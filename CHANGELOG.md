@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Established RecordBench OSS as the upstream source for portable product
+  behavior, with synthetic clean-room reproduction rules for defects found by
+  private downstream deployments.
+- Added a contribution and pull-request contract covering user outcomes,
+  validation evidence, security/lifecycle impact, immutable releases, and the
+  strict separation of private deployment overlays.
+
 ## 0.1.0-alpha.2 — private review candidate
 
 - Imported the RecordBench 0.1 application into a fresh, sanitized history.
