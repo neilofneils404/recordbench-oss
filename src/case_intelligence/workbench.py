@@ -1,0 +1,11491 @@
+"""Milestone A staff workbench: matters, uploads, retrieval, generation, support."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import re
+import stat
+import tempfile
+import threading
+import urllib.request
+import uuid
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
+from typing import Callable, Iterable, Iterator, Mapping, Sequence
+from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
+from zoneinfo import ZoneInfo
+
+import uvicorn
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.background import BackgroundTask
+
+from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
+from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
+from .identity import (
+    KERBEROS_SECRET_HEADER,
+    KERBEROS_USER_HEADER,
+    LOGIN_CHALLENGE_COOKIE,
+    OIDC_STATE_COOKIE,
+    SESSION_COOKIE,
+    AuthContext,
+    IdentityService,
+    KerberosAuthenticationError,
+    KerberosSettings,
+    LocalAccountSettings,
+    LocalAuthenticationError,
+    OidcAuthenticationError,
+    OidcProviderClient,
+    OidcSettings,
+)
+from .generation import (
+    EvidenceItem,
+    GenerationGroundingRejected,
+    GenerationRejected,
+    GenerationUnavailable,
+    GeneratorClient,
+    GroundedGenerationService,
+    VerifiedAnswer,
+    generator_from_environment,
+)
+from .ingestion import IngestionCoordinator
+from .media_evidence import (
+    MediaCoordinator,
+    MediaExport,
+    MediaProcessor,
+    TranscriptSummaryResult,
+    TranscriptionV2Client,
+    export_media_summary,
+    export_transcript,
+    format_timestamp,
+    render_clip,
+    transcript_summary_basis,
+    transcript_summary_windows,
+    transcript_units,
+)
+from .managed_storage import ManagedMatterStorage, StoragePolicy, format_bytes
+from .malware_scan import MalwareScanner, scanner_from_environment, scanner_status
+from .matter_analysis import MAX_ANALYSIS_UNITS, analyze_candidates
+from .media_playback import BrowserPlaybackCoordinator
+from .model_portfolio import model_portfolio_projection
+from .pilot_uploads import (
+    AUDIO_MEDIA_TYPES,
+    DOCX_MEDIA_TYPE,
+    EMAIL_MEDIA_TYPES,
+    IMAGE_MEDIA_TYPES,
+    MEDIA_TYPES,
+    SPREADSHEET_MEDIA_TYPES,
+    VIDEO_MEDIA_TYPES,
+    MAX_FILES,
+    MAX_UPLOAD_CHUNK_BYTES,
+    MAX_UPLOAD_INTAKE_ITEMS,
+    MAX_UPLOAD_SESSION_ITEMS,
+    PilotDocument,
+    PilotStore,
+    PilotStoreChange,
+    PilotUnit,
+    RawUploadLimitMiddleware,
+    UploadProblem,
+    canonical_media_type,
+    is_media_type,
+    maximum_file_bytes,
+    media_kind,
+    securely_delete_owned_tree,
+)
+from .review_bench import RetrievalUnavailable
+from .review_bench_v2 import (
+    Candidate,
+    DeterministicEmbeddingAdapter,
+    DeterministicReranker,
+    HybridRetriever,
+    InMemoryHybridBackend,
+    PostgresHybridBackend,
+    RemoteEmbeddingAdapter,
+    RemoteRerankerAdapter,
+    apply_postgres_migrations,
+    delete_postgres_document,
+    delete_postgres_matter,
+    retain_postgres_workbench_matters,
+    upsert_postgres_document,
+)
+from .source_locations import (
+    SourceLocationProblem,
+    SourceLocationRegistry,
+    source_registry_from_environment,
+)
+from .service_endpoints import validate_service_endpoint
+from .workspace_store import (
+    AnswerJobRecord,
+    ConversationRecord,
+    MatterLifecycleRecord,
+    MatterReadinessRecord,
+    MatterRecord,
+    MatterRetentionRecord,
+    MediaClipRecord,
+    MediaJobRecord,
+    MediaSummaryRecord,
+    MediaTranscriptRecord,
+    MessageRecord,
+    NOTEBOOK_STATUSES,
+    NOTEBOOK_TYPES,
+    NotebookItemRecord,
+    NotebookReferenceRecord,
+    ResearchJobRecord,
+    ReviewDecisionRecord,
+    ReviewRunRecord,
+    SourceCollectionRecord,
+    SourceSetRecord,
+    SpeakerMappingRecord,
+    TranscriptSegmentRecord,
+    UploadItemRecord,
+    WorkspaceProblem,
+    WorkspaceStore,
+)
+from .workflow_jobs import (
+    ResearchCoordinator,
+    ReviewCoordinator,
+    ReviewDecisionResult,
+    WorkflowFailure,
+)
+from .work_product_exports import (
+    ExportArtifact,
+    ExportProblem,
+    export_answer,
+    export_conversation,
+    export_full_review,
+    export_matter_bundle,
+    export_notebook,
+    export_research,
+    export_report,
+)
+
+PACKAGE_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = PACKAGE_ROOT.parents[1]
+DEFAULT_RUNTIME = PROJECT_ROOT / ".tmp/milestone-a-workbench"
+MAX_SEARCH_CHARS = 512
+MAX_QUESTION_CHARS = 2_000
+_WORD = re.compile(r"[a-z0-9]+")
+_FOLLOWUP_WORDS = {"it", "that", "those", "they", "them", "this", "these", "he", "she", "there"}
+_COLLECTION_WIDE_QUESTION = re.compile(
+    r"\b(?:all|each|every|complete|comprehensive|entire|exhaustive)\b.{0,80}"
+    r"\b(?:document|documents|record|records|source|sources|mention|mentions|"
+    r"reference|references|chronology|timeline|list)\b|"
+    r"\b(?:list|identify|find|show)\s+(?:me\s+)?(?:all|each|every)\b|"
+    r"\b(?:complete|comprehensive|full)\s+(?:chronology|timeline|list|account)\b",
+    re.IGNORECASE,
+)
+_MATTER_PURGE_ID = re.compile(r"^matter-purge-[0-9a-f]{32}$")
+_DATE_REFERENCE = re.compile(
+    r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"\s+[0-3]?\d(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b|"
+    r"\b(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])/(?:\d{2}|\d{4})\b"
+)
+_PERSON_REFERENCE = re.compile(
+    r"\b(?:Officer|Detective|Det\.|Agent|Sergeant|Sgt\.|Lieutenant|Lt\.|"
+    r"Captain|Capt\.|Dr\.|Mr\.|Mrs\.|Ms\.|Judge|Attorney)\s+"
+    r"[A-Z][A-Za-z'’-]{1,40}(?:\s+[A-Z][A-Za-z'’-]{1,40}){0,2}\b"
+)
+_PLACE_REFERENCE = re.compile(
+    r"\b(?:at|near|inside|outside|located at|arrived at)\s+(?:the\s+)?"
+    r"(?P<place>[A-Z][A-Za-z0-9'’.-]{1,40}(?:\s+(?:[A-Z][A-Za-z0-9'’.-]{1,40}|"
+    r"Street|Road|Avenue|Boulevard|Drive|Lane|Park|Center|Hospital|School|Station)){0,3})"
+)
+ANSWER_STAGE_LABELS = {
+    "queued": "Waiting in the answer queue",
+    "retrieving": "Finding candidate evidence",
+    "reranking": "Ordering evidence for relevance",
+    "generating": "Drafting from the best support",
+    "verifying": "Verifying claims and citations",
+    "complete": "Answer ready",
+    "failed": "Answer needs attention",
+    "cancelling": "Cancelling this request",
+    "cancelled": "Answer cancelled",
+}
+ANSWER_STAGE_MESSAGES = {
+    "retrieving": "Searching this matter's indexed sources.",
+    "reranking": "Comparing candidate passages for relevance.",
+    "generating": "Drafting only from the selected case support.",
+    "repairing": "Rewriting the draft in source-close language for verification.",
+    "verifying": "Checking every claim and citation against the retrieved record.",
+}
+
+
+def _source_coverage(readiness: MatterReadinessRecord) -> dict[str, object]:
+    """Describe query-time coverage without exposing source identity or content."""
+
+    partial = readiness.partial_query
+    excluded = readiness.attention_count if partial else 0
+    notice = ""
+    if partial:
+        source_word = "source" if excluded == 1 else "sources"
+        need_word = "needs" if excluded == 1 else "need"
+        excluded_word = "is" if excluded == 1 else "are"
+        notice = (
+            f"Search and answers use {readiness.searchable_count:,} of "
+            f"{readiness.total_count:,} sources. {excluded:,} {source_word} "
+            f"{need_word} attention and {excluded_word} excluded."
+        )
+    return {
+        "mode": "partial" if partial else "complete",
+        "searchable_count": readiness.searchable_count,
+        "total_count": readiness.total_count,
+        "excluded_count": excluded,
+        "notice": notice,
+    }
+
+
+def _focused_answer_scope(
+    question: str,
+    readiness: MatterReadinessRecord,
+    answer: VerifiedAnswer,
+    evidence: Mapping[str, "WorkbenchCitation"],
+) -> dict[str, object]:
+    """Persist what focused RAG did without implying exhaustive review."""
+
+    used = tuple(
+        evidence[identifier]
+        for identifier in answer.used_evidence_ids
+        if identifier in evidence
+    )
+    cited_sources = len({citation.document_id for citation in used})
+    candidate_sources = len(
+        {citation.document_id for citation in evidence.values()}
+    )
+    collection_wide = bool(_COLLECTION_WIDE_QUESTION.search(question))
+    if collection_wide:
+        notice = (
+            "This is a focused answer from the highest-ranked passages, not a "
+            "document-by-document completeness review. Verify collection-wide "
+            "lists, counts, and chronologies with source search and direct review."
+        )
+    else:
+        searchable_word = "source" if readiness.searchable_count == 1 else "sources"
+        cited_word = "source" if cited_sources == 1 else "sources"
+        notice = (
+            f"RecordBench searched the index for {readiness.searchable_count:,} "
+            f"searchable {searchable_word}, reranked the strongest passages, and "
+            f"grounded this answer in {cited_sources:,} cited {cited_word}."
+        )
+    return {
+        "mode": "focused",
+        "collection_wide_request": collection_wide,
+        "searchable_source_count": readiness.searchable_count,
+        "candidate_passage_count": len(evidence),
+        "candidate_source_count": candidate_sources,
+        "cited_passage_count": len(used),
+        "cited_source_count": cited_sources,
+        "notice": notice,
+    }
+
+
+def _backup_status_projection() -> dict[str, object]:
+    """Read one administrator-safe backup receipt, never repository content."""
+
+    configured = os.getenv(
+        "RECORDBENCH_BACKUP_STATUS_FILE",
+        "/srv/recordbench/.local/state/recordbench-backup/status.json",
+    ).strip()
+    path = Path(configured)
+    fallback = {
+        "state": "not_initialized",
+        "tone": "attention",
+        "headline": "Backup setup required",
+        "message": "No encrypted RecordBench disaster-recovery receipt is available.",
+        "completed_at": "",
+        "duration_seconds": 0,
+        "snapshot_id": "",
+        "snapshot_short": "",
+        "retention": "14d",
+        "stale": True,
+    }
+    if not configured or not path.is_absolute() or path == Path("/"):
+        return fallback
+    try:
+        metadata = path.stat(follow_symlinks=False)
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size > 65_536
+        ):
+            return fallback
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return fallback
+    if not isinstance(payload, dict):
+        return fallback
+    state = payload.get("state")
+    if state not in {"initialized", "succeeded", "deferred", "failed"}:
+        return fallback
+    completed_at = payload.get("completed_at")
+    if not isinstance(completed_at, str) or len(completed_at) > 40:
+        completed_at = ""
+    stale = state != "succeeded"
+    if state == "succeeded" and completed_at:
+        try:
+            completed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+            stale = (
+                datetime.now(timezone.utc) - completed.astimezone(timezone.utc)
+            ).total_seconds() > 36 * 3_600
+        except ValueError:
+            stale = True
+    snapshot_id = payload.get("snapshot_id")
+    if not isinstance(snapshot_id, str) or not re.fullmatch(
+        r"[0-9a-f]{0,64}", snapshot_id
+    ):
+        snapshot_id = ""
+    retention = payload.get("retention")
+    if not isinstance(retention, str) or not re.fullmatch(r"[0-9]{1,3}d", retention):
+        retention = "14d"
+    duration = payload.get("duration_seconds")
+    if not isinstance(duration, int) or not 0 <= duration <= 7 * 86_400:
+        duration = 0
+    default_messages = {
+        "initialized": "The encrypted repository is ready; its first snapshot has not completed.",
+        "succeeded": "Encrypted NAS snapshot and repository verification completed.",
+        "deferred": "The quiet-hour backup deferred because background work was active; it will retry.",
+        "failed": "The most recent backup needs administrator attention.",
+    }
+    raw_message = payload.get("message")
+    message = (
+        " ".join(raw_message.split())[:320]
+        if isinstance(raw_message, str) and raw_message.strip()
+        else default_messages[state]
+    )
+    if state == "succeeded" and stale:
+        message = (
+            "The last successful backup is older than 36 hours. Review the "
+            "backup timer and NAS mount."
+        )
+    return {
+        "state": state,
+        "tone": "ready" if state == "succeeded" and not stale else "attention",
+        "headline": (
+            "Protected and current"
+            if state == "succeeded" and not stale
+            else "Backup needs attention"
+        ),
+        "message": message,
+        "completed_at": completed_at,
+        "duration_seconds": duration,
+        "snapshot_id": snapshot_id,
+        "snapshot_short": snapshot_id[:12],
+        "retention": retention,
+        "stale": stale,
+    }
+
+
+@dataclass(frozen=True)
+class SourceRow:
+    document_id: str
+    name: str
+    relative_path: str
+    kind: str
+    state: str
+    tone: str
+    count_label: str
+    action_token: str
+    retryable: bool
+    removable: bool = True
+    review_state: str = "unreviewed"
+    collection_id: str = ""
+    collection_name: str = "Unfiled"
+    added_at: str = ""
+    byte_size: int = 0
+    origin: str = "upload"
+
+
+@dataclass(frozen=True)
+class SourceLibraryPage:
+    items: tuple[SourceRow, ...]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    first_item: int
+    last_item: int
+    stats: Mapping[str, int]
+    type_counts: Mapping[str, int]
+    review_counts: Mapping[str, int]
+    view: str
+    query: str
+    status: str
+    kind: str
+    review: str
+    collection_id: str
+    source_set_id: str
+    sort: str
+
+
+@dataclass(frozen=True)
+class SourceReviewView:
+    row: SourceRow
+    document: PilotDocument
+    unit: PilotUnit | None
+    unit_index: int
+    unit_count: int
+    position_label: str
+    previous_href: str
+    next_href: str
+    embedded_content_href: str
+
+
+@dataclass(frozen=True)
+class MediaReviewView:
+    row: SourceRow
+    document: PilotDocument
+    job: MediaJobRecord | None
+    transcript: MediaTranscriptRecord | None
+    summary: MediaSummaryRecord | None
+    segments: tuple[TranscriptSegmentRecord, ...]
+    speakers: tuple[SpeakerMappingRecord, ...]
+    clips: tuple[MediaClipRecord, ...]
+    playback_href: str
+    playback_media_type: str
+    playback_is_compatible_copy: bool
+    player_kind: str
+    start_ms: int
+    focus_segment_id: str
+
+
+@dataclass(frozen=True)
+class WorkbenchCitation:
+    source_name: str
+    location: str
+    excerpt: str
+    href: str
+    support_token: str
+    matter_id: str
+    document_id: str
+    source_version_id: str
+    excerpt_digest: str
+    chunk_id: str
+    unit_number: int
+    line_start: int | None
+    line_end: int | None
+    evidence_kind: str
+
+    def staff_payload(self) -> dict[str, str]:
+        return {
+            "source_name": self.source_name,
+            "location": self.location,
+            "href": self.href,
+            "support_token": self.support_token,
+            "evidence_kind": self.evidence_kind,
+        }
+
+
+@dataclass(frozen=True)
+class SupportView:
+    source_name: str
+    kind: str
+    location: str
+    position_label: str
+    lines: tuple[str, ...]
+    previous_href: str
+    next_href: str
+    support_token: str
+    evidence_kind: str
+    source_review_href: str
+    playback_href: str
+    playback_media_type: str
+    player_kind: str
+    start_ms: int
+    end_ms: int
+    autoplay: bool
+
+
+class MatterMaintenanceCoordinator:
+    """Run bounded lifecycle maintenance without tying it to an HTTP request."""
+
+    def __init__(
+        self,
+        run_once: Callable[[], Mapping[str, int]],
+        *,
+        interval_seconds: float = 900.0,
+    ) -> None:
+        self._run_once = run_once
+        self._interval = max(float(interval_seconds), 30.0)
+        self._stop = threading.Event()
+        self._lock = threading.RLock()
+        self._last_run_at = ""
+        self._last_result: dict[str, int] = {
+            "uploads_cleaned": 0,
+            "matters_purged": 0,
+            "matters_deferred": 0,
+        }
+        self._last_error = ""
+        self._thread = threading.Thread(
+            target=self._loop,
+            name="recordbench-maintenance",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                result = dict(self._run_once())
+                with self._lock:
+                    self._last_result = {
+                        "uploads_cleaned": int(result.get("uploads_cleaned", 0)),
+                        "matters_purged": int(result.get("matters_purged", 0)),
+                        "matters_deferred": int(result.get("matters_deferred", 0)),
+                    }
+                    self._last_run_at = datetime.now(timezone.utc).isoformat().replace(
+                        "+00:00", "Z"
+                    )
+                    self._last_error = ""
+            except Exception:
+                with self._lock:
+                    self._last_run_at = datetime.now(timezone.utc).isoformat().replace(
+                        "+00:00", "Z"
+                    )
+                    self._last_error = "Maintenance needs administrator attention."
+            if self._stop.wait(self._interval):
+                return
+
+    def status(self) -> dict[str, object]:
+        with self._lock:
+            return {
+                "enabled": True,
+                "last_run_at": self._last_run_at,
+                "last_error": self._last_error,
+                **self._last_result,
+            }
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+
+class CaseIntelligenceWorkbench:
+    """Matter-isolated Milestone A runtime behind an explicit actor boundary."""
+
+    def __init__(
+        self,
+        runtime_dir: Path,
+        *,
+        generator: GeneratorClient | None = None,
+        postgres_connection=None,
+        embedding=None,
+        reranker=None,
+        learned_retrieval: bool | None = None,
+        source_registry: SourceLocationRegistry | None = None,
+        background_ingestion: bool = False,
+        ingestion_workers: int = 2,
+        answer_workers: int = 2,
+        media_processor: MediaProcessor | None = None,
+        media_poll_seconds: float = 2.0,
+        managed_storage_root: Path | None = None,
+        storage_policy: StoragePolicy | None = None,
+        malware_scanner: MalwareScanner | None = None,
+        malware_scan_mode: str | None = None,
+    ) -> None:
+        self.runtime_dir = Path(runtime_dir).absolute()
+        self._prepare_runtime()
+        self.storage_policy = storage_policy or StoragePolicy.from_environment()
+        configured_storage = managed_storage_root
+        if configured_storage is None:
+            configured_value = os.getenv(
+                "CASE_INTELLIGENCE_MANAGED_STORAGE_ROOT", ""
+            ).strip()
+            configured_storage = Path(configured_value) if configured_value else None
+        if configured_storage is None:
+            self.storage = ManagedMatterStorage.legacy_runtime(
+                self.runtime_dir, policy=self.storage_policy
+            )
+        else:
+            legacy_matters = self.runtime_dir / "matters"
+            if legacy_matters.exists() and any(legacy_matters.iterdir()):
+                raise RuntimeError(
+                    "legacy matter bytes require an explicit migration before managed storage activation"
+                )
+            self.storage = ManagedMatterStorage(
+                Path(configured_storage).absolute(),
+                policy=self.storage_policy,
+                require_marker=True,
+            )
+        self.workspace = WorkspaceStore(self.runtime_dir / "workbench.sqlite")
+        self.workspace.recover_interrupted_matter_purges()
+        self._stores: dict[str, PilotStore] = {}
+        self._store_lock = threading.RLock()
+        self._storage_reservation_lock = threading.RLock()
+        self._playback_reservations: dict[tuple[str, str], int] = {}
+        self.malware_scanner = malware_scanner or scanner_from_environment()
+        self.malware_scan_mode = (
+            malware_scan_mode
+            if malware_scan_mode is not None
+            else os.getenv("CASE_INTELLIGENCE_MALWARE_SCAN_MODE", "extended")
+        ).strip().casefold()
+        if self.malware_scan_mode not in {"disabled", "extended", "all"}:
+            raise RuntimeError("CASE_INTELLIGENCE_MALWARE_SCAN_MODE is invalid")
+        self._postgres_lock = threading.RLock()
+        self.source_registry = source_registry or source_registry_from_environment()
+        self.background_ingestion = bool(background_ingestion)
+        self.ingestion: IngestionCoordinator | None = None
+        self.media: MediaCoordinator | None = None
+        self.playback: BrowserPlaybackCoordinator | None = None
+        self.answers: AnswerCoordinator | None = None
+        self.research: ResearchCoordinator | None = None
+        self.full_review: ReviewCoordinator | None = None
+        self.maintenance: MatterMaintenanceCoordinator | None = None
+        try:
+            generation_concurrency = int(
+                os.getenv("CASE_INTELLIGENCE_GENERATION_CONCURRENCY", "2")
+            )
+        except ValueError:
+            generation_concurrency = 2
+        self.generator = GroundedGenerationService(
+            generator or generator_from_environment(),
+            maximum_active=generation_concurrency,
+        )
+        configured_postgres_dsn = self._postgres_dsn_from_environment()
+        self._postgres_projection_configured = bool(
+            postgres_connection is not None or configured_postgres_dsn
+        )
+        self.postgres_connection = postgres_connection
+        self._owns_postgres = False
+        if self.postgres_connection is None:
+            self.postgres_connection = self._connect_postgres(configured_postgres_dsn)
+            self._owns_postgres = self.postgres_connection is not None
+        self.embedding = embedding
+        self.reranker = reranker
+        worker_ready = False
+        if self.embedding is None or self.reranker is None:
+            worker_url = os.getenv("CASE_INTELLIGENCE_RETRIEVAL_WORKER_URL", "").strip()
+            worker_ready = self._retrieval_worker_ready(worker_url) if worker_url else False
+            if worker_ready:
+                self.embedding = RemoteEmbeddingAdapter(worker_url)
+                self.reranker = RemoteRerankerAdapter(worker_url)
+        if self.embedding is None:
+            self.embedding = DeterministicEmbeddingAdapter()
+        if self.reranker is None:
+            self.reranker = DeterministicReranker()
+        if learned_retrieval is None:
+            learned_retrieval = worker_ready
+        self.learned_retrieval = bool(
+            learned_retrieval and self.postgres_connection is not None
+        )
+        self.postgres_ready = False
+        if self.postgres_connection is not None:
+            try:
+                with self.postgres_connection.cursor() as cursor:
+                    apply_postgres_migrations(cursor)
+                self.postgres_connection.commit()
+                self.postgres_ready = True
+            except Exception:
+                self.postgres_connection.rollback()
+                self.learned_retrieval = False
+        self._rebuild_all_indexes()
+        if self.background_ingestion:
+            self.ingestion = IngestionCoordinator(
+                self.workspace,
+                self.source_registry,
+                self.storage.ingestion_staging,
+                resolve_matter=self._matter_by_id,
+                resolve_store=self.source_store,
+                index_document=self._index_document,
+                workers=ingestion_workers,
+            )
+        configured_processor = media_processor or TranscriptionV2Client.from_environment()
+        self.media = MediaCoordinator(
+            self.workspace,
+            configured_processor,
+            resolve_matter=self._matter_by_id,
+            resolve_store=self.source_store,
+            project_transcript=self._project_media_transcript,
+            summarize_transcript=self._summarize_media_transcript,
+            poll_seconds=media_poll_seconds,
+        )
+        self.playback = BrowserPlaybackCoordinator(
+            resolve_matter=self._matter_by_id,
+            resolve_store=self.source_store,
+            reserve_capacity=self._reserve_browser_playback,
+            release_capacity=self._release_browser_playback,
+        )
+        self.answers = AnswerCoordinator(
+            self.workspace,
+            process=self._process_answer_job,
+            workers=answer_workers,
+        )
+        try:
+            research_workers = int(
+                os.getenv("CASE_INTELLIGENCE_RESEARCH_WORKERS", "1")
+            )
+        except ValueError:
+            research_workers = 1
+        try:
+            review_workers = int(
+                os.getenv("CASE_INTELLIGENCE_FULL_REVIEW_WORKERS", "1")
+            )
+        except ValueError:
+            review_workers = 1
+        try:
+            review_source_concurrency = int(
+                os.getenv("CASE_INTELLIGENCE_FULL_REVIEW_SOURCE_CONCURRENCY", "2")
+            )
+        except ValueError:
+            review_source_concurrency = 2
+        self.research = ResearchCoordinator(
+            self.workspace,
+            process=self._process_research_job,
+            workers=research_workers,
+        )
+        self.full_review = ReviewCoordinator(
+            self.workspace,
+            process=self._process_review_decision,
+            workers=review_workers,
+            source_concurrency=review_source_concurrency,
+        )
+        if os.getenv("CASE_INTELLIGENCE_MAINTENANCE_ENABLED", "").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            try:
+                maintenance_interval = float(
+                    os.getenv("CASE_INTELLIGENCE_MAINTENANCE_INTERVAL_SECONDS", "900")
+                )
+            except ValueError:
+                maintenance_interval = 900.0
+            self.maintenance = MatterMaintenanceCoordinator(
+                self.run_maintenance_once,
+                interval_seconds=maintenance_interval,
+            )
+
+    def _prepare_runtime(self) -> None:
+        if self.runtime_dir.exists() and (
+            self.runtime_dir.is_symlink() or not self.runtime_dir.is_dir()
+        ):
+            raise RuntimeError("workbench runtime directory is unsafe")
+        self.runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    @staticmethod
+    def _postgres_dsn_from_environment() -> str:
+        inline = os.getenv("CASE_INTELLIGENCE_POSTGRES_DSN", "").strip()
+        configured_file = os.getenv(
+            "CASE_INTELLIGENCE_POSTGRES_DSN_FILE", ""
+        ).strip()
+        if inline and configured_file:
+            raise RuntimeError(
+                "Configure only one of CASE_INTELLIGENCE_POSTGRES_DSN or "
+                "CASE_INTELLIGENCE_POSTGRES_DSN_FILE"
+            )
+        if not configured_file:
+            return inline
+        path = Path(configured_file)
+        try:
+            metadata = path.lstat()
+            if (
+                path.is_symlink()
+                or not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_uid != os.geteuid()
+                or metadata.st_size > 4_096
+            ):
+                raise RuntimeError("PostgreSQL connection file is unsafe")
+            value = path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise RuntimeError("PostgreSQL connection file is unavailable") from exc
+        if not value or any(character in value for character in "\r\n\x00"):
+            raise RuntimeError("PostgreSQL connection file is invalid")
+        return value
+
+    @staticmethod
+    def _connect_postgres(dsn: str):
+        if not dsn:
+            return None
+        try:
+            import psycopg
+
+            return psycopg.connect(dsn, connect_timeout=2, autocommit=True)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _retrieval_worker_ready(url: str) -> bool:
+        try:
+            endpoint = validate_service_endpoint(
+                url,
+                environment_name="CASE_INTELLIGENCE_RETRIEVAL_ALLOWED_HOSTS",
+                label="retrieval worker endpoint",
+                schemes=frozenset({"http"}),
+                origin_only=True,
+            )
+        except ValueError:
+            return False
+        try:
+            with urllib.request.urlopen(endpoint + "/health", timeout=2) as response:
+                payload = json.load(response)
+            return bool(
+                isinstance(payload, dict)
+                and payload.get("status") == "ok"
+                and payload.get("embedding_loaded") is True
+                and payload.get("reranker_loaded") is True
+            )
+        except Exception:
+            return False
+
+    def close(self) -> None:
+        if self.maintenance is not None:
+            self.maintenance.close()
+        if self.full_review is not None:
+            self.full_review.close()
+        if self.research is not None:
+            self.research.close()
+        if self.answers is not None:
+            self.answers.close()
+        if self.playback is not None:
+            self.playback.close()
+        if self.media is not None:
+            self.media.close()
+        if self.ingestion is not None:
+            self.ingestion.close()
+        with self._store_lock:
+            stores = tuple(self._stores.values())
+            self._stores.clear()
+        for store in stores:
+            store.close()
+        self.workspace.close()
+        if self.postgres_connection is not None:
+            self.postgres_connection.close()
+
+    def matters(
+        self, actor_id: str, *, administrator: bool = False
+    ) -> tuple[MatterRecord, ...]:
+        if administrator:
+            self.workspace.get_principal(actor_id)
+            return self.workspace.all_matters()
+        return self.workspace.list_matters(actor_id)
+
+    def matter(
+        self, slug: str, actor_id: str, *, administrator: bool = False
+    ) -> MatterRecord:
+        if administrator:
+            self.workspace.get_principal(actor_id)
+            return self.workspace.get_active_matter(slug)
+        return self.workspace.get_matter(slug, actor_id)
+
+    def _matter_by_id(self, matter_id: str) -> MatterRecord:
+        return self.workspace.get_matter_by_id(matter_id)
+
+    def create_matter(
+        self,
+        name: str,
+        descriptor: str,
+        actor_id: str,
+        *,
+        retention_days: int | None = None,
+    ) -> MatterRecord:
+        matter = self.workspace.create_matter(
+            name,
+            descriptor,
+            actor_id,
+            retention_days=retention_days,
+        )
+        self.source_store(matter)
+        return matter
+
+    @staticmethod
+    def _parse_utc(value: str) -> datetime:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
+
+    def retention_projection(self, matter: MatterRecord) -> dict[str, object]:
+        retention = self.workspace.matter_retention(matter.matter_id)
+        now = self.workspace.current_time()
+        office_zone = ZoneInfo("America/New_York")
+        local_today = now.astimezone(office_zone).date()
+        minimum_date = (local_today + timedelta(days=1)).isoformat()
+        maximum_date = (local_today + timedelta(days=365)).isoformat()
+        if retention is None:
+            return {
+                "record": None,
+                "status": "unscheduled",
+                "tone": "attention",
+                "label": "Set a review end date",
+                "short_label": "Set date",
+                "detail": (
+                    "This existing matter has no automatic deletion schedule. "
+                    "Set one before expanding the pilot."
+                ),
+                "show_warning": True,
+                "expires_on": "",
+                "purge_on": "",
+                "days_remaining": None,
+                "minimum_date": minimum_date,
+                "maximum_date": maximum_date,
+            }
+        expires = self._parse_utc(retention.expires_at)
+        purge_after = self._parse_utc(retention.purge_after)
+        seconds_to_expiry = (expires - now).total_seconds()
+        seconds_to_purge = (purge_after - now).total_seconds()
+        expiry_date = expires.astimezone(office_zone).date().isoformat()
+        purge_date = purge_after.astimezone(office_zone).date().isoformat()
+        if seconds_to_purge <= 0:
+            status = "due"
+            tone = "danger"
+            label = "Automatic deletion is due"
+            short_label = "Due"
+            detail = "Finish active work or extend the review end date now."
+            days_remaining: int | None = 0
+        elif seconds_to_expiry <= 0:
+            days_to_purge = max(math.ceil(seconds_to_purge / 86_400), 1)
+            status = "grace"
+            tone = "danger"
+            label = f"Review period ended · deletion in {days_to_purge} day{'s' if days_to_purge != 1 else ''}"
+            short_label = f"{days_to_purge}d grace"
+            detail = "Export the work product or extend this temporary matter before deletion."
+            days_remaining = 0
+        else:
+            days_remaining = max(math.ceil(seconds_to_expiry / 86_400), 1)
+            status = "warning" if days_remaining <= 14 else "scheduled"
+            tone = "attention" if status == "warning" else "quiet"
+            label = f"Scheduled to close in {days_remaining} day{'s' if days_remaining != 1 else ''}"
+            short_label = f"{days_remaining}d"
+            detail = f"Automatic deletion begins after the seven-day grace period on {purge_date}."
+        return {
+            "record": retention,
+            "status": status,
+            "tone": tone,
+            "label": label,
+            "short_label": short_label,
+            "detail": detail,
+            "show_warning": status in {"warning", "grace", "due"},
+            "expires_on": expiry_date,
+            "purge_on": purge_date,
+            "days_remaining": days_remaining,
+            "minimum_date": minimum_date,
+            "maximum_date": maximum_date,
+        }
+
+    def retention_for_date(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        expires_on: str,
+        *,
+        administrator_override: bool = False,
+    ) -> MatterRetentionRecord:
+        try:
+            selected_date = date.fromisoformat((expires_on or "").strip())
+        except ValueError as exc:
+            raise WorkspaceProblem("Choose a valid review end date.") from exc
+        office_zone = ZoneInfo("America/New_York")
+        selected = datetime.combine(selected_date, time(23, 59, 59), office_zone)
+        return self.workspace.set_matter_retention(
+            matter.matter_id,
+            actor_id,
+            selected,
+            administrator_override=administrator_override,
+        )
+
+    def source_store(self, matter: MatterRecord) -> PilotStore:
+        with self._store_lock:
+            existing = self._stores.get(matter.matter_id)
+            if existing is not None:
+                return existing
+            if not re.fullmatch(r"ci-matter-[0-9a-f]{32}", matter.matter_id):
+                raise RuntimeError("stored matter identity is invalid")
+            root = self.storage.matters / matter.matter_id / "sources"
+            store = PilotStore(
+                root,
+                document_file_limit=self.storage_policy.document_file_bytes,
+                media_file_limit=self.storage_policy.media_file_bytes,
+                upload_session_limit=self.storage_policy.upload_session_bytes,
+                on_change=lambda change: self._apply_source_store_change(matter, change),
+                malware_scanner=self.malware_scanner,
+                malware_scan_mode=self.malware_scan_mode,
+            )
+            self._stores[matter.matter_id] = store
+            if store.documents:
+                self.workspace.reconcile_source_organizations(
+                    matter.matter_id,
+                    tuple(
+                        (
+                            document.document_id,
+                            document.origin,
+                            document.relative_path or document.display_name,
+                        )
+                        for document in store.documents.values()
+                    ),
+                )
+            self._sync_source_catalog(matter, tuple(store.documents.values()))
+            return store
+
+    def matter_storage_projection(self, matter: MatterRecord) -> dict[str, object]:
+        used = self.storage.matter_payload_usage_bytes(matter.matter_id)
+        reserved = self.workspace.pending_upload_bytes(
+            matter.matter_id
+        ) + self._playback_reserved_bytes(matter.matter_id)
+        projected = used + reserved
+        quota = self.storage_policy.matter_quota_bytes
+        remaining = max(quota - projected, 0)
+        return {
+            "ready": projected <= quota,
+            "used_bytes": used,
+            "reserved_bytes": reserved,
+            "projected_bytes": projected,
+            "quota_bytes": quota,
+            "remaining_bytes": remaining,
+            "used_label": format_bytes(used),
+            "reserved_label": format_bytes(reserved),
+            "quota_label": format_bytes(quota),
+            "remaining_label": format_bytes(remaining),
+            "percent": min(round((projected / quota) * 100, 1), 100.0),
+        }
+
+    def storage_capacity_projection(self, *, include_managed_usage: bool) -> dict[str, object]:
+        try:
+            capacity = self.storage.capacity(
+                include_managed_usage=include_managed_usage
+            )
+        except (OSError, RuntimeError):
+            return {
+                "ready": False,
+                "free_bytes": 0,
+                "reserve_bytes": self.storage_policy.reserve_bytes,
+                "available_bytes": 0,
+                "managed_bytes": -1,
+                "optimized_finalize": False,
+                "free_label": "Unavailable",
+                "reserve_label": format_bytes(self.storage_policy.reserve_bytes),
+                "available_label": "Unavailable",
+                "managed_label": "Unavailable",
+            }
+        return {
+            "ready": capacity.ready,
+            "free_bytes": capacity.free_bytes,
+            "reserve_bytes": capacity.reserve_bytes,
+            "available_bytes": capacity.available_bytes,
+            "managed_bytes": capacity.managed_bytes,
+            "optimized_finalize": capacity.optimized_finalize,
+            "free_label": format_bytes(capacity.free_bytes),
+            "reserve_label": format_bytes(capacity.reserve_bytes),
+            "available_label": format_bytes(capacity.available_bytes),
+            "managed_label": (
+                format_bytes(capacity.managed_bytes)
+                if capacity.managed_bytes >= 0
+                else "Not calculated"
+            ),
+        }
+
+    def create_upload_session(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        collection_name: str,
+        files: Sequence[Mapping[str, object]],
+        *,
+        collection_id: str = "",
+    ):
+        requested = sum(int(item.get("expected_size") or 0) for item in files)
+        with self._storage_reservation_lock:
+            used = self.storage.matter_payload_usage_bytes(matter.matter_id)
+            matter_reserved = self.workspace.pending_upload_bytes(
+                matter.matter_id
+            ) + self._playback_reserved_bytes(matter.matter_id)
+            if used + matter_reserved + requested > self.storage_policy.matter_quota_bytes:
+                remaining = max(
+                    self.storage_policy.matter_quota_bytes - used - matter_reserved,
+                    0,
+                )
+                raise UploadProblem(
+                    "This matter has "
+                    f"{format_bytes(remaining)} of upload capacity remaining. "
+                    "Remove unneeded sources or split the review into another matter.",
+                    413,
+                )
+            global_reserved = (
+                self.workspace.pending_upload_bytes()
+                + self._playback_reserved_bytes()
+            )
+            try:
+                self.storage.ensure_capacity(global_reserved + requested)
+            except RuntimeError as exc:
+                raise UploadProblem(
+                    "Managed matter storage does not have enough protected free space for "
+                    "this upload collection. Ask an administrator to review capacity.",
+                    507,
+                ) from exc
+            return self.workspace.create_upload_session(
+                matter.matter_id,
+                actor_id,
+                collection_name,
+                files,
+                collection_id=collection_id,
+            )
+
+    def ensure_upload_write_capacity(self) -> None:
+        with self._storage_reservation_lock:
+            try:
+                self.storage.ensure_capacity(
+                    self.workspace.pending_upload_bytes()
+                    + self._playback_reserved_bytes()
+                )
+            except RuntimeError as exc:
+                raise UploadProblem(
+                    "The upload paused because managed storage reached its protected reserve. "
+                    "Its saved progress can be resumed after an administrator restores capacity.",
+                    507,
+                ) from exc
+
+    def ensure_direct_upload_capacity(self, matter: MatterRecord, requested: int) -> None:
+        """Protect the bounded non-JavaScript compatibility upload route."""
+
+        with self._storage_reservation_lock:
+            used = self.storage.matter_payload_usage_bytes(matter.matter_id)
+            matter_reserved = self.workspace.pending_upload_bytes(
+                matter.matter_id
+            ) + self._playback_reserved_bytes(matter.matter_id)
+            if used + matter_reserved + requested > self.storage_policy.matter_quota_bytes:
+                raise UploadProblem("This matter does not have enough upload capacity remaining.", 413)
+            try:
+                self.storage.ensure_capacity(
+                    self.workspace.pending_upload_bytes()
+                    + self._playback_reserved_bytes()
+                    + requested
+                )
+            except RuntimeError as exc:
+                raise UploadProblem(
+                    "Managed matter storage does not have enough protected free space.", 507
+                ) from exc
+
+    def _reserve_browser_playback(
+        self, matter_id: str, document_id: str, requested: int
+    ) -> None:
+        """Reserve bounded temporary space before a video rendition is written."""
+
+        amount = max(int(requested), 1)
+        key = (matter_id, document_id)
+        with self._storage_reservation_lock:
+            if key in self._playback_reservations:
+                return
+            matter_reserved = sum(
+                value
+                for (reserved_matter, _), value in self._playback_reservations.items()
+                if reserved_matter == matter_id
+            )
+            used = self.storage.matter_payload_usage_bytes(matter_id)
+            pending_uploads = self.workspace.pending_upload_bytes(matter_id)
+            if (
+                used + pending_uploads + matter_reserved + amount
+                > self.storage_policy.matter_quota_bytes
+            ):
+                raise UploadProblem(
+                    "This matter does not have enough temporary capacity for a browser-compatible video copy.",
+                    507,
+                )
+            all_reserved = sum(self._playback_reservations.values())
+            try:
+                self.storage.ensure_capacity(
+                    self.workspace.pending_upload_bytes() + all_reserved + amount
+                )
+            except RuntimeError as exc:
+                raise UploadProblem(
+                    "Managed matter storage does not have enough protected capacity for a browser-compatible video copy.",
+                    507,
+                ) from exc
+            self._playback_reservations[key] = amount
+
+    def _playback_reserved_bytes(self, matter_id: str | None = None) -> int:
+        with self._storage_reservation_lock:
+            return sum(
+                value
+                for (reserved_matter, _), value in self._playback_reservations.items()
+                if matter_id is None or reserved_matter == matter_id
+            )
+
+    def _release_browser_playback(self, matter_id: str, document_id: str) -> None:
+        with self._storage_reservation_lock:
+            self._playback_reservations.pop((matter_id, document_id), None)
+
+    def matter_for_closure(
+        self, slug: str, actor_id: str
+    ) -> tuple[MatterRecord, MatterLifecycleRecord]:
+        return self.workspace.matter_for_closure(slug, actor_id)
+
+    def _matter_source_count_for_purge(
+        self, matter: MatterRecord, lifecycle: MatterLifecycleRecord
+    ) -> int:
+        if lifecycle.state != "active":
+            return lifecycle.source_count
+        source_root = self.storage.matters / matter.matter_id / "sources"
+        if source_root.exists():
+            return self.source_store(matter).document_count()
+        return lifecycle.source_count
+
+    def begin_matter_purge(
+        self, slug: str, actor_id: str, confirmed_name: str
+    ) -> tuple[MatterRecord, MatterLifecycleRecord]:
+        matter, lifecycle = self.matter_for_closure(slug, actor_id)
+        return self.workspace.begin_matter_purge(
+            slug,
+            actor_id,
+            confirmed_name,
+            source_count=self._matter_source_count_for_purge(matter, lifecycle),
+        )
+
+    def execute_matter_purge(
+        self, matter: MatterRecord, lifecycle: MatterLifecycleRecord
+    ) -> MatterLifecycleRecord:
+        purge_id = lifecycle.purge_id or ""
+        if not _MATTER_PURGE_ID.fullmatch(purge_id):
+            raise RuntimeError("matter purge identity is invalid")
+        matters_root = self.storage.matters
+        matter_root = matters_root / matter.matter_id
+        source_root = matter_root / "sources"
+        quarantine_root = self.storage.purging
+        quarantine = quarantine_root / purge_id
+
+        if self.playback is not None and not self.playback.cancel_matter(
+            matter.matter_id
+        ):
+            self.workspace.fail_matter_purge(
+                matter.matter_id, purge_id, "media_playback"
+            )
+            raise WorkspaceProblem(
+                "Matter deletion is waiting for browser playback preparation to stop. Try the deletion again shortly."
+            )
+
+        if self.media is not None and not self.media.cancel_matter(matter.matter_id):
+            self.workspace.fail_matter_purge(
+                matter.matter_id, purge_id, "media_processing"
+            )
+            raise WorkspaceProblem(
+                "Matter deletion is waiting for an active media transfer to stop. Try the deletion again shortly."
+            )
+
+        try:
+            if source_root.is_symlink() or matter_root.is_symlink():
+                raise RuntimeError("matter storage is unsafe")
+            if source_root.exists() and quarantine.exists():
+                raise RuntimeError("matter purge storage has conflicting copies")
+            if source_root.exists():
+                store = self.source_store(matter)
+                store.quarantine(quarantine)
+                with self._store_lock:
+                    self._stores.pop(matter.matter_id, None)
+        except Exception as exc:
+            self.workspace.fail_matter_purge(
+                matter.matter_id, purge_id, "storage"
+            )
+            raise WorkspaceProblem(
+                "Matter deletion stopped before completion. No ordinary access was restored; try the deletion again."
+            ) from exc
+
+        try:
+            if self._postgres_projection_configured:
+                if self.postgres_connection is None or not self.postgres_ready:
+                    raise RuntimeError("derived search projection is unavailable")
+                with self._postgres_lock:
+                    delete_postgres_matter(
+                        self.postgres_connection, matter_id=matter.matter_id
+                    )
+        except Exception as exc:
+            self.workspace.fail_matter_purge(
+                matter.matter_id, purge_id, "projection"
+            )
+            raise WorkspaceProblem(
+                "Matter deletion stopped because the search index could not be verified. Try again when search is available."
+            ) from exc
+
+        try:
+            securely_delete_owned_tree(quarantine, allowed_parent=quarantine_root)
+            if matter_root.exists():
+                if matter_root.is_symlink() or matter_root.parent != matters_root:
+                    raise RuntimeError("matter storage boundary is unsafe")
+                with os.scandir(matter_root) as entries:
+                    if any(True for _ in entries):
+                        raise RuntimeError("matter storage contains an unhandled component")
+                matter_root.rmdir()
+                PilotStore._fsync_directory(matters_root)
+        except Exception as exc:
+            self.workspace.fail_matter_purge(
+                matter.matter_id, purge_id, "storage"
+            )
+            raise WorkspaceProblem(
+                "Matter deletion stopped while removing processing files. Try the deletion again."
+            ) from exc
+
+        try:
+            return self.workspace.complete_matter_purge(matter.matter_id, purge_id)
+        except Exception as exc:
+            self.workspace.fail_matter_purge(
+                matter.matter_id, purge_id, "control_store"
+            )
+            raise WorkspaceProblem(
+                "Matter files were removed, but the closure record still needs attention. Try the deletion again."
+            ) from exc
+
+    def cleanup_abandoned_uploads(self, *, maximum_age_hours: int = 24) -> int:
+        """Cancel old open sessions through the normal store and staging APIs."""
+
+        cleaned = 0
+        for session in self.workspace.abandoned_upload_sessions(
+            maximum_age_hours=maximum_age_hours
+        ):
+            try:
+                matter = self.workspace.get_matter_by_id(session.matter_id)
+                cancelled = self.workspace.cancel_upload_session(
+                    session.matter_id,
+                    session.actor_id,
+                    session.upload_session_id,
+                )
+                store = self.source_store(matter)
+                for item in cancelled:
+                    store.discard_resumable_upload(item.upload_item_id)
+                self.workspace.append_audit_event(
+                    actor_principal_id=None,
+                    session_id=None,
+                    matter_id=session.matter_id,
+                    request_id=f"maintenance-{uuid.uuid4().hex}",
+                    action="upload.cleanup",
+                    outcome="success",
+                    object_type="upload_session",
+                    object_id=session.upload_session_id,
+                    details={"count": len(cancelled), "state": "cancelled"},
+                )
+                cleaned += 1
+            except Exception:
+                try:
+                    self.workspace.append_audit_event(
+                        actor_principal_id=None,
+                        session_id=None,
+                        matter_id=session.matter_id,
+                        request_id=f"maintenance-{uuid.uuid4().hex}",
+                        action="upload.cleanup",
+                        outcome="failure",
+                        object_type="upload_session",
+                        object_id=session.upload_session_id,
+                        details={"state": "failed"},
+                    )
+                except Exception:
+                    pass
+        return cleaned
+
+    def purge_due_matters(self) -> dict[str, int]:
+        purged = 0
+        deferred = 0
+        for retention in self.workspace.due_matter_retentions():
+            try:
+                matter = self.workspace.get_matter_by_id(retention.matter_id)
+                lifecycle = self.workspace.matter_lifecycle(matter.matter_id)
+                source_count = self._matter_source_count_for_purge(matter, lifecycle)
+                claimed = self.workspace.begin_due_matter_purge(
+                    matter.matter_id,
+                    source_count=source_count,
+                )
+                if claimed is None:
+                    deferred += 1
+                    continue
+                claimed_matter, claimed_lifecycle = claimed
+                self.workspace.append_audit_event(
+                    actor_principal_id=None,
+                    session_id=None,
+                    matter_id=claimed_matter.matter_id,
+                    request_id=f"maintenance-{uuid.uuid4().hex}",
+                    action="matter.purge_scheduled",
+                    outcome="success",
+                    object_type="matter_purge",
+                    object_id=claimed_lifecycle.purge_id,
+                    details={"state": "purging", "source_count": source_count},
+                )
+                completed = self.execute_matter_purge(
+                    claimed_matter, claimed_lifecycle
+                )
+                self.workspace.append_audit_event(
+                    actor_principal_id=None,
+                    session_id=None,
+                    matter_id=claimed_matter.matter_id,
+                    request_id=f"maintenance-{uuid.uuid4().hex}",
+                    action="matter.purge_scheduled",
+                    outcome="success",
+                    object_type="matter_purge",
+                    object_id=completed.purge_id,
+                    details={"state": "deleted", "source_count": source_count},
+                )
+                purged += 1
+            except Exception:
+                deferred += 1
+        return {"matters_purged": purged, "matters_deferred": deferred}
+
+    def run_maintenance_once(self) -> dict[str, int]:
+        uploads_cleaned = self.cleanup_abandoned_uploads(maximum_age_hours=24)
+        purge = self.purge_due_matters()
+        return {"uploads_cleaned": uploads_cleaned, **purge}
+
+    def _rebuild_all_indexes(self) -> None:
+        """Incrementally reconcile derived search rows without a startup rebuild."""
+
+        matters = self.workspace.all_matters()
+        if self.postgres_ready and self.postgres_connection is not None:
+            try:
+                retain_postgres_workbench_matters(
+                    self.postgres_connection,
+                    matter_ids=tuple(matter.matter_id for matter in matters),
+                )
+            except Exception:
+                self.postgres_connection.rollback()
+                self.learned_retrieval = False
+                return
+        for matter in matters:
+            store = self.source_store(matter)
+            if self.postgres_ready and self.postgres_connection is not None:
+                try:
+                    with self.postgres_connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT document_id,current_source_version_id FROM review_document "
+                            "WHERE matter_id=%s",
+                            (matter.matter_id,),
+                        )
+                        indexed = {row[0]: row[1] for row in cursor.fetchall()}
+                    ready = {item.document_id: item for item in store.ready_documents()}
+                    for document_id in indexed.keys() - ready.keys():
+                        delete_postgres_document(
+                            self.postgres_connection,
+                            matter_id=matter.matter_id,
+                            document_id=document_id,
+                        )
+                    for document in ready.values():
+                        if indexed.get(document.document_id) != document.version_id:
+                            self._index_document(matter, document)
+                except Exception:
+                    self.postgres_connection.rollback()
+                    self.learned_retrieval = False
+
+    @staticmethod
+    def _kind(document: PilotDocument) -> str:
+        if document.media_type == "application/pdf":
+            return "PDF"
+        if document.media_type == DOCX_MEDIA_TYPE:
+            return "DOCX"
+        if document.media_type in IMAGE_MEDIA_TYPES:
+            return "IMAGE"
+        if document.media_type in EMAIL_MEDIA_TYPES:
+            return "EMAIL"
+        if document.media_type in SPREADSHEET_MEDIA_TYPES:
+            return "SPREADSHEET"
+        if is_media_type(document.media_type):
+            return "VIDEO" if document.has_video else "AUDIO"
+        return "TXT"
+
+    @staticmethod
+    def _count_label(document: PilotDocument) -> str:
+        if document.media_type == "application/pdf":
+            count = document.page_count
+            return f"{count} page{'s' if count != 1 else ''}" if count else "—"
+        if document.media_type == DOCX_MEDIA_TYPE:
+            count = document.page_count
+            return f"{count} section{'s' if count != 1 else ''}" if count else "—"
+        if document.media_type in IMAGE_MEDIA_TYPES:
+            count = document.page_count
+            return f"{count} frame{'s' if count != 1 else ''}" if count else "—"
+        if document.media_type in EMAIL_MEDIA_TYPES:
+            count = document.page_count
+            return f"{count} section{'s' if count != 1 else ''}" if count else "—"
+        if document.media_type in SPREADSHEET_MEDIA_TYPES:
+            count = document.page_count
+            return f"{count} section{'s' if count != 1 else ''}" if count else "—"
+        if is_media_type(document.media_type):
+            if not document.duration_ms:
+                return "—"
+            return format_timestamp(document.duration_ms)
+        count = document.page_count
+        return f"{count} line{'s' if count != 1 else ''}" if count else "—"
+
+    def _ensure_source_organizations(self, matter: MatterRecord, store: PilotStore) -> None:
+        self.workspace.reconcile_source_organizations(
+            matter.matter_id,
+            tuple(
+                (
+                    document.document_id,
+                    document.origin,
+                    document.relative_path or document.display_name,
+                )
+                for document in store.documents.values()
+            ),
+        )
+
+    def _sync_source_catalog(
+        self, matter: MatterRecord, documents: Sequence[PilotDocument]
+    ) -> None:
+        self.workspace.replace_source_catalog(
+            matter.matter_id,
+            tuple(self._source_catalog_projection(document) for document in documents),
+        )
+
+    def _apply_source_store_change(
+        self, matter: MatterRecord, change: PilotStoreChange
+    ) -> None:
+        if change.upserted:
+            self.workspace.upsert_source_catalog(
+                matter.matter_id,
+                tuple(
+                    self._source_catalog_projection(document)
+                    for document in change.upserted
+                ),
+            )
+        if change.removed_document_ids:
+            self.workspace.delete_source_catalog(
+                matter.matter_id, change.removed_document_ids
+            )
+
+    def _source_catalog_projection(
+        self, document: PilotDocument
+    ) -> Mapping[str, object]:
+        state_label, tone = self._source_state(document)
+        return {
+            "document_id": document.document_id,
+            "version_id": document.version_id,
+            "action_token": PilotStore.action_token(document),
+            "display_name": document.display_name,
+            "relative_path": document.relative_path or document.display_name,
+            "media_type": document.media_type,
+            "kind": self._kind(document),
+            "source_state": document.state,
+            "tone": tone,
+            "state_label": state_label,
+            "count_label": self._count_label(document),
+            "processing_stage": document.processing_stage,
+            "completed_units": document.completed_units,
+            "total_units": document.total_units,
+            "page_count": document.page_count,
+            "duration_ms": document.duration_ms,
+            "byte_size": document.size,
+            "origin": document.origin,
+            "retryable": document.state in {"failed", "needs_ocr"},
+            "removable": document.state not in {"queued", "processing"},
+            "has_video": bool(document.has_video),
+        }
+
+    @staticmethod
+    def _source_state(document: PilotDocument) -> tuple[str, str]:
+        if document.state == "ready":
+            if "remain unreadable" in document.message or "no searchable text" in document.message:
+                return document.message, "ready"
+            return "Searchable", "ready"
+        if document.state in {"queued", "processing"}:
+            progress = ""
+            if document.total_units:
+                progress = (
+                    f" · {document.completed_units}%"
+                    if is_media_type(document.media_type)
+                    else f" · {document.completed_units} of {document.total_units}"
+                )
+            return (document.processing_stage or "Processing") + progress, "processing"
+        if document.state == "failed":
+            return document.message, "attention"
+        if document.state == "needs_ocr":
+            return "Needs attention — scanned pages could not be read", "attention"
+        return document.message or "Needs attention", "attention"
+
+    def _source_rows(self, matter: MatterRecord) -> tuple[SourceRow, ...]:
+        store = self.source_store(matter)
+        self._ensure_source_organizations(matter, store)
+        organizations = {
+            item.document_id: item
+            for item in self.workspace.source_organizations(matter.matter_id)
+        }
+        collections = {
+            item.collection_id: item
+            for item in self.workspace.source_collections(matter.matter_id)
+        }
+        rows: list[SourceRow] = []
+        for document in store.documents.values():
+            organization = organizations.get(document.document_id)
+            if organization is None:
+                raise RuntimeError("source organization reconciliation failed")
+            collection = collections.get(organization.collection_id or "")
+            state, tone = self._source_state(document)
+            rows.append(
+                SourceRow(
+                    document.document_id,
+                    document.display_name,
+                    organization.relative_path,
+                    self._kind(document),
+                    state,
+                    tone,
+                    self._count_label(document),
+                    store.action_token(document),
+                    document.state in {"failed", "needs_ocr"},
+                    document.state not in {"queued", "processing"},
+                    organization.review_state,
+                    organization.collection_id or "",
+                    collection.name if collection is not None else "Unfiled",
+                    organization.added_at,
+                    document.size,
+                    document.origin,
+                )
+            )
+        return tuple(rows)
+
+    def sources(self, matter: MatterRecord) -> tuple[SourceRow, ...]:
+        """Return the complete inventory for exports and bounded internal uses."""
+
+        return self._source_rows(matter)
+
+    @staticmethod
+    def _catalog_source_row(item) -> SourceRow:
+        """Project one catalog row without materializing a matter manifest."""
+
+        return SourceRow(
+            item.document_id,
+            item.display_name,
+            item.relative_path,
+            item.kind,
+            item.state_label,
+            item.tone,
+            item.count_label,
+            item.action_token,
+            bool(item.retryable),
+            bool(item.removable),
+            item.review_state,
+            item.collection_id,
+            item.collection_name,
+            item.added_at,
+            item.byte_size,
+            item.origin,
+        )
+
+    def source_library(
+        self,
+        matter: MatterRecord,
+        *,
+        view: str = "overview",
+        query: str = "",
+        status: str = "",
+        kind: str = "",
+        review: str = "",
+        collection_id: str = "",
+        source_set_id: str = "",
+        sort: str = "newest",
+        page: int = 1,
+        page_size: int = 50,
+    ) -> SourceLibraryPage:
+        view_value = view if view in {"overview", "list"} else "overview"
+        query_value = " ".join((query or "").split())[:240]
+        query_key = query_value.casefold()
+        status_value = status if status in {"", "ready", "processing", "attention"} else ""
+        kind_value = (
+            kind.upper()
+            if kind.upper()
+            in {
+                "PDF",
+                "DOCX",
+                "TXT",
+                "AUDIO",
+                "VIDEO",
+                "IMAGE",
+                "EMAIL",
+                "SPREADSHEET",
+            }
+            else ""
+        )
+        review_value = review if review in {"", "unreviewed", "reviewed", "flagged"} else ""
+        sort_value = sort if sort in {"newest", "oldest", "name", "name_desc", "status"} else "newest"
+        page_size_value = page_size if page_size in {25, 50, 100} else 50
+        source_set_value = source_set_id.strip()
+        if source_set_value:
+            self.workspace.source_set(matter.matter_id, source_set_value)
+        collection_value = collection_id.strip()
+        if collection_value:
+            self.workspace.source_collection(matter.matter_id, collection_value)
+        if view_value == "overview" and not any(
+            (query_value, status_value, kind_value, review_value, collection_value, source_set_value)
+        ):
+            page_size_value = 8
+        requested_page = max(int(page), 1)
+        catalog = self.workspace.source_catalog_page(
+            matter.matter_id,
+            query_key=query_key,
+            tone=status_value,
+            kind=kind_value,
+            review_state=review_value,
+            collection_id=collection_value,
+            source_set_id=source_set_value,
+            sort=sort_value,
+            limit=page_size_value,
+            offset=(requested_page - 1) * page_size_value,
+        )
+        total = catalog.total
+        total_pages = max(math.ceil(total / page_size_value), 1)
+        page_value = min(requested_page, total_pages)
+        start = (page_value - 1) * page_size_value
+        if page_value != requested_page:
+            catalog = self.workspace.source_catalog_page(
+                matter.matter_id,
+                query_key=query_key,
+                tone=status_value,
+                kind=kind_value,
+                review_state=review_value,
+                collection_id=collection_value,
+                source_set_id=source_set_value,
+                sort=sort_value,
+                limit=page_size_value,
+                offset=start,
+            )
+        items = tuple(self._catalog_source_row(item) for item in catalog.items)
+        stats = dict(catalog.stats)
+        type_counts = {
+            file_kind: int(catalog.type_counts.get(file_kind, 0))
+            for file_kind in (
+                "PDF",
+                "DOCX",
+                "TXT",
+                "AUDIO",
+                "VIDEO",
+                "IMAGE",
+                "EMAIL",
+                "SPREADSHEET",
+            )
+        }
+        review_counts = {
+            state: int(catalog.review_counts.get(state, 0))
+            for state in ("unreviewed", "reviewed", "flagged")
+        }
+        return SourceLibraryPage(
+            items,
+            page_value,
+            page_size_value,
+            total,
+            total_pages,
+            start + 1 if total else 0,
+            min(start + len(items), total),
+            stats,
+            type_counts,
+            review_counts,
+            view_value,
+            query_value,
+            status_value,
+            kind_value,
+            review_value,
+            collection_value,
+            source_set_value,
+            sort_value,
+        )
+
+    def source_review(
+        self, matter: MatterRecord, token: str, *, unit_number: int = 1
+    ) -> SourceReviewView:
+        store = self.source_store(matter)
+        self._ensure_source_organizations(matter, store)
+        document = store.get_by_action_token(token)
+        row = self._catalog_source_row(
+            self.workspace.source_catalog_record(matter.matter_id, document.document_id)
+        )
+        units = document.parsed_units() if document.state == "ready" else ()
+        if units:
+            index = min(max(unit_number, 1), len(units)) - 1
+            unit = units[index]
+            if document.media_type == "application/pdf":
+                position = f"Page {unit.number} of {document.page_count or len(units)}"
+            elif document.media_type == DOCX_MEDIA_TYPE:
+                position = f"Section {unit.number} of {len(units)}"
+            else:
+                position = unit.location
+        else:
+            index = 0
+            unit = None
+            position = "Content is not searchable yet"
+
+        def adjacent(target: int) -> str:
+            if target < 0 or target >= len(units):
+                return ""
+            return f"/matters/{matter.slug}/sources/{token}?unit={target + 1}"
+
+        embedded = ""
+        if document.origin == "upload" and (
+            document.media_type == "application/pdf"
+            or document.media_type in IMAGE_MEDIA_TYPES
+        ):
+            embedded = f"/matters/{matter.slug}/sources/{token}/content"
+            if unit is not None and document.media_type == "application/pdf":
+                embedded += f"#page={unit.number}"
+        return SourceReviewView(
+            row,
+            document,
+            unit,
+            index + 1,
+            len(units),
+            position,
+            adjacent(index - 1),
+            adjacent(index + 1),
+            embedded,
+        )
+
+    def media_review(
+        self,
+        matter: MatterRecord,
+        token: str,
+        *,
+        start_ms: int = 0,
+        focus_segment_id: str = "",
+    ) -> MediaReviewView:
+        store = self.source_store(matter)
+        self._ensure_source_organizations(matter, store)
+        document = store.get_by_action_token(token)
+        if not is_media_type(document.media_type):
+            raise KeyError(token)
+        if self.playback is not None and document.has_video:
+            document = self.playback.ensure(matter, document)
+        row = self._catalog_source_row(
+            self.workspace.source_catalog_record(matter.matter_id, document.document_id)
+        )
+        job = self.workspace.media_job(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        transcript = self.workspace.media_transcript(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        summary = self.workspace.media_summary(
+            matter.matter_id, document.document_id, document.version_id
+        ) if transcript is not None else None
+        segments = self.workspace.transcript_segments(
+            matter.matter_id, document.document_id, document.version_id
+        ) if transcript is not None else ()
+        speakers = self.workspace.transcript_speakers(
+            matter.matter_id, document.document_id, document.version_id
+        ) if transcript is not None else ()
+        clips = self.workspace.media_clips(
+            matter.matter_id, document.document_id, document.version_id
+        ) if transcript is not None else ()
+        bounded_start = min(max(int(start_ms), 0), max(document.duration_ms - 1, 0))
+        focus = focus_segment_id if any(
+            item.segment_id == focus_segment_id for item in segments
+        ) else ""
+        return MediaReviewView(
+            row=row,
+            document=document,
+            job=job,
+            transcript=transcript,
+            summary=summary,
+            segments=segments,
+            speakers=speakers,
+            clips=clips,
+            playback_href=f"/matters/{matter.slug}/sources/{token}/content",
+            playback_media_type=(
+                document.playback_media_type
+                if document.playback_state in {"original", "ready"}
+                and document.playback_media_type
+                else document.media_type
+            ),
+            playback_is_compatible_copy=document.playback_state == "ready",
+            player_kind="video" if document.has_video else "audio",
+            start_ms=bounded_start,
+            focus_segment_id=focus,
+        )
+
+    def _candidate(
+        self, matter: MatterRecord, document: PilotDocument, unit: PilotUnit, ordinal: int
+    ) -> Candidate:
+        return Candidate(
+            matter.matter_id,
+            document.document_id,
+            f"chunk-{ordinal}",
+            document.display_name,
+            unit.number,
+            unit.text,
+            line_start=unit.line_start,
+            line_end=unit.line_end,
+            source_version_id=document.version_id,
+            excerpt_digest=unit.excerpt_digest,
+        )
+
+    def _candidates(
+        self,
+        matter: MatterRecord,
+        document_ids: frozenset[str] | None = None,
+        maximum: int | None = None,
+    ) -> tuple[Candidate, ...]:
+        store = self.source_store(matter)
+        candidates: list[Candidate] = []
+        limit = max(int(maximum), 0) if maximum is not None else None
+        for document in store.ready_documents():
+            if document_ids is not None and document.document_id not in document_ids:
+                continue
+            for ordinal, unit in enumerate(document.parsed_units(), 1):
+                candidates.append(self._candidate(matter, document, unit, ordinal))
+                if limit is not None and len(candidates) >= limit:
+                    return tuple(candidates)
+        return tuple(candidates)
+
+    def _retriever(
+        self,
+        matter: MatterRecord,
+        document_ids: frozenset[str] | None = None,
+    ) -> HybridRetriever:
+        if self.learned_retrieval and self.postgres_ready and self.postgres_connection is not None:
+            return HybridRetriever(
+                PostgresHybridBackend(
+                    self.postgres_connection,
+                    lock=self._postgres_lock,
+                    document_ids=document_ids,
+                ),
+                self.embedding,
+                self.reranker,
+                minimum_dense_score=0.72,
+                minimum_rerank_score=0.80,
+            )
+        return HybridRetriever(
+            InMemoryHybridBackend(
+                self._candidates(matter, document_ids),
+                document_ids=document_ids,
+            ),
+            DeterministicEmbeddingAdapter(),
+            DeterministicReranker(),
+        )
+
+    @staticmethod
+    def _support_token(candidate: Candidate) -> str:
+        material = "\x00".join(
+            (
+                "case-intelligence-support-v1",
+                candidate.matter_id,
+                candidate.document_id,
+                candidate.source_version_id,
+                candidate.chunk_id,
+                candidate.excerpt_digest,
+            )
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:40]
+
+    def _citation(self, matter: MatterRecord, candidate: Candidate) -> WorkbenchCitation:
+        token = self._support_token(candidate)
+        href = f"/matters/{matter.slug}?support={token}#support-pane"
+        evidence_kind = "document"
+        try:
+            document = self.source_store(matter).get(candidate.document_id)
+        except KeyError:
+            document = None
+        if document is not None and is_media_type(document.media_type):
+            evidence_kind = "transcript"
+            href = f"/matters/{matter.slug}?support={token}&play=1#support-pane"
+        return WorkbenchCitation(
+            candidate.source_name,
+            candidate.citation,
+            candidate.text,
+            href,
+            token,
+            candidate.matter_id,
+            candidate.document_id,
+            candidate.source_version_id,
+            candidate.excerpt_digest,
+            candidate.chunk_id,
+            candidate.page_number,
+            candidate.line_start,
+            candidate.line_end,
+            evidence_kind,
+        )
+
+    def _validate_candidates(
+        self, matter: MatterRecord, candidates: Sequence[Candidate]
+    ) -> bool:
+        store = self.source_store(matter)
+        for candidate in candidates:
+            if candidate.matter_id != matter.matter_id:
+                return False
+            try:
+                document = store.get(candidate.document_id)
+            except KeyError:
+                return False
+            matched = any(
+                unit.number == candidate.page_number
+                and unit.text == candidate.text
+                and unit.line_start == candidate.line_start
+                and unit.line_end == candidate.line_end
+                and unit.excerpt_digest == candidate.excerpt_digest
+                for unit in document.parsed_units()
+            )
+            if (
+                document.state != "ready"
+                or document.version_id != candidate.source_version_id
+                or not matched
+            ):
+                return False
+        return True
+
+    def search(
+        self,
+        matter: MatterRecord,
+        query: str,
+        *,
+        limit: int = 12,
+        stage_callback: Callable[[str], None] | None = None,
+        document_ids: frozenset[str] | None = None,
+    ) -> tuple[WorkbenchCitation, ...]:
+        value = " ".join((query or "").split()).strip()
+        if not value:
+            return ()
+        if len(value) > MAX_SEARCH_CHARS:
+            raise WorkspaceProblem("Search is too long.")
+        try:
+            candidates = self._retriever(matter, document_ids).search(
+                matter.matter_id,
+                value,
+                limit=limit,
+                stage_callback=stage_callback,
+            )
+        except Exception as exc:
+            raise RetrievalUnavailable("matter search could not run") from exc
+        if not self._validate_candidates(matter, candidates):
+            raise RetrievalUnavailable("matter search returned invalid support")
+        return tuple(self._citation(matter, item) for item in candidates)
+
+    def _answer_evidence_citations(
+        self,
+        matter: MatterRecord,
+        citations: Sequence[WorkbenchCitation],
+        *,
+        maximum: int = 12,
+    ) -> tuple[WorkbenchCitation, ...]:
+        """Diversify top anchors, then use remaining slots for media neighbors."""
+
+        limit = min(max(int(maximum), 1), 12)
+        anchor_limit = min(limit, 8)
+        anchors: list[WorkbenchCitation] = []
+        document_counts: dict[str, int] = {}
+        for citation in citations:
+            if document_counts.get(citation.document_id, 0) >= 2:
+                continue
+            anchors.append(citation)
+            document_counts[citation.document_id] = (
+                document_counts.get(citation.document_id, 0) + 1
+            )
+            if len(anchors) >= anchor_limit:
+                break
+        # A highly focused result can legitimately need more than two passages
+        # from one source. Backfill only when source diversity left empty slots.
+        if len(anchors) < anchor_limit:
+            anchor_tokens = {citation.support_token for citation in anchors}
+            for citation in citations:
+                if citation.support_token in anchor_tokens:
+                    continue
+                anchors.append(citation)
+                anchor_tokens.add(citation.support_token)
+                if len(anchors) >= anchor_limit:
+                    break
+        selected: list[WorkbenchCitation] = []
+        seen: set[str] = set()
+
+        def append(item: WorkbenchCitation) -> None:
+            if len(selected) < limit and item.support_token not in seen:
+                selected.append(item)
+                seen.add(item.support_token)
+
+        for citation in tuple(anchors):
+            append(citation)
+        if len(selected) >= limit:
+            return tuple(selected)
+
+        store = self.source_store(matter)
+        for citation in tuple(anchors):
+            if len(selected) >= limit:
+                break
+            try:
+                document = store.get(citation.document_id)
+            except KeyError:
+                continue
+            if (
+                not is_media_type(document.media_type)
+                or document.state != "ready"
+                or document.version_id != citation.source_version_id
+            ):
+                continue
+            units = document.parsed_units()
+            anchor_index = citation.unit_number - 1
+            if not 0 <= anchor_index < len(units):
+                continue
+            anchor = units[anchor_index]
+            if (
+                anchor.excerpt_digest != citation.excerpt_digest
+                or anchor.line_start != citation.line_start
+                or anchor.line_end != citation.line_end
+            ):
+                continue
+            for neighbor_index in (anchor_index - 1, anchor_index + 1):
+                if not 0 <= neighbor_index < len(units):
+                    continue
+                candidate = self._candidate(
+                    matter,
+                    document,
+                    units[neighbor_index],
+                    neighbor_index + 1,
+                )
+                append(self._citation(matter, candidate))
+                if len(selected) >= limit:
+                    break
+        return tuple(selected)
+
+    def _find_support(
+        self, matter: MatterRecord, token: str
+    ) -> tuple[PilotDocument, tuple[PilotUnit, ...], int]:
+        if not re.fullmatch(r"[0-9a-f]{40}", token):
+            raise KeyError(token)
+        store = self.source_store(matter)
+        for document in store.ready_documents():
+            units = document.parsed_units()
+            for ordinal, unit in enumerate(units, 1):
+                candidate = self._candidate(matter, document, unit, ordinal)
+                if self._support_token(candidate) == token:
+                    return document, units, ordinal - 1
+        raise KeyError(token)
+
+    def support(
+        self,
+        matter: MatterRecord,
+        token: str,
+        *,
+        conversation_id: str = "",
+        autoplay: bool = False,
+    ) -> SupportView:
+        document, units, index = self._find_support(matter, token)
+        unit = units[index]
+        evidence_kind = "document"
+        source_review_href = ""
+        playback_href = ""
+        playback_media_type = ""
+        player_kind = ""
+        start_ms = 0
+        end_ms = 0
+        action_token = self.source_store(matter).action_token(document)
+        if is_media_type(document.media_type):
+            evidence_kind = "transcript"
+            candidate = self._candidate(matter, document, unit, index + 1)
+            location = candidate.citation
+            position = f"Transcript passage {index + 1} of {len(units)}"
+            start_ms = max(int(unit.start_ms or unit.line_start or 0), 0)
+            end_ms = max(int(unit.end_ms or unit.line_end or start_ms), start_ms)
+            source_review_href = (
+                _query_url(
+                    f"/matters/{matter.slug}/sources/{action_token}",
+                    start_ms=str(start_ms),
+                )
+                + f"#segment-{index + 1}"
+            )
+            playback_href = (
+                f"/matters/{matter.slug}/sources/{action_token}/content"
+            )
+            if self.playback is not None and document.has_video:
+                document = self.playback.ensure(matter, document)
+            playback_media_type = (
+                document.playback_media_type
+                if document.playback_state in {"original", "ready"}
+                and document.playback_media_type
+                else document.media_type
+            )
+            player_kind = "video" if document.has_video else "audio"
+        elif unit.line_start is not None:
+            location = unit.location
+            position = location
+            source_review_href = _query_url(
+                f"/matters/{matter.slug}/sources/{action_token}",
+                unit=str(index + 1),
+            )
+        elif document.media_type == DOCX_MEDIA_TYPE:
+            location = f"Section {unit.number}"
+            position = f"Section {unit.number} of {len(units)}"
+            source_review_href = _query_url(
+                f"/matters/{matter.slug}/sources/{action_token}",
+                unit=str(index + 1),
+            )
+        else:
+            location = f"Page {unit.number}"
+            position = f"Page {unit.number} of {document.page_count or len(units)}"
+            source_review_href = _query_url(
+                f"/matters/{matter.slug}/sources/{action_token}",
+                unit=str(index + 1),
+            )
+
+        def adjacent(target_index: int) -> str:
+            if target_index < 0 or target_index >= len(units):
+                return ""
+            target = self._candidate(matter, document, units[target_index], target_index + 1)
+            return _query_url(
+                f"/matters/{matter.slug}",
+                support=self._support_token(target),
+                conversation=conversation_id,
+                play="1" if evidence_kind == "transcript" else "",
+            ) + "#support-pane"
+
+        return SupportView(
+            document.display_name,
+            self._kind(document),
+            location,
+            position,
+            tuple(unit.text.splitlines()) or (unit.text,),
+            adjacent(index - 1),
+            adjacent(index + 1),
+            token,
+            evidence_kind,
+            source_review_href,
+            playback_href,
+            playback_media_type,
+            player_kind,
+            start_ms,
+            end_ms,
+            bool(autoplay),
+        )
+
+    def notebook_reference_from_support(
+        self, matter: MatterRecord, token: str
+    ) -> dict[str, object]:
+        document, units, index = self._find_support(matter, token)
+        unit = units[index]
+        candidate = self._candidate(matter, document, unit, index + 1)
+        citation = self._citation(matter, candidate)
+        if citation.support_token != token:
+            raise KeyError(token)
+        return {
+            "document_id": candidate.document_id,
+            "source_version_id": candidate.source_version_id,
+            "source_name": candidate.source_name,
+            "location": candidate.citation,
+            "unit_number": unit.number,
+            "chunk_id": candidate.chunk_id,
+            "excerpt_digest": candidate.excerpt_digest,
+            "excerpt": candidate.text[:6_000],
+            "support_token": token,
+        }
+
+    def available_notebook_support_tokens(
+        self,
+        matter: MatterRecord,
+        references: Sequence[NotebookReferenceRecord],
+    ) -> frozenset[str]:
+        store = self.source_store(matter)
+        by_document: dict[str, list[NotebookReferenceRecord]] = {}
+        for reference in references:
+            by_document.setdefault(reference.document_id, []).append(reference)
+        available: set[str] = set()
+        for document_id, expected in by_document.items():
+            try:
+                document = store.get(document_id)
+            except KeyError:
+                continue
+            if document.state != "ready":
+                continue
+            units = document.parsed_units()
+            for reference in expected:
+                try:
+                    ordinal = int(reference.chunk_id.removeprefix("chunk-"))
+                except ValueError:
+                    continue
+                if not 1 <= ordinal <= len(units):
+                    continue
+                unit = units[ordinal - 1]
+                candidate = self._candidate(matter, document, unit, ordinal)
+                if (
+                    document.version_id == reference.source_version_id
+                    and unit.number == reference.unit_number
+                    and unit.excerpt_digest == reference.excerpt_digest
+                    and self._support_token(candidate) == reference.support_token
+                ):
+                    available.add(reference.support_token)
+        return frozenset(available)
+
+    @staticmethod
+    def _citation_support_token(value: object) -> str:
+        if not isinstance(value, Mapping):
+            raise KeyError("citation")
+        href = value.get("href")
+        if not isinstance(href, str):
+            raise KeyError("citation")
+        tokens = parse_qs(urlparse(href).query).get("support", [])
+        if len(tokens) != 1 or not re.fullmatch(r"[0-9a-f]{40}", tokens[0]):
+            raise KeyError("citation")
+        return tokens[0]
+
+    @staticmethod
+    def _notebook_title(value: str, maximum: int = 120) -> str:
+        title = " ".join(value.split()).strip()
+        if len(title) <= maximum:
+            return title
+        shortened = title[: maximum - 1].rstrip()
+        if " " in shortened:
+            shortened = shortened.rsplit(" ", 1)[0].rstrip(".,;:!?-")
+        return (shortened or title[: maximum - 1]).rstrip() + "…"
+
+    def save_answer_to_notebook(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        conversation_id: str,
+        message_id: str,
+        claim_index: int,
+        *,
+        citation_index: int | None = None,
+    ) -> tuple[NotebookItemRecord, bool]:
+        messages = self.workspace.messages(matter.matter_id, conversation_id)
+        message = next(
+            (
+                item
+                for item in messages
+                if item.message_id == message_id and item.role == "assistant"
+            ),
+            None,
+        )
+        if message is None or message.payload.get("kind") != "generated":
+            raise KeyError(message_id)
+        claims = message.payload.get("claims")
+        if not isinstance(claims, list) or not 0 <= claim_index < len(claims):
+            raise KeyError(str(claim_index))
+        claim = claims[claim_index]
+        if not isinstance(claim, Mapping) or not isinstance(claim.get("text"), str):
+            raise KeyError(str(claim_index))
+        citations = claim.get("citations")
+        if not isinstance(citations, list) or not citations:
+            raise WorkspaceProblem("That answer passage no longer has source support.")
+        if citation_index is None:
+            selected_citations = citations[:12]
+            body = str(claim["text"])
+            title = self._notebook_title(body)
+            status = "suggested"
+            origin = "answer"
+            dedupe = f"answer:{message_id}:{claim_index}"
+            item_type = "fact"
+        else:
+            if not 0 <= citation_index < len(citations):
+                raise KeyError(str(citation_index))
+            selected_citations = [citations[citation_index]]
+            token = self._citation_support_token(selected_citations[0])
+            reference = self.notebook_reference_from_support(matter, token)
+            body = str(reference["excerpt"])
+            title = self._notebook_title(
+                f"{reference['source_name']} · {reference['location']}"
+            )
+            status = "needs_review"
+            origin = "citation"
+            dedupe = f"citation:{message_id}:{claim_index}:{citation_index}"
+            item_type = "note"
+        references = tuple(
+            self.notebook_reference_from_support(
+                matter, self._citation_support_token(citation)
+            )
+            for citation in selected_citations
+        )
+        return self.workspace.create_notebook_item(
+            matter.matter_id,
+            actor_id,
+            item_type=item_type,
+            status=status,
+            title=title,
+            body=body,
+            origin=origin,
+            source_conversation_id=conversation_id,
+            source_message_id=message_id,
+            dedupe_key=dedupe,
+            references=references,
+        )
+
+    def save_support_to_notebook(
+        self, matter: MatterRecord, actor_id: str, token: str
+    ) -> tuple[NotebookItemRecord, bool]:
+        reference = self.notebook_reference_from_support(matter, token)
+        return self.workspace.create_notebook_item(
+            matter.matter_id,
+            actor_id,
+            item_type="note",
+            status="needs_review",
+            title=self._notebook_title(
+                f"{reference['source_name']} · {reference['location']}"
+            ),
+            body=str(reference["excerpt"]),
+            origin="citation",
+            dedupe_key=f"support:{token}",
+            references=(reference,),
+        )
+
+    @staticmethod
+    def _suggestion_context(text: str, start: int, end: int) -> str:
+        left = max(text.rfind(".", 0, start), text.rfind("\n", 0, start))
+        right_candidates = [
+            position for position in (text.find(".", end), text.find("\n", end))
+            if position >= 0
+        ]
+        right = min(right_candidates) + 1 if right_candidates else min(len(text), end + 240)
+        context = " ".join(text[left + 1 : right].split()).strip()
+        if len(context) > 500:
+            context = context[:499].rstrip() + "…"
+        return context
+
+    def suggest_notebook_references(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        *,
+        source_set_id: str | None = None,
+        maximum: int = 75,
+        candidates_override: Sequence[Candidate] | None = None,
+    ) -> dict[str, int | bool]:
+        self.workspace.membership(matter.matter_id, actor_id)
+        document_ids = (
+            self.workspace.source_set_document_ids(matter.matter_id, source_set_id)
+            if source_set_id
+            else None
+        )
+        candidates = (
+            tuple(candidates_override)
+            if candidates_override is not None
+            else self._candidates(matter, document_ids, maximum=2_501)
+        )
+        created_count = 0
+        matched_count = 0
+        scanned_units = 0
+        seen: set[str] = set()
+        capped = False
+        for candidate in candidates:
+            if scanned_units >= 2_500 or created_count >= maximum:
+                capped = True
+                break
+            scanned_units += 1
+            text = candidate.text[:6_000]
+            reference = {
+                "document_id": candidate.document_id,
+                "source_version_id": candidate.source_version_id,
+                "source_name": candidate.source_name,
+                "location": candidate.citation,
+                "unit_number": candidate.page_number,
+                "chunk_id": candidate.chunk_id,
+                "excerpt_digest": candidate.excerpt_digest,
+                "excerpt": text,
+                "support_token": self._support_token(candidate),
+            }
+            matches: list[tuple[str, str, re.Match[str]]] = []
+            matches.extend(("date", match.group(0), match) for match in _DATE_REFERENCE.finditer(text))
+            matches.extend(("person", match.group(0), match) for match in _PERSON_REFERENCE.finditer(text))
+            matches.extend(("place", match.group("place"), match) for match in _PLACE_REFERENCE.finditer(text))
+            matches.sort(key=lambda value: value[2].start())
+            for item_type, raw_title, match in matches:
+                title = " ".join(raw_title.split()).strip(" ,.;:")
+                key_value = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")
+                dedupe = f"extraction:{item_type}:{key_value}"[:200]
+                if not key_value or dedupe in seen:
+                    continue
+                seen.add(dedupe)
+                matched_count += 1
+                _, created = self.workspace.create_notebook_item(
+                    matter.matter_id,
+                    actor_id,
+                    item_type=item_type,
+                    status="suggested",
+                    title=self._notebook_title(title),
+                    body=self._suggestion_context(text, match.start(), match.end()),
+                    date_label=title if item_type == "date" else "",
+                    origin="extraction",
+                    dedupe_key=dedupe,
+                    references=(reference,),
+                )
+                if created:
+                    created_count += 1
+                if created_count >= maximum:
+                    capped = True
+                    break
+        return {
+            "created": created_count,
+            "matched": matched_count,
+            "scanned_units": scanned_units,
+            "capped": capped,
+        }
+
+    def run_review_analysis(
+        self, matter: MatterRecord, actor_id: str
+    ):
+        run = self.workspace.start_analysis_run(matter.matter_id, actor_id)
+        try:
+            candidates = self._candidates(
+                matter, maximum=MAX_ANALYSIS_UNITS + 1
+            )
+            result = analyze_candidates(
+                candidates,
+                support_token=self._support_token,
+            )
+            suggestions = self.suggest_notebook_references(
+                matter,
+                actor_id,
+                maximum=250,
+                candidates_override=candidates[:MAX_ANALYSIS_UNITS],
+            )
+            completed = self.workspace.complete_analysis_run(
+                run.analysis_id,
+                matter.matter_id,
+                actor_id,
+                source_count=result.source_count,
+                unit_count=result.unit_count,
+                entity_count=result.entity_count,
+                capped=bool(result.capped or suggestions["capped"]),
+                findings=tuple(
+                    {
+                        "kind": finding.kind,
+                        "signature": finding.signature,
+                        "title": finding.title,
+                        "summary": finding.summary,
+                        "references": finding.references,
+                    }
+                    for finding in result.findings
+                ),
+            )
+            return completed
+        except Exception:
+            self.workspace.fail_analysis_run(
+                run.analysis_id,
+                matter.matter_id,
+                "The bounded review scan did not finish. No prior review decisions were removed.",
+            )
+            raise
+
+    def _report_citation_from_reference(
+        self, matter: MatterRecord, reference
+    ) -> dict[str, object]:
+        document = self.source_store(matter).get(reference.document_id)
+        return {
+            "kind": "transcript" if is_media_type(document.media_type) else "source",
+            "document_id": reference.document_id,
+            "source_version_id": reference.source_version_id,
+            "source_name": reference.source_name,
+            "location": reference.location,
+            "support_token": reference.support_token,
+            "excerpt": reference.excerpt,
+        }
+
+    def add_notebook_item_to_report(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        report_id: str,
+        item_id: str,
+    ):
+        item = self.workspace.notebook_item(matter.matter_id, actor_id, item_id)
+        references = self.workspace.notebook_references(
+            matter.matter_id, actor_id, item_id
+        )
+        details = "\n\n".join(
+            value
+            for value in (
+                f"Date or time: {item.date_label}" if item.date_label else "",
+                item.body,
+                f"Review status when added: {item.status.replace('_', ' ')}.",
+            )
+            if value
+        )
+        return self.workspace.add_report_section(
+            matter.matter_id,
+            report_id,
+            actor_id,
+            heading=item.title,
+            body=details,
+            origin="notebook",
+            origin_id=item.item_id,
+            citations=tuple(
+                self._report_citation_from_reference(matter, reference)
+                for reference in references
+            ),
+        )
+
+    def add_finding_to_report(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        report_id: str,
+        finding_id: str,
+    ):
+        finding = next(
+            (
+                item
+                for item in self.workspace.review_findings(matter.matter_id)
+                if item.finding_id == finding_id
+            ),
+            None,
+        )
+        if finding is None:
+            raise KeyError(finding_id)
+        references = self.workspace.review_finding_references(
+            matter.matter_id, finding_id
+        )
+        return self.workspace.add_report_section(
+            matter.matter_id,
+            report_id,
+            actor_id,
+            heading=finding.title,
+            body=(
+                finding.summary
+                + "\n\nReview status when added: "
+                + finding.status.replace("_", " ")
+                + "."
+            ),
+            origin="finding",
+            origin_id=finding.finding_id,
+            citations=tuple(
+                self._report_citation_from_reference(matter, reference)
+                for reference in references
+            ),
+        )
+
+    def add_media_clip_to_report(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        report_id: str,
+        clip_id: str,
+    ):
+        clip = self.workspace.media_clip(matter.matter_id, clip_id)
+        document = self.source_store(matter).get(clip.document_id)
+        if document.version_id != clip.source_version_id or not is_media_type(
+            document.media_type
+        ):
+            raise KeyError(clip_id)
+        location = f"{format_timestamp(clip.start_ms)}–{format_timestamp(clip.end_ms)}"
+        return self.workspace.add_report_section(
+            matter.matter_id,
+            report_id,
+            actor_id,
+            heading=clip.title,
+            body=(
+                "Selected recording segment. Play the cited timestamp and review the "
+                "current transcript, speaker attribution, and surrounding media before use."
+            ),
+            origin="media_clip",
+            origin_id=clip.clip_id,
+            citations=(
+                {
+                    "kind": "media_clip",
+                    "document_id": document.document_id,
+                    "source_version_id": document.version_id,
+                    "source_name": document.display_name,
+                    "location": location,
+                    "excerpt": "",
+                    "media_clip_id": clip.clip_id,
+                    "start_ms": clip.start_ms,
+                    "end_ms": clip.end_ms,
+                },
+            ),
+        )
+
+    def add_answer_to_report(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        report_id: str,
+        conversation_id: str,
+        message_id: str,
+    ):
+        conversation = self.workspace.get_conversation(
+            matter.matter_id, conversation_id
+        )
+        messages = self.workspace.messages(matter.matter_id, conversation_id)
+        answer = next(
+            (
+                message
+                for message in messages
+                if message.message_id == message_id and message.role == "assistant"
+            ),
+            None,
+        )
+        if answer is None:
+            raise KeyError(message_id)
+        support_tokens: list[str] = []
+        payload = answer.payload
+        claims = payload.get("claims")
+        if isinstance(claims, list):
+            for claim in claims:
+                if not isinstance(claim, Mapping):
+                    continue
+                citations = claim.get("citations")
+                if not isinstance(citations, list):
+                    continue
+                for citation in citations:
+                    try:
+                        token = self._citation_support_token(citation)
+                    except KeyError:
+                        continue
+                    if token not in support_tokens:
+                        support_tokens.append(token)
+        references = tuple(
+            self.notebook_reference_from_support(matter, token)
+            for token in support_tokens[:100]
+        )
+        citations = []
+        for reference in references:
+            document = self.source_store(matter).get(str(reference["document_id"]))
+            citations.append(
+                {
+                    "kind": (
+                        "transcript" if is_media_type(document.media_type) else "source"
+                    ),
+                    **reference,
+                }
+            )
+        question = next(
+            (
+                item.content
+                for item in reversed(messages[: messages.index(answer)])
+                if item.role == "user"
+            ),
+            "",
+        )
+        return self.workspace.add_report_section(
+            matter.matter_id,
+            report_id,
+            actor_id,
+            heading=question[:200] or conversation.title,
+            body=answer.content,
+            origin="answer",
+            origin_id=answer.message_id,
+            citations=tuple(citations),
+        )
+
+    def _index_document(self, matter: MatterRecord, document: PilotDocument) -> None:
+        if not self.postgres_ready or self.postgres_connection is None:
+            return
+        with self._postgres_lock:
+            upsert_postgres_document(
+                self.postgres_connection,
+                matter_id=matter.matter_id,
+                matter_name=matter.display_name,
+                document_id=document.document_id,
+                display_name=document.display_name,
+                media_type=document.media_type,
+                units=document.parsed_units(),
+                embedder=(
+                    self.embedding
+                    if self.learned_retrieval
+                    else DeterministicEmbeddingAdapter()
+                ),
+                source_version_id=document.version_id,
+                content_digest=document.digest,
+                byte_size=document.size,
+                storage_key=(
+                    document.stored_name
+                    if document.origin == "upload"
+                    else f"registered:{document.source_location_id}:{document.relative_path}"
+                ),
+                ensure_schema=False,
+            )
+
+    def _project_media_transcript(
+        self,
+        matter: MatterRecord,
+        document: PilotDocument,
+        segments: Sequence[TranscriptSegmentRecord],
+        degraded: bool,
+    ) -> None:
+        store = self.source_store(matter)
+        current = store.get(document.document_id)
+        if current.version_id != document.version_id:
+            raise RuntimeError("media source version changed during projection")
+        projected = store.install_media_transcript(
+            document.document_id,
+            transcript_units(segments),
+            degraded=degraded,
+        )
+        self._index_document(matter, projected)
+
+    def _summarize_media_transcript(
+        self,
+        document: PilotDocument,
+        segments: Sequence[TranscriptSegmentRecord],
+    ) -> TranscriptSummaryResult:
+        windows = transcript_summary_windows(segments)
+        if not windows:
+            raise GenerationRejected("The transcript does not contain summary material.")
+        packet = tuple(
+            EvidenceItem(
+                window.evidence_id,
+                document.display_name,
+                window.location,
+                window.excerpt,
+                "transcript",
+            )
+            for window in windows
+        )
+        answer = self.generator.answer(
+            (
+                "Create a concise orientation overview of what this machine transcript "
+                "appears to say. Identify major topics, requests, decisions, disagreements, "
+                "and next steps only when they are present. Do not state that an underlying "
+                "event occurred, and do not infer speaker identity or relationships."
+            ),
+            packet,
+        )
+        if not answer.answerable or not answer.claims:
+            raise GenerationRejected("The transcript overview did not contain supported points.")
+        window_map = {window.evidence_id: window for window in windows}
+        claims: list[dict[str, object]] = []
+        for claim in answer.claims:
+            citations = [
+                {
+                    "location": window_map[identifier].location,
+                    "start_ms": window_map[identifier].start_ms,
+                    "end_ms": window_map[identifier].end_ms,
+                    "ordinal": window_map[identifier].first_ordinal,
+                }
+                for identifier in claim.evidence_ids
+                if identifier in window_map
+            ]
+            if citations:
+                claims.append({"text": claim.text, "citations": citations})
+        if not claims:
+            raise GenerationRejected("The transcript overview did not retain citations.")
+        covered = sum(window.segment_count for window in windows)
+        total = len(segments)
+        return TranscriptSummaryResult(
+            payload={
+                "kind": "media-transcript-overview",
+                "introduction": "Orientation from the machine transcript",
+                "evidence_notice": answer.evidence_notice.replace(
+                    "this answer reports", "this overview reports"
+                ),
+                "claims": claims,
+                "coverage": {
+                    "mode": "full" if covered == total else "representative",
+                    "covered_segment_count": covered,
+                    "total_segment_count": total,
+                },
+            },
+            basis_digest=transcript_summary_basis(segments),
+            covered_segment_count=covered,
+            total_segment_count=total,
+        )
+
+    def refresh_media_projection(
+        self, matter: MatterRecord, document: PilotDocument
+    ) -> None:
+        segments = self.workspace.transcript_segments(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        job = self.workspace.media_job(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        if not segments or job is None:
+            raise KeyError(document.document_id)
+        self._project_media_transcript(
+            matter, document, segments, bool(job.degraded)
+        )
+
+    def index_document(self, matter: MatterRecord, document_id: str) -> None:
+        store = self.source_store(matter)
+        document = store.get(document_id)
+        if document.state != "ready" or not self.postgres_ready:
+            return
+        try:
+            self._index_document(matter, document)
+        except Exception:
+            if self.postgres_connection is not None:
+                with self._postgres_lock:
+                    self.postgres_connection.rollback()
+            document.state = "failed"
+            document.message = "Saved, but processing did not finish. Choose Try again."
+            store._save()
+
+    def retry_document(
+        self, matter: MatterRecord, token: str, actor_id: str | None = None
+    ) -> None:
+        store = self.source_store(matter)
+        document = store.get_by_action_token(token)
+        media_job = self.workspace.media_job(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        if media_job is not None:
+            if media_job.state != "failed":
+                raise UploadProblem("This source cannot be retried right now.", 409)
+            document.state = "queued"
+            document.message = "Queued for transcription"
+            document.processing_stage = "Queued for transcription"
+            document.completed_units = 0
+            document.total_units = 0
+            store._save()
+            self.workspace.retry_media_job(
+                matter.matter_id,
+                document.document_id,
+                actor_id or media_job.requested_by,
+            )
+            if self.media is not None:
+                self.media.notify()
+            if self.playback is not None and document.has_video:
+                self.playback.ensure(
+                    matter,
+                    document,
+                    retry=document.playback_state == "failed",
+                )
+            return
+        job = self.workspace.ingest_job(matter.matter_id, document.document_id)
+        if job is not None:
+            if job.state != "failed":
+                raise UploadProblem("This source cannot be retried right now.", 409)
+            document.state = "queued"
+            document.message = "Queued for processing"
+            document.processing_stage = "Queued"
+            store._save()
+            self.workspace.retry_ingest_job(matter.matter_id, document.document_id)
+            if self.ingestion is not None:
+                self.ingestion.notify()
+            return
+        document = store.retry(document.document_id)
+        self.index_document(matter, document.document_id)
+
+    def remove_document(self, matter: MatterRecord, token: str) -> None:
+        store = self.source_store(matter)
+        document = store.get_by_action_token(token)
+        media_job = self.workspace.media_job(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        if media_job is not None and media_job.state == "running":
+            raise UploadProblem("This source is being processed and cannot be removed yet.", 409)
+        media_summary = self.workspace.media_summary(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        if media_summary is not None and media_summary.state == "running":
+            raise UploadProblem(
+                "This transcript overview is still being created. Try removing the source again shortly.",
+                409,
+            )
+        job = self.workspace.ingest_job(matter.matter_id, document.document_id)
+        if job is not None and job.state == "running":
+            raise UploadProblem("This source is being processed and cannot be removed yet.", 409)
+        if self.playback is not None and not self.playback.cancel_document(
+            matter.matter_id, document.document_id
+        ):
+            raise UploadProblem(
+                "This video is still preparing browser playback. Try removing it again shortly.",
+                409,
+            )
+        if job is not None:
+            self.workspace.cancel_document_ingest_job(matter.matter_id, document.document_id)
+        if self.postgres_connection is not None and self.postgres_ready:
+            with self._postgres_lock:
+                delete_postgres_document(
+                    self.postgres_connection,
+                    matter_id=matter.matter_id,
+                    document_id=document.document_id,
+                )
+        if media_job is not None:
+            if self.media is not None:
+                self.media.cancel_external(media_job)
+            self.workspace.remove_media_document(
+                matter.matter_id, document.document_id
+            )
+        store.remove(document.document_id)
+        self.workspace.remove_source_organization(
+            matter.matter_id, document.document_id
+        )
+
+    @staticmethod
+    def _retrieval_question(
+        question: str, messages: Sequence[MessageRecord]
+    ) -> str:
+        terms = tuple(_WORD.findall(question.casefold()))
+        contextual = len(terms) < 6 or bool(_FOLLOWUP_WORDS.intersection(terms))
+        if not contextual:
+            return question
+        previous = next(
+            (message.content for message in reversed(messages) if message.role == "user"), ""
+        )
+        return f"{previous} {question}".strip()[:MAX_SEARCH_CHARS]
+
+    @staticmethod
+    def _notebook_working_context(items: Sequence[object]) -> str:
+        lines: list[str] = []
+        used = 0
+        for item in items:
+            title = str(getattr(item, "title", "")).strip()
+            body = str(getattr(item, "body", "")).strip()
+            date_label = str(getattr(item, "date_label", "")).strip()
+            item_type = str(getattr(item, "item_type", "note")).strip()
+            status = str(getattr(item, "status", "needs_review")).strip()
+            details = " | ".join(value for value in (date_label, body) if value)
+            line = f"[{status} {item_type}] {title}{' — ' + details if details else ''}"
+            remaining = 12_000 - used
+            if remaining <= 0:
+                break
+            line = line[:remaining]
+            lines.append(line)
+            used += len(line) + 1
+        return "\n".join(lines)
+
+    @staticmethod
+    def _answer_payload(
+        answer: VerifiedAnswer,
+        evidence: Mapping[str, WorkbenchCitation],
+    ) -> dict[str, object]:
+        def claim_payload(claim) -> dict[str, object]:
+            return {
+                "text": claim.text,
+                "citations": [
+                    evidence[identifier].staff_payload()
+                    for identifier in claim.evidence_ids
+                    if identifier in evidence
+                ],
+            }
+
+        payload: dict[str, object] = {
+            "kind": (
+                "generated"
+                if answer.model_called and answer.answerable
+                else "not-supported"
+            ),
+            "answerable": answer.answerable,
+            "introduction": answer.introduction,
+            "claims": [claim_payload(claim) for claim in answer.claims],
+            "limitation": claim_payload(answer.limitation) if answer.limitation else None,
+            "missing_information": answer.missing_information,
+            "model_called": answer.model_called,
+            "elapsed_ms": answer.elapsed_ms,
+            "omitted_claims": answer.omitted_claims,
+        }
+        if answer.evidence_notice:
+            payload["evidence_notice"] = answer.evidence_notice
+        if not answer.answerable and evidence:
+            payload["source_matches"] = [
+                citation.staff_payload() for citation in evidence.values()
+            ]
+        return payload
+
+    @staticmethod
+    def _verification_abstention() -> VerifiedAnswer:
+        return VerifiedAnswer(
+            False,
+            "The retrieved passages require direct review.",
+            (),
+            None,
+            (
+                "I found potentially relevant source passages, but the generated "
+                "answer did not pass source verification. Review the matches below "
+                "or ask a narrower question."
+            ),
+            (),
+            True,
+            0,
+        )
+
+    def ask(
+        self,
+        matter: MatterRecord,
+        conversation: ConversationRecord,
+        question: str,
+    ) -> MessageRecord:
+        value = " ".join((question or "").split()).strip()
+        if not value or len(value) > MAX_QUESTION_CHARS:
+            raise WorkspaceProblem("Question must be between 1 and 2,000 characters.")
+        prior = self.workspace.messages(matter.matter_id, conversation.conversation_id)
+        self.workspace.append_message(
+            matter.matter_id, conversation.conversation_id, "user", value
+        )
+        retrieval_query = self._retrieval_question(value, prior)
+        citations = self._answer_evidence_citations(
+            matter,
+            self.search(matter, retrieval_query, limit=20),
+        )
+        evidence = {
+            f"S{index}": citation
+            for index, citation in enumerate(citations, 1)
+        }
+        packet = tuple(
+            EvidenceItem(
+                identifier,
+                citation.source_name,
+                citation.location,
+                citation.excerpt[:6_000],
+                citation.evidence_kind,
+            )
+            for identifier, citation in evidence.items()
+        )
+        history = tuple((message.role, message.content) for message in prior[-6:])
+        try:
+            answer = self.generator.answer(value, packet, history=history)
+        except GenerationGroundingRejected:
+            answer = self._verification_abstention()
+        payload = self._answer_payload(answer, evidence)
+        payload["review_scope"] = _focused_answer_scope(
+            value,
+            self.workspace.matter_readiness(matter.matter_id),
+            answer,
+            evidence,
+        )
+        return self.workspace.append_message(
+            matter.matter_id,
+            conversation.conversation_id,
+            "assistant",
+            answer.text,
+            payload,
+        )
+
+    def queue_answer(
+        self,
+        matter: MatterRecord,
+        conversation: ConversationRecord | None,
+        question: str,
+        request_key: str,
+        actor_id: str,
+        source_set_id: str | None = None,
+        notebook_mode: str | None = None,
+        notebook_item_ids: Sequence[str] = (),
+    ) -> tuple[AnswerJobRecord, bool]:
+        job, created = self.workspace.queue_answer_job(
+            matter.matter_id,
+            conversation.conversation_id if conversation is not None else None,
+            actor_id,
+            question,
+            request_key,
+            source_set_id,
+            notebook_mode,
+            notebook_item_ids,
+        )
+        if self.answers is not None:
+            self.answers.notify()
+        return job, created
+
+    def _process_answer_job(
+        self,
+        job: AnswerJobRecord,
+        report_stage: Callable[[str, str], None],
+        cancelled: Callable[[], bool],
+    ) -> AnswerResult:
+        try:
+            try:
+                self.workspace.membership(job.matter_id, job.actor_id)
+            except KeyError as exc:
+                raise AnswerJobFailure(
+                    "Access to this matter was removed before the answer began."
+                ) from exc
+            matter = self._matter_by_id(job.matter_id)
+            readiness = self.workspace.matter_readiness(matter.matter_id)
+            if not readiness.can_query:
+                raise AnswerJobFailure(
+                    "Matter preparation changed before this answer began. Wait for "
+                    "active processing to finish, or resolve an attention item if no "
+                    "source is searchable, then try again."
+                )
+            source_coverage = _source_coverage(readiness)
+            conversation = self.workspace.get_conversation(
+                matter.matter_id, job.conversation_id
+            )
+            messages = self.workspace.messages(
+                matter.matter_id, conversation.conversation_id
+            )
+            question_message = next(
+                (
+                    message
+                    for message in messages
+                    if message.message_id == job.question_message_id
+                    and message.role == "user"
+                ),
+                None,
+            )
+            if question_message is None or question_message.content != job.question:
+                raise AnswerJobFailure(
+                    "The saved question could not be matched to this conversation."
+                )
+            prior = tuple(
+                message
+                for message in messages
+                if message.ordinal < question_message.ordinal
+            )
+            retrieval_query = self._retrieval_question(job.question, prior)
+            notebook_mode, notebook_items = self.workspace.answer_notebook_context(
+                matter.matter_id, job.job_id
+            )
+            notebook_context = self._notebook_working_context(notebook_items)
+            if notebook_context:
+                retrieval_query = (
+                    retrieval_query
+                    + " "
+                    + " ".join(
+                        " ".join(
+                            " ".join(
+                                (
+                                    item.title,
+                                    item.date_label,
+                                    item.body[:300],
+                                )
+                            ).split()
+                        )
+                        for item in notebook_items
+                    )
+                ).strip()[:MAX_SEARCH_CHARS]
+            source_set_id = self.workspace.answer_source_set_id(
+                matter.matter_id, job.job_id
+            )
+            scoped_document_ids = (
+                self.workspace.source_set_document_ids(
+                    matter.matter_id, source_set_id
+                )
+                if source_set_id is not None
+                else None
+            )
+            if scoped_document_ids is not None and not scoped_document_ids:
+                raise AnswerJobFailure(
+                    "The selected source set is empty. Add sources to it or use all searchable sources."
+                )
+
+            def retrieval_stage(stage_key: str) -> None:
+                report_stage(stage_key, ANSWER_STAGE_MESSAGES[stage_key])
+
+            citations = self._answer_evidence_citations(
+                matter,
+                self.search(
+                    matter,
+                    retrieval_query,
+                    limit=20,
+                    stage_callback=retrieval_stage,
+                    document_ids=scoped_document_ids,
+                ),
+            )
+            if cancelled():
+                raise AnswerJobFailure("Answer cancelled.")
+            evidence = {
+                f"S{index}": citation
+                for index, citation in enumerate(citations, 1)
+            }
+            packet = tuple(
+                EvidenceItem(
+                    identifier,
+                    citation.source_name,
+                    citation.location,
+                    citation.excerpt[:6_000],
+                    citation.evidence_kind,
+                )
+                for identifier, citation in evidence.items()
+            )
+            history = tuple(
+                (message.role, message.content) for message in prior[-6:]
+            )
+
+            def generation_stage(stage_key: str) -> None:
+                persisted_stage = "generating" if stage_key == "repairing" else stage_key
+                report_stage(persisted_stage, ANSWER_STAGE_MESSAGES[stage_key])
+
+            try:
+                answer = self.generator.answer(
+                    job.question,
+                    packet,
+                    history=history,
+                    working_context=notebook_context,
+                    stage_callback=generation_stage,
+                )
+            except GenerationGroundingRejected:
+                answer = self._verification_abstention()
+            try:
+                self.workspace.membership(job.matter_id, job.actor_id)
+            except KeyError as exc:
+                raise AnswerJobFailure(
+                    "Access to this matter was removed before the answer completed."
+                ) from exc
+            payload = self._answer_payload(answer, evidence)
+            payload["source_coverage"] = source_coverage
+            payload["review_scope"] = _focused_answer_scope(
+                job.question,
+                readiness,
+                answer,
+                evidence,
+            )
+            if source_set_id is not None:
+                payload["source_scope"] = self.workspace.source_set(
+                    matter.matter_id, source_set_id
+                ).name
+            if notebook_items:
+                payload["notebook_context"] = {
+                    "mode": notebook_mode,
+                    "count": len(notebook_items),
+                    "items": [
+                        {
+                            "item_id": item.notebook_item_id,
+                            "item_type": item.item_type,
+                            "status": item.status,
+                            "title": item.title,
+                        }
+                        for item in notebook_items
+                    ],
+                }
+            return AnswerResult(answer.text, payload)
+        except AnswerJobFailure:
+            raise
+        except RetrievalUnavailable as exc:
+            raise AnswerJobFailure(
+                "Search could not run. Your sources are still saved; try again in a moment."
+            ) from exc
+        except GenerationUnavailable as exc:
+            raise AnswerJobFailure(
+                "Answering is temporarily unavailable. Search and source review still work."
+            ) from exc
+        except GenerationRejected as exc:
+            raise AnswerJobFailure(
+                "I could not verify enough source support for a reliable answer. Try a narrower question or search the matter."
+            ) from exc
+
+    @staticmethod
+    def _workflow_citation_payload(citation: WorkbenchCitation) -> dict[str, object]:
+        """Persist enough locator state to validate and reopen derived work product."""
+
+        return {
+            "source_name": citation.source_name,
+            "location": citation.location,
+            "excerpt": citation.excerpt,
+            "href": citation.href,
+            "support_token": citation.support_token,
+            "matter_id": citation.matter_id,
+            "document_id": citation.document_id,
+            "source_version_id": citation.source_version_id,
+            "excerpt_digest": citation.excerpt_digest,
+            "chunk_id": citation.chunk_id,
+            "unit_number": citation.unit_number,
+            "line_start": citation.line_start,
+            "line_end": citation.line_end,
+            "evidence_kind": citation.evidence_kind,
+        }
+
+    @staticmethod
+    def _workflow_citation(value: Mapping[str, object]) -> WorkbenchCitation:
+        return WorkbenchCitation(
+            str(value["source_name"]),
+            str(value["location"]),
+            str(value["excerpt"]),
+            str(value["href"]),
+            str(value["support_token"]),
+            str(value["matter_id"]),
+            str(value["document_id"]),
+            str(value["source_version_id"]),
+            str(value["excerpt_digest"]),
+            str(value["chunk_id"]),
+            int(value["unit_number"]),
+            int(value["line_start"]) if value.get("line_start") is not None else None,
+            int(value["line_end"]) if value.get("line_end") is not None else None,
+            str(value["evidence_kind"]),
+        )
+
+    @staticmethod
+    def _research_plan(question: str, title: str) -> dict[str, object]:
+        """Create a bounded, explainable search plan without inventing case facts."""
+
+        base = " ".join(question.split())
+        variants = (
+            base,
+            f"{base} chronology dates sequence events",
+            f"{base} corroboration supporting records independent accounts",
+            f"{base} conflicts inconsistencies competing accounts",
+            f"{base} missing information gaps unresolved questions",
+        )
+        queries: list[str] = []
+        seen: set[str] = set()
+        for variant in variants:
+            bounded = variant[:MAX_SEARCH_CHARS].strip()
+            key = bounded.casefold()
+            if bounded and key not in seen:
+                queries.append(bounded)
+                seen.add(key)
+        return {
+            "title": title,
+            "objective": base,
+            "queries": queries[:5],
+            "method": "Iterative hybrid retrieval, source diversification, grounded synthesis, and independent claim verification.",
+        }
+
+    def _process_research_job(
+        self, job: ResearchJobRecord, cancelled: Callable[[], bool]
+    ) -> Mapping[str, object]:
+        try:
+            self.workspace.membership(job.matter_id, job.actor_id)
+        except KeyError as exc:
+            raise WorkflowFailure(
+                "Access to this matter was removed before research began."
+            ) from exc
+        matter = self._matter_by_id(job.matter_id)
+        readiness = self.workspace.matter_readiness(matter.matter_id)
+        if not readiness.can_query:
+            raise WorkflowFailure(
+                "No source is searchable for this research run. Finish active preparation or resolve a source issue, then retry."
+            )
+        scoped_document_ids = (
+            self.workspace.source_set_document_ids(matter.matter_id, job.source_set_id)
+            if job.source_set_id else None
+        )
+        if scoped_document_ids is not None and not scoped_document_ids:
+            raise WorkflowFailure("The selected source set is empty.")
+
+        plan = dict(job.plan) if job.plan else self._research_plan(job.question, job.title)
+        raw_queries = plan.get("queries")
+        queries = tuple(
+            str(item).strip()[:MAX_SEARCH_CHARS]
+            for item in raw_queries
+            if isinstance(item, str) and item.strip()
+        ) if isinstance(raw_queries, list) else ()
+        if not queries:
+            plan = self._research_plan(job.question, job.title)
+            queries = tuple(str(item) for item in plan["queries"])
+        total_steps = len(queries) + 2
+        if not job.plan or job.total_steps != total_steps:
+            self.workspace.set_research_plan(job.job_id, plan, total_steps)
+
+        checkpoint = dict(job.result) if job.result else {}
+        passes = [dict(item) for item in checkpoint.get("passes", []) if isinstance(item, dict)]
+        evidence_values = [
+            dict(item) for item in checkpoint.get("evidence", []) if isinstance(item, dict)
+        ]
+        citations: list[WorkbenchCitation] = []
+        seen_tokens: set[str] = set()
+        for value in evidence_values:
+            try:
+                citation = self._workflow_citation(value)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if citation.matter_id == matter.matter_id and citation.support_token not in seen_tokens:
+                citations.append(citation)
+                seen_tokens.add(citation.support_token)
+        candidate_count = int(checkpoint.get("candidate_count", 0) or 0)
+
+        for index, query in enumerate(queries[len(passes):], len(passes) + 1):
+            if cancelled():
+                raise WorkflowFailure("Research cancelled.")
+            try:
+                found = self.search(
+                    matter,
+                    query,
+                    limit=30,
+                    document_ids=scoped_document_ids,
+                )
+            except RetrievalUnavailable:
+                found = ()
+            candidate_count += len(found)
+            selected = self._answer_evidence_citations(matter, found, maximum=12)
+            for citation in selected:
+                if citation.support_token not in seen_tokens and len(citations) < 72:
+                    citations.append(citation)
+                    seen_tokens.add(citation.support_token)
+            evidence = {f"S{ordinal}": citation for ordinal, citation in enumerate(selected, 1)}
+            packet = tuple(
+                EvidenceItem(
+                    identifier,
+                    citation.source_name,
+                    citation.location,
+                    citation.excerpt[:6_000],
+                    citation.evidence_kind,
+                )
+                for identifier, citation in evidence.items()
+            )
+            if packet:
+                try:
+                    answer = self.generator.answer(
+                        f"For this research step, what does the supplied record say about: {query}",
+                        packet,
+                    )
+                    payload = self._answer_payload(answer, evidence)
+                    pass_result = {
+                        "query": query,
+                        "status": "supported" if answer.answerable else "gap",
+                        "text": answer.text,
+                        "answer": payload,
+                        "candidate_passages": len(found),
+                        "candidate_sources": len({item.document_id for item in found}),
+                    }
+                except GenerationGroundingRejected:
+                    pass_result = {
+                        "query": query,
+                        "status": "needs_review",
+                        "text": "Potential passages were found, but this research step did not produce a source-verified finding.",
+                        "candidate_passages": len(found),
+                        "candidate_sources": len({item.document_id for item in found}),
+                    }
+            else:
+                pass_result = {
+                    "query": query,
+                    "status": "gap",
+                    "text": "No searchable passage matched this part of the research plan.",
+                    "candidate_passages": 0,
+                    "candidate_sources": 0,
+                }
+            passes.append(pass_result)
+            checkpoint = {
+                "passes": passes,
+                "evidence": [self._workflow_citation_payload(item) for item in citations],
+                "candidate_count": candidate_count,
+            }
+            self.workspace.checkpoint_research_job(job.job_id, checkpoint)
+            if not self.workspace.update_research_progress(
+                job.job_id,
+                stage="searching",
+                message=f"Completed evidence pass {index:,} of {len(queries):,}.",
+                completed_steps=index,
+                candidate_count=candidate_count,
+                evidence_count=len(citations),
+            ):
+                raise WorkflowFailure("Research cancelled.")
+
+        if cancelled():
+            raise WorkflowFailure("Research cancelled.")
+        final_citations = self._answer_evidence_citations(matter, citations, maximum=12)
+        self.workspace.update_research_progress(
+            job.job_id,
+            stage="synthesizing",
+            message="Synthesizing findings from the cross-source evidence ledger.",
+            completed_steps=len(queries) + 1,
+            candidate_count=candidate_count,
+            evidence_count=len(citations),
+        )
+        final_evidence = {
+            f"S{ordinal}": citation for ordinal, citation in enumerate(final_citations, 1)
+        }
+        final_packet = tuple(
+            EvidenceItem(
+                identifier,
+                citation.source_name,
+                citation.location,
+                citation.excerpt[:6_000],
+                citation.evidence_kind,
+            )
+            for identifier, citation in final_evidence.items()
+        )
+        try:
+            final_answer = self.generator.answer(job.question, final_packet)
+        except GenerationGroundingRejected:
+            final_answer = self._verification_abstention()
+        if cancelled():
+            raise WorkflowFailure("Research cancelled.")
+        self.workspace.update_research_progress(
+            job.job_id,
+            stage="verifying",
+            message="Final verification complete. Saving the evidence and coverage ledger.",
+            completed_steps=total_steps,
+            candidate_count=candidate_count,
+            evidence_count=len(citations),
+        )
+        gaps = [
+            {"query": item.get("query", ""), "note": item.get("text", "")}
+            for item in passes
+            if item.get("status") != "supported"
+        ]
+        return {
+            "summary": final_answer.text,
+            "answer": self._answer_payload(final_answer, final_evidence),
+            "passes": passes,
+            "evidence": [self._workflow_citation_payload(item) for item in citations],
+            "gaps": gaps,
+            "coverage": {
+                **_source_coverage(readiness),
+                "search_pass_count": len(queries),
+                "candidate_passage_count": candidate_count,
+                "evidence_passage_count": len(citations),
+                "evidence_source_count": len({item.document_id for item in citations}),
+                "scope": "source_set" if job.source_set_id else "all_searchable_sources",
+                "notice": (
+                    "Deep Research used multiple focused retrieval passes. It is broader than Quick Answer, "
+                    "but it is not a document-by-document completeness determination. Use Full Review for that task."
+                ),
+            },
+        }
+
+    def _process_review_decision(
+        self,
+        run: ReviewRunRecord,
+        decision: ReviewDecisionRecord,
+        cancelled: Callable[[], bool],
+    ) -> ReviewDecisionResult:
+        try:
+            self.workspace.membership(run.matter_id, run.actor_id)
+        except KeyError as exc:
+            raise WorkflowFailure("Access to this matter was removed during full review.") from exc
+        if cancelled():
+            raise WorkflowFailure("Review cancelled.")
+        matter = self._matter_by_id(run.matter_id)
+        criterion = self.workspace.review_criterion(matter.matter_id, run.criterion_id)
+        version = self.workspace.review_criterion_version(
+            matter.matter_id, run.criterion_version_id
+        )
+        retrieval_query = " ".join(
+            value for value in (
+                criterion.title,
+                version.instructions,
+                version.include_guidance,
+            ) if value
+        )[:MAX_SEARCH_CHARS]
+        citations = self.search(
+            matter,
+            retrieval_query,
+            limit=12,
+            document_ids=frozenset({decision.document_id}),
+        )
+        if not citations:
+            return ReviewDecisionResult(
+                "excluded",
+                "No searchable passage in this source was identified as matching the saved criterion.",
+            )
+        evidence = {
+            f"S{ordinal}": citation for ordinal, citation in enumerate(citations[:12], 1)
+        }
+        packet = tuple(
+            EvidenceItem(
+                identifier,
+                citation.source_name,
+                citation.location,
+                citation.excerpt[:6_000],
+                citation.evidence_kind,
+            )
+            for identifier, citation in evidence.items()
+        )
+        try:
+            classification = self.generator.classify_source(
+                criterion=version.instructions,
+                include_guidance=version.include_guidance,
+                exclude_guidance=version.exclude_guidance,
+                evidence=packet,
+            )
+        except (GenerationGroundingRejected, GenerationRejected):
+            return ReviewDecisionResult(
+                "needs_attention",
+                "Potentially relevant passages were found, but an inclusion decision did not pass source verification.",
+                [self._workflow_citation_payload(item) for item in citations[:12]],
+                "Source verification did not resolve an inclusion decision.",
+            )
+        if cancelled():
+            raise WorkflowFailure("Review cancelled.")
+        used = [
+            evidence[identifier]
+            for identifier in classification.used_evidence_ids
+            if identifier in evidence
+        ]
+        if classification.decision == "include":
+            return ReviewDecisionResult(
+                "included",
+                classification.rationale[:4_000],
+                [self._workflow_citation_payload(item) for item in used],
+            )
+        return ReviewDecisionResult(
+            "excluded",
+            classification.rationale,
+            [self._workflow_citation_payload(item) for item in citations[:4]],
+        )
+
+    def record_answer_error(
+        self,
+        matter: MatterRecord,
+        conversation: ConversationRecord,
+        message: str,
+    ) -> MessageRecord:
+        return self.workspace.append_message(
+            matter.matter_id,
+            conversation.conversation_id,
+            "assistant",
+            message,
+            {"kind": "error"},
+        )
+
+    def capabilities(self) -> dict[str, str]:
+        storage = self.storage_capacity_projection(include_managed_usage=False)
+        malware = scanner_status(self.malware_scanner)
+        return {
+            "search": "word + meaning" if self.learned_retrieval else "word search only",
+            "answering": "ready" if self.generator.available else "temporarily unavailable",
+            "source_review": "ready",
+            "ingestion": "background queue" if self.background_ingestion else "request-bound",
+            "ocr": os.getenv("CASE_INTELLIGENCE_OCR_MODE", "off") or "off",
+            "malware_scan": (
+                "ready"
+                if malware.ready
+                else (
+                    "not required"
+                    if self.malware_scan_mode == "disabled"
+                    else "administrator setup required"
+                )
+            ),
+            "transcription": (
+                "local WhisperX v2"
+                if self.media is not None and self.media.available
+                else "temporarily unavailable"
+            ),
+            "storage": "ready" if storage["ready"] else "capacity attention required",
+        }
+
+
+def _query_url(path: str, **values: str) -> str:
+    filtered = {key: value for key, value in values.items() if value}
+    return path + (("?" + urlencode(filtered)) if filtered else "")
+
+
+def _workspace_citation_href(
+    citation: object, matter_slug: str, conversation_id: str = ""
+) -> str:
+    """Normalize current and historical citations into the in-workspace evidence pane."""
+
+    def citation_value(name: str) -> str:
+        if isinstance(citation, Mapping):
+            return str(citation.get(name) or "")
+        return str(getattr(citation, name, "") or "")
+
+    token = citation_value("support_token")
+    raw_href = citation_value("href")
+    if not re.fullmatch(r"[0-9a-f]{40}", token):
+        try:
+            parsed = urlparse(raw_href)
+            token = (parse_qs(parsed.query).get("support") or [""])[0]
+        except (TypeError, ValueError):
+            token = ""
+    if re.fullmatch(r"[0-9a-f]{40}", token):
+        return _query_url(
+            f"/matters/{matter_slug}",
+            support=token,
+            conversation=conversation_id,
+            play="1" if citation_value("evidence_kind") == "transcript" else "",
+        ) + "#support-pane"
+    if raw_href.startswith(f"/matters/{matter_slug}"):
+        return raw_href
+    return _query_url(f"/matters/{matter_slug}", conversation=conversation_id)
+
+
+def create_workbench_app(
+    runtime_dir: Path | None = None,
+    *,
+    generator: GeneratorClient | None = None,
+    postgres_connection=None,
+    embedding=None,
+    reranker=None,
+    learned_retrieval: bool | None = None,
+    source_registry: SourceLocationRegistry | None = None,
+    background_ingestion: bool | None = None,
+    ingestion_workers: int | None = None,
+    answer_workers: int | None = None,
+    media_processor: MediaProcessor | None = None,
+    media_poll_seconds: float = 2.0,
+    auth_mode: str | None = None,
+    secure_cookie: bool | None = None,
+    local_settings: LocalAccountSettings | None = None,
+    oidc_settings: OidcSettings | None = None,
+    oidc_client: OidcProviderClient | None = None,
+    kerberos_settings: KerberosSettings | None = None,
+    kerberos_profile_resolver: Callable[[str], tuple[str, str]] | None = None,
+    kerberos_group_resolver: Callable[[str], Iterable[str]] | None = None,
+    managed_storage_root: Path | None = None,
+    storage_policy: StoragePolicy | None = None,
+    malware_scanner: MalwareScanner | None = None,
+    malware_scan_mode: str | None = None,
+) -> FastAPI:
+    if background_ingestion is None:
+        background_ingestion = os.getenv("CASE_INTELLIGENCE_BACKGROUND_INGESTION", "0") == "1"
+    if ingestion_workers is None:
+        try:
+            ingestion_workers = int(os.getenv("CASE_INTELLIGENCE_INGESTION_WORKERS", "2"))
+        except ValueError:
+            ingestion_workers = 2
+    if answer_workers is None:
+        try:
+            answer_workers = int(os.getenv("CASE_INTELLIGENCE_ANSWER_WORKERS", "2"))
+        except ValueError:
+            answer_workers = 2
+    bench = CaseIntelligenceWorkbench(
+        runtime_dir or DEFAULT_RUNTIME,
+        generator=generator,
+        postgres_connection=postgres_connection,
+        embedding=embedding,
+        reranker=reranker,
+        learned_retrieval=learned_retrieval,
+        source_registry=source_registry,
+        background_ingestion=background_ingestion,
+        ingestion_workers=ingestion_workers,
+        answer_workers=answer_workers,
+        media_processor=media_processor,
+        media_poll_seconds=media_poll_seconds,
+        managed_storage_root=managed_storage_root,
+        storage_policy=storage_policy,
+        malware_scanner=malware_scanner,
+        malware_scan_mode=malware_scan_mode,
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        yield
+        bench.close()
+
+    app = FastAPI(title=PRODUCT_NAME, description=PRODUCT_DESCRIPTION, lifespan=lifespan)
+    app.add_middleware(RawUploadLimitMiddleware)
+    app.state.workbench = bench
+    try:
+        identity = IdentityService(
+            bench.workspace,
+            bench.runtime_dir,
+            auth_mode=auth_mode,
+            secure_cookie=secure_cookie,
+            local_settings=local_settings,
+            oidc_settings=oidc_settings,
+            oidc_client=oidc_client,
+            kerberos_settings=kerberos_settings,
+            kerberos_profile_resolver=kerberos_profile_resolver,
+            kerberos_group_resolver=kerberos_group_resolver,
+        )
+    except Exception:
+        bench.close()
+        raise
+    app.state.identity = identity
+    templates = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
+    templates.env.globals.update(
+        product_name=PRODUCT_NAME,
+        product_tagline=PRODUCT_TAGLINE,
+        citation_href=_workspace_citation_href,
+    )
+    app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
+
+    def auth_context(request: Request) -> AuthContext:
+        context = getattr(request.state, "auth", None)
+        if not isinstance(context, AuthContext):
+            raise HTTPException(401, "Sign in is required.")
+        return context
+
+    def audit(
+        request: Request,
+        action: str,
+        outcome: str,
+        *,
+        context: AuthContext | None = None,
+        matter: MatterRecord | None = None,
+        object_type: str | None = None,
+        object_id: str | None = None,
+        details: Mapping[str, object] | None = None,
+    ) -> None:
+        current = context or getattr(request.state, "auth", None)
+        bench.workspace.append_audit_event(
+            actor_principal_id=(current.principal_id if isinstance(current, AuthContext) else None),
+            session_id=(
+                current.session.session_id
+                if isinstance(current, AuthContext) and current.session is not None
+                else None
+            ),
+            matter_id=matter.matter_id if matter is not None else None,
+            request_id=getattr(request.state, "request_id", f"request-{uuid.uuid4().hex}"),
+            action=action,
+            outcome=outcome,
+            object_type=object_type,
+            object_id=object_id,
+            details=details,
+        )
+
+    def requested_path(request: Request) -> str:
+        value = request.url.path
+        if request.url.query:
+            value += "?" + request.url.query
+        return IdentityService.safe_next(value)
+
+    @app.middleware("http")
+    async def identity_boundary(request: Request, call_next):
+        request.state.request_id = f"request-{uuid.uuid4().hex}"
+        public = (
+            request.url.path == "/health"
+            or request.url.path == "/favicon.ico"
+            or request.url.path.startswith("/static/")
+            or request.url.path.startswith("/auth/login")
+            or request.url.path == "/auth/local"
+            or request.url.path.startswith("/auth/oidc/")
+            or request.url.path == "/auth/signed-out"
+        )
+        if not public:
+            context = identity.resolve(request.cookies.get(SESSION_COOKIE))
+            if context is not None and identity.auth_mode == "kerberos":
+                bound_context = identity.bind_kerberos_request(
+                    context,
+                    request.headers.get(KERBEROS_USER_HEADER),
+                    request.headers.get(KERBEROS_SECRET_HEADER),
+                )
+                if bound_context is None:
+                    audit(
+                        request,
+                        "auth.session_binding",
+                        "denied",
+                        context=context,
+                        object_type="session",
+                        object_id=(
+                            context.session.session_id
+                            if context.session is not None
+                            else None
+                        ),
+                        details={"auth_method": "spnego"},
+                    )
+                    if identity.kerberos_session_identity_matches(
+                        context,
+                        request.headers.get(KERBEROS_USER_HEADER),
+                        request.headers.get(KERBEROS_SECRET_HEADER),
+                    ):
+                        identity.logout(context)
+                    context = None
+                else:
+                    context = bound_context
+            if context is None:
+                wants_json = "application/json" in request.headers.get("accept", "")
+                if wants_json:
+                    return JSONResponse({"message": "Your session has ended. Sign in again."}, status_code=401)
+                destination = _query_url("/auth/login", next=requested_path(request))
+                return RedirectResponse(destination, status_code=303)
+            request.state.auth = context
+        response = await call_next(request)
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        if not request.url.path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
+
+    async def require_csrf(
+        request: Request,
+        csrf_token: str | None = Form(None),
+        x_csrf_token: str | None = Header(None, alias="X-CSRF-Token"),
+    ) -> None:
+        context = auth_context(request)
+        submitted = x_csrf_token or csrf_token
+        if not identity.csrf_valid(context, submitted):
+            audit(
+                request,
+                "security.csrf",
+                "denied",
+                context=context,
+                details={"auth_method": context.auth_method},
+            )
+            raise HTTPException(403, "This form expired. Refresh the page and try again.")
+
+    async def require_csrf_header(
+        request: Request,
+        x_csrf_token: str | None = Header(None, alias="X-CSRF-Token"),
+    ) -> None:
+        context = auth_context(request)
+        if not identity.csrf_valid(context, x_csrf_token):
+            audit(
+                request,
+                "security.csrf",
+                "denied",
+                context=context,
+                details={"auth_method": context.auth_method},
+            )
+            raise HTTPException(403, "This page expired. Refresh it and try again.")
+
+    def authorized_matter(
+        request: Request,
+        slug: str,
+        *,
+        allow_administrator_write: bool = False,
+    ) -> MatterRecord:
+        context = auth_context(request)
+        try:
+            return bench.matter(slug, context.principal_id)
+        except KeyError as exc:
+            if not context.is_administrator:
+                audit(request, "matter.access", "denied", context=context)
+                raise HTTPException(404, "Matter not found") from exc
+        try:
+            matter = bench.matter(
+                slug,
+                context.principal_id,
+                administrator=True,
+            )
+        except KeyError as exc:
+            audit(request, "matter.access", "denied", context=context)
+            raise HTTPException(404, "Matter not found") from exc
+        if request.method not in {"GET", "HEAD"} and not allow_administrator_write:
+            audit(
+                request,
+                "matter.admin_write",
+                "denied",
+                context=context,
+                matter=matter,
+                details={"role": "administrator"},
+            )
+            raise HTTPException(
+                403,
+                "Administrator review is read-only until you join the case team.",
+            )
+        audit(
+            request,
+            "matter.admin_access",
+            "success",
+            context=context,
+            matter=matter,
+            details={"role": "administrator"},
+        )
+        request.state.administrator_matter_override = matter.matter_id
+        return matter
+
+    def matter_readiness_projection(
+        matter: MatterRecord,
+        record: MatterReadinessRecord | None = None,
+    ) -> dict[str, object]:
+        readiness = record or bench.workspace.matter_readiness(matter.matter_id)
+        if readiness.state == "empty":
+            headline = "Add sources to begin"
+            summary = "Upload the records you want RecordBench to prepare for review."
+            guidance = "Add sources before searching or asking questions."
+            action_label = "Add sources"
+            action_url = f"/matters/{matter.slug}/setup"
+        elif readiness.state == "preparing":
+            headline = "Preparing your matter"
+            summary = (
+                f"{readiness.searchable_count:,} of {readiness.total_count:,} sources "
+                f"searchable · {readiness.processing_count:,} still processing"
+            )
+            if readiness.attention_count:
+                summary += f" · {readiness.attention_count:,} need attention"
+            guidance = (
+                "Wait until preparation is complete before asking questions "
+                "across the full record."
+            )
+            action_label = "View processing details"
+            action_url = ""
+        elif readiness.state == "attention":
+            if readiness.can_query:
+                headline = "Review available with exclusions"
+                summary = (
+                    f"{readiness.searchable_count:,} of {readiness.total_count:,} sources "
+                    f"searchable · {readiness.attention_count:,} excluded"
+                )
+                guidance = str(_source_coverage(readiness)["notice"])
+            else:
+                headline = "Preparation needs attention"
+                summary = (
+                    f"0 of {readiness.total_count:,} sources searchable · "
+                    f"{readiness.attention_count:,} need attention"
+                )
+                guidance = (
+                    "No source is searchable yet. Retry or remove an affected "
+                    "source to begin search and conversation."
+                )
+            action_label = "Review issues"
+            action_url = _query_url(
+                f"/matters/{matter.slug}/setup", view="list", status="attention"
+            ) + "#source-library"
+        else:
+            headline = "Ready for questions"
+            summary = f"All {readiness.total_count:,} sources are searchable."
+            guidance = "You can now ask questions across the full record."
+            action_label = "View sources"
+            action_url = f"/matters/{matter.slug}/setup?view=list#source-library"
+
+        active_work = tuple(
+            item
+            for item in (
+                {
+                    "key": "uploading",
+                    "label": "Uploading",
+                    "count": readiness.uploading_count,
+                },
+                {
+                    "key": "extracting",
+                    "label": "Reading & OCR",
+                    "count": readiness.extracting_count,
+                },
+                {
+                    "key": "transcribing",
+                    "label": "Transcribing",
+                    "count": readiness.transcribing_count,
+                },
+                {
+                    "key": "indexing",
+                    "label": "Building search index",
+                    "count": readiness.indexing_count,
+                },
+            )
+            if int(item["count"])
+        )
+
+        def stage(
+            key: str,
+            label: str,
+            description: str,
+            completed: int,
+            *,
+            working: int = 0,
+        ) -> dict[str, object]:
+            if readiness.total_count == 0:
+                state = "waiting"
+            elif completed >= readiness.total_count:
+                state = "complete"
+            elif working:
+                state = "working"
+            elif readiness.attention_count:
+                state = "attention"
+            elif completed:
+                # A downstream stage can already contain completed sources
+                # while the rest of a large intake is still arriving.
+                state = "working"
+            else:
+                state = "waiting"
+            return {
+                "key": key,
+                "label": label,
+                "description": description,
+                "completed": completed,
+                "total": readiness.total_count,
+                "count_label": f"{completed:,} of {readiness.total_count:,}",
+                "state": state,
+                "state_label": {
+                    "waiting": "Waiting",
+                    "working": "Working",
+                    "complete": "Complete",
+                    "attention": "Needs attention",
+                }[state],
+            }
+
+        stages = (
+            stage(
+                "saved",
+                "Saved",
+                "Securely received by this matter.",
+                readiness.saved_count,
+                working=readiness.uploading_count,
+            ),
+            stage(
+                "text",
+                "Text, OCR & transcripts",
+                "Reading documents and transcribing recordings.",
+                readiness.extracted_count,
+                working=readiness.extracting_count + readiness.transcribing_count,
+            ),
+            stage(
+                "index",
+                "Search index",
+                "Building word and meaning search.",
+                readiness.searchable_count,
+                working=readiness.indexing_count,
+            ),
+            stage(
+                "ready",
+                "Ready for questions",
+                "Available to grounded search and conversation.",
+                readiness.searchable_count,
+                working=readiness.processing_count,
+            ),
+        )
+        overview_note = ""
+        if readiness.overview_processing_count:
+            overview_note = (
+                f"{readiness.overview_processing_count:,} media overview"
+                f"{'s are' if readiness.overview_processing_count != 1 else ' is'} still "
+                "being prepared; searchable transcripts remain available."
+            )
+        elif readiness.overview_attention_count:
+            overview_note = (
+                f"{readiness.overview_attention_count:,} optional media overview"
+                f"{'s need' if readiness.overview_attention_count != 1 else ' needs'} attention; "
+                "this does not remove searchable transcripts."
+            )
+        coverage = _source_coverage(readiness)
+        return {
+            "state": readiness.state,
+            "can_query": readiness.can_query,
+            "partial_query": readiness.partial_query,
+            "excluded_count": int(coverage["excluded_count"]),
+            "coverage_notice": str(coverage["notice"]),
+            "headline": headline,
+            "summary": summary,
+            "guidance": guidance,
+            "action_label": action_label,
+            "action_url": action_url,
+            "total_count": readiness.total_count,
+            "saved_count": readiness.saved_count,
+            "extracted_count": readiness.extracted_count,
+            "searchable_count": readiness.searchable_count,
+            "processing_count": readiness.processing_count,
+            "attention_count": readiness.attention_count,
+            "progress_percent": readiness.progress_percent,
+            "active_work": active_work,
+            "stages": stages,
+            "overview_processing_count": readiness.overview_processing_count,
+            "overview_attention_count": readiness.overview_attention_count,
+            "overview_note": overview_note,
+            "updated_at": readiness.updated_at,
+            "status_url": f"/matters/{matter.slug}/processing-status",
+            "sources_url": f"/matters/{matter.slug}/setup?view=list#source-library",
+            "poll_after_ms": 2_000 if readiness.state == "preparing" else 8_000,
+        }
+
+    def assistant_context(
+        request: Request,
+        matter: MatterRecord,
+        context: AuthContext,
+        *,
+        membership_present: bool,
+        readiness: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        if not membership_present:
+            return None
+        conversations = bench.workspace.conversations(
+            matter.matter_id, include_archived=False
+        )
+        if not conversations:
+            return None
+        conversation_summaries = tuple(
+            item
+            for item in bench.workspace.conversation_summaries(matter.matter_id)
+            if item.state == "active"
+        )
+        requested_conversation = request.query_params.get("conversation", "")
+        conversation = next(
+            (
+                item
+                for item in conversations
+                if item.conversation_id == requested_conversation
+            ),
+            conversations[0],
+        )
+        conversation_choices = conversation_summaries[:20]
+        if not any(
+            item.conversation_id == conversation.conversation_id
+            for item in conversation_choices
+        ):
+            selected_summary = next(
+                item
+                for item in conversation_summaries
+                if item.conversation_id == conversation.conversation_id
+            )
+            conversation_choices = (*conversation_choices, selected_summary)
+        latest_job = bench.workspace.latest_answer_job(
+            matter.matter_id,
+            conversation.conversation_id,
+            context.principal_id,
+        )
+        projected_job = (
+            answer_projection(request, matter, latest_job)
+            if latest_job is not None and latest_job.state != "succeeded"
+            else None
+        )
+        requested_presentation = request.query_params.get(
+            "assistant_presentation", ""
+        )
+        if requested_presentation in {"matter", "quick"}:
+            presentation = requested_presentation
+        elif request.url.path.endswith(("/research", "/full-review")):
+            presentation = "quick"
+        else:
+            presentation = "matter"
+        return {
+            "matter": matter,
+            "conversation": conversation,
+            "conversation_choices": conversation_choices,
+            "conversation_total": len(conversation_summaries),
+            "messages": bench.workspace.messages(
+                matter.matter_id, conversation.conversation_id
+            )[-8:],
+            "active_answer": projected_job,
+            "source_sets": bench.workspace.source_sets(matter.matter_id),
+            "searchable_source_count": int(readiness["searchable_count"]),
+            "matter_ready": bool(readiness["can_query"]),
+            "readiness": readiness,
+            "request_key": f"answer-request-{uuid.uuid4().hex}",
+            "fragment_url": _query_url(
+                f"/matters/{matter.slug}/assistant",
+                conversation=conversation.conversation_id,
+                assistant_presentation=presentation,
+            ),
+            "open_url": _query_url(
+                f"/matters/{matter.slug}",
+                conversation=conversation.conversation_id,
+            )
+            + "#evidence-conversation",
+            "new_conversation_url": f"/matters/{matter.slug}/conversations",
+            "presentation": presentation,
+            "default_state": "collapsed" if presentation == "quick" else "open",
+            "display_label": "Quick question" if presentation == "quick" else "Matter assistant",
+        }
+
+    def activity_center_projection(
+        context: AuthContext, *, active_slug: str = ""
+    ) -> dict[str, object]:
+        """Project content-minimized work status across a member's matters."""
+
+        active_states = {"queued", "running"}
+        attention_states = {"failed"}
+        items: list[dict[str, object]] = []
+        active_count = 0
+        attention_count = 0
+        matters = bench.matters(context.principal_id, administrator=False)
+        answers_by_matter: dict[str, list[AnswerJobRecord]] = {}
+        research_by_matter: dict[str, list[ResearchJobRecord]] = {}
+        reviews_by_matter: dict[str, list[ReviewRunRecord]] = {}
+        for job in bench.workspace.answer_jobs_for_actor(
+            context.principal_id, limit=150
+        ):
+            answers_by_matter.setdefault(job.matter_id, []).append(job)
+        for job in bench.workspace.research_jobs_for_actor(
+            context.principal_id, limit=150
+        ):
+            research_by_matter.setdefault(job.matter_id, []).append(job)
+        for run in bench.workspace.review_runs_for_actor(
+            context.principal_id, limit=150
+        ):
+            reviews_by_matter.setdefault(run.matter_id, []).append(run)
+
+        def append_item(
+            *,
+            matter: MatterRecord,
+            kind: str,
+            title: str,
+            detail: str,
+            state: str,
+            href: str,
+            updated_at: str,
+        ) -> None:
+            nonlocal active_count, attention_count
+            if state in active_states:
+                tone = "working"
+                state_label = "Working" if state == "running" else "Queued"
+                active_count += 1
+            elif state in attention_states:
+                tone = "attention"
+                state_label = "Needs attention"
+                attention_count += 1
+            elif state == "cancelled":
+                tone = "quiet"
+                state_label = "Cancelled"
+            elif state in {"ready", "succeeded"}:
+                tone = "complete"
+                state_label = "Complete" if state == "succeeded" else "Ready"
+            else:
+                tone = "quiet"
+                state_label = state.replace("_", " ").title() or "Saved"
+            items.append(
+                {
+                    "matter_name": matter.display_name,
+                    "matter_slug": matter.slug,
+                    "kind": kind,
+                    "title": title,
+                    "detail": detail,
+                    "state": state,
+                    "state_label": state_label,
+                    "tone": tone,
+                    "href": href,
+                    "updated_at": updated_at,
+                }
+            )
+
+        for matter in matters[:50]:
+            readiness = matter_readiness_projection(matter)
+            if matter.slug == active_slug or readiness["state"] in {
+                "preparing",
+                "attention",
+            }:
+                readiness_state = str(readiness["state"])
+                append_item(
+                    matter=matter,
+                    kind="Source preparation",
+                    title=str(readiness["headline"]),
+                    detail=str(readiness["summary"]),
+                    state=(
+                        "running"
+                        if readiness_state == "preparing"
+                        else "failed"
+                        if readiness_state == "attention"
+                        else "ready"
+                        if readiness_state == "ready"
+                        else "saved"
+                    ),
+                    href=str(readiness["action_url"] or readiness["sources_url"]),
+                    updated_at=str(readiness["updated_at"]),
+                )
+
+            recent_answers = answers_by_matter.get(matter.matter_id, [])[:3]
+            for index, job in enumerate(recent_answers):
+                if not (
+                    job.state in active_states | attention_states
+                    or (matter.slug == active_slug and index == 0)
+                ):
+                    continue
+                append_item(
+                    matter=matter,
+                    kind="Focused answer",
+                    title="Focused answer",
+                    detail=job.message,
+                    state=job.state,
+                    href=_query_url(
+                        f"/matters/{matter.slug}",
+                        conversation=job.conversation_id,
+                    )
+                    + "#latest",
+                    updated_at=job.updated_at,
+                )
+
+            for index, job in enumerate(
+                research_by_matter.get(matter.matter_id, [])[:3]
+            ):
+                if not (
+                    job.state in active_states | attention_states
+                    or (matter.slug == active_slug and index == 0)
+                ):
+                    continue
+                append_item(
+                    matter=matter,
+                    kind="Deep research",
+                    title=job.title,
+                    detail=job.message,
+                    state=job.state,
+                    href=_query_url(
+                        f"/matters/{matter.slug}/research", job=job.job_id
+                    ),
+                    updated_at=job.updated_at,
+                )
+
+            for index, run in enumerate(
+                reviews_by_matter.get(matter.matter_id, [])[:3]
+            ):
+                if not (
+                    run.state in active_states | attention_states
+                    or (matter.slug == active_slug and index == 0)
+                ):
+                    continue
+                append_item(
+                    matter=matter,
+                    kind="Full review",
+                    title=(
+                        f"Full review · {run.snapshot_count:,} source"
+                        f"{'s' if run.snapshot_count != 1 else ''}"
+                    ),
+                    detail=run.message,
+                    state=run.state,
+                    href=_query_url(
+                        f"/matters/{matter.slug}/full-review",
+                        criterion=run.criterion_id,
+                        run=run.run_id,
+                    ),
+                    updated_at=run.updated_at,
+                )
+
+        items.sort(
+            key=lambda item: (
+                str(item["state"]) in attention_states,
+                str(item["state"]) in active_states,
+                str(item["updated_at"]),
+            ),
+            reverse=True,
+        )
+        visible = tuple(items[:16])
+        if active_count:
+            summary = (
+                f"{active_count:,} background task"
+                f"{'s are' if active_count != 1 else ' is'} working"
+            )
+            if attention_count:
+                summary += f" · {attention_count:,} need attention"
+        elif attention_count:
+            summary = (
+                f"{attention_count:,} item"
+                f"{'s need' if attention_count != 1 else ' needs'} attention"
+            )
+        else:
+            summary = "No background work is running"
+        return {
+            "items": visible,
+            "active_count": active_count,
+            "attention_count": attention_count,
+            "badge_count": active_count + attention_count,
+            "summary": summary,
+            # Refresh quickly while work is moving, then back off. Opening the
+            # drawer and readiness events still request an immediate refresh.
+            "poll_after_ms": 3_000 if active_count else 30_000,
+            "active_slug": active_slug,
+        }
+
+    def base_context(
+        request: Request,
+        active: MatterRecord | None = None,
+        *,
+        readiness: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        context = auth_context(request)
+        membership = None
+        if active is not None:
+            try:
+                membership = bench.workspace.membership(
+                    active.matter_id, context.principal_id
+                )
+            except KeyError:
+                membership = None
+        is_matter_owner = membership is not None and membership.role == "owner"
+        administrator_view = bool(
+            active is not None
+            and membership is None
+            and context.is_administrator
+        )
+        matters = bench.matters(
+            context.principal_id,
+            administrator=context.is_administrator,
+        )
+        matter_navigation = tuple(
+            {"matter": item, "retention": bench.retention_projection(item)}
+            for item in matters
+        )
+        active_retention = (
+            bench.retention_projection(active) if active is not None else None
+        )
+        active_lifecycle = (
+            bench.workspace.matter_lifecycle(active.matter_id)
+            if active is not None
+            else None
+        )
+        active_readiness = (
+            readiness
+            if readiness is not None
+            else matter_readiness_projection(active)
+            if active is not None
+            and active_lifecycle is not None
+            and active_lifecycle.state == "active"
+            else None
+        )
+        assistant = (
+            assistant_context(
+                request,
+                active,
+                context,
+                membership_present=membership is not None,
+                readiness=active_readiness,
+            )
+            if active is not None and active_readiness is not None
+            else None
+        )
+        preference = bench.workspace.principal_preference(context.principal_id)
+        initial_activity_count = 0
+        if active_readiness is not None and active_readiness["state"] in {
+            "preparing",
+            "attention",
+        }:
+            initial_activity_count += 1
+        if assistant and assistant["active_answer"]:
+            initial_activity_count += 1
+        return {
+            "matters": matters,
+            "matter_navigation": matter_navigation,
+            "active_matter": active,
+            "retention": active_retention,
+            "assistant": assistant,
+            "assistant_default": (
+                str(assistant["default_state"]) if assistant else "open"
+            ),
+            "matter_readiness": active_readiness,
+            "show_assistant_dock": bool(
+                assistant is not None
+                and active is not None
+                and request.url.path != f"/matters/{active.slug}"
+            ),
+            "actor_name": context.display_name,
+            "actor_initials": context.initials,
+            "csrf_token": context.csrf_token,
+            "theme": preference.theme,
+            "current_path": requested_path(request),
+            "auth_mode": identity.auth_mode,
+            "membership": membership,
+            "is_administrator": context.is_administrator,
+            "administrator_view": administrator_view,
+            "can_manage_members": is_matter_owner or context.is_administrator,
+            "can_close_matter": is_matter_owner,
+            "can_delete_conversations": is_matter_owner,
+            "session_action_label": (
+                "Close RecordBench" if identity.auth_mode == "kerberos" else "Sign out"
+            ),
+            "activity_url": _query_url(
+                "/activity", matter=active.slug if active is not None else ""
+            ),
+            "activity_initial_count": initial_activity_count,
+            "capabilities": bench.capabilities(),
+        }
+
+    def download_response(artifact: ExportArtifact) -> Response:
+        return Response(
+            content=artifact.body,
+            media_type=artifact.media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+                "X-Case-Intelligence-Export": "work-product",
+            },
+        )
+
+    def export_source_inventory(matter: MatterRecord) -> tuple[dict[str, object], ...]:
+        return tuple(
+            {
+                "name": source.name,
+                "kind": source.kind,
+                "state": source.state,
+                "count_label": source.count_label,
+            }
+            for source in bench.sources(matter)
+        )
+
+    def export_media_work_product(
+        matter: MatterRecord,
+    ) -> tuple[dict[str, object], ...]:
+        store = bench.source_store(matter)
+        exports: list[dict[str, object]] = []
+        for document in store.documents.values():
+            if not is_media_type(document.media_type):
+                continue
+            transcript = bench.workspace.media_transcript(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if transcript is None:
+                continue
+            segments = bench.workspace.transcript_segments(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            clips = bench.workspace.media_clips(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            summary = bench.workspace.media_summary(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            summary_markdown = None
+            summary_coverage: Mapping[str, object] | None = None
+            if summary is not None and summary.state == "ready":
+                try:
+                    summary_markdown = export_media_summary(
+                        document.display_name, summary, "markdown"
+                    ).body
+                    coverage = summary.payload.get("coverage")
+                    if isinstance(coverage, Mapping):
+                        summary_coverage = dict(coverage)
+                except ValueError:
+                    summary_markdown = None
+            exports.append(
+                {
+                    "source_name": document.display_name,
+                    "review_state": transcript.review_state,
+                    "segment_count": len(segments),
+                    "markdown": export_transcript(
+                        document.display_name, segments, "markdown"
+                    ).body,
+                    "srt": export_transcript(
+                        document.display_name, segments, "srt"
+                    ).body,
+                    "json": export_transcript(
+                        document.display_name, segments, "json"
+                    ).body,
+                    "summary_markdown": summary_markdown,
+                    "summary_coverage": summary_coverage,
+                    "clips": [
+                        {
+                            "title": clip.title,
+                            "start": format_timestamp(clip.start_ms),
+                            "end": format_timestamp(clip.end_ms),
+                            "created_at": clip.created_at,
+                        }
+                        for clip in clips
+                    ],
+                }
+            )
+        return tuple(exports)
+
+    def notebook_export_entries(
+        matter: MatterRecord,
+        actor_id: str,
+        *,
+        item_id: str | None = None,
+        include_dismissed: bool = True,
+    ) -> tuple[tuple[NotebookItemRecord, tuple[NotebookReferenceRecord, ...]], ...]:
+        items = (
+            (bench.workspace.notebook_item(matter.matter_id, actor_id, item_id),)
+            if item_id is not None
+            else bench.workspace.all_notebook_items(
+                matter.matter_id,
+                actor_id,
+                include_dismissed=include_dismissed,
+            )
+        )
+        return tuple(
+            (
+                item,
+                bench.workspace.notebook_references(
+                    matter.matter_id, actor_id, item.item_id
+                ),
+            )
+            for item in items
+        )
+
+    def upload_projection(
+        matter: MatterRecord,
+        session,
+        items: Sequence[UploadItemRecord],
+    ) -> dict[str, object]:
+        store = bench.source_store(matter)
+        collection = bench.workspace.source_collection(
+            matter.matter_id, session.collection_id
+        )
+        received_bytes = sum(item.received_size for item in items)
+        queued = sum(item.state == "queued" for item in items)
+        failed = sum(item.state in {"failed", "cancelled"} for item in items)
+        projected_items: list[dict[str, object]] = []
+        for item in items:
+            work_state = item.state
+            work_stage = item.message or "Waiting for upload"
+            work_progress = (
+                item.received_size / item.expected_size if item.expected_size else 0.0
+            )
+            review_url = ""
+            media_source = is_media_type(item.media_type)
+            if item.document_id:
+                try:
+                    document = store.get(item.document_id)
+                    review_url = (
+                        f"/matters/{matter.slug}/sources/{store.action_token(document)}"
+                    )
+                    if media_source:
+                        job = bench.workspace.media_job(
+                            matter.matter_id,
+                            document.document_id,
+                            document.version_id,
+                        )
+                        if job is not None:
+                            work_state = (
+                                "processing"
+                                if job.state == "running"
+                                else "queued"
+                                if job.state == "queued"
+                                else "ready"
+                                if job.state in {"succeeded", "degraded"}
+                                else "attention"
+                            )
+                            work_stage = job.stage
+                            work_progress = job.progress
+                    else:
+                        job = bench.workspace.ingest_job(
+                            matter.matter_id, document.document_id
+                        )
+                        if job is not None:
+                            work_state = (
+                                "processing"
+                                if job.state == "running"
+                                else "queued"
+                                if job.state == "queued"
+                                else "ready"
+                                if job.state == "succeeded"
+                                else "attention"
+                            )
+                            work_stage = job.stage
+                            work_progress = (
+                                job.completed_units / job.total_units
+                                if job.total_units
+                                else 0.0
+                            )
+                    if document.state == "ready":
+                        work_state = "ready"
+                        work_stage = document.processing_stage or "Searchable"
+                        work_progress = 1.0
+                    elif document.state in {"failed", "needs_ocr"}:
+                        work_state = "attention"
+                        work_stage = document.processing_stage or "Needs attention"
+                except KeyError:
+                    work_state = "attention"
+                    work_stage = "Source status unavailable"
+            if item.state in {"failed", "cancelled"}:
+                work_state = "attention"
+                work_stage = item.message or "Upload needs attention"
+            projected_items.append(
+                {
+                    "upload_item_id": item.upload_item_id,
+                    "ordinal": item.ordinal,
+                    "display_name": item.display_name,
+                    "relative_path": item.relative_path,
+                    "media_type": item.media_type,
+                    "expected_size": item.expected_size,
+                    "received_size": item.received_size,
+                    "state": item.state,
+                    "message": item.message,
+                    "is_media": media_source,
+                    "work_state": work_state,
+                    "work_stage": work_stage,
+                    "work_progress": max(0.0, min(float(work_progress), 1.0)),
+                    "review_url": review_url,
+                    "chunk_url": (
+                        f"/matters/{matter.slug}/upload-sessions/"
+                        f"{session.upload_session_id}/items/{item.upload_item_id}"
+                    ),
+                    "finalize_url": (
+                        f"/matters/{matter.slug}/upload-sessions/"
+                        f"{session.upload_session_id}/items/{item.upload_item_id}/finalize"
+                    ),
+                }
+            )
+        processing_count = sum(
+            item["work_state"] in {"queued", "processing"}
+            for item in projected_items
+        )
+        ready_count = sum(item["work_state"] == "ready" for item in projected_items)
+        attention_count = sum(
+            item["work_state"] == "attention" for item in projected_items
+        )
+        review_ready = bool(projected_items) and all(
+            item["state"] in {"queued", "failed", "cancelled"}
+            for item in projected_items
+        )
+        primary_review_url = (
+            str(projected_items[0]["review_url"])
+            if len(projected_items) == 1 and projected_items[0]["review_url"]
+            else ""
+        )
+        return {
+            "upload_session_id": session.upload_session_id,
+            "state": session.state,
+            "collection_id": session.collection_id,
+            "collection_name": collection.name,
+            "item_count": session.item_count,
+            "total_bytes": session.total_bytes,
+            "received_bytes": received_bytes,
+            "queued_count": queued,
+            "failed_count": failed,
+            "processing_count": processing_count,
+            "ready_count": ready_count,
+            "attention_count": attention_count,
+            "work_complete": processing_count == 0 and session.state in {"complete", "partial"},
+            "review_ready": review_ready,
+            "contains_media": any(item["is_media"] for item in projected_items),
+            "primary_review_url": primary_review_url,
+            "chunk_bytes": MAX_UPLOAD_CHUNK_BYTES,
+            "status_url": (
+                f"/matters/{matter.slug}/upload-sessions/{session.upload_session_id}"
+            ),
+            "cancel_url": (
+                f"/matters/{matter.slug}/upload-sessions/{session.upload_session_id}/cancel"
+            ),
+            "library_url": _query_url(
+                f"/matters/{matter.slug}/setup",
+                view="list",
+                collection=session.collection_id,
+            ),
+            "items": projected_items,
+        }
+
+    def upload_delta_projection(
+        matter: MatterRecord,
+        session,
+        item: UploadItemRecord,
+    ) -> dict[str, object]:
+        """Return one changed item plus database-native session aggregates."""
+
+        projection = upload_projection(matter, session, (item,))
+        summary = bench.workspace.upload_session_summary(
+            matter.matter_id, session.actor_id, session.upload_session_id
+        )
+        projection.update(summary)
+        projection["delta"] = True
+        projection["primary_review_url"] = (
+            str(projection["items"][0]["review_url"])
+            if session.item_count == 1 and projection["items"][0]["review_url"]
+            else ""
+        )
+        return projection
+
+    def upload_compact_projection(
+        matter: MatterRecord, session
+    ) -> dict[str, object]:
+        """Return bounded polling state regardless of upload-session size."""
+
+        projection = upload_projection(matter, session, ())
+        projection.update(
+            bench.workspace.upload_session_summary(
+                matter.matter_id, session.actor_id, session.upload_session_id
+            )
+        )
+        projection["delta"] = True
+        return projection
+
+    def media_activity_projection(matter: MatterRecord) -> dict[str, object]:
+        jobs = bench.workspace.media_jobs_for_matter(matter.matter_id)
+        summaries = bench.workspace.media_summaries_for_matter(matter.matter_id)
+        active_jobs = [job for job in jobs if job.state in {"queued", "running"}]
+        attention_jobs = [job for job in jobs if job.state == "failed"]
+        ready_jobs = [job for job in jobs if job.state in {"succeeded", "degraded"}]
+        active_summaries = [
+            summary
+            for summary in summaries
+            if summary.state in {"queued", "running", "stale"}
+        ]
+        attention_summaries = [
+            summary for summary in summaries if summary.state == "failed"
+        ]
+        active_source_ids = {
+            item.document_id for item in (*active_jobs, *active_summaries)
+        }
+        attention_source_ids = {
+            item.document_id for item in (*attention_jobs, *attention_summaries)
+        }
+        projected: list[dict[str, object]] = []
+        projected_ids: set[str] = set()
+
+        for job in (*active_jobs, *attention_jobs):
+            try:
+                row = bench.workspace.source_catalog_record(
+                    matter.matter_id, job.document_id
+                )
+                if row.version_id != job.source_version_id:
+                    continue
+            except KeyError:
+                continue
+            projected.append(
+                {
+                    "document_id": job.document_id,
+                    "state": job.state,
+                    "stage": job.stage,
+                    "progress": job.progress,
+                    "message": job.message,
+                    "source_name": row.display_name,
+                    "review_url": f"/matters/{matter.slug}/sources/{row.action_token}",
+                    "updated_at": job.updated_at,
+                }
+            )
+            projected_ids.add(job.document_id)
+            if len(projected) >= 25:
+                break
+
+        for summary in (*active_summaries, *attention_summaries):
+            if len(projected) >= 25 or summary.document_id in projected_ids:
+                continue
+            try:
+                row = bench.workspace.source_catalog_record(
+                    matter.matter_id, summary.document_id
+                )
+                if row.version_id != summary.source_version_id:
+                    continue
+            except KeyError:
+                continue
+            if summary.state == "failed":
+                stage = "Transcript overview needs attention"
+                message = summary.message
+            elif summary.state == "stale":
+                stage = "Refreshing transcript overview"
+                message = "The reviewed transcript changed; a current overview is queued."
+            else:
+                stage = "Creating transcript overview"
+                message = "The transcript is searchable while its orientation overview is created."
+            projected.append(
+                {
+                    "document_id": summary.document_id,
+                    "state": summary.state,
+                    "stage": stage,
+                    "progress": 0.99 if summary.state == "running" else 0.98,
+                    "message": message,
+                    "source_name": row.display_name,
+                    "review_url": f"/matters/{matter.slug}/sources/{row.action_token}",
+                    "updated_at": summary.updated_at,
+                }
+            )
+            projected_ids.add(summary.document_id)
+
+        if not projected and ready_jobs:
+            job = max(ready_jobs, key=lambda item: item.updated_at)
+            try:
+                row = bench.workspace.source_catalog_record(
+                    matter.matter_id, job.document_id
+                )
+                if row.version_id == job.source_version_id:
+                    projected.append(
+                        {
+                            "document_id": job.document_id,
+                            "state": job.state,
+                            "stage": job.stage,
+                            "progress": job.progress,
+                            "message": job.message,
+                            "source_name": row.display_name,
+                            "review_url": f"/matters/{matter.slug}/sources/{row.action_token}",
+                            "updated_at": job.updated_at,
+                        }
+                    )
+            except KeyError:
+                pass
+        return {
+            "active_count": len(active_source_ids),
+            "attention_count": len(attention_source_ids),
+            "ready_count": len(ready_jobs),
+            "total_count": len(jobs),
+            "items": projected,
+            "status_url": f"/matters/{matter.slug}/media-activity",
+            "library_url": _query_url(
+                f"/matters/{matter.slug}/setup", view="list", kind="AUDIO"
+            ),
+        }
+
+    def source_catalog_href(matter: MatterRecord, row, locator: int = 0) -> str:
+        base = f"/matters/{matter.slug}/sources/{row.action_token}"
+        if row.kind in {"AUDIO", "VIDEO"}:
+            return _query_url(base, start_ms=str(locator) if locator else "")
+        return _query_url(base, unit=str(max(locator, 1)) if locator else "")
+
+    def source_catalog_projection(
+        matter: MatterRecord, row, *, locator: int = 0
+    ) -> dict[str, object]:
+        if row.kind in {"AUDIO", "VIDEO"} and locator:
+            position = format_timestamp(locator)
+        elif locator:
+            position = f"Section {locator}"
+        else:
+            position = row.count_label
+        return {
+            "object_id": row.document_id,
+            "kind": row.kind,
+            "title": row.display_name,
+            "detail": f"{row.collection_name} · {position}",
+            "state": row.state_label,
+            "tone": row.tone,
+            "review_state": row.review_state,
+            "href": source_catalog_href(matter, row, locator),
+            "action_token": row.action_token,
+        }
+
+    def source_sequence_projection(
+        matter: MatterRecord, document_id: str
+    ) -> dict[str, object]:
+        previous = bench.workspace.source_catalog_neighbor(
+            matter.matter_id, document_id, "previous"
+        )
+        following = bench.workspace.source_catalog_neighbor(
+            matter.matter_id, document_id, "next"
+        )
+        return {
+            "previous": (
+                source_catalog_projection(matter, previous)
+                if previous is not None
+                else None
+            ),
+            "next": (
+                source_catalog_projection(matter, following)
+                if following is not None
+                else None
+            ),
+        }
+
+    def matter_resume_projection(
+        matter: MatterRecord, context: AuthContext
+    ) -> tuple[dict[str, object], ...]:
+        """Resolve bounded, content-free activity records into current safe links."""
+
+        try:
+            activities = bench.workspace.recent_matter_activities(
+                matter.matter_id, context.principal_id, limit=12
+            )
+        except KeyError:
+            return ()
+        conversations = {
+            item.conversation_id: item
+            for item in bench.workspace.conversation_summaries(matter.matter_id)
+        }
+        projected: list[dict[str, object]] = []
+        for activity in activities:
+            item: dict[str, object] | None = None
+            if activity.activity_kind == "source":
+                try:
+                    source = bench.workspace.source_catalog_record(
+                        matter.matter_id, activity.object_id
+                    )
+                except KeyError:
+                    continue
+                item = source_catalog_projection(
+                    matter, source, locator=activity.locator
+                )
+                item["category"] = "Source review"
+            elif activity.activity_kind == "conversation":
+                conversation = conversations.get(activity.object_id)
+                if conversation is None or conversation.state != "active":
+                    continue
+                item = {
+                    "object_id": conversation.conversation_id,
+                    "kind": "CONVERSATION",
+                    "title": conversation.title,
+                    "detail": (
+                        f"{conversation.message_count} message"
+                        f"{'s' if conversation.message_count != 1 else ''}"
+                    ),
+                    "href": _query_url(
+                        f"/matters/{matter.slug}",
+                        conversation=conversation.conversation_id,
+                    )
+                    + "#evidence-conversation",
+                    "category": "Conversation",
+                    "tone": "ready",
+                }
+            elif activity.activity_kind == "notebook":
+                item = {
+                    "object_id": "notebook",
+                    "kind": "NOTE",
+                    "title": "Case notes",
+                    "detail": "Working observations and cited notes",
+                    "href": f"/matters/{matter.slug}/notebook",
+                    "category": "Work product",
+                    "tone": "ready",
+                }
+            elif activity.activity_kind == "analysis":
+                item = {
+                    "object_id": "review-map",
+                    "kind": "ANALYSIS",
+                    "title": "Review map",
+                    "detail": "People, places, dates, and comparisons",
+                    "href": f"/matters/{matter.slug}/analysis",
+                    "category": "Work product",
+                    "tone": "ready",
+                }
+            elif activity.activity_kind == "report":
+                if activity.object_id == "reports":
+                    title = "Reports"
+                    href = f"/matters/{matter.slug}/reports"
+                else:
+                    try:
+                        report = bench.workspace.report(
+                            matter.matter_id, activity.object_id
+                        )
+                    except KeyError:
+                        continue
+                    title = report.title
+                    href = _query_url(
+                        f"/matters/{matter.slug}/reports", report=report.report_id
+                    )
+                item = {
+                    "object_id": activity.object_id,
+                    "kind": "REPORT",
+                    "title": title,
+                    "detail": "Draft work product",
+                    "href": href,
+                    "category": "Work product",
+                    "tone": "ready",
+                }
+            if item is not None:
+                item["updated_at"] = activity.updated_at
+                projected.append(item)
+        return tuple(projected)
+
+    def answer_projection(
+        request: Request, matter: MatterRecord, job: AnswerJobRecord
+    ) -> dict[str, object]:
+        context = auth_context(request)
+        job = bench.workspace.get_answer_job(
+            matter.matter_id, context.principal_id, job.job_id
+        )
+        stage_label = ANSWER_STAGE_LABELS[job.stage]
+        if job.state == "running" and job.stage == "queued":
+            stage_label = "Starting your answer"
+        workspace_url = _query_url(
+            f"/matters/{matter.slug}", conversation=job.conversation_id
+        ) + "#latest"
+        conversation = bench.workspace.get_conversation(
+            matter.matter_id, job.conversation_id
+        )
+        fragment_url = _query_url(
+            f"/matters/{matter.slug}/assistant", conversation=job.conversation_id
+        )
+        return {
+            "job_id": job.job_id,
+            "conversation_id": job.conversation_id,
+            "conversation_title": conversation.title,
+            "state": job.state,
+            "stage": job.stage,
+            "stage_label": stage_label,
+            "message": job.message,
+            "queue_position": bench.workspace.answer_queue_position(
+                matter.matter_id, context.principal_id, job.job_id
+            ),
+            "attempts": job.attempts,
+            "created_at": job.created_at,
+            "started_at": job.started_at,
+            "finished_at": job.finished_at,
+            "can_cancel": job.state in {"queued", "running"},
+            "can_retry": job.state in {"failed", "cancelled"},
+            "status_url": f"/matters/{matter.slug}/answer-jobs/{job.job_id}",
+            "result_url": f"/matters/{matter.slug}/answer-jobs/{job.job_id}/result",
+            "cancel_url": f"/matters/{matter.slug}/answer-jobs/{job.job_id}/cancel",
+            "retry_url": f"/matters/{matter.slug}/answer-jobs/{job.job_id}/retry",
+            "workspace_url": workspace_url,
+            "fragment_url": fragment_url,
+            "open_url": _query_url(
+                f"/matters/{matter.slug}", conversation=job.conversation_id
+            )
+            + "#evidence-conversation",
+            "events": [
+                {
+                    "ordinal": event.ordinal,
+                    "state": event.state,
+                    "stage": event.stage,
+                    "stage_label": ANSWER_STAGE_LABELS[event.stage],
+                    "message": event.message,
+                    "created_at": event.created_at,
+                }
+                for event in bench.workspace.answer_events(
+                    matter.matter_id, context.principal_id, job.job_id
+                )
+            ],
+        }
+
+    @app.get("/health")
+    def health() -> dict[str, object]:
+        capabilities = bench.capabilities()
+        storage = bench.storage_capacity_projection(include_managed_usage=False)
+        maintenance = (
+            bench.maintenance.status()
+            if bench.maintenance is not None
+            else {
+                "enabled": False,
+                "last_run_at": "",
+                "last_error": "",
+                "uploads_cleaned": 0,
+                "matters_purged": 0,
+                "matters_deferred": 0,
+            }
+        )
+        return {
+            "status": (
+                "ok"
+                if capabilities["answering"] == "ready" and storage["ready"]
+                else "degraded"
+            ),
+            "product": PRODUCT_NAME,
+            "data": "private RecordBench node",
+            "capabilities": capabilities,
+            "ingest_jobs": bench.workspace.ingest_counts(),
+            "media_jobs": bench.workspace.media_job_counts(),
+            "media_summaries": bench.workspace.media_summary_counts(),
+            "answer_jobs": bench.workspace.answer_counts(),
+            "research_jobs": bench.workspace.research_counts(),
+            "review_runs": bench.workspace.review_counts(),
+            "maintenance": maintenance,
+            "storage": {
+                "status": "ready" if storage["ready"] else "degraded",
+                "reserve_satisfied": bool(storage["ready"]),
+                "optimized_finalize": bool(storage["optimized_finalize"]),
+            },
+        }
+
+    if os.getenv("CASE_INTELLIGENCE_ACCEPTANCE_DIAGNOSTICS") == "1":
+        @app.get("/internal/acceptance")
+        def acceptance_diagnostics(request: Request):
+            if request.client is None or request.client.host not in {"127.0.0.1", "::1", "testclient"}:
+                raise HTTPException(403, "Acceptance diagnostics are loopback-only.")
+            return {
+                "generation_requests_started": bench.generator.requests_started,
+                "generation_requests_completed": bench.generator.requests_completed,
+                "learned_retrieval": bench.learned_retrieval,
+            }
+
+    @app.get("/auth/login", response_class=HTMLResponse, include_in_schema=False)
+    def login_page(
+        request: Request,
+        next_path: str = Query("/", alias="next", max_length=2_048),
+        error: str = Query("", max_length=240),
+    ):
+        destination = IdentityService.safe_next(next_path)
+        existing = identity.resolve(request.cookies.get(SESSION_COOKIE))
+        if (
+            existing is not None
+            and (
+                identity.auth_mode != "kerberos"
+                or identity.kerberos_request_valid(
+                    existing,
+                    request.headers.get(KERBEROS_USER_HEADER),
+                    request.headers.get(KERBEROS_SECRET_HEADER),
+                )
+            )
+        ):
+            return RedirectResponse(destination, status_code=303)
+        if identity.auth_mode == "kerberos":
+            try:
+                context, raw_token = identity.login_kerberos(
+                    request.headers.get(KERBEROS_USER_HEADER),
+                    request.headers.get(KERBEROS_SECRET_HEADER),
+                )
+            except KerberosAuthenticationError as exc:
+                audit(
+                    request,
+                    "auth.login",
+                    "denied",
+                    details={"auth_method": "spnego"},
+                )
+                return templates.TemplateResponse(
+                    request=request,
+                    name="workbench_login.html",
+                    status_code=401,
+                    context={
+                        "identities": (),
+                        "login_challenge": "",
+                        "next_path": destination,
+                        "error": str(exc),
+                        "auth_mode": identity.auth_mode,
+                        "oidc_start_url": "",
+                        "kerberos_continue_url": _query_url(
+                            "/auth/login", next=destination
+                        ),
+                        "signed_out": False,
+                    },
+                )
+            audit(
+                request,
+                "auth.login",
+                "success",
+                context=context,
+                object_type="session",
+                object_id=(
+                    context.session.session_id if context.session is not None else None
+                ),
+                details={
+                    "auth_method": "spnego",
+                    **(
+                        {"role": "administrator"}
+                        if context.is_administrator
+                        else {}
+                    ),
+                },
+            )
+            response = RedirectResponse(destination, status_code=303)
+            response.set_cookie(
+                SESSION_COOKIE,
+                raw_token,
+                **identity.session_cookie_options,
+            )
+            return response
+        challenge = (
+            identity.new_login_challenge()
+            if identity.auth_mode in {"preview", "local"}
+            else ""
+        )
+        response = templates.TemplateResponse(
+            request=request,
+            name="workbench_login.html",
+            context={
+                "identities": identity.preview_identities(),
+                "login_challenge": challenge,
+                "next_path": destination,
+                "error": error,
+                "auth_mode": identity.auth_mode,
+                "oidc_start_url": _query_url("/auth/oidc/start", next=destination),
+                "kerberos_continue_url": _query_url("/auth/login", next=destination),
+                "signed_out": False,
+            },
+        )
+        if identity.auth_mode in {"preview", "local"}:
+            response.set_cookie(
+                LOGIN_CHALLENGE_COOKIE,
+                challenge,
+                **identity.login_cookie_options,
+            )
+        return response
+
+    @app.get("/auth/signed-out", response_class=HTMLResponse, include_in_schema=False)
+    def signed_out_page(request: Request):
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_login.html",
+            context={
+                "identities": (),
+                "login_challenge": "",
+                "next_path": "/",
+                "error": "",
+                "auth_mode": identity.auth_mode,
+                "oidc_start_url": _query_url("/auth/oidc/start", next="/"),
+                "kerberos_continue_url": _query_url("/auth/login", next="/"),
+                "signed_out": True,
+            },
+        )
+
+    @app.get("/auth/oidc/start", include_in_schema=False)
+    async def start_oidc_login(
+        request: Request,
+        next_path: str = Query("/", alias="next", max_length=2_048),
+    ):
+        destination = IdentityService.safe_next(next_path)
+        if identity.auth_mode != "oidc":
+            raise HTTPException(404, "Organization sign-in is unavailable.")
+        try:
+            start = await identity.begin_oidc_login(destination)
+        except OidcAuthenticationError as exc:
+            audit(
+                request,
+                "auth.login",
+                "failure",
+                details={"auth_method": "oidc"},
+            )
+            return RedirectResponse(
+                _query_url("/auth/login", next=destination, error=str(exc)),
+                status_code=303,
+            )
+        response = RedirectResponse(start.authorization_url, status_code=302)
+        response.set_cookie(
+            OIDC_STATE_COOKIE,
+            start.state,
+            **identity.oidc_state_cookie_options,
+        )
+        return response
+
+    @app.get("/auth/oidc/callback", include_in_schema=False)
+    async def oidc_callback(
+        request: Request,
+        code: str | None = Query(None, max_length=4_096),
+        state: str | None = Query(None, max_length=256),
+        error: str | None = Query(None, max_length=128),
+    ):
+        if identity.auth_mode != "oidc":
+            raise HTTPException(404, "Organization sign-in is unavailable.")
+        try:
+            context, raw_token, destination = await identity.finish_oidc_login(
+                cookie_state=request.cookies.get(OIDC_STATE_COOKIE),
+                returned_state=state,
+                code=code,
+                provider_error=error,
+            )
+        except OidcAuthenticationError as exc:
+            audit(
+                request,
+                "auth.login",
+                "denied",
+                details={"auth_method": "oidc"},
+            )
+            response = RedirectResponse(
+                _query_url("/auth/login", error=str(exc)),
+                status_code=303,
+            )
+            response.delete_cookie(OIDC_STATE_COOKIE, path="/auth/oidc")
+            return response
+        audit(
+            request,
+            "auth.login",
+            "success",
+            context=context,
+            object_type="session",
+            object_id=context.session.session_id if context.session is not None else None,
+            details={"auth_method": "oidc"},
+        )
+        response = RedirectResponse(destination, status_code=303)
+        response.set_cookie(SESSION_COOKIE, raw_token, **identity.session_cookie_options)
+        response.delete_cookie(OIDC_STATE_COOKIE, path="/auth/oidc")
+        return response
+
+    @app.post("/auth/login", include_in_schema=False)
+    def login(
+        request: Request,
+        identity_subject: str = Form(..., max_length=80),
+        login_challenge: str = Form(..., max_length=256),
+        next_path: str = Form("/", alias="next", max_length=2_048),
+    ):
+        destination = IdentityService.safe_next(next_path)
+        if not identity.valid_login_challenge(
+            request.cookies.get(LOGIN_CHALLENGE_COOKIE), login_challenge
+        ):
+            return RedirectResponse(
+                _query_url(
+                    "/auth/login",
+                    next=destination,
+                    error="The sign-in page expired. Please choose your preview identity again.",
+                ),
+                status_code=303,
+            )
+        try:
+            context, raw_token = identity.login_preview(identity_subject)
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url("/auth/login", next=destination, error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "auth.login",
+            "success",
+            context=context,
+            object_type="session",
+            object_id=context.session.session_id if context.session is not None else None,
+            details={"auth_method": context.auth_method},
+        )
+        response = RedirectResponse(destination, status_code=303)
+        response.set_cookie(SESSION_COOKIE, raw_token, **identity.session_cookie_options)
+        response.delete_cookie(LOGIN_CHALLENGE_COOKIE, path="/auth")
+        return response
+
+    @app.post("/auth/local", include_in_schema=False)
+    def local_login(
+        request: Request,
+        username: str = Form(..., max_length=128),
+        password: str = Form(..., max_length=1_024),
+        login_challenge: str = Form(..., max_length=256),
+        next_path: str = Form("/", alias="next", max_length=2_048),
+    ):
+        destination = IdentityService.safe_next(next_path)
+        if identity.auth_mode != "local":
+            raise HTTPException(404, "Local account sign-in is unavailable.")
+        if not identity.valid_login_challenge(
+            request.cookies.get(LOGIN_CHALLENGE_COOKIE), login_challenge
+        ):
+            return RedirectResponse(
+                _query_url(
+                    "/auth/login",
+                    next=destination,
+                    error="The sign-in page expired. Please try again.",
+                ),
+                status_code=303,
+            )
+        try:
+            context, raw_token = identity.login_local(
+                username,
+                password,
+                client_key=request.client.host if request.client is not None else "unknown",
+            )
+        except LocalAuthenticationError as exc:
+            audit(
+                request,
+                "auth.login",
+                "denied",
+                details={"auth_method": "local"},
+            )
+            return RedirectResponse(
+                _query_url("/auth/login", next=destination, error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "auth.login",
+            "success",
+            context=context,
+            object_type="session",
+            object_id=context.session.session_id if context.session is not None else None,
+            details={
+                "auth_method": "local",
+                **({"role": "administrator"} if context.is_administrator else {}),
+            },
+        )
+        response = RedirectResponse(destination, status_code=303)
+        response.set_cookie(SESSION_COOKIE, raw_token, **identity.session_cookie_options)
+        response.delete_cookie(LOGIN_CHALLENGE_COOKIE, path="/auth")
+        return response
+
+    @app.post(
+        "/auth/logout",
+        dependencies=[Depends(require_csrf)],
+        include_in_schema=False,
+    )
+    def logout(request: Request):
+        context = auth_context(request)
+        audit(
+            request,
+            "auth.logout",
+            "success",
+            context=context,
+            object_type="session",
+            object_id=context.session.session_id if context.session is not None else None,
+            details={"auth_method": context.auth_method},
+        )
+        identity.logout(context)
+        destination = (
+            "/auth/signed-out" if identity.auth_mode == "kerberos" else "/auth/login"
+        )
+        response = RedirectResponse(destination, status_code=303)
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
+
+    @app.post(
+        "/preferences/theme",
+        dependencies=[Depends(require_csrf)],
+        include_in_schema=False,
+    )
+    def set_appearance_theme(
+        request: Request,
+        theme: str = Form(..., max_length=24),
+        next_path: str = Form("/", alias="next", max_length=2_048),
+    ):
+        context = auth_context(request)
+        # Cyberpunk and retro are schema-ready design directions. Only themes
+        # with a complete, reviewed component treatment are exposed to staff.
+        if theme not in {"light", "dusk"}:
+            raise HTTPException(400, "Choose an available appearance theme.")
+        try:
+            preference = bench.workspace.set_principal_theme(
+                context.principal_id, theme
+            )
+        except WorkspaceProblem as exc:
+            raise HTTPException(400, str(exc)) from exc
+        audit(
+            request,
+            "preference.theme",
+            "success",
+            context=context,
+            object_type="principal",
+            object_id=context.principal_id,
+        )
+        return RedirectResponse(
+            IdentityService.safe_next(next_path, default="/"),
+            status_code=303,
+            headers={"X-RecordBench-Theme": preference.theme},
+        )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> FileResponse:
+        return FileResponse(PACKAGE_ROOT / "static/favicon.svg", media_type="image/svg+xml")
+
+    @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+    def administrator_console(
+        request: Request,
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        if not context.is_administrator:
+            audit(
+                request,
+                "admin.console",
+                "denied",
+                context=context,
+            )
+            raise HTTPException(403, "Administrator access is required.")
+        matter_rows: list[dict[str, object]] = []
+        now = bench.workspace.current_time()
+        for matter in bench.workspace.all_matters():
+            owner = bench.workspace.get_principal(matter.owner_id)
+            try:
+                bench.workspace.membership(matter.matter_id, context.principal_id)
+                current_is_member = True
+            except KeyError:
+                current_is_member = False
+            activity_at = bench.workspace.matter_activity_at(matter.matter_id)
+            inactive_days = max(
+                0,
+                int((now - bench._parse_utc(activity_at)).total_seconds() // 86_400),
+            )
+            retention = bench.retention_projection(matter)
+            stale_reasons: list[str] = []
+            if inactive_days >= 30:
+                stale_reasons.append(f"No recorded activity for {inactive_days} days")
+            if retention["status"] in {"unscheduled", "warning", "grace", "due"}:
+                stale_reasons.append(str(retention["label"]))
+            matter_rows.append(
+                {
+                    "matter": matter,
+                    "owner": owner,
+                    "member_count": len(bench.workspace.members(matter.matter_id)),
+                    "current_is_member": current_is_member,
+                    "storage": bench.matter_storage_projection(matter),
+                    "retention": retention,
+                    "activity_at": activity_at,
+                    "inactive_days": inactive_days,
+                    "stale_reasons": tuple(stale_reasons),
+                }
+            )
+        principals = identity.membership_candidates()
+        storage_capacity = bench.storage_capacity_projection(include_managed_usage=True)
+        abandoned_uploads = bench.workspace.abandoned_upload_sessions(
+            maximum_age_hours=24
+        )
+        matter_lookup = {
+            row["matter"].matter_id: row["matter"] for row in matter_rows
+        }
+        abandoned_upload_rows = tuple(
+            {
+                "session": session,
+                "matter": matter_lookup.get(session.matter_id),
+            }
+            for session in abandoned_uploads
+        )
+        stale_matters = tuple(row for row in matter_rows if row["stale_reasons"])
+        maintenance_status = (
+            bench.maintenance.status()
+            if bench.maintenance is not None
+            else {"enabled": False, "last_run_at": "", "last_error": ""}
+        )
+        backup_status = _backup_status_projection()
+        malware_status = scanner_status(bench.malware_scanner, force=True)
+        model_portfolio = model_portfolio_projection(
+            bench.generator,
+            learned_retrieval=bench.learned_retrieval,
+            answer_workers=bench.answers.worker_count if bench.answers is not None else 0,
+            research_workers=(
+                bench.research.worker_count if bench.research is not None else 0
+            ),
+            review_workers=(
+                bench.full_review.worker_count if bench.full_review is not None else 0
+            ),
+            review_source_concurrency=(
+                bench.full_review.source_concurrency
+                if bench.full_review is not None
+                else 0
+            ),
+            media_ready=bench.media.available,
+        )
+        audit(
+            request,
+            "admin.console",
+            "success",
+            context=context,
+            details={"role": "administrator", "count": len(matter_rows)},
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_admin.html",
+            context={
+                **base_context(request),
+                "admin_matters": tuple(matter_rows),
+                "stale_matters": stale_matters,
+                "admin_principals": principals,
+                "abandoned_uploads": abandoned_uploads,
+                "abandoned_upload_rows": abandoned_upload_rows,
+                "maintenance_status": maintenance_status,
+                "backup_status": backup_status,
+                "malware_status": malware_status,
+                "malware_scan_mode": bench.malware_scan_mode,
+                "model_portfolio": model_portfolio,
+                "ingest_counts": bench.workspace.ingest_counts(),
+                "media_counts": bench.workspace.media_job_counts(),
+                "media_summary_counts": bench.workspace.media_summary_counts(),
+                "answer_counts": bench.workspace.answer_counts(),
+                "research_counts": bench.workspace.research_counts(),
+                "review_counts": bench.workspace.review_counts(),
+                "storage_capacity": storage_capacity,
+                "storage_policy": bench.storage_policy,
+                "format_bytes": format_bytes,
+                "notice": notice,
+                "error": error,
+            },
+        )
+
+    @app.post(
+        "/admin/matters/{slug}/retention",
+        dependencies=[Depends(require_csrf)],
+        include_in_schema=False,
+    )
+    def administrator_set_matter_retention(
+        request: Request,
+        slug: str,
+        expires_on: str = Form(..., max_length=10),
+    ):
+        context = auth_context(request)
+        if not context.is_administrator:
+            raise HTTPException(403, "Administrator access is required.")
+        matter = authorized_matter(
+            request, slug, allow_administrator_write=True
+        )
+        try:
+            retention = bench.retention_for_date(
+                matter,
+                context.principal_id,
+                expires_on,
+                administrator_override=True,
+            )
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url("/admin", error=str(exc)), status_code=303
+            )
+        audit(
+            request,
+            "matter.retention",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="matter",
+            object_id=matter.matter_id,
+            details={"state": "scheduled", "role": "administrator"},
+        )
+        return RedirectResponse(
+            _query_url(
+                "/admin",
+                notice=(
+                    f"Review end date updated. Automatic deletion is scheduled for "
+                    f"{bench.retention_projection(matter)['purge_on']}."
+                ),
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/admin/maintenance/uploads",
+        dependencies=[Depends(require_csrf)],
+        include_in_schema=False,
+    )
+    def administrator_cleanup_uploads(request: Request):
+        context = auth_context(request)
+        if not context.is_administrator:
+            raise HTTPException(403, "Administrator access is required.")
+        cleaned = bench.cleanup_abandoned_uploads(maximum_age_hours=24)
+        audit(
+            request,
+            "admin.maintenance",
+            "success",
+            context=context,
+            object_type="upload_session",
+            details={"count": cleaned, "state": "completed"},
+        )
+        return RedirectResponse(
+            _query_url(
+                "/admin",
+                notice=(
+                    f"Cleaned {cleaned} abandoned upload "
+                    f"{'session' if cleaned == 1 else 'sessions'}."
+                ),
+            ),
+            status_code=303,
+        )
+
+    @app.get("/", include_in_schema=False)
+    def home(request: Request) -> RedirectResponse:
+        context = auth_context(request)
+        matters = bench.matters(
+            context.principal_id,
+            administrator=context.is_administrator,
+        )
+        return RedirectResponse(
+            f"/matters/{matters[0].slug}/home" if matters else "/matters/new",
+            status_code=303,
+        )
+
+    @app.get("/activity", response_class=HTMLResponse, include_in_schema=False)
+    def workspace_activity(
+        request: Request,
+        matter: str = Query("", max_length=80),
+    ):
+        context = auth_context(request)
+        activity = activity_center_projection(context, active_slug=matter)
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_activity_center.html",
+            context={"activity": activity},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/matters/new", response_class=HTMLResponse)
+    def new_matter(
+        request: Request,
+        error: str = Query("", max_length=240),
+        notice: str = Query("", max_length=240),
+    ):
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_new_matter.html",
+            context={**base_context(request), "error": error, "notice": notice},
+        )
+
+    @app.post("/matters", dependencies=[Depends(require_csrf)])
+    def create_matter(
+        request: Request,
+        name: str = Form(..., max_length=140),
+        descriptor: str = Form("", max_length=240),
+        retention_days: int = Form(30),
+    ):
+        context = auth_context(request)
+        if retention_days not in {7, 30, 60, 90}:
+            return RedirectResponse(
+                "/matters/new?error="
+                + quote_plus("Choose a supported temporary review period."),
+                status_code=303,
+            )
+        try:
+            matter = bench.create_matter(
+                name,
+                descriptor,
+                context.principal_id,
+                retention_days=retention_days,
+            )
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                "/matters/new?error=" + quote_plus(str(exc)), status_code=303
+            )
+        audit(
+            request,
+            "matter.create",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="matter",
+            object_id=matter.matter_id,
+            details={"role": "owner", "state": "scheduled"},
+        )
+        return RedirectResponse(f"/matters/{matter.slug}/setup", status_code=303)
+
+    @app.post(
+        "/matters/{slug}/retention",
+        dependencies=[Depends(require_csrf)],
+        include_in_schema=False,
+    )
+    def set_matter_retention(
+        request: Request,
+        slug: str,
+        expires_on: str = Form(..., max_length=10),
+        next_path: str = Form("", alias="next", max_length=2_048),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            bench.retention_for_date(matter, context.principal_id, expires_on)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except WorkspaceProblem as exc:
+            destination = IdentityService.safe_next(
+                next_path, default=f"/matters/{slug}"
+            )
+            return RedirectResponse(
+                _query_url(destination.split("?", 1)[0], error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "matter.retention",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="matter",
+            object_id=matter.matter_id,
+            details={"state": "scheduled", "role": "owner"},
+        )
+        destination = IdentityService.safe_next(
+            next_path, default=f"/matters/{slug}"
+        )
+        return RedirectResponse(destination, status_code=303)
+
+    @app.get(
+        "/matters/{slug}/assistant",
+        response_class=HTMLResponse,
+        include_in_schema=False,
+    )
+    def matter_assistant(request: Request, slug: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            membership = bench.workspace.membership(
+                matter.matter_id, context.principal_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        assistant = assistant_context(
+            request,
+            matter,
+            context,
+            membership_present=membership is not None,
+            readiness=matter_readiness_projection(matter),
+        )
+        if assistant is None:
+            raise HTTPException(404, "Matter assistant is unavailable")
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_assistant.html",
+            context={
+                "assistant": assistant,
+                "matter": matter,
+                "actor_initials": context.initials,
+                "csrf_token": context.csrf_token,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/matters/{slug}/processing-status")
+    def matter_processing_status(request: Request, slug: str):
+        try:
+            matter = authorized_matter(request, slug)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        return JSONResponse(
+            matter_readiness_projection(matter),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/matters/{slug}/home", response_class=HTMLResponse)
+    def matter_home(
+        request: Request,
+        slug: str,
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            readiness = matter_readiness_projection(matter)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            read_actor_id = (
+                matter.owner_id if administrator_override else context.principal_id
+            )
+            queue = bench.source_library(
+                matter,
+                view="list",
+                status="ready",
+                review="unreviewed",
+                sort="oldest",
+                page_size=25,
+            )
+            attention = bench.source_library(
+                matter,
+                view="list",
+                status="attention",
+                sort="status",
+                page_size=25,
+            )
+            catalog = bench.workspace.source_catalog_page(
+                matter.matter_id, limit=1
+            )
+            media_activity = media_activity_projection(matter)
+            resumes = matter_resume_projection(matter, context)
+            notebook = bench.workspace.notebook_page(
+                matter.matter_id, read_actor_id, status="all", page_size=10
+            )
+            reports = bench.workspace.reports(matter.matter_id, read_actor_id)
+            findings = bench.workspace.review_findings(matter.matter_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+
+        queue_items = tuple(
+            source_catalog_projection(
+                matter,
+                bench.workspace.source_catalog_record(matter.matter_id, row.document_id),
+            )
+            for row in queue.items[:4]
+        )
+        attention_items = tuple(
+            source_catalog_projection(
+                matter,
+                bench.workspace.source_catalog_record(matter.matter_id, row.document_id),
+            )
+            for row in attention.items[:3]
+        )
+        continue_item = resumes[0] if resumes else (
+            queue_items[0] if queue_items else None
+        )
+        continue_url = (
+            str(continue_item["href"])
+            if continue_item is not None
+            else f"/matters/{matter.slug}"
+        )
+        stats = dict(catalog.stats)
+        total = stats["total"]
+        reviewed = stats["reviewed"]
+        progress_percent = round((reviewed / total) * 100) if total else 0
+        status_parts = [
+            f"{stats['ready']} searchable",
+            f"{stats['processing']} processing" if stats["processing"] else "",
+            f"{stats['attention']} need attention" if stats["attention"] else "",
+        ]
+        audit(
+            request,
+            "matter.home",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="matter",
+            object_id=matter.matter_id,
+            details={"count": total},
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_matter_home.html",
+            context={
+                **base_context(request, matter, readiness=readiness),
+                "matter": matter,
+                "continue_item": continue_item,
+                "continue_url": continue_url,
+                "recent_work": resumes[:3],
+                "queue_items": queue_items,
+                "queue_total": queue.total,
+                "attention_items": attention_items,
+                "stats": stats,
+                "progress_percent": progress_percent,
+                "status_line": " · ".join(part for part in status_parts if part),
+                "media_activity": media_activity,
+                "work_product_counts": {
+                    "notes": notebook.total,
+                    "findings": len(findings),
+                    "reports": len(reports),
+                },
+                "notice": notice,
+                "error": error,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/matters/{slug}/work-product", response_class=HTMLResponse)
+    def matter_work_product(
+        request: Request,
+        slug: str,
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            read_actor_id = (
+                matter.owner_id if administrator_override else context.principal_id
+            )
+            notebook = bench.workspace.notebook_page(
+                matter.matter_id, read_actor_id, status="all", page_size=10
+            )
+            findings = bench.workspace.review_findings(matter.matter_id)
+            reports = bench.workspace.reports(matter.matter_id, read_actor_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        audit(
+            request,
+            "work_product.open",
+            "success",
+            context=context,
+            matter=matter,
+            details={"count": notebook.total + len(findings) + len(reports)},
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_work_product.html",
+            context={
+                **base_context(request, matter),
+                "matter": matter,
+                "notebook": notebook,
+                "findings": findings,
+                "reports": reports,
+                "notice": notice,
+                "error": error,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/matters/{slug}/setup", response_class=HTMLResponse)
+    def setup_matter(
+        request: Request,
+        slug: str,
+        plan: str = Query("", max_length=64),
+        view: str = Query("overview", max_length=16),
+        q: str = Query("", max_length=240),
+        status: str = Query("", max_length=20),
+        kind: str = Query("", max_length=12),
+        review: str = Query("", max_length=20),
+        collection: str = Query("", max_length=80),
+        source_set: str = Query("", max_length=80),
+        sort: str = Query("newest", max_length=20),
+        page: int = Query(1, ge=1, le=100_000),
+        page_size: int = Query(50, ge=1, le=100),
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            ingest_plan = (
+                bench.workspace.get_ingest_plan(matter.matter_id, plan) if plan else None
+            )
+            plan_items = (
+                bench.workspace.ingest_plan_items(matter.matter_id, plan)
+                if ingest_plan is not None
+                else ()
+            )
+            library = bench.source_library(
+                matter,
+                view=view,
+                query=q,
+                status=status,
+                kind=kind,
+                review=review,
+                collection_id=collection,
+                source_set_id=source_set,
+                sort=sort,
+                page=page,
+                page_size=page_size,
+            )
+            collections = bench.workspace.source_collections(matter.matter_id)
+            source_sets = bench.workspace.source_sets(matter.matter_id)
+            active_collection = next(
+                (
+                    item
+                    for item in collections
+                    if item.collection_id == library.collection_id
+                ),
+                None,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter, import plan, or source group not found") from exc
+
+        def library_url(target_page: int, **changes: str) -> str:
+            values = {
+                "view": library.view,
+                "q": library.query,
+                "status": library.status,
+                "kind": library.kind,
+                "review": library.review,
+                "collection": library.collection_id,
+                "source_set": library.source_set_id,
+                "sort": library.sort,
+                "page_size": str(library.page_size),
+                "page": str(target_page),
+            }
+            values.update(changes)
+            return _query_url(f"/matters/{matter.slug}/setup", **values)
+
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_setup.html",
+            context={
+                **base_context(request, matter),
+                "matter": matter,
+                "sources": library.items,
+                "source_library": library,
+                "source_collections": collections,
+                "active_source_collection": active_collection,
+                "source_sets": source_sets,
+                "matter_storage": bench.matter_storage_projection(matter),
+                "storage_policy": bench.storage_policy,
+                "upload_limits": {
+                    "items": MAX_UPLOAD_INTAKE_ITEMS,
+                    "item_label": f"{MAX_UPLOAD_INTAKE_ITEMS:,}",
+                    "batch_items": MAX_UPLOAD_SESSION_ITEMS,
+                    "batch_item_label": f"{MAX_UPLOAD_SESSION_ITEMS:,}",
+                    "document_bytes": bench.storage_policy.document_file_bytes,
+                    "media_bytes": bench.storage_policy.media_file_bytes,
+                    "collection_bytes": bench.storage_policy.upload_session_bytes,
+                    "document_label": format_bytes(
+                        bench.storage_policy.document_file_bytes
+                    ),
+                    "media_label": format_bytes(bench.storage_policy.media_file_bytes),
+                    "collection_label": format_bytes(
+                        bench.storage_policy.upload_session_bytes
+                    ),
+                },
+                "library_url": library_url,
+                "recent_upload_sessions": bench.workspace.recent_upload_sessions(
+                    matter.matter_id, context.principal_id
+                ),
+                "registered_locations": bench.source_registry.staff_locations(),
+                "ingest_plan": ingest_plan,
+                "plan_items": plan_items[:200],
+                "plan_items_omitted": max(len(plan_items) - 200, 0),
+                "notice": notice,
+                "error": error,
+                "members": bench.workspace.members(matter.matter_id),
+                "available_principals": tuple(
+                    principal
+                    for principal in identity.membership_candidates()
+                    if principal.principal_id
+                    not in {member.principal_id for member in bench.workspace.members(matter.matter_id)}
+                ),
+            },
+        )
+
+    def reconcile_upload_session(
+        matter: MatterRecord, actor_id: str, session_id: str
+    ):
+        session, items = bench.workspace.upload_session(
+            matter.matter_id, actor_id, session_id
+        )
+        store = bench.source_store(matter)
+        refreshed: list[UploadItemRecord] = []
+        for item in items:
+            if item.state not in {"pending", "uploading", "uploaded"}:
+                refreshed.append(item)
+                continue
+            try:
+                actual = store.resumable_size(
+                    item.upload_item_id, expected_size=item.expected_size
+                )
+            except UploadProblem as exc:
+                refreshed.append(
+                    bench.workspace.fail_upload_item(
+                        matter.matter_id,
+                        actor_id,
+                        session_id,
+                        item.upload_item_id,
+                        str(exc),
+                    )
+                )
+                continue
+            if actual < item.received_size:
+                refreshed.append(
+                    bench.workspace.fail_upload_item(
+                        matter.matter_id,
+                        actor_id,
+                        session_id,
+                        item.upload_item_id,
+                        "The saved upload is incomplete. Select this source in a new upload collection.",
+                    )
+                )
+            elif actual > item.received_size:
+                refreshed.append(
+                    bench.workspace.set_upload_item_offset(
+                        matter.matter_id,
+                        actor_id,
+                        session_id,
+                        item.upload_item_id,
+                        item.received_size,
+                        actual,
+                    )
+                )
+            else:
+                refreshed.append(item)
+        session, _ = bench.workspace.upload_session(
+            matter.matter_id, actor_id, session_id
+        )
+        return session, tuple(refreshed)
+
+    @app.get("/matters/{slug}/close", response_class=HTMLResponse)
+    def close_matter_page(
+        request: Request,
+        slug: str,
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter, lifecycle = bench.matter_for_closure(
+                slug, context.principal_id
+            )
+            counts = bench.workspace.matter_content_counts(matter.matter_id)
+            source_count = (
+                bench._matter_source_count_for_purge(matter, lifecycle)
+                if lifecycle.state == "active"
+                else lifecycle.source_count
+            )
+            active_work = bench.workspace.active_matter_work_counts(
+                matter.matter_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except RuntimeError as exc:
+            raise HTTPException(
+                503,
+                "Matter storage could not be checked safely. Ask an administrator to review it.",
+            ) from exc
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_close_matter.html",
+            context={
+                **base_context(request, matter),
+                "matter": matter,
+                "lifecycle": lifecycle,
+                "source_count": max(source_count, lifecycle.source_count),
+                "conversation_count": max(
+                    counts["conversations"], lifecycle.conversation_count
+                ),
+                "message_count": max(counts["messages"], lifecycle.message_count),
+                "notebook_count": counts["notebook_items"],
+                "active_work": active_work,
+                "error": error,
+            },
+        )
+
+    @app.post(
+        "/matters/{slug}/close",
+        dependencies=[Depends(require_csrf)],
+    )
+    def close_matter(
+        request: Request,
+        slug: str,
+        confirmed_name: str = Form("", max_length=140),
+        acknowledge: str = Form("", max_length=8),
+    ):
+        context = auth_context(request)
+        try:
+            matter, lifecycle = bench.matter_for_closure(
+                slug, context.principal_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        if acknowledge != "yes":
+            audit(
+                request,
+                "matter.purge",
+                "failure",
+                context=context,
+                matter=matter,
+                details={"state": lifecycle.state},
+            )
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/close",
+                    error="Confirm that you understand this deletion cannot be undone.",
+                ),
+                status_code=303,
+            )
+        try:
+            matter, lifecycle = bench.begin_matter_purge(
+                slug, context.principal_id, confirmed_name
+            )
+        except RuntimeError:
+            audit(
+                request,
+                "matter.purge",
+                "failure",
+                context=context,
+                matter=matter,
+                details={"state": lifecycle.state},
+            )
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/close",
+                    error="Matter storage could not be checked safely. Ask an administrator to review it.",
+                ),
+                status_code=303,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except WorkspaceProblem as exc:
+            audit(
+                request,
+                "matter.purge",
+                "failure",
+                context=context,
+                matter=matter,
+                details={"state": lifecycle.state},
+            )
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/close", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "matter.purge_request",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="matter_purge",
+            object_id=lifecycle.purge_id,
+            details={"state": "purging"},
+        )
+        try:
+            completed = bench.execute_matter_purge(matter, lifecycle)
+        except WorkspaceProblem as exc:
+            failed = bench.workspace.matter_lifecycle(matter.matter_id)
+            audit(
+                request,
+                "matter.purge",
+                "failure",
+                context=context,
+                matter=matter,
+                object_type="matter_purge",
+                object_id=lifecycle.purge_id,
+                details={"state": failed.state},
+            )
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/close", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "matter.purge",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="matter_purge",
+            object_id=completed.purge_id,
+            details={"state": "deleted", "count": completed.message_count},
+        )
+        return RedirectResponse(
+            _query_url(
+                "/matters/new",
+                notice="Matter deleted. Its processing files, conversations, and search index were removed.",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/members",
+        dependencies=[Depends(require_csrf)],
+    )
+    def add_matter_member(
+        request: Request,
+        slug: str,
+        principal_id: str = Form(..., max_length=100),
+    ):
+        matter = authorized_matter(
+            request,
+            slug,
+            allow_administrator_write=True,
+        )
+        context = auth_context(request)
+        allowed = {
+            principal.principal_id for principal in identity.membership_candidates()
+        }
+        if principal_id not in allowed:
+            audit(
+                request,
+                "membership.add",
+                "denied",
+                context=context,
+                matter=matter,
+            )
+            raise HTTPException(403, "That identity cannot be added.")
+        try:
+            membership = bench.workspace.add_member(
+                matter.matter_id,
+                principal_id,
+                context.principal_id,
+                administrator_override=context.is_administrator,
+            )
+        except WorkspaceProblem as exc:
+            audit(
+                request,
+                "membership.add",
+                "denied",
+                context=context,
+                matter=matter,
+                object_type="principal",
+                object_id=principal_id,
+            )
+            raise HTTPException(403, str(exc)) from exc
+        audit(
+            request,
+            "membership.add",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="principal",
+            object_id=membership.principal_id,
+            details={"role": membership.role},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/setup",
+                notice=f"{membership.display_name} added to the case team",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/members/{principal_id}/remove",
+        dependencies=[Depends(require_csrf)],
+    )
+    def remove_matter_member(request: Request, slug: str, principal_id: str):
+        matter = authorized_matter(
+            request,
+            slug,
+            allow_administrator_write=True,
+        )
+        context = auth_context(request)
+        try:
+            target = bench.workspace.membership(matter.matter_id, principal_id)
+            bench.workspace.revoke_member(
+                matter.matter_id,
+                principal_id,
+                context.principal_id,
+                administrator_override=context.is_administrator,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Case team member not found") from exc
+        except WorkspaceProblem as exc:
+            audit(
+                request,
+                "membership.revoke",
+                "denied",
+                context=context,
+                matter=matter,
+                object_type="principal",
+                object_id=principal_id,
+            )
+            raise HTTPException(403, str(exc)) from exc
+        audit(
+            request,
+            "membership.revoke",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="principal",
+            object_id=principal_id,
+            details={"role": target.role},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/setup",
+                notice=f"{target.display_name} removed from the case team",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/registered-sources/preflight",
+        dependencies=[Depends(require_csrf)],
+    )
+    def preflight_registered_sources(
+        request: Request,
+        slug: str,
+        source_location_id: str = Form(..., max_length=64),
+        relative_folder: str = Form("", max_length=2_048),
+    ):
+        try:
+            matter = authorized_matter(request, slug)
+            preflight = bench.source_registry.preflight(
+                source_location_id, relative_folder
+            )
+            if not preflight.supported:
+                raise SourceLocationProblem(
+                    "No supported PDF, DOCX, or TXT sources were found in that folder."
+                )
+            plan = bench.workspace.create_ingest_plan(matter.matter_id, preflight)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except SourceLocationProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/setup", error=str(exc)), status_code=303
+            )
+        audit(
+            request,
+            "source.preflight",
+            "success",
+            matter=matter,
+            object_type="ingest_plan",
+            object_id=plan.plan_id,
+            details={"count": plan.supported_count, "state": plan.state},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/setup", plan=plan.plan_id), status_code=303
+        )
+
+    @app.post(
+        "/matters/{slug}/registered-sources/{plan_id}/confirm",
+        dependencies=[Depends(require_csrf)],
+    )
+    def confirm_registered_sources(request: Request, slug: str, plan_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            plan = bench.workspace.get_ingest_plan(matter.matter_id, plan_id)
+            items = bench.workspace.ingest_plan_items(matter.matter_id, plan_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or import plan not found") from exc
+        if plan.state != "review":
+            return PlainTextResponse("That import plan has already been resolved.", status_code=409)
+        if bench.ingestion is None:
+            return PlainTextResponse(
+                "Background ingestion is not enabled for this workbench.", status_code=503
+            )
+        store = bench.source_store(matter)
+        created: list[str] = []
+        mapping: dict[int, str] = {}
+        try:
+            documents = store.register_linked_sources(
+                source_location_id=plan.source_location_id,
+                sources=items,
+            )
+            created.extend(document.document_id for document in documents)
+            mapping.update(
+                {item.ordinal: document.document_id for item, document in zip(items, documents)}
+            )
+            bench.workspace.confirm_ingest_plan(
+                matter.matter_id,
+                plan_id,
+                mapping,
+                context.principal_id,
+            )
+        except UploadProblem as exc:
+            for document_id in created:
+                store.remove(document_id)
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/setup", error=str(exc)), status_code=303
+            )
+        except Exception:
+            for document_id in created:
+                store.remove(document_id)
+            return PlainTextResponse(
+                "The import plan could not be queued. No new sources were added.",
+                status_code=503,
+            )
+        bench.ingestion.notify()
+        audit(
+            request,
+            "source.import_confirm",
+            "success",
+            matter=matter,
+            object_type="ingest_plan",
+            object_id=plan_id,
+            details={"count": len(created), "state": "queued"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/setup",
+                notice=f"{len(created)} registered source(s) queued",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/registered-sources/{plan_id}/cancel",
+        dependencies=[Depends(require_csrf)],
+    )
+    def cancel_registered_sources(request: Request, slug: str, plan_id: str):
+        try:
+            matter = authorized_matter(request, slug)
+            bench.workspace.cancel_ingest_plan(matter.matter_id, plan_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or import plan not found") from exc
+        audit(
+            request,
+            "source.import_cancel",
+            "success",
+            matter=matter,
+            object_type="ingest_plan",
+            object_id=plan_id,
+            details={"state": "cancelled"},
+        )
+        return RedirectResponse(f"/matters/{slug}/setup", status_code=303)
+
+    def workflow_eta_projection(
+        *, state: str, started_at: str | None, completed: int, total: int, unit: str
+    ) -> dict[str, object]:
+        if state == "queued":
+            return {
+                "eta_seconds": None,
+                "eta_label": "Waiting for an available workflow worker.",
+                "throughput_per_minute": None,
+            }
+        if state != "running":
+            return {
+                "eta_seconds": 0 if state == "succeeded" else None,
+                "eta_label": "Complete." if state == "succeeded" else "",
+                "throughput_per_minute": None,
+            }
+        if not started_at or completed <= 0 or total <= completed:
+            return {
+                "eta_seconds": None,
+                "eta_label": f"Estimating after the first {unit} completes…",
+                "throughput_per_minute": None,
+            }
+        try:
+            started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        except ValueError:
+            return {
+                "eta_seconds": None,
+                "eta_label": "Calculating remaining time…",
+                "throughput_per_minute": None,
+            }
+        elapsed = max((datetime.now(timezone.utc) - started).total_seconds(), 1.0)
+        seconds = min(round((elapsed / completed) * (total - completed)), 2_592_000)
+        rate = round((completed / elapsed) * 60, 2)
+        if seconds < 60:
+            duration = "less than a minute"
+        elif seconds < 3_600:
+            minutes = max(round(seconds / 60), 1)
+            duration = f"about {minutes:,} minute{'s' if minutes != 1 else ''}"
+        elif seconds < 86_400:
+            hours = max(round(seconds / 3_600), 1)
+            duration = f"about {hours:,} hour{'s' if hours != 1 else ''}"
+        else:
+            days = max(round(seconds / 86_400), 1)
+            duration = f"about {days:,} day{'s' if days != 1 else ''}"
+        return {
+            "eta_seconds": seconds,
+            "eta_label": f"Estimated remaining: {duration} · {rate:g} {unit}s/min",
+            "throughput_per_minute": rate,
+        }
+
+    def research_status_projection(
+        matter: MatterRecord, job: ResearchJobRecord
+    ) -> dict[str, object]:
+        progress = (
+            round((job.completed_steps / job.total_steps) * 100)
+            if job.total_steps else 0
+        )
+        eta = workflow_eta_projection(
+            state=job.state,
+            started_at=job.started_at,
+            completed=job.completed_steps,
+            total=job.total_steps,
+            unit="step",
+        )
+        return {
+            "job_id": job.job_id,
+            "state": job.state,
+            "stage": job.stage,
+            "message": job.message,
+            "completed_steps": job.completed_steps,
+            "total_steps": job.total_steps,
+            "progress_percent": progress,
+            "candidate_count": job.candidate_count,
+            "evidence_count": job.evidence_count,
+            **eta,
+            "terminal": job.state in {"succeeded", "failed", "cancelled"},
+            "result_url": _query_url(
+                f"/matters/{matter.slug}/research", job=job.job_id
+            ),
+        }
+
+    @app.get("/matters/{slug}/research", response_class=HTMLResponse)
+    def matter_research(
+        request: Request,
+        slug: str,
+        job: str = Query("", max_length=80),
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            readiness = matter_readiness_projection(matter)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            read_actor = matter.owner_id if administrator_override else context.principal_id
+            jobs = bench.workspace.research_jobs(matter.matter_id, read_actor)
+            active = (
+                bench.workspace.research_job(matter.matter_id, read_actor, job)
+                if job else (jobs[0] if jobs else None)
+            )
+            source_sets = bench.workspace.source_sets(matter.matter_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or research run not found") from exc
+        if not administrator_override:
+            bench.workspace.record_matter_activity(
+                matter.matter_id,
+                context.principal_id,
+                "analysis",
+                active.job_id if active else matter.matter_id,
+            )
+        audit(
+            request, "research.open", "success", context=context, matter=matter,
+            object_type="research_job", object_id=active.job_id if active else None,
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_research.html",
+            context={
+                **base_context(request, matter, readiness=readiness),
+                "matter": matter,
+                "readiness": readiness,
+                "review_mode": "research",
+                "research_jobs": jobs,
+                "active_research": active,
+                "source_sets": source_sets,
+                "research_request_key": f"research-request-{uuid.uuid4().hex}",
+                "notice": notice,
+                "error": error,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/matters/{slug}/research",
+        dependencies=[Depends(require_csrf)],
+    )
+    def create_research(
+        request: Request,
+        slug: str,
+        title: str = Form(..., max_length=160),
+        question: str = Form(..., max_length=2_000),
+        request_key: str = Form(..., max_length=80),
+        source_set: str = Form("", max_length=80),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            readiness = bench.workspace.matter_readiness(matter.matter_id)
+            if not readiness.can_query:
+                raise WorkspaceProblem(
+                    "Deep Research needs at least one searchable source and no active preparation."
+                )
+            if not bench.generator.available:
+                raise WorkspaceProblem(
+                    "The local answer model is unavailable. Search and source review still work."
+                )
+            research, created = bench.workspace.queue_research_job(
+                matter.matter_id,
+                context.principal_id,
+                question,
+                title,
+                request_key,
+                source_set or None,
+            )
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/research", error=str(exc)), status_code=303
+            )
+        if bench.research is not None:
+            bench.research.notify()
+        audit(
+            request, "research.create", "success", context=context, matter=matter,
+            object_type="research_job", object_id=research.job_id,
+            details={"created": created, "state": research.state},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/research", job=research.job_id), status_code=303
+        )
+
+    @app.get("/matters/{slug}/research/{job_id}/status")
+    def research_status(request: Request, slug: str, job_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            actor = matter.owner_id if administrator_override else context.principal_id
+            job = bench.workspace.research_job(matter.matter_id, actor, job_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Research run not found") from exc
+        return JSONResponse(
+            research_status_projection(matter, job),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/matters/{slug}/research/{job_id}/cancel",
+        dependencies=[Depends(require_csrf)],
+    )
+    def cancel_research(request: Request, slug: str, job_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            job = bench.workspace.cancel_research_job(
+                matter.matter_id, context.principal_id, job_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Research run not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/research", job=job_id, error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request, "research.cancel", "success", context=context, matter=matter,
+            object_type="research_job", object_id=job.job_id,
+            details={"state": job.state},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/research", job=job.job_id), status_code=303
+        )
+
+    @app.post(
+        "/matters/{slug}/research/{job_id}/retry",
+        dependencies=[Depends(require_csrf)],
+    )
+    def retry_research(request: Request, slug: str, job_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            if not bench.workspace.matter_readiness(matter.matter_id).can_query:
+                raise WorkspaceProblem("No source is searchable for this research run yet.")
+            job = bench.workspace.retry_research_job(
+                matter.matter_id, context.principal_id, job_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Research run not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/research", job=job_id, error=str(exc)),
+                status_code=303,
+            )
+        if bench.research is not None:
+            bench.research.notify()
+        audit(
+            request, "research.retry", "success", context=context, matter=matter,
+            object_type="research_job", object_id=job.job_id,
+            details={"state": job.state},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/research", job=job.job_id), status_code=303
+        )
+
+    @app.get("/matters/{slug}/research/{job_id}/export")
+    def export_research_run(
+        request: Request,
+        slug: str,
+        job_id: str,
+        format_name: str = Query("docx", alias="format", pattern="^(docx|markdown|json)$"),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            actor = matter.owner_id if administrator_override else context.principal_id
+            job = bench.workspace.research_job(matter.matter_id, actor, job_id)
+            if job.state != "succeeded":
+                raise WorkspaceProblem("This research run is not ready to export.")
+            artifact = export_research(matter, job, format_name)
+        except KeyError as exc:
+            raise HTTPException(404, "Research run not found") from exc
+        except (WorkspaceProblem, ExportProblem) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        audit(
+            request, "research.export", "success", context=context, matter=matter,
+            object_type="research_job", object_id=job.job_id,
+            details={"format": format_name},
+        )
+        return download_response(artifact)
+
+    @app.post(
+        "/matters/{slug}/research/{job_id}/report",
+        dependencies=[Depends(require_csrf)],
+    )
+    def research_to_report(request: Request, slug: str, job_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            job = bench.workspace.research_job(
+                matter.matter_id, context.principal_id, job_id
+            )
+            if job.state != "succeeded":
+                raise WorkspaceProblem("Research must finish before it can be saved to a report.")
+            report = bench.workspace.create_report(
+                matter.matter_id,
+                context.principal_id,
+                f"Deep Research — {job.title}",
+                f"Research question: {job.question}",
+            )
+            citations = []
+            for value in job.result.get("evidence", [])[:100]:
+                if not isinstance(value, Mapping):
+                    continue
+                citations.append(
+                    {
+                        "kind": "transcript" if value.get("evidence_kind") == "transcript" else "source",
+                        "document_id": value.get("document_id", ""),
+                        "source_version_id": value.get("source_version_id", ""),
+                        "source_name": value.get("source_name", ""),
+                        "location": value.get("location", ""),
+                        "support_token": value.get("support_token", ""),
+                        "excerpt": value.get("excerpt", ""),
+                    }
+                )
+            bench.workspace.add_report_section(
+                matter.matter_id,
+                report.report_id,
+                context.principal_id,
+                heading="Verified research synthesis",
+                body=str(job.result.get("summary", "")),
+                origin="finding",
+                origin_id=job.job_id,
+                citations=citations,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Research run not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/research", job=job_id, error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request, "research.report", "success", context=context, matter=matter,
+            object_type="report", object_id=report.report_id,
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/reports", report=report.report_id,
+                notice="Research brief saved to a new report",
+            ),
+            status_code=303,
+        )
+
+    def review_status_projection(
+        matter: MatterRecord, run: ReviewRunRecord
+    ) -> dict[str, object]:
+        progress = (
+            round((run.reviewed_count / run.snapshot_count) * 100)
+            if run.snapshot_count else 0
+        )
+        eta = workflow_eta_projection(
+            state=run.state,
+            started_at=run.started_at,
+            completed=run.reviewed_count,
+            total=run.snapshot_count,
+            unit="source",
+        )
+        return {
+            "run_id": run.run_id,
+            "state": run.state,
+            "stage": run.stage,
+            "message": run.message,
+            "reviewed_count": run.reviewed_count,
+            "snapshot_count": run.snapshot_count,
+            "progress_percent": progress,
+            "included_count": run.included_count,
+            "excluded_count": run.excluded_count,
+            "attention_count": run.attention_count,
+            **eta,
+            "terminal": run.state in {"succeeded", "failed", "cancelled"},
+            "result_url": _query_url(
+                f"/matters/{matter.slug}/full-review",
+                criterion=run.criterion_id,
+                run=run.run_id,
+            ),
+        }
+
+    @app.get("/matters/{slug}/full-review", response_class=HTMLResponse)
+    def matter_full_review(
+        request: Request,
+        slug: str,
+        criterion: str = Query("", max_length=80),
+        run: str = Query("", max_length=80),
+        decision: str = Query("", max_length=24),
+        validation: bool = Query(False),
+        page: int = Query(1, ge=1, le=100_000),
+        source: str = Query("", max_length=100),
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            readiness = matter_readiness_projection(matter)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            read_actor = matter.owner_id if administrator_override else context.principal_id
+            criteria = bench.workspace.review_criteria(matter.matter_id, read_actor)
+            active_criterion = (
+                bench.workspace.review_criterion(matter.matter_id, criterion)
+                if criterion else (criteria[0] if criteria else None)
+            )
+            active_version = (
+                bench.workspace.review_criterion_version(
+                    matter.matter_id, active_criterion.current_version_id
+                ) if active_criterion else None
+            )
+            runs = bench.workspace.review_runs(matter.matter_id, read_actor)
+            if active_criterion:
+                runs = tuple(item for item in runs if item.criterion_id == active_criterion.criterion_id)
+            active_run = (
+                bench.workspace.review_run(matter.matter_id, read_actor, run)
+                if run else (runs[0] if runs else None)
+            )
+            if active_run and active_criterion and active_run.criterion_id != active_criterion.criterion_id:
+                raise KeyError(run)
+            decision_page = (
+                bench.workspace.review_decisions(
+                    matter.matter_id,
+                    read_actor,
+                    active_run.run_id,
+                    page=page,
+                    page_size=50,
+                    decision_filter=decision,
+                    validation_only=validation,
+                ) if active_run else None
+            )
+            selected_decision = (
+                bench.workspace.review_decision(
+                    matter.matter_id, read_actor, active_run.run_id, source
+                ) if active_run and source else None
+            )
+            metrics = (
+                bench.workspace.review_validation_metrics(
+                    matter.matter_id, read_actor, active_run.run_id
+                ) if active_run else {}
+            )
+            source_sets = bench.workspace.source_sets(matter.matter_id)
+        except (KeyError, WorkspaceProblem) as exc:
+            raise HTTPException(404, "Matter, criterion, review run, or source decision not found") from exc
+        if not administrator_override:
+            bench.workspace.record_matter_activity(
+                matter.matter_id,
+                context.principal_id,
+                "analysis",
+                active_run.run_id if active_run else (
+                    active_criterion.criterion_id if active_criterion else matter.matter_id
+                ),
+            )
+        audit(
+            request, "full_review.open", "success", context=context, matter=matter,
+            object_type="review_run", object_id=active_run.run_id if active_run else None,
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_full_review.html",
+            context={
+                **base_context(request, matter, readiness=readiness),
+                "matter": matter,
+                "readiness": readiness,
+                "review_mode": "full",
+                "criteria": criteria,
+                "active_criterion": active_criterion,
+                "active_version": active_version,
+                "review_runs": runs,
+                "active_run": active_run,
+                "decision_page": decision_page,
+                "selected_decision": selected_decision,
+                "validation": metrics,
+                "source_sets": source_sets,
+                "notice": notice,
+                "error": error,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/matters/{slug}/full-review/criteria",
+        dependencies=[Depends(require_csrf)],
+    )
+    def create_full_review_criterion(
+        request: Request,
+        slug: str,
+        title: str = Form(..., max_length=160),
+        instructions: str = Form(..., max_length=8_000),
+        include_guidance: str = Form("", max_length=4_000),
+        exclude_guidance: str = Form("", max_length=4_000),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            criterion, version = bench.workspace.create_review_criterion(
+                matter.matter_id,
+                context.principal_id,
+                title=title,
+                instructions=instructions,
+                include_guidance=include_guidance,
+                exclude_guidance=exclude_guidance,
+            )
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/full-review", error=str(exc)), status_code=303
+            )
+        audit(
+            request, "full_review.criterion_create", "success", context=context,
+            matter=matter, object_type="review_criterion", object_id=criterion.criterion_id,
+            details={"count": version.version_number},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/full-review", criterion=criterion.criterion_id,
+                notice="Criterion v1 saved",
+            ), status_code=303
+        )
+
+    @app.post(
+        "/matters/{slug}/full-review/criteria/{criterion_id}/versions",
+        dependencies=[Depends(require_csrf)],
+    )
+    def version_full_review_criterion(
+        request: Request,
+        slug: str,
+        criterion_id: str,
+        title: str = Form(..., max_length=160),
+        instructions: str = Form(..., max_length=8_000),
+        include_guidance: str = Form("", max_length=4_000),
+        exclude_guidance: str = Form("", max_length=4_000),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            version = bench.workspace.add_review_criterion_version(
+                matter.matter_id,
+                context.principal_id,
+                criterion_id,
+                title=title,
+                instructions=instructions,
+                include_guidance=include_guidance,
+                exclude_guidance=exclude_guidance,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Criterion not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/full-review", criterion=criterion_id, error=str(exc)
+                ), status_code=303
+            )
+        audit(
+            request, "full_review.criterion_version", "success", context=context,
+            matter=matter, object_type="review_criterion", object_id=criterion_id,
+            details={"count": version.version_number},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/full-review", criterion=criterion_id,
+                notice=f"Criterion v{version.version_number} saved",
+            ), status_code=303
+        )
+
+    @app.post(
+        "/matters/{slug}/full-review/runs",
+        dependencies=[Depends(require_csrf)],
+    )
+    def create_full_review_run(
+        request: Request,
+        slug: str,
+        criterion_version_id: str = Form(..., max_length=80),
+        run_kind: str = Form(..., max_length=16),
+        source_set: str = Form("", max_length=80),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            readiness = bench.workspace.matter_readiness(matter.matter_id)
+            if not readiness.can_query:
+                raise WorkspaceProblem(
+                    "Full Review needs at least one searchable source and no active preparation."
+                )
+            if not bench.generator.available:
+                raise WorkspaceProblem("The local answer model is unavailable.")
+            run = bench.workspace.queue_review_run(
+                matter.matter_id,
+                context.principal_id,
+                criterion_version_id,
+                run_kind=run_kind,
+                source_set_id=source_set or None,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Criterion version not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/full-review", error=str(exc)), status_code=303
+            )
+        if bench.full_review is not None:
+            bench.full_review.notify()
+        audit(
+            request, "full_review.create", "success", context=context, matter=matter,
+            object_type="review_run", object_id=run.run_id,
+            details={"state": run.state, "count": run.snapshot_count},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/full-review",
+                criterion=run.criterion_id,
+                run=run.run_id,
+            ), status_code=303
+        )
+
+    @app.get("/matters/{slug}/full-review/{run_id}/status")
+    def full_review_status(request: Request, slug: str, run_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            actor = matter.owner_id if administrator_override else context.principal_id
+            run = bench.workspace.review_run(matter.matter_id, actor, run_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Review run not found") from exc
+        return JSONResponse(
+            review_status_projection(matter, run), headers={"Cache-Control": "no-store"}
+        )
+
+    @app.post(
+        "/matters/{slug}/full-review/{run_id}/cancel",
+        dependencies=[Depends(require_csrf)],
+    )
+    def cancel_full_review(request: Request, slug: str, run_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            run = bench.workspace.cancel_review_run(
+                matter.matter_id, context.principal_id, run_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Review run not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/full-review", run=run_id, error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request, "full_review.cancel", "success", context=context, matter=matter,
+            object_type="review_run", object_id=run.run_id,
+            details={"state": run.state},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/full-review", criterion=run.criterion_id, run=run.run_id
+            ), status_code=303
+        )
+
+    @app.post(
+        "/matters/{slug}/full-review/{run_id}/retry",
+        dependencies=[Depends(require_csrf)],
+    )
+    def retry_full_review(request: Request, slug: str, run_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            run = bench.workspace.retry_review_run(
+                matter.matter_id, context.principal_id, run_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Review run not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/full-review", run=run_id, error=str(exc)),
+                status_code=303,
+            )
+        if bench.full_review is not None:
+            bench.full_review.notify()
+        audit(
+            request, "full_review.retry", "success", context=context, matter=matter,
+            object_type="review_run", object_id=run.run_id,
+            details={"state": run.state},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/full-review", criterion=run.criterion_id, run=run.run_id
+            ), status_code=303
+        )
+
+    @app.post(
+        "/matters/{slug}/full-review/{run_id}/decisions/{document_id}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def adjudicate_full_review(
+        request: Request,
+        slug: str,
+        run_id: str,
+        document_id: str,
+        human_decision: str = Form(..., max_length=16),
+        note: str = Form("", max_length=2_000),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            run = bench.workspace.review_run(
+                matter.matter_id, context.principal_id, run_id
+            )
+            decision = bench.workspace.adjudicate_review_decision(
+                matter.matter_id,
+                context.principal_id,
+                run_id,
+                document_id,
+                human_decision=human_decision,
+                note=note,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Review decision not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/full-review",
+                    run=run_id,
+                    source=document_id,
+                    error=str(exc),
+                ), status_code=303
+            )
+        audit(
+            request, "full_review.adjudicate", "success", context=context, matter=matter,
+            object_type="review_decision", object_id=decision.document_id,
+            details={"state": "reviewed"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/full-review",
+                criterion=run.criterion_id,
+                run=run.run_id,
+                source=decision.document_id,
+                notice="Human validation saved",
+            ), status_code=303
+        )
+
+    @app.get("/matters/{slug}/full-review/{run_id}/export")
+    def export_full_review_run(
+        request: Request,
+        slug: str,
+        run_id: str,
+        format_name: str = Query(
+            "csv", alias="format", pattern="^(csv|docx|markdown|json)$"
+        ),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            actor = matter.owner_id if administrator_override else context.principal_id
+            run = bench.workspace.review_run(matter.matter_id, actor, run_id)
+            criterion = bench.workspace.review_criterion(matter.matter_id, run.criterion_id)
+            version = bench.workspace.review_criterion_version(
+                matter.matter_id, run.criterion_version_id
+            )
+            decisions = bench.workspace.review_decisions_for_export(
+                matter.matter_id, actor, run.run_id
+            )
+            metrics = bench.workspace.review_validation_metrics(
+                matter.matter_id, actor, run.run_id
+            )
+            artifact = export_full_review(
+                matter, criterion, version, run, decisions, metrics, format_name
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Review run not found") from exc
+        except ExportProblem as exc:
+            raise HTTPException(409, str(exc)) from exc
+        audit(
+            request, "full_review.export", "success", context=context, matter=matter,
+            object_type="review_run", object_id=run.run_id,
+            details={"format": format_name, "count": len(decisions)},
+        )
+        return download_response(artifact)
+
+    @app.post(
+        "/matters/{slug}/full-review/{run_id}/report",
+        dependencies=[Depends(require_csrf)],
+    )
+    def full_review_to_report(request: Request, slug: str, run_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            run = bench.workspace.review_run(
+                matter.matter_id, context.principal_id, run_id
+            )
+            criterion = bench.workspace.review_criterion(matter.matter_id, run.criterion_id)
+            version = bench.workspace.review_criterion_version(
+                matter.matter_id, run.criterion_version_id
+            )
+            decisions = bench.workspace.review_decisions_for_export(
+                matter.matter_id, context.principal_id, run.run_id
+            )
+            metrics = bench.workspace.review_validation_metrics(
+                matter.matter_id, context.principal_id, run.run_id
+            )
+            report = bench.workspace.create_report(
+                matter.matter_id,
+                context.principal_id,
+                f"Full Review — {criterion.title}",
+                f"Criterion version {version.version_number}; frozen population {run.snapshot_count:,} sources.",
+            )
+            citations: list[dict[str, object]] = []
+            for decision_record in decisions:
+                if decision_record.machine_decision != "included":
+                    continue
+                for value in decision_record.citations:
+                    if len(citations) >= 100:
+                        break
+                    citations.append(
+                        {
+                            "kind": "transcript" if value.get("evidence_kind") == "transcript" else "source",
+                            "document_id": value.get("document_id", ""),
+                            "source_version_id": value.get("source_version_id", ""),
+                            "source_name": value.get("source_name", ""),
+                            "location": value.get("location", ""),
+                            "support_token": value.get("support_token", ""),
+                            "excerpt": value.get("excerpt", ""),
+                        }
+                    )
+                if len(citations) >= 100:
+                    break
+            body = (
+                f"Criterion v{version.version_number}: {version.instructions}\n\n"
+                f"Frozen population: {run.snapshot_count:,}\n"
+                f"Included: {run.included_count:,}\n"
+                f"Not identified: {run.excluded_count:,}\n"
+                f"Needs attention: {run.attention_count:,}\n"
+                f"Validation reviewed: {metrics.get('reviewed_total', 0)} of {metrics.get('sample_total', 0)} sampled decisions."
+            )
+            bench.workspace.add_report_section(
+                matter.matter_id,
+                report.report_id,
+                context.principal_id,
+                heading="Review scope and result",
+                body=body,
+                origin="finding",
+                origin_id=run.run_id,
+                citations=citations,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Review run not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/full-review", run=run_id, error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request, "full_review.report", "success", context=context, matter=matter,
+            object_type="report", object_id=report.report_id,
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/reports", report=report.report_id,
+                notice="Full Review summary saved to a new report",
+            ), status_code=303
+        )
+
+    @app.get("/matters/{slug}", response_class=HTMLResponse)
+    def workspace(
+        request: Request,
+        slug: str,
+        q: str = Query("", max_length=MAX_SEARCH_CHARS),
+        mode: str = Query("ask", pattern="^(ask|search|sources)$"),
+        support: str = Query("", max_length=64),
+        play: bool = Query(False),
+        conversation: str = Query("", max_length=80),
+        source_set: str = Query("", max_length=80),
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            readiness = matter_readiness_projection(matter)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            active_conversation = bench.workspace.get_conversation(
+                matter.matter_id, conversation or None
+            )
+            conversation_summaries = bench.workspace.conversation_summaries(
+                matter.matter_id
+            )
+            active_conversation_summary = next(
+                item
+                for item in conversation_summaries
+                if item.conversation_id == active_conversation.conversation_id
+            )
+            active_answer = (
+                None
+                if administrator_override
+                else bench.workspace.latest_answer_job(
+                    matter.matter_id,
+                    active_conversation.conversation_id,
+                    context.principal_id,
+                )
+            )
+            source_sets = bench.workspace.source_sets(matter.matter_id)
+            reports = bench.workspace.reports(
+                matter.matter_id,
+                matter.owner_id if administrator_override else context.principal_id,
+            )
+            selected_source_set_id = ""
+            if source_set:
+                selected_source_set_id = bench.workspace.source_set(
+                    matter.matter_id, source_set
+                ).source_set_id
+        except KeyError as exc:
+            raise HTTPException(404, "Matter, conversation, or source set not found") from exc
+        if not administrator_override:
+            bench.workspace.record_matter_activity(
+                matter.matter_id,
+                context.principal_id,
+                "conversation",
+                active_conversation.conversation_id,
+            )
+        action_error = error
+        search_results: tuple[WorkbenchCitation, ...] = ()
+        if q.strip():
+            if not readiness["can_query"]:
+                mode = "search"
+                action_error = (
+                    f"{readiness['headline']}. {readiness['guidance']}"
+                )
+                audit(
+                    request,
+                    "search.execute",
+                    "failure",
+                    context=context,
+                    matter=matter,
+                    details={"state": str(readiness["state"])},
+                )
+            else:
+                try:
+                    search_results = bench.search(matter, q)
+                    mode = "search"
+                    audit(
+                        request,
+                        "search.execute",
+                        "success",
+                        context=context,
+                        matter=matter,
+                        details={"result_count": len(search_results)},
+                    )
+                except (RetrievalUnavailable, WorkspaceProblem):
+                    action_error = "Search could not run. Your sources are still saved; try again in a moment."
+                    audit(
+                        request,
+                        "search.execute",
+                        "failure",
+                        context=context,
+                        matter=matter,
+                    )
+        support_view = None
+        if support:
+            try:
+                support_view = bench.support(
+                    matter,
+                    support,
+                    conversation_id=active_conversation.conversation_id,
+                    autoplay=play,
+                )
+                audit(
+                    request,
+                    "support.open",
+                    "success",
+                    context=context,
+                    matter=matter,
+                )
+            except KeyError as exc:
+                raise HTTPException(404, "Source support is unavailable") from exc
+        audit(
+            request,
+            "matter.open",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="matter",
+            object_id=matter.matter_id,
+        )
+        source_overview = bench.source_library(matter, view="overview")
+        media_activity = media_activity_projection(matter)
+        notebook_context_page = bench.workspace.notebook_page(
+            matter.matter_id,
+            matter.owner_id if administrator_override else context.principal_id,
+            status="all",
+            page_size=50,
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_workspace.html",
+            context={
+                **base_context(request, matter, readiness=readiness),
+                "matter": matter,
+                "review_mode": "quick",
+                "sources": source_overview.items[:4],
+                "source_total": source_overview.stats["total"],
+                "searchable_source_count": int(readiness["searchable_count"]),
+                "readiness": readiness,
+                "media_activity": media_activity,
+                "source_sets": source_sets,
+                "reports": reports,
+                "selected_source_set_id": selected_source_set_id,
+                "conversations": conversation_summaries,
+                "pinned_conversations": tuple(
+                    item
+                    for item in conversation_summaries
+                    if item.state == "active" and item.is_pinned
+                ),
+                "recent_conversations": tuple(
+                    item
+                    for item in conversation_summaries
+                    if item.state == "active" and not item.is_pinned
+                ),
+                "archived_conversations": tuple(
+                    item for item in conversation_summaries if item.state == "archived"
+                ),
+                "conversation": active_conversation,
+                "conversation_summary": active_conversation_summary,
+                "messages": bench.workspace.messages(
+                    matter.matter_id, active_conversation.conversation_id
+                ),
+                "active_answer": (
+                    answer_projection(request, matter, active_answer)
+                    if active_answer is not None
+                    else None
+                ),
+                "answer_request_key": f"answer-request-{uuid.uuid4().hex}",
+                "query": q,
+                "mode": mode,
+                "search_results": search_results,
+                "support": support_view,
+                "notebook_context_items": tuple(
+                    item
+                    for item in notebook_context_page.items
+                    if item.status != "dismissed"
+                ),
+                "confirmed_notebook_count": notebook_context_page.counts["confirmed"],
+                "notice": notice,
+                "error": action_error,
+            },
+        )
+
+    @app.get("/matters/{slug}/media-activity")
+    def matter_media_activity(request: Request, slug: str):
+        try:
+            matter = authorized_matter(request, slug)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        return JSONResponse(
+            media_activity_projection(matter),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/matters/{slug}/upload-sessions",
+        dependencies=[Depends(require_csrf_header)],
+    )
+    async def create_upload_session(request: Request, slug: str):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        if bench.ingestion is None:
+            return JSONResponse(
+                {"message": "Background source processing is temporarily unavailable."},
+                status_code=503,
+            )
+        content_length = request.headers.get("content-length", "")
+        if content_length:
+            try:
+                if int(content_length) > 6 * 1024 * 1024:
+                    raise ValueError
+            except ValueError:
+                return JSONResponse(
+                    {"message": "The upload file list is too large."}, status_code=413
+                )
+        raw = await request.body()
+        if len(raw) > 6 * 1024 * 1024:
+            return JSONResponse(
+                {"message": "The upload file list is too large."}, status_code=413
+            )
+        try:
+            payload = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return JSONResponse(
+                {"message": "The selected-file list could not be read."}, status_code=400
+            )
+        if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+            return JSONResponse(
+                {"message": "Choose one or more supported files."}, status_code=400
+            )
+        selected = payload["files"]
+        if not 1 <= len(selected) <= MAX_UPLOAD_SESSION_ITEMS:
+            return JSONResponse(
+                {
+                    "message": (
+                        f"Choose between 1 and {MAX_UPLOAD_SESSION_ITEMS:,} files "
+                        "for one upload collection."
+                    )
+                },
+                status_code=413 if len(selected) > MAX_UPLOAD_SESSION_ITEMS else 400,
+            )
+        prepared: list[dict[str, object]] = []
+        total_bytes = 0
+        try:
+            for item in selected:
+                if not isinstance(item, dict):
+                    raise UploadProblem("The selected-file list is invalid.")
+                relative_path, filename, suffix, _ = PilotStore.validate_relative_upload_path(
+                    str(item.get("relative_path") or item.get("name") or "")
+                )
+                raw_size = item.get("size")
+                if isinstance(raw_size, bool) or not isinstance(raw_size, int):
+                    raise UploadProblem("Every selected source must have a valid size.")
+                if raw_size <= 0:
+                    raise UploadProblem("Empty files cannot be uploaded.")
+                maximum = maximum_file_bytes(
+                    suffix,
+                    document_limit=bench.storage_policy.document_file_bytes,
+                    media_limit=bench.storage_policy.media_file_bytes,
+                )
+                if raw_size > maximum:
+                    limit_label = format_bytes(maximum)
+                    raise UploadProblem(
+                        f"Each {('recording' if suffix in MEDIA_TYPES else 'file')} must be "
+                        f"{limit_label} or smaller.",
+                        413,
+                    )
+                total_bytes += raw_size
+                if total_bytes > bench.storage_policy.upload_session_bytes:
+                    raise UploadProblem(
+                        "One upload collection must total "
+                        f"{format_bytes(bench.storage_policy.upload_session_bytes)} or less.",
+                        413,
+                    )
+                media_type = canonical_media_type(suffix)
+                prepared.append(
+                    {
+                        "display_name": filename,
+                        "relative_path": relative_path,
+                        "media_type": media_type,
+                        "expected_size": raw_size,
+                    }
+                )
+        except UploadProblem as exc:
+            return JSONResponse({"message": str(exc)}, status_code=exc.status_code)
+
+        resume_session_id = str(payload.get("resume_session_id") or "")
+        if resume_session_id:
+            try:
+                session, existing_items = reconcile_upload_session(
+                    matter, context.principal_id, resume_session_id
+                )
+                existing_manifest = tuple(
+                    (
+                        item.display_name,
+                        item.relative_path,
+                        item.media_type,
+                        item.expected_size,
+                    )
+                    for item in existing_items
+                )
+                requested_manifest = tuple(
+                    (
+                        str(item["display_name"]),
+                        str(item["relative_path"]),
+                        str(item["media_type"]),
+                        int(item["expected_size"]),
+                    )
+                    for item in prepared
+                )
+                if session.state in {"open", "complete", "partial"} and (
+                    existing_manifest == requested_manifest
+                ):
+                    audit(
+                        request,
+                        "source.upload_resume",
+                        "success",
+                        context=context,
+                        matter=matter,
+                        object_type="upload_session",
+                        object_id=session.upload_session_id,
+                        details={"count": session.item_count, "state": session.state},
+                    )
+                    return JSONResponse(
+                        upload_projection(matter, session, existing_items), status_code=200
+                    )
+            except KeyError:
+                pass
+
+        collection_name = str(payload.get("collection_name") or "Uploaded sources")
+        collection_id = str(payload.get("collection_id") or "")
+        try:
+            session, items = bench.create_upload_session(
+                matter,
+                context.principal_id,
+                collection_name,
+                prepared,
+                collection_id=collection_id,
+            )
+        except UploadProblem as exc:
+            return JSONResponse({"message": str(exc)}, status_code=exc.status_code)
+        except (WorkspaceProblem, KeyError) as exc:
+            return JSONResponse({"message": str(exc)}, status_code=400)
+        audit(
+            request,
+            "source.upload_session_create",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="upload_session",
+            object_id=session.upload_session_id,
+            details={"count": session.item_count, "state": session.state},
+        )
+        return JSONResponse(upload_projection(matter, session, items), status_code=201)
+
+    @app.get("/matters/{slug}/upload-sessions/{session_id}")
+    def upload_session_status(
+        request: Request,
+        slug: str,
+        session_id: str,
+        compact: bool = Query(False),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            if compact:
+                session = bench.workspace.upload_session_record(
+                    matter.matter_id, context.principal_id, session_id
+                )
+                return upload_compact_projection(matter, session)
+            session, items = reconcile_upload_session(
+                matter, context.principal_id, session_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Upload collection not found") from exc
+        return upload_projection(matter, session, items)
+
+    @app.put(
+        "/matters/{slug}/upload-sessions/{session_id}/items/{item_id}",
+        dependencies=[Depends(require_csrf_header)],
+    )
+    async def upload_source_chunk(
+        request: Request,
+        slug: str,
+        session_id: str,
+        item_id: str,
+        x_upload_offset: str = Header("", alias="X-Upload-Offset"),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            item = bench.workspace.upload_item(
+                matter.matter_id, context.principal_id, session_id, item_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Upload item not found") from exc
+        if item.state == "queued":
+            session = bench.workspace.upload_session_record(
+                matter.matter_id, context.principal_id, session_id
+            )
+            return upload_delta_projection(matter, session, item)
+        if item.state not in {"pending", "uploading"}:
+            return JSONResponse(
+                {"message": "This upload item is not accepting more data."},
+                status_code=409,
+            )
+        try:
+            offset = int(x_upload_offset)
+            if offset < 0:
+                raise ValueError
+        except ValueError:
+            return JSONResponse(
+                {"message": "The upload offset is invalid."}, status_code=400
+            )
+        content_length = request.headers.get("content-length", "")
+        if content_length:
+            try:
+                if int(content_length) <= 0 or int(content_length) > MAX_UPLOAD_CHUNK_BYTES:
+                    raise ValueError
+            except ValueError:
+                return JSONResponse(
+                    {"message": "Each upload chunk must be between 1 byte and 2 MiB."},
+                    status_code=413,
+                )
+        body = bytearray()
+        async for part in request.stream():
+            body.extend(part)
+            if len(body) > MAX_UPLOAD_CHUNK_BYTES:
+                return JSONResponse(
+                    {"message": "Each upload chunk must be 2 MiB or smaller."},
+                    status_code=413,
+                )
+        store = bench.source_store(matter)
+        try:
+            bench.ensure_upload_write_capacity()
+            actual = store.resumable_size(
+                item.upload_item_id, expected_size=item.expected_size
+            )
+            if actual > item.received_size:
+                item = bench.workspace.set_upload_item_offset(
+                    matter.matter_id,
+                    context.principal_id,
+                    session_id,
+                    item_id,
+                    item.received_size,
+                    actual,
+                )
+            elif actual < item.received_size:
+                raise UploadProblem(
+                    "The saved upload is incomplete. Start a new upload collection.", 409
+                )
+            if offset != item.received_size:
+                raise UploadProblem(
+                    f"Resume this source at byte {item.received_size}.", 409
+                )
+            new_size = store.append_resumable_chunk(
+                item.upload_item_id,
+                offset=offset,
+                expected_size=item.expected_size,
+                chunk=bytes(body),
+            )
+            item = bench.workspace.set_upload_item_offset(
+                matter.matter_id,
+                context.principal_id,
+                session_id,
+                item_id,
+                item.received_size,
+                new_size,
+            )
+            session = bench.workspace.upload_session_record(
+                matter.matter_id, context.principal_id, session_id
+            )
+        except (UploadProblem, WorkspaceProblem) as exc:
+            return JSONResponse(
+                {"message": str(exc)},
+                status_code=getattr(exc, "status_code", 409),
+            )
+        return upload_delta_projection(matter, session, item)
+
+    @app.post(
+        "/matters/{slug}/upload-sessions/{session_id}/items/{item_id}/finalize",
+        dependencies=[Depends(require_csrf_header)],
+    )
+    def finalize_uploaded_source(
+        request: Request, slug: str, session_id: str, item_id: str
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            item = bench.workspace.upload_item(
+                matter.matter_id, context.principal_id, session_id, item_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Upload item not found") from exc
+        if item.state == "queued":
+            session = bench.workspace.upload_session_record(
+                matter.matter_id, context.principal_id, session_id
+            )
+            return upload_delta_projection(matter, session, item)
+        store = bench.source_store(matter)
+        try:
+            document = store.finalize_resumable_upload(
+                item.upload_item_id,
+                display_name=item.display_name,
+                relative_path=item.relative_path,
+                content_type=item.media_type,
+                expected_size=item.expected_size,
+            )
+            media_source = is_media_type(document.media_type)
+            item, _ = bench.workspace.finish_upload_item(
+                matter.matter_id,
+                context.principal_id,
+                session_id,
+                item_id,
+                document.document_id,
+                queue_ingestion=not media_source,
+                media_details=(
+                    {
+                        "source_version_id": document.version_id,
+                        "source_sha256": document.digest,
+                        "byte_size": document.size,
+                        "media_type": document.media_type,
+                        "duration_ms": document.duration_ms,
+                    }
+                    if media_source
+                    else None
+                ),
+                maximum_media_bytes=bench.storage_policy.media_file_bytes,
+            )
+            store.discard_resumable_upload(item.upload_item_id)
+            if media_source:
+                if bench.media is not None:
+                    bench.media.notify()
+                if document.has_video and bench.playback is not None:
+                    bench.playback.ensure(matter, document)
+            elif bench.ingestion is not None:
+                bench.ingestion.notify()
+            session = bench.workspace.upload_session_record(
+                matter.matter_id, context.principal_id, session_id
+            )
+        except UploadProblem as exc:
+            try:
+                store.discard_resumable_upload(item.upload_item_id)
+            except Exception:
+                # Detection may already have atomically moved the staged inode
+                # into quarantine. Ledger finalization is independent of that
+                # best-effort staging cleanup and must still become terminal.
+                pass
+            try:
+                bench.workspace.fail_upload_item(
+                    matter.matter_id,
+                    context.principal_id,
+                    session_id,
+                    item_id,
+                    str(exc),
+                )
+            except Exception:
+                pass
+            return JSONResponse({"message": str(exc)}, status_code=exc.status_code)
+        except WorkspaceProblem as exc:
+            return JSONResponse({"message": str(exc)}, status_code=409)
+        audit(
+            request,
+            "source.upload_item_queue",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="upload_session",
+            object_id=session_id,
+            details={"count": 1, "state": "queued"},
+        )
+        return upload_delta_projection(matter, session, item)
+
+    @app.post(
+        "/matters/{slug}/upload-sessions/{session_id}/cancel",
+        dependencies=[Depends(require_csrf_header)],
+    )
+    def cancel_upload_session(request: Request, slug: str, session_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            cancelled = bench.workspace.cancel_upload_session(
+                matter.matter_id, context.principal_id, session_id
+            )
+            store = bench.source_store(matter)
+            for item in cancelled:
+                store.discard_resumable_upload(item.upload_item_id)
+            session, items = bench.workspace.upload_session(
+                matter.matter_id, context.principal_id, session_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Upload collection not found") from exc
+        except WorkspaceProblem as exc:
+            return JSONResponse({"message": str(exc)}, status_code=409)
+        audit(
+            request,
+            "source.upload_session_cancel",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="upload_session",
+            object_id=session_id,
+            details={"count": len(cancelled), "state": "cancelled"},
+        )
+        return upload_projection(matter, session, items)
+
+    @app.post(
+        "/matters/{slug}/uploads",
+        dependencies=[Depends(require_csrf)],
+    )
+    def upload_sources(
+        request: Request,
+        slug: str,
+        files: list[UploadFile] = File(...),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        if not files or len(files) > MAX_FILES:
+            return RedirectResponse(
+                f"/matters/{slug}/setup?error="
+                + quote_plus("Choose between 1 and 10 files for each upload."),
+                status_code=303,
+            )
+        declared_bytes = sum(
+            int(upload.size)
+            if isinstance(upload.size, int) and not isinstance(upload.size, bool)
+            else 100 * 1024 * 1024
+            for upload in files
+        )
+        try:
+            bench.ensure_direct_upload_capacity(matter, declared_bytes)
+        except UploadProblem as exc:
+            return PlainTextResponse(str(exc), status_code=exc.status_code)
+        store = bench.source_store(matter)
+        used = 0
+        created: list[str] = []
+        accepted: list[str] = []
+        try:
+            for upload in files:
+                before = set(store.documents)
+                document, used = store.store_stream(
+                    upload.filename or "",
+                    upload.content_type,
+                    upload.file,
+                    request_used=used,
+                    retain_extraction_failure=True,
+                    defer_processing=bench.background_ingestion,
+                )
+                if document.document_id not in before:
+                    created.append(document.document_id)
+                accepted.append(document.document_id)
+        except UploadProblem as exc:
+            for document_id in created:
+                store.remove(document_id)
+            return PlainTextResponse(str(exc), status_code=exc.status_code)
+        finally:
+            for upload in files:
+                upload.file.close()
+        collection = None
+        if created:
+            try:
+                collection = bench.workspace.create_source_collection(
+                    matter.matter_id,
+                    "Uploaded sources",
+                    "upload",
+                    context.principal_id,
+                )
+                bench.workspace.register_source_organizations(
+                    matter.matter_id,
+                    collection.collection_id,
+                    tuple(
+                        (
+                            document_id,
+                            store.get(document_id).relative_path
+                            or store.get(document_id).display_name,
+                        )
+                        for document_id in created
+                    ),
+                    context.principal_id,
+                )
+            except Exception:
+                for document_id in created:
+                    bench.workspace.remove_source_organization(
+                        matter.matter_id, document_id
+                    )
+                    store.remove(document_id)
+                return PlainTextResponse(
+                    "The sources could not be organized. No new sources were added.",
+                    status_code=503,
+                )
+        needs_queue = bench.background_ingestion or any(
+            is_media_type(store.get(document_id).media_type) for document_id in created
+        )
+        if needs_queue:
+            try:
+                for document_id in created:
+                    document = store.get(document_id)
+                    if is_media_type(document.media_type):
+                        bench.workspace.queue_media_job(
+                            matter.matter_id,
+                            document.document_id,
+                            document.version_id,
+                            context.principal_id,
+                            source_sha256=document.digest,
+                            byte_size=document.size,
+                            media_type=document.media_type,
+                            duration_ms=document.duration_ms,
+                            maximum_byte_size=bench.storage_policy.media_file_bytes,
+                        )
+                    elif bench.background_ingestion:
+                        bench.workspace.queue_upload(matter.matter_id, document_id)
+            except Exception:
+                for document_id in created:
+                    bench.workspace.cancel_document_ingest_job(matter.matter_id, document_id)
+                    bench.workspace.remove_media_document(matter.matter_id, document_id)
+                    bench.workspace.remove_source_organization(
+                        matter.matter_id, document_id
+                    )
+                    store.remove(document_id)
+                return PlainTextResponse(
+                    "The sources could not be queued. No new sources were added.",
+                    status_code=503,
+                )
+            if bench.ingestion is not None:
+                bench.ingestion.notify()
+            if bench.media is not None:
+                bench.media.notify()
+            if bench.playback is not None:
+                for document_id in created:
+                    document = store.get(document_id)
+                    if document.has_video:
+                        bench.playback.ensure(matter, document)
+        else:
+            for document_id in accepted:
+                bench.index_document(matter, document_id)
+        path = f"/matters/{slug}/setup"
+        audit(
+            request,
+            "source.upload",
+            "success",
+            matter=matter,
+            details={
+                "count": len(created),
+                "state": "queued" if needs_queue else "ready",
+            },
+        )
+        return RedirectResponse(
+            _query_url(
+                path,
+                view="list",
+                collection=(collection.collection_id if collection is not None else ""),
+                notice=(
+                    f"{len(created)} source(s) "
+                    + ("queued" if needs_queue else "added")
+                ),
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/retry",
+        dependencies=[Depends(require_csrf)],
+    )
+    def retry_source(request: Request, slug: str, token: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            bench.retry_document(matter, token, context.principal_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Source not found") from exc
+        except UploadProblem as exc:
+            return PlainTextResponse(str(exc), status_code=exc.status_code)
+        audit(
+            request,
+            "source.retry",
+            "success",
+            matter=matter,
+            details={"state": "queued" if bench.background_ingestion else "ready"},
+        )
+        return RedirectResponse(
+            f"/matters/{slug}?notice=" + quote_plus("Processing retried"), status_code=303
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/remove",
+        dependencies=[Depends(require_csrf)],
+    )
+    def remove_source(slug: str, token: str, request: Request):
+        if request.client is None or request.client.host not in {"127.0.0.1", "::1", "testclient"}:
+            raise HTTPException(403, "This development action is available only on localhost.")
+        try:
+            matter = authorized_matter(request, slug)
+            bench.remove_document(matter, token)
+        except KeyError as exc:
+            raise HTTPException(404, "Source not found") from exc
+        except UploadProblem as exc:
+            return PlainTextResponse(str(exc), status_code=exc.status_code)
+        except RuntimeError as exc:
+            raise HTTPException(503, "The source could not be removed safely. Try again.") from exc
+        audit(
+            request,
+            "source.remove",
+            "success",
+            matter=matter,
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/setup", view="list", notice="Source removed"
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/bulk",
+        dependencies=[Depends(require_csrf)],
+    )
+    def organize_sources(
+        request: Request,
+        slug: str,
+        selected: list[str] = Form(default=[]),
+        action: str = Form(..., max_length=40),
+        collection_id: str = Form("", max_length=80),
+        source_set_id: str = Form("", max_length=80),
+        source_set_name: str = Form("", max_length=160),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            if not 1 <= len(selected) <= 100:
+                raise WorkspaceProblem("Select between 1 and 100 sources on this page.")
+            store = bench.source_store(matter)
+            documents = tuple(
+                store.get_by_action_token(token).document_id
+                for token in dict.fromkeys(selected)
+            )
+            if action in {"unreviewed", "reviewed", "flagged"}:
+                changed = bench.workspace.update_source_review_state(
+                    matter.matter_id, documents, action, context.principal_id
+                )
+                notice = f"{changed} source(s) marked {action}"
+                audit_state = action
+            elif action == "move":
+                changed = bench.workspace.move_sources_to_collection(
+                    matter.matter_id,
+                    documents,
+                    collection_id,
+                    context.principal_id,
+                )
+                notice = f"{changed} source(s) moved"
+                audit_state = "completed"
+            elif action == "create_set":
+                source_set_record = bench.workspace.create_source_set(
+                    matter.matter_id,
+                    source_set_name,
+                    documents,
+                    context.principal_id,
+                )
+                changed = source_set_record.source_count
+                notice = f"Source set “{source_set_record.name}” created"
+                audit_state = "completed"
+            elif action == "add_to_set":
+                changed = bench.workspace.add_sources_to_set(
+                    matter.matter_id,
+                    source_set_id,
+                    documents,
+                    context.principal_id,
+                )
+                notice = f"{changed} new source(s) added to the set"
+                audit_state = "completed"
+            else:
+                raise WorkspaceProblem("Choose a valid source action.")
+        except KeyError as exc:
+            raise HTTPException(404, "Source or source group not found") from exc
+        except (WorkspaceProblem, UploadProblem) as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/setup", view="list", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "source.bulk_organize",
+            "success",
+            context=context,
+            matter=matter,
+            details={"count": changed, "state": audit_state},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/setup", view="list", notice=notice),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/collections/{collection_id}/rename",
+        dependencies=[Depends(require_csrf)],
+    )
+    def rename_source_collection(
+        request: Request,
+        slug: str,
+        collection_id: str,
+        name: str = Form(..., max_length=160),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            collection = bench.workspace.rename_source_collection(
+                matter.matter_id, collection_id, name, context.principal_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Source collection not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/setup", error=str(exc)), status_code=303
+            )
+        audit(
+            request,
+            "source.collection_rename",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="source_collection",
+            object_id=collection.collection_id,
+            details={"count": collection.source_count},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/setup",
+                collection=collection.collection_id,
+                view="list",
+                notice="Collection renamed",
+            ),
+            status_code=303,
+        )
+
+    @app.get("/matters/{slug}/sources/{token}", response_class=HTMLResponse)
+    def review_source(
+        request: Request,
+        slug: str,
+        token: str,
+        unit: int = Query(1, ge=1, le=100_000),
+        start_ms: int = Query(0, ge=0, le=43_200_000),
+        segment: str = Query("", max_length=100),
+        q: str = Query("", max_length=240),
+        speaker: str = Query("", max_length=100),
+        flag: str = Query("", pattern="^(|low|overlap|edited)$"),
+        page: int = Query(1, ge=1, le=100_000),
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            document = bench.source_store(matter).get_by_action_token(token)
+            source_sequence = source_sequence_projection(
+                matter, document.document_id
+            )
+            if is_media_type(document.media_type):
+                media = bench.media_review(
+                    matter,
+                    token,
+                    start_ms=start_ms,
+                    focus_segment_id=segment,
+                )
+                query_key = " ".join(q.split()).casefold()
+                selected = tuple(
+                    item
+                    for item in media.segments
+                    if (
+                        not query_key
+                        or query_key in item.current_text.casefold()
+                        or query_key in item.speaker_display_name.casefold()
+                    )
+                    and (not speaker or item.speaker_cluster == speaker)
+                    and (
+                        not flag
+                        or (flag == "low" and item.low_confidence)
+                        or (flag == "overlap" and item.overlap)
+                        or (flag == "edited" and item.current_revision)
+                    )
+                )
+                page_size = 200
+                if start_ms and not any((q, speaker, flag)):
+                    target = next(
+                        (
+                            index
+                            for index, item in enumerate(selected)
+                            if item.start_ms <= start_ms < item.end_ms
+                        ),
+                        None,
+                    )
+                    if target is not None:
+                        page = target // page_size + 1
+                total_pages = max(math.ceil(len(selected) / page_size), 1)
+                page = min(page, total_pages)
+                offset = (page - 1) * page_size
+                page_segments = selected[offset : offset + page_size]
+                if not administrator_override:
+                    bench.workspace.record_matter_activity(
+                        matter.matter_id,
+                        context.principal_id,
+                        "source",
+                        document.document_id,
+                        locator=media.start_ms,
+                    )
+                audit(
+                    request,
+                    "source.media_review_open",
+                    "success",
+                    matter=matter,
+                    object_type="source",
+                    object_id=document.document_id,
+                )
+                return templates.TemplateResponse(
+                    request=request,
+                    name="workbench_media_review.html",
+                    context={
+                        **base_context(request, matter),
+                        "matter": matter,
+                        "media": media,
+                        "segments": page_segments,
+                        "segment_total": len(selected),
+                        "segment_first": offset + 1 if selected else 0,
+                        "segment_last": offset + len(page_segments),
+                        "segment_page": page,
+                        "segment_pages": total_pages,
+                        "transcript_query": q,
+                        "transcript_speaker": speaker,
+                        "transcript_flag": flag,
+                        "source_sequence": source_sequence,
+                        "format_timestamp": format_timestamp,
+                        "notice": notice,
+                        "error": error,
+                    },
+                )
+            source = bench.source_review(matter, token, unit_number=unit)
+            if not administrator_override:
+                bench.workspace.record_matter_activity(
+                    matter.matter_id,
+                    context.principal_id,
+                    "source",
+                    document.document_id,
+                    locator=source.unit_index,
+                )
+        except (KeyError, StopIteration) as exc:
+            raise HTTPException(404, "Source not found") from exc
+        audit(
+            request,
+            "source.review_open",
+            "success",
+            matter=matter,
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_source_review.html",
+            context={
+                **base_context(request, matter),
+                "matter": matter,
+                "source": source,
+                "source_sequence": source_sequence,
+                "notice": notice,
+                "error": error,
+            },
+        )
+
+    @app.get("/matters/{slug}/sources/{token}/media-status")
+    def media_status(request: Request, slug: str, token: str):
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if not is_media_type(document.media_type):
+                raise KeyError(token)
+            job = bench.workspace.media_job(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            transcript = bench.workspace.media_transcript(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            summary = (
+                bench.workspace.media_summary(
+                    matter.matter_id, document.document_id, document.version_id
+                )
+                if transcript is not None
+                else None
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Media source not found") from exc
+        return JSONResponse(
+            {
+                "state": job.state if job is not None else "unavailable",
+                "stage": job.stage if job is not None else "Not queued",
+                "progress": job.progress if job is not None else 0,
+                "message": job.message if job is not None else "",
+                "ready": document.state == "ready",
+                "playback_state": document.playback_state or "unknown",
+                "playback_message": document.playback_message,
+                "playback_ready": document.playback_state in {"original", "ready"},
+                "playback_compatible_copy": document.playback_state == "ready",
+                "summary_state": summary.state if summary is not None else "not_created",
+                "review_url": f"/matters/{matter.slug}/sources/{token}",
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/resume",
+        dependencies=[Depends(require_csrf_header)],
+        include_in_schema=False,
+    )
+    async def save_media_resume(request: Request, slug: str, token: str):
+        context = auth_context(request)
+        try:
+            payload = await request.json()
+            position_ms = payload.get("position_ms")
+            if (
+                isinstance(position_ms, bool)
+                or not isinstance(position_ms, int)
+                or not 0 <= position_ms <= 43_200_000
+            ):
+                raise ValueError("invalid resume position")
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if not is_media_type(document.media_type):
+                raise KeyError(token)
+            bounded = min(position_ms, max(document.duration_ms - 1, 0))
+            activity = bench.workspace.record_matter_activity(
+                matter.matter_id,
+                context.principal_id,
+                "source",
+                document.document_id,
+                locator=bounded,
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(400, "Choose a valid playback position") from exc
+        except KeyError as exc:
+            raise HTTPException(404, "Media source not found") from exc
+        return JSONResponse(
+            {"saved": True, "position_ms": activity.locator},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/playback/retry",
+        dependencies=[Depends(require_csrf)],
+    )
+    def retry_browser_playback(request: Request, slug: str, token: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if not document.has_video or bench.playback is None:
+                raise KeyError(token)
+            document = bench.playback.ensure(matter, document, retry=True)
+        except KeyError as exc:
+            raise HTTPException(404, "Video source not found") from exc
+        audit(
+            request,
+            "source.playback_retry",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="source",
+            object_id=document.document_id,
+            details={"state": document.playback_state},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/sources/{token}",
+                notice="Browser playback preparation queued",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/summary",
+        dependencies=[Depends(require_csrf)],
+    )
+    def request_media_summary(request: Request, slug: str, token: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if not is_media_type(document.media_type):
+                raise KeyError(token)
+            summary = bench.workspace.queue_media_summary(
+                matter.matter_id,
+                document.document_id,
+                document.version_id,
+                context.principal_id,
+            )
+            bench.media.notify()
+        except KeyError as exc:
+            raise HTTPException(404, "Media transcript not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/sources/{token}", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "transcript.summary_request",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="transcript_summary",
+            object_id=summary.transcript_id,
+            details={"state": summary.state},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/sources/{token}",
+                notice="Transcript overview queued",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/segments/{segment_id}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def revise_media_segment(
+        request: Request,
+        slug: str,
+        token: str,
+        segment_id: str,
+        expected_revision: int = Form(..., ge=0),
+        text: str = Form(..., max_length=20_000),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if not is_media_type(document.media_type):
+                raise KeyError(token)
+            segment = bench.workspace.revise_transcript_segment(
+                matter.matter_id,
+                document.document_id,
+                document.version_id,
+                segment_id,
+                expected_revision=expected_revision,
+                text=text,
+                actor_id=context.principal_id,
+            )
+            bench.refresh_media_projection(matter, document)
+            if bench.media is not None:
+                bench.media.notify()
+        except KeyError as exc:
+            raise HTTPException(404, "Transcript passage not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/sources/{token}",
+                    error=str(exc),
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "transcript.segment_edit",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="transcript_segment",
+            object_id=segment.segment_id,
+            details={"state": "reviewed"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/sources/{token}",
+                start_ms=str(segment.start_ms),
+                segment=segment.segment_id,
+                notice="Transcript correction saved and reindexed",
+            )
+            + f"#segment-{segment.ordinal}",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/speakers",
+        dependencies=[Depends(require_csrf)],
+    )
+    def revise_media_speaker(
+        request: Request,
+        slug: str,
+        token: str,
+        speaker_cluster: str = Form(..., max_length=100),
+        expected_revision: int = Form(..., ge=0),
+        display_name: str = Form(..., max_length=120),
+        identity_state: str = Form("confirmed", pattern="^(cluster|confirmed)$"),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if not is_media_type(document.media_type):
+                raise KeyError(token)
+            mapping = bench.workspace.revise_speaker_mapping(
+                matter.matter_id,
+                document.document_id,
+                document.version_id,
+                speaker_cluster,
+                expected_revision=expected_revision,
+                display_name=display_name,
+                identity_state=identity_state,
+                actor_id=context.principal_id,
+            )
+            bench.refresh_media_projection(matter, document)
+            if bench.media is not None:
+                bench.media.notify()
+        except KeyError as exc:
+            raise HTTPException(404, "Speaker cluster not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/sources/{token}", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "transcript.speaker_review",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="speaker_mapping",
+            object_id=mapping.speaker_cluster,
+            details={"state": "confirmed" if identity_state == "confirmed" else "review"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/sources/{token}",
+                speaker=mapping.speaker_cluster,
+                notice="Speaker label saved and reindexed",
+            ),
+            status_code=303,
+        )
+
+    @app.get("/matters/{slug}/sources/{token}/summary-export")
+    def download_media_summary(
+        request: Request,
+        slug: str,
+        token: str,
+        format_name: str = Query("docx", alias="format", pattern="^(docx|markdown)$"),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if not is_media_type(document.media_type):
+                raise KeyError(token)
+            summary = bench.workspace.media_summary(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if summary is None:
+                raise KeyError(token)
+            artifact = export_media_summary(document.display_name, summary, format_name)
+        except KeyError as exc:
+            raise HTTPException(404, "Transcript overview not found") from exc
+        except ValueError as exc:
+            raise HTTPException(
+                409, "Transcript overview is not ready for export"
+            ) from exc
+        filename = f"transcript-overview-{document.document_id[:12]}{artifact.suffix}"
+        audit(
+            request,
+            "work_product.export",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="transcript_summary",
+            object_id=summary.transcript_id,
+            details={"kind": "transcript_summary", "format": format_name},
+        )
+        return Response(
+            content=artifact.body,
+            media_type=artifact.media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-Case-Intelligence-Export": "work-product",
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.get("/matters/{slug}/sources/{token}/transcript-export")
+    def download_media_transcript(
+        request: Request,
+        slug: str,
+        token: str,
+        format_name: str = Query("docx", alias="format", pattern="^(docx|txt|markdown|srt|vtt|csv|json)$"),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if not is_media_type(document.media_type):
+                raise KeyError(token)
+            segments = bench.workspace.transcript_segments(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            artifact = export_transcript(document.display_name, segments, format_name)
+        except KeyError as exc:
+            raise HTTPException(404, "Transcript not found") from exc
+        except ValueError as exc:
+            raise HTTPException(409, "Transcript is not ready for export") from exc
+        filename = f"transcript-{document.document_id[:12]}{artifact.suffix}"
+        audit(
+            request,
+            "transcript.export",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="transcript",
+            object_id=document.document_id,
+            details={"format": format_name},
+        )
+        return Response(
+            content=artifact.body,
+            media_type=artifact.media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-Case-Intelligence-Export": "work-product",
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/clips",
+        dependencies=[Depends(require_csrf)],
+    )
+    def create_media_clip(
+        request: Request,
+        slug: str,
+        token: str,
+        title: str = Form(..., max_length=160),
+        start_ms: int = Form(..., ge=0, le=43_200_000),
+        end_ms: int = Form(..., ge=1, le=43_200_000),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if not is_media_type(document.media_type):
+                raise KeyError(token)
+            clip = bench.workspace.create_media_clip(
+                matter.matter_id,
+                document.document_id,
+                document.version_id,
+                title=title,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                actor_id=context.principal_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Media source not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/sources/{token}", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "media.clip_create",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="media_clip",
+            object_id=clip.clip_id,
+            details={"created": True},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/sources/{token}",
+                start_ms=str(start_ms),
+                notice="Clip saved as exportable work product",
+            )
+            + "#media-clips",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/clips/{clip_id}/delete",
+        dependencies=[Depends(require_csrf)],
+    )
+    def delete_media_clip(
+        request: Request, slug: str, token: str, clip_id: str
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            clip = bench.workspace.media_clip(matter.matter_id, clip_id)
+            if clip.document_id != document.document_id or clip.source_version_id != document.version_id:
+                raise KeyError(clip_id)
+            bench.workspace.delete_media_clip(
+                matter.matter_id, clip_id, context.principal_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Media clip not found") from exc
+        audit(
+            request,
+            "media.clip_delete",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="media_clip",
+            object_id=clip_id,
+            details={"state": "deleted"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/sources/{token}", notice="Clip deleted"
+            )
+            + "#media-clips",
+            status_code=303,
+        )
+
+    @app.get("/matters/{slug}/sources/{token}/clips/{clip_id}/download")
+    def download_media_clip(
+        request: Request, slug: str, token: str, clip_id: str
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            store = bench.source_store(matter)
+            document = store.get_by_action_token(token)
+            clip = bench.workspace.media_clip(matter.matter_id, clip_id)
+            if (
+                not is_media_type(document.media_type)
+                or clip.document_id != document.document_id
+                or clip.source_version_id != document.version_id
+            ):
+                raise KeyError(clip_id)
+            source = store.source_path(document.document_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Media clip not found") from exc
+        export_root = bench.runtime_dir / "clip-exports"
+        export_root.mkdir(exist_ok=True)
+        if export_root.is_symlink() or not export_root.is_dir():
+            raise HTTPException(503, "Clip export storage is unavailable")
+        directory = Path(tempfile.mkdtemp(prefix="clip-", dir=export_root))
+        suffix = ".mp4" if document.has_video else ".wav"
+        output = directory / f"clip-{clip.clip_id[-12:]}{suffix}"
+        try:
+            render_clip(source, clip, has_video=document.has_video, output=output)
+        except (RuntimeError, ValueError) as exc:
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+            raise HTTPException(503, "The clip could not be rendered. Try again.") from exc
+
+        def cleanup_clip() -> None:
+            try:
+                output.unlink(missing_ok=True)
+                directory.rmdir()
+            except OSError:
+                pass
+
+        audit(
+            request,
+            "media.clip_export",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="media_clip",
+            object_id=clip.clip_id,
+            details={"format": "mp4" if document.has_video else "wav"},
+        )
+        return FileResponse(
+            output,
+            media_type="video/mp4" if document.has_video else "audio/wav",
+            filename=f"media-clip-{clip.clip_id[-12:]}{suffix}",
+            headers={
+                "X-Case-Intelligence-Export": "work-product",
+                "Cache-Control": "no-store",
+            },
+            background=BackgroundTask(cleanup_clip),
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/review-state",
+        dependencies=[Depends(require_csrf)],
+    )
+    def update_source_review_state(
+        request: Request,
+        slug: str,
+        token: str,
+        state: str = Form(..., max_length=20),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            bench.workspace.update_source_review_state(
+                matter.matter_id,
+                (document.document_id,),
+                state,
+                context.principal_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Source not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/sources/{token}", error=str(exc)
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "source.review_state",
+            "success",
+            context=context,
+            matter=matter,
+            details={"count": 1, "state": state},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/sources/{token}",
+                notice=f"Source marked {state}",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/review-next",
+        dependencies=[Depends(require_csrf)],
+    )
+    def review_source_and_continue(request: Request, slug: str, token: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            bench.workspace.update_source_review_state(
+                matter.matter_id,
+                (document.document_id,),
+                "reviewed",
+                context.principal_id,
+            )
+            remaining = bench.workspace.source_catalog_page(
+                matter.matter_id,
+                tone="ready",
+                review_state="unreviewed",
+                sort="oldest",
+                limit=1,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Source not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/sources/{token}", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "source.review_continue",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="source",
+            object_id=document.document_id,
+            details={"count": 1, "state": "reviewed"},
+        )
+        if remaining.items:
+            following = remaining.items[0]
+            return RedirectResponse(
+                _query_url(
+                    source_catalog_href(matter, following),
+                    notice="Source reviewed · next item opened",
+                ),
+                status_code=303,
+            )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{matter.slug}/home",
+                notice="Review queue complete",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/sources/{token}/ask",
+        dependencies=[Depends(require_csrf)],
+    )
+    def ask_using_source(request: Request, slug: str, token: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            document = bench.source_store(matter).get_by_action_token(token)
+            if document.state != "ready":
+                raise WorkspaceProblem(
+                    "This source must finish processing before it can answer questions."
+                )
+            label = f"Only · {document.display_name}"
+            source_set = bench.workspace.singleton_source_set(
+                matter.matter_id,
+                document.document_id,
+                label[:160],
+                context.principal_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Source not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/sources/{token}", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "source.ask_scope",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="source_set",
+            object_id=source_set.source_set_id,
+            details={"count": 1},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}",
+                source_set=source_set.source_set_id,
+                notice="Answer scope limited to this source",
+            )
+            + "#matter-question",
+            status_code=303,
+        )
+
+    @app.get("/matters/{slug}/sources/{token}/content")
+    @app.head("/matters/{slug}/sources/{token}/content")
+    def source_content(
+        request: Request,
+        slug: str,
+        token: str,
+        range_header: str = Header("", alias="Range"),
+    ):
+        try:
+            matter = authorized_matter(request, slug)
+            store = bench.source_store(matter)
+            document = store.get_by_action_token(token)
+        except KeyError as exc:
+            raise HTTPException(404, "Source not found") from exc
+        if document.origin != "upload" or not document.stored_name:
+            raise HTTPException(404, "The original is not stored in this workbench.")
+        response_media_type = document.media_type
+        expected_size = document.size
+        compatible_copy = False
+        if is_media_type(document.media_type):
+            try:
+                path, response_media_type, expected_size, compatible_copy = (
+                    store.browser_playback_source(document.document_id)
+                )
+            except UploadProblem as exc:
+                raise HTTPException(409, "This source is unavailable for review.") from exc
+            allowed_parent = store.derived if compatible_copy else store.files
+        else:
+            path = store.files / document.stored_name
+            allowed_parent = store.files
+        if path.parent != allowed_parent:
+            raise HTTPException(404, "Source not found")
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != expected_size:
+                raise OSError
+        except OSError as exc:
+            try:
+                os.close(descriptor)
+            except (NameError, OSError):
+                pass
+            raise HTTPException(409, "This source is unavailable for review.") from exc
+        size = int(metadata.st_size)
+        start, end = 0, max(size - 1, 0)
+        status_code = 200
+        if range_header:
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+            if match is None or (not match.group(1) and not match.group(2)):
+                os.close(descriptor)
+                return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+            if match.group(1):
+                start = int(match.group(1))
+                end = int(match.group(2)) if match.group(2) else end
+            else:
+                suffix_length = int(match.group(2))
+                start = max(size - suffix_length, 0)
+            end = min(end, size - 1)
+            if start < 0 or start > end or start >= size:
+                os.close(descriptor)
+                return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+            status_code = 206
+        length = end - start + 1
+
+        def stream() -> Iterator[bytes]:
+            remaining = length
+            try:
+                os.lseek(descriptor, start, os.SEEK_SET)
+                while remaining:
+                    chunk = os.read(descriptor, min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+            finally:
+                os.close(descriptor)
+
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(length),
+            "Content-Disposition": "inline",
+            "Cache-Control": "no-store",
+            "X-Frame-Options": "SAMEORIGIN",
+            "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'",
+            "X-RecordBench-Playback": (
+                "compatible-copy" if compatible_copy else "original"
+            ),
+        }
+        if status_code == 206:
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        if request.method == "HEAD":
+            os.close(descriptor)
+            return Response(
+                status_code=status_code,
+                media_type=response_media_type,
+                headers=headers,
+            )
+        return StreamingResponse(
+            stream(),
+            status_code=status_code,
+            media_type=response_media_type,
+            headers=headers,
+        )
+
+    @app.post(
+        "/matters/{slug}/conversations",
+        dependencies=[Depends(require_csrf)],
+    )
+    def new_conversation(request: Request, slug: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            conversation = bench.workspace.create_conversation(
+                matter.matter_id,
+                actor_id=context.principal_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        audit(
+            request,
+            "conversation.create",
+            "success",
+            matter=matter,
+            object_type="conversation",
+            object_id=conversation.conversation_id,
+        )
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse(
+                {
+                    "conversation_id": conversation.conversation_id,
+                    "title": conversation.title,
+                    "fragment_url": _query_url(
+                        f"/matters/{slug}/assistant",
+                        conversation=conversation.conversation_id,
+                    ),
+                    "open_url": _query_url(
+                        f"/matters/{slug}",
+                        conversation=conversation.conversation_id,
+                    )
+                    + "#evidence-conversation",
+                },
+                status_code=201,
+            )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}", conversation=conversation.conversation_id),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/conversations/{conversation_id}/rename",
+        dependencies=[Depends(require_csrf)],
+    )
+    def rename_conversation(
+        request: Request,
+        slug: str,
+        conversation_id: str,
+        title: str = Form(..., max_length=120),
+    ):
+        try:
+            matter = authorized_matter(request, slug)
+            conversation = bench.workspace.rename_conversation(
+                matter.matter_id, conversation_id, title
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or conversation not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}",
+                    conversation=conversation_id,
+                    error=str(exc),
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "conversation.rename",
+            "success",
+            matter=matter,
+            object_type="conversation",
+            object_id=conversation.conversation_id,
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}",
+                conversation=conversation.conversation_id,
+                notice="Conversation renamed",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/conversations/{conversation_id}/pin",
+        dependencies=[Depends(require_csrf)],
+    )
+    def pin_conversation(request: Request, slug: str, conversation_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            conversation = bench.workspace.set_conversation_pinned(
+                matter.matter_id,
+                conversation_id,
+                context.principal_id,
+                True,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or conversation not found") from exc
+        audit(
+            request,
+            "conversation.pin",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="conversation",
+            object_id=conversation.conversation_id,
+            details={"state": "active"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}",
+                conversation=conversation.conversation_id,
+                notice="Conversation pinned",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/conversations/{conversation_id}/unpin",
+        dependencies=[Depends(require_csrf)],
+    )
+    def unpin_conversation(request: Request, slug: str, conversation_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            conversation = bench.workspace.set_conversation_pinned(
+                matter.matter_id,
+                conversation_id,
+                context.principal_id,
+                False,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or conversation not found") from exc
+        audit(
+            request,
+            "conversation.unpin",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="conversation",
+            object_id=conversation.conversation_id,
+            details={"state": "active"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}",
+                conversation=conversation.conversation_id,
+                notice="Conversation unpinned",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/conversations/{conversation_id}/archive",
+        dependencies=[Depends(require_csrf)],
+    )
+    def archive_conversation(request: Request, slug: str, conversation_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            next_conversation = bench.workspace.archive_conversation(
+                matter.matter_id,
+                conversation_id,
+                context.principal_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or conversation not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}",
+                    conversation=conversation_id,
+                    error=str(exc),
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "conversation.archive",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="conversation",
+            object_id=conversation_id,
+            details={"state": "archived"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}",
+                conversation=next_conversation.conversation_id,
+                notice="Conversation archived",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/conversations/{conversation_id}/restore",
+        dependencies=[Depends(require_csrf)],
+    )
+    def restore_conversation(request: Request, slug: str, conversation_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            conversation = bench.workspace.restore_conversation(
+                matter.matter_id,
+                conversation_id,
+                context.principal_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or conversation not found") from exc
+        audit(
+            request,
+            "conversation.restore",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="conversation",
+            object_id=conversation_id,
+            details={"state": "active"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}",
+                conversation=conversation.conversation_id,
+                notice="Conversation restored",
+            ),
+            status_code=303,
+        )
+
+    def owner_conversation(
+        request: Request, slug: str, conversation_id: str
+    ) -> tuple[object, object, object]:
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        membership = bench.workspace.membership(matter.matter_id, context.principal_id)
+        if membership.role != "owner":
+            audit(
+                request,
+                "conversation.delete",
+                "denied",
+                context=context,
+                matter=matter,
+                object_type="conversation",
+                object_id=conversation_id,
+            )
+            raise HTTPException(
+                403, "Only the matter owner can permanently delete conversations."
+            )
+        conversation = bench.workspace.get_conversation_any(
+            matter.matter_id, conversation_id
+        )
+        return context, matter, conversation
+
+    @app.get(
+        "/matters/{slug}/conversations/{conversation_id}/delete",
+        response_class=HTMLResponse,
+    )
+    def delete_conversation_page(
+        request: Request,
+        slug: str,
+        conversation_id: str,
+        error: str = Query("", max_length=240),
+    ):
+        try:
+            _context, matter, conversation = owner_conversation(
+                request, slug, conversation_id
+            )
+            counts = bench.workspace.conversation_content_counts(
+                matter.matter_id, conversation_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or conversation not found") from exc
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_delete_conversation.html",
+            context={
+                **base_context(request, matter),
+                "matter": matter,
+                "conversation": conversation,
+                "counts": counts,
+                "error": error,
+            },
+        )
+
+    @app.post(
+        "/matters/{slug}/conversations/{conversation_id}/delete",
+        dependencies=[Depends(require_csrf)],
+    )
+    def delete_conversation(
+        request: Request,
+        slug: str,
+        conversation_id: str,
+        confirmed_title: str = Form("", max_length=120),
+        acknowledge: str = Form("", max_length=8),
+    ):
+        try:
+            context, matter, _conversation = owner_conversation(
+                request, slug, conversation_id
+            )
+            result = bench.workspace.delete_conversation(
+                matter.matter_id,
+                conversation_id,
+                context.principal_id,
+                confirmed_title=confirmed_title,
+                acknowledged=acknowledge == "yes",
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or conversation not found") from exc
+        except WorkspaceProblem as exc:
+            audit(
+                request,
+                "conversation.delete",
+                "failure",
+                context=context,
+                matter=matter,
+                object_type="conversation",
+                object_id=conversation_id,
+                details={"state": "active"},
+            )
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/conversations/{conversation_id}/delete",
+                    error=str(exc),
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "conversation.delete",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="conversation",
+            object_id=conversation_id,
+            details={"state": "deleted", "count": result.message_count},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}",
+                conversation=result.next_conversation_id,
+                notice="Conversation permanently deleted",
+            ),
+            status_code=303,
+        )
+
+    @app.get("/matters/{slug}/notebook", response_class=HTMLResponse)
+    def matter_notebook(
+        request: Request,
+        slug: str,
+        q: str = Query("", max_length=200),
+        item_type: str = Query("", alias="type", max_length=24),
+        status: str = Query("", max_length=24),
+        page: int = Query(1, ge=1, le=100_000),
+        edit: str = Query("", max_length=80),
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            read_actor_id = (
+                matter.owner_id if administrator_override else context.principal_id
+            )
+            notebook_page = bench.workspace.notebook_page(
+                matter.matter_id,
+                read_actor_id,
+                query=q,
+                item_type=item_type,
+                status=status,
+                page=page,
+            )
+            references = {
+                item.item_id: bench.workspace.notebook_references(
+                    matter.matter_id, read_actor_id, item.item_id
+                )
+                for item in notebook_page.items
+            }
+            available_support_tokens = bench.available_notebook_support_tokens(
+                matter,
+                tuple(
+                    reference
+                    for item_references in references.values()
+                    for reference in item_references
+                ),
+            )
+            edit_item = (
+                bench.workspace.notebook_item(
+                    matter.matter_id, read_actor_id, edit
+                )
+                if edit
+                else None
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter notebook item not found") from exc
+        except WorkspaceProblem as exc:
+            return PlainTextResponse(str(exc), status_code=400)
+        if not administrator_override:
+            bench.workspace.record_matter_activity(
+                matter.matter_id,
+                context.principal_id,
+                "notebook",
+                "notebook",
+            )
+        audit(
+            request,
+            "notebook.open",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook",
+            object_id=matter.matter_id,
+            details={"result_count": notebook_page.total},
+        )
+        def notebook_url(target_page: int) -> str:
+            return _query_url(
+                f"/matters/{slug}/notebook",
+                q=notebook_page.query,
+                type=notebook_page.item_type,
+                status=notebook_page.status,
+                page=str(target_page) if target_page > 1 else "",
+            )
+
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_notebook.html",
+            context={
+                **base_context(request, matter),
+                "matter": matter,
+                "notebook": notebook_page,
+                "references": references,
+                "available_support_tokens": available_support_tokens,
+                "edit_item": edit_item,
+                "notebook_types": NOTEBOOK_TYPES,
+                "notebook_statuses": NOTEBOOK_STATUSES,
+                "source_sets": bench.workspace.source_sets(matter.matter_id),
+                "notebook_url": notebook_url,
+                "notice": notice,
+                "error": error,
+            },
+        )
+
+    @app.get("/matters/{slug}/analysis", response_class=HTMLResponse)
+    def matter_analysis(
+        request: Request,
+        slug: str,
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            read_actor_id = (
+                matter.owner_id if administrator_override else context.principal_id
+            )
+            notebook_items = bench.workspace.all_notebook_items(
+                matter.matter_id,
+                read_actor_id,
+                include_dismissed=False,
+                limit=2_000,
+            )
+            timeline = tuple(
+                sorted(
+                    (
+                        item
+                        for item in notebook_items
+                        if item.item_type in {"date", "event"}
+                    ),
+                    key=lambda item: (
+                        (item.date_label or item.title).casefold(),
+                        item.item_id,
+                    ),
+                )
+            )
+            entities = tuple(
+                item
+                for item in notebook_items
+                if item.item_type in {"person", "place"}
+            )
+            notebook_references = {
+                item.item_id: bench.workspace.notebook_references(
+                    matter.matter_id, read_actor_id, item.item_id
+                )
+                for item in (*timeline, *entities)
+            }
+            findings = bench.workspace.review_findings(matter.matter_id)
+            finding_references = {
+                finding.finding_id: bench.workspace.review_finding_references(
+                    matter.matter_id, finding.finding_id
+                )
+                for finding in findings
+            }
+            all_references = tuple(
+                reference
+                for references in (
+                    *notebook_references.values(),
+                    *finding_references.values(),
+                )
+                for reference in references
+            )
+            available_support_tokens = bench.available_notebook_support_tokens(
+                matter, all_references
+            )
+            latest_run = bench.workspace.latest_analysis_run(matter.matter_id)
+            source_overview = bench.source_library(matter, view="overview")
+        except KeyError as exc:
+            raise HTTPException(404, "Matter review map not found") from exc
+        if not administrator_override:
+            bench.workspace.record_matter_activity(
+                matter.matter_id,
+                context.principal_id,
+                "analysis",
+                "review-map",
+            )
+        audit(
+            request,
+            "analysis.open",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="analysis",
+            object_id=matter.matter_id,
+            details={"count": len(findings)},
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_analysis.html",
+            context={
+                **base_context(request, matter),
+                "matter": matter,
+                "latest_run": latest_run,
+                "timeline": timeline,
+                "entities": entities,
+                "findings": findings,
+                "notebook_references": notebook_references,
+                "finding_references": finding_references,
+                "available_support_tokens": available_support_tokens,
+                "source_stats": source_overview.stats,
+                "notice": notice,
+                "error": error,
+            },
+        )
+
+    @app.post(
+        "/matters/{slug}/analysis/refresh",
+        dependencies=[Depends(require_csrf)],
+    )
+    def refresh_matter_analysis(request: Request, slug: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            bench.workspace.membership(matter.matter_id, context.principal_id)
+            run = bench.run_review_analysis(matter, context.principal_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/analysis", error=str(exc)),
+                status_code=303,
+            )
+        except Exception:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/analysis",
+                    error="The review map could not be refreshed. Existing review decisions are unchanged.",
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "analysis.refresh",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="analysis",
+            object_id=run.analysis_id,
+            details={
+                "count": run.finding_count,
+                "source_count": run.source_count,
+                "capped": bool(run.capped),
+            },
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/analysis",
+                notice=(
+                    "Review map refreshed within bounded scan limits"
+                    if run.capped
+                    else "Review map refreshed"
+                ),
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/analysis/findings/{finding_id}/status",
+        dependencies=[Depends(require_csrf)],
+    )
+    def update_analysis_finding(
+        request: Request,
+        slug: str,
+        finding_id: str,
+        status: str = Form(..., max_length=24),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            finding = bench.workspace.update_review_finding_status(
+                matter.matter_id,
+                finding_id,
+                status,
+                context.principal_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Review finding not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/analysis", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "analysis.finding_status",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="review_finding",
+            object_id=finding.finding_id,
+            details={"state": finding.status},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/analysis", notice="Review decision saved")
+            + f"#{finding.finding_id}",
+            status_code=303,
+        )
+
+    @app.get("/matters/{slug}/reports", response_class=HTMLResponse)
+    def matter_reports(
+        request: Request,
+        slug: str,
+        report: str = Query("", max_length=80),
+        notice: str = Query("", max_length=240),
+        error: str = Query("", max_length=240),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            read_actor_id = (
+                matter.owner_id if administrator_override else context.principal_id
+            )
+            reports = bench.workspace.reports(matter.matter_id, read_actor_id)
+            active_report = (
+                bench.workspace.report(matter.matter_id, report)
+                if report
+                else (reports[0] if reports else None)
+            )
+            sections = (
+                bench.workspace.report_sections(
+                    matter.matter_id, active_report.report_id
+                )
+                if active_report is not None
+                else ()
+            )
+            citations = {
+                section.section_id: bench.workspace.report_citations(
+                    matter.matter_id,
+                    active_report.report_id,
+                    section.section_id,
+                )
+                for section in sections
+            }
+            citation_hrefs: dict[str, str] = {}
+            store = bench.source_store(matter)
+            for section_citations in citations.values():
+                for citation in section_citations:
+                    if citation.kind == "media_clip":
+                        try:
+                            document = store.get(citation.document_id)
+                            if document.version_id != citation.source_version_id:
+                                raise KeyError(citation.document_id)
+                            token = store.action_token(document)
+                            citation_hrefs[citation.citation_id] = (
+                                f"/matters/{matter.slug}/sources/{token}?"
+                                f"start_ms={citation.start_ms}#transcript-segments"
+                            )
+                        except KeyError:
+                            citation_hrefs[citation.citation_id] = ""
+                    elif citation.support_token:
+                        citation_hrefs[citation.citation_id] = (
+                            f"/matters/{matter.slug}?support={citation.support_token}#support-pane"
+                        )
+            notebook_items = bench.workspace.all_notebook_items(
+                matter.matter_id,
+                read_actor_id,
+                include_dismissed=False,
+                limit=250,
+            )
+            findings = tuple(
+                item
+                for item in bench.workspace.review_findings(matter.matter_id)
+                if item.status != "dismissed"
+            )
+            clips: list[dict[str, object]] = []
+            for document in store.documents.values():
+                if not is_media_type(document.media_type):
+                    continue
+                for clip in bench.workspace.media_clips(
+                    matter.matter_id, document.document_id, document.version_id
+                ):
+                    clips.append(
+                        {
+                            "clip": clip,
+                            "source_name": document.display_name,
+                            "location": (
+                                f"{format_timestamp(clip.start_ms)}–"
+                                f"{format_timestamp(clip.end_ms)}"
+                            ),
+                        }
+                    )
+            clips.sort(
+                key=lambda item: (
+                    str(item["source_name"]).casefold(),
+                    item["clip"].start_ms,
+                )
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter report not found") from exc
+        if not administrator_override:
+            bench.workspace.record_matter_activity(
+                matter.matter_id,
+                context.principal_id,
+                "report",
+                active_report.report_id if active_report is not None else "reports",
+            )
+        audit(
+            request,
+            "report.open",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report",
+            object_id=active_report.report_id if active_report is not None else None,
+            details={"count": len(reports)},
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_reports.html",
+            context={
+                **base_context(request, matter),
+                "matter": matter,
+                "reports": reports,
+                "report": active_report,
+                "sections": sections,
+                "citations": citations,
+                "citation_hrefs": citation_hrefs,
+                "notebook_items": notebook_items,
+                "findings": findings,
+                "clips": tuple(clips[:250]),
+                "notice": notice,
+                "error": error,
+            },
+        )
+
+    @app.post("/matters/{slug}/reports", dependencies=[Depends(require_csrf)])
+    def create_matter_report(
+        request: Request,
+        slug: str,
+        title: str = Form(..., max_length=200),
+        purpose: str = Form("", max_length=2_000),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            created = bench.workspace.create_report(
+                matter.matter_id, context.principal_id, title, purpose
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/reports", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "report.create",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report",
+            object_id=created.report_id,
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/reports",
+                report=created.report_id,
+                notice="Report draft created",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def update_matter_report(
+        request: Request,
+        slug: str,
+        report_id: str,
+        title: str = Form(..., max_length=200),
+        purpose: str = Form("", max_length=2_000),
+        status: str = Form("draft", max_length=16),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            updated = bench.workspace.update_report(
+                matter.matter_id,
+                report_id,
+                context.principal_id,
+                title=title,
+                purpose=purpose,
+                status=status,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Report not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "report.update",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report",
+            object_id=updated.report_id,
+            details={"state": updated.status},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/reports",
+                report=report_id,
+                notice="Report details saved",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}/sections",
+        dependencies=[Depends(require_csrf)],
+    )
+    def add_manual_report_section(
+        request: Request,
+        slug: str,
+        report_id: str,
+        heading: str = Form(..., max_length=200),
+        body: str = Form("", max_length=50_000),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            section = bench.workspace.add_report_section(
+                matter.matter_id,
+                report_id,
+                context.principal_id,
+                heading=heading,
+                body=body,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Report not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "report.section_add",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report_section",
+            object_id=section.section_id,
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/reports",
+                report=report_id,
+                notice="Section added",
+            )
+            + f"#{section.section_id}",
+            status_code=303,
+        )
+
+    def add_report_material(
+        request: Request,
+        slug: str,
+        report_id: str,
+        origin: str,
+        origin_id: str,
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            if origin == "notebook":
+                section = bench.add_notebook_item_to_report(
+                    matter, context.principal_id, report_id, origin_id
+                )
+            elif origin == "finding":
+                section = bench.add_finding_to_report(
+                    matter, context.principal_id, report_id, origin_id
+                )
+            elif origin == "media_clip":
+                section = bench.add_media_clip_to_report(
+                    matter, context.principal_id, report_id, origin_id
+                )
+            else:
+                raise KeyError(origin_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Report material not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "report.material_add",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report_section",
+            object_id=section.section_id,
+            details={"type": origin},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/reports",
+                report=report_id,
+                notice="Cited material added to report",
+            )
+            + f"#{section.section_id}",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}/from-notebook/{item_id}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def add_notebook_report_material(
+        request: Request, slug: str, report_id: str, item_id: str
+    ):
+        return add_report_material(request, slug, report_id, "notebook", item_id)
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}/from-finding/{finding_id}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def add_finding_report_material(
+        request: Request, slug: str, report_id: str, finding_id: str
+    ):
+        return add_report_material(request, slug, report_id, "finding", finding_id)
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}/from-clip/{clip_id}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def add_clip_report_material(
+        request: Request, slug: str, report_id: str, clip_id: str
+    ):
+        return add_report_material(request, slug, report_id, "media_clip", clip_id)
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}/from-answer/{conversation_id}/{message_id}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def add_answer_report_material(
+        request: Request,
+        slug: str,
+        report_id: str,
+        conversation_id: str,
+        message_id: str,
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            section = bench.add_answer_to_report(
+                matter,
+                context.principal_id,
+                report_id,
+                conversation_id,
+                message_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Answer or report not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}", error=str(exc)), status_code=303
+            )
+        audit(
+            request,
+            "report.answer_add",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report_section",
+            object_id=section.section_id,
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/reports",
+                report=report_id,
+                notice="Answer and its current citations added to report",
+            )
+            + f"#{section.section_id}",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}/sections/{section_id}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def update_matter_report_section(
+        request: Request,
+        slug: str,
+        report_id: str,
+        section_id: str,
+        heading: str = Form(..., max_length=200),
+        body: str = Form("", max_length=50_000),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            section = bench.workspace.update_report_section(
+                matter.matter_id,
+                report_id,
+                section_id,
+                context.principal_id,
+                heading=heading,
+                body=body,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Report section not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "report.section_update",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report_section",
+            object_id=section.section_id,
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/reports", report=report_id, notice="Section saved"
+            )
+            + f"#{section.section_id}",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}/sections/{section_id}/move",
+        dependencies=[Depends(require_csrf)],
+    )
+    def move_matter_report_section(
+        request: Request,
+        slug: str,
+        report_id: str,
+        section_id: str,
+        direction: str = Form(..., max_length=8),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            bench.workspace.move_report_section(
+                matter.matter_id,
+                report_id,
+                section_id,
+                context.principal_id,
+                direction,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Report section not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
+                ),
+                status_code=303,
+            )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/reports", report=report_id)
+            + f"#{section_id}",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}/sections/{section_id}/delete",
+        dependencies=[Depends(require_csrf)],
+    )
+    def delete_matter_report_section(
+        request: Request, slug: str, report_id: str, section_id: str
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            bench.workspace.delete_report_section(
+                matter.matter_id,
+                report_id,
+                section_id,
+                context.principal_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Report section not found") from exc
+        audit(
+            request,
+            "report.section_delete",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report_section",
+            object_id=section_id,
+            details={"state": "deleted"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/reports",
+                report=report_id,
+                notice="Section removed",
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/reports/{report_id}/delete",
+        dependencies=[Depends(require_csrf)],
+    )
+    def delete_matter_report(request: Request, slug: str, report_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            deleted = bench.workspace.delete_report(
+                matter.matter_id, report_id, context.principal_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Report not found") from exc
+        audit(
+            request,
+            "report.delete",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report",
+            object_id=deleted.report_id,
+            details={"state": "deleted"},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/reports", notice="Report deleted"),
+            status_code=303,
+        )
+
+    @app.get("/matters/{slug}/reports/{report_id}/export")
+    def export_matter_report(
+        request: Request,
+        slug: str,
+        report_id: str,
+        format_name: str = Query("docx", alias="format", pattern="^(docx|markdown)$"),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            report = bench.workspace.report(matter.matter_id, report_id)
+            sections = bench.workspace.report_sections(matter.matter_id, report_id)
+            entries = tuple(
+                (
+                    section,
+                    bench.workspace.report_citations(
+                        matter.matter_id, report_id, section.section_id
+                    ),
+                )
+                for section in sections
+            )
+            artifact = export_report(matter, report, entries, format_name)
+        except KeyError as exc:
+            raise HTTPException(404, "Report not found") from exc
+        except ExportProblem as exc:
+            return PlainTextResponse(str(exc), status_code=400)
+        audit(
+            request,
+            "report.export",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="report",
+            object_id=report.report_id,
+            details={"format": format_name, "count": len(entries)},
+        )
+        return download_response(artifact)
+
+    @app.post(
+        "/matters/{slug}/notebook/items",
+        dependencies=[Depends(require_csrf)],
+    )
+    def create_notebook_item(
+        request: Request,
+        slug: str,
+        item_type: str = Form("note", max_length=24),
+        status: str = Form("needs_review", max_length=24),
+        title: str = Form(..., max_length=160),
+        body: str = Form("", max_length=20_000),
+        date_label: str = Form("", max_length=100),
+        pinned: str = Form("", max_length=8),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            item, _created = bench.workspace.create_notebook_item(
+                matter.matter_id,
+                context.principal_id,
+                item_type=item_type,
+                status=status,
+                title=title,
+                body=body,
+                date_label=date_label,
+                pinned=pinned == "yes",
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/notebook", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "notebook.item_create",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook_item",
+            object_id=item.item_id,
+            details={"state": item.status},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/notebook", notice="Notebook item saved")
+            + f"#{item.item_id}",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/notebook/items/{item_id}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def update_notebook_item(
+        request: Request,
+        slug: str,
+        item_id: str,
+        item_type: str = Form(..., max_length=24),
+        status: str = Form(..., max_length=24),
+        title: str = Form(..., max_length=160),
+        body: str = Form("", max_length=20_000),
+        date_label: str = Form("", max_length=100),
+        pinned: str = Form("", max_length=8),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            item = bench.workspace.update_notebook_item(
+                matter.matter_id,
+                context.principal_id,
+                item_id,
+                item_type=item_type,
+                status=status,
+                title=title,
+                body=body,
+                date_label=date_label,
+                pinned=pinned == "yes",
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter notebook item not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}/notebook", edit=item_id, error=str(exc)
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "notebook.item_update",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook_item",
+            object_id=item.item_id,
+            details={"state": item.status},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/notebook", notice="Notebook item updated")
+            + f"#{item.item_id}",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/notebook/items/{item_id}/status",
+        dependencies=[Depends(require_csrf)],
+    )
+    def update_notebook_item_status(
+        request: Request,
+        slug: str,
+        item_id: str,
+        status: str = Form(..., max_length=24),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            item = bench.workspace.set_notebook_item_status(
+                matter.matter_id, context.principal_id, item_id, status
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter notebook item not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/notebook", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "notebook.item_review",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook_item",
+            object_id=item.item_id,
+            details={"state": item.status},
+        )
+        return RedirectResponse(
+            _query_url(f"/matters/{slug}/notebook", notice="Review status updated")
+            + f"#{item.item_id}",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/notebook/items/{item_id}/delete",
+        dependencies=[Depends(require_csrf)],
+    )
+    def delete_notebook_item(request: Request, slug: str, item_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            item = bench.workspace.delete_notebook_item(
+                matter.matter_id, context.principal_id, item_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter notebook item not found") from exc
+        audit(
+            request,
+            "notebook.item_delete",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook_item",
+            object_id=item.item_id,
+            details={"state": "deleted"},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/notebook", notice="Notebook item permanently deleted"
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/notebook/suggestions",
+        dependencies=[Depends(require_csrf)],
+    )
+    def find_notebook_suggestions(
+        request: Request,
+        slug: str,
+        source_set: str = Form("", max_length=80),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            result = bench.suggest_notebook_references(
+                matter,
+                context.principal_id,
+                source_set_id=source_set or None,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or source set not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}/notebook", error=str(exc)),
+                status_code=303,
+            )
+        audit(
+            request,
+            "notebook.suggest",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook",
+            object_id=matter.matter_id,
+            details={"count": int(result["created"]), "state": "suggested"},
+        )
+        notice_value = (
+            f"Added {result['created']} new review suggestion(s) from "
+            f"{result['scanned_units']} source section(s)"
+        )
+        if result["capped"]:
+            notice_value += "; this bounded pass can be run again after review"
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/notebook", status="suggested", notice=notice_value
+            ),
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/notebook/from-support/{token}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def save_support_notebook(request: Request, slug: str, token: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            item, created = bench.save_support_to_notebook(
+                matter, context.principal_id, token
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Supporting source is unavailable") from exc
+        audit(
+            request,
+            "notebook.capture_citation",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook_item",
+            object_id=item.item_id,
+            details={"created": created, "state": item.status},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}/notebook",
+                notice="Citation saved to the notebook" if created else "Citation was already in the notebook",
+            )
+            + f"#{item.item_id}",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/notebook/claims/{claim_index}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def save_answer_claim_notebook(
+        request: Request,
+        slug: str,
+        conversation_id: str,
+        message_id: str,
+        claim_index: int,
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            item, created = bench.save_answer_to_notebook(
+                matter,
+                context.principal_id,
+                conversation_id,
+                message_id,
+                claim_index,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Saved answer passage not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}", conversation=conversation_id, error=str(exc)
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "notebook.capture_answer",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook_item",
+            object_id=item.item_id,
+            details={"created": created, "state": item.status},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}",
+                conversation=conversation_id,
+                notice="Answer passage saved for notebook review" if created else "That answer passage was already saved",
+            )
+            + "#latest",
+            status_code=303,
+        )
+
+    @app.post(
+        "/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/notebook/claims/{claim_index}/citations/{citation_index}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def save_answer_citation_notebook(
+        request: Request,
+        slug: str,
+        conversation_id: str,
+        message_id: str,
+        claim_index: int,
+        citation_index: int,
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            item, created = bench.save_answer_to_notebook(
+                matter,
+                context.principal_id,
+                conversation_id,
+                message_id,
+                claim_index,
+                citation_index=citation_index,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Saved answer citation not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(
+                    f"/matters/{slug}", conversation=conversation_id, error=str(exc)
+                ),
+                status_code=303,
+            )
+        audit(
+            request,
+            "notebook.capture_citation",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook_item",
+            object_id=item.item_id,
+            details={"created": created, "state": item.status},
+        )
+        return RedirectResponse(
+            _query_url(
+                f"/matters/{slug}",
+                conversation=conversation_id,
+                notice="Citation saved to the notebook" if created else "That citation was already saved",
+            )
+            + "#latest",
+            status_code=303,
+        )
+
+    @app.get("/matters/{slug}/notebook/export")
+    def download_notebook(
+        request: Request,
+        slug: str,
+        format_name: str = Query("docx", alias="format", pattern="^(docx|markdown|csv)$"),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            entries = notebook_export_entries(matter, context.principal_id)
+            artifact = export_notebook(matter, entries, format_name)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except ExportProblem as exc:
+            return PlainTextResponse(str(exc), status_code=409)
+        audit(
+            request,
+            "work_product.export",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook",
+            object_id=matter.matter_id,
+            details={"kind": "notebook", "format": format_name},
+        )
+        return download_response(artifact)
+
+    @app.get("/matters/{slug}/notebook/items/{item_id}/export")
+    def download_notebook_item(
+        request: Request,
+        slug: str,
+        item_id: str,
+        format_name: str = Query("docx", alias="format", pattern="^(docx|markdown)$"),
+    ):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            entries = notebook_export_entries(
+                matter, context.principal_id, item_id=item_id
+            )
+            artifact = export_notebook(
+                matter,
+                entries,
+                format_name,
+                heading=entries[0][0].title,
+                stem=f"{matter.display_name}-{entries[0][0].title}",
+            )
+        except (KeyError, IndexError) as exc:
+            raise HTTPException(404, "Matter notebook item not found") from exc
+        except ExportProblem as exc:
+            return PlainTextResponse(str(exc), status_code=409)
+        audit(
+            request,
+            "work_product.export",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="notebook_item",
+            object_id=item_id,
+            details={"kind": "notebook_item", "format": format_name},
+        )
+        return download_response(artifact)
+
+    @app.get("/matters/{slug}/conversations/{conversation_id}/export")
+    def download_conversation(
+        request: Request,
+        slug: str,
+        conversation_id: str,
+        format_name: str = Query("docx", alias="format", pattern="^(docx|markdown)$"),
+    ):
+        try:
+            matter = authorized_matter(request, slug)
+            conversation = bench.workspace.get_conversation_any(
+                matter.matter_id, conversation_id
+            )
+            messages = bench.workspace.messages(matter.matter_id, conversation_id)
+            artifact = export_conversation(
+                matter, conversation, messages, format_name
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or conversation not found") from exc
+        except ExportProblem as exc:
+            return PlainTextResponse(str(exc), status_code=409)
+        audit(
+            request,
+            "work_product.export",
+            "success",
+            matter=matter,
+            object_type="conversation",
+            object_id=conversation.conversation_id,
+            details={"kind": "conversation", "format": format_name},
+        )
+        return download_response(artifact)
+
+    @app.get(
+        "/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/export"
+    )
+    def download_answer(
+        request: Request,
+        slug: str,
+        conversation_id: str,
+        message_id: str,
+        format_name: str = Query("docx", alias="format", pattern="^(docx|markdown)$"),
+    ):
+        try:
+            matter = authorized_matter(request, slug)
+            conversation = bench.workspace.get_conversation_any(
+                matter.matter_id, conversation_id
+            )
+            messages = bench.workspace.messages(matter.matter_id, conversation_id)
+            answer_index = next(
+                index
+                for index, message in enumerate(messages)
+                if message.message_id == message_id and message.role == "assistant"
+            )
+            answer = messages[answer_index]
+            question = next(
+                (
+                    message
+                    for message in reversed(messages[:answer_index])
+                    if message.role == "user"
+                ),
+                None,
+            )
+            artifact = export_answer(
+                matter, conversation, answer, question, format_name
+            )
+        except (KeyError, StopIteration) as exc:
+            raise HTTPException(404, "Saved answer not found") from exc
+        except ExportProblem as exc:
+            return PlainTextResponse(str(exc), status_code=409)
+        audit(
+            request,
+            "work_product.export",
+            "success",
+            matter=matter,
+            object_type="message",
+            object_id=answer.message_id,
+            details={"kind": "answer", "format": format_name},
+        )
+        return download_response(artifact)
+
+    @app.get("/matters/{slug}/export")
+    def download_matter_work_product(request: Request, slug: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            conversations = tuple(
+                (
+                    conversation,
+                    bench.workspace.messages(
+                        matter.matter_id, conversation.conversation_id
+                    ),
+                )
+                for conversation in bench.workspace.conversations(matter.matter_id)
+            )
+            additional_work_product: list[dict[str, object]] = []
+            for index, research_job in enumerate(
+                (
+                    item for item in bench.workspace.research_jobs(
+                        matter.matter_id, context.principal_id, limit=500
+                    ) if item.state == "succeeded"
+                ),
+                1,
+            ):
+                for format_name in ("markdown", "json"):
+                    research_artifact = export_research(
+                        matter, research_job, format_name
+                    )
+                    additional_work_product.append(
+                        {
+                            "kind": "deep_research",
+                            "path": f"research/{index:03d}-{research_artifact.filename}",
+                            "body": research_artifact.body,
+                        }
+                    )
+            for index, review_run in enumerate(
+                bench.workspace.review_runs(
+                    matter.matter_id, context.principal_id, limit=500
+                ),
+                1,
+            ):
+                criterion = bench.workspace.review_criterion(
+                    matter.matter_id, review_run.criterion_id
+                )
+                version = bench.workspace.review_criterion_version(
+                    matter.matter_id, review_run.criterion_version_id
+                )
+                decisions = bench.workspace.review_decisions_for_export(
+                    matter.matter_id, context.principal_id, review_run.run_id
+                )
+                metrics = bench.workspace.review_validation_metrics(
+                    matter.matter_id, context.principal_id, review_run.run_id
+                )
+                for format_name in ("csv", "json"):
+                    review_artifact = export_full_review(
+                        matter,
+                        criterion,
+                        version,
+                        review_run,
+                        decisions,
+                        metrics,
+                        format_name,
+                    )
+                    additional_work_product.append(
+                        {
+                            "kind": "full_review",
+                            "path": f"full-review/{index:03d}-{review_artifact.filename}",
+                            "body": review_artifact.body,
+                        }
+                    )
+            artifact = export_matter_bundle(
+                matter,
+                conversations,
+                export_source_inventory(matter),
+                notebook_export_entries(matter, context.principal_id),
+                export_media_work_product(matter),
+                additional_work_product,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except ExportProblem as exc:
+            return PlainTextResponse(str(exc), status_code=409)
+        audit(
+            request,
+            "work_product.export",
+            "success",
+            matter=matter,
+            object_type="matter",
+            object_id=matter.matter_id,
+            details={"kind": "matter", "format": "zip"},
+        )
+        return download_response(artifact)
+
+    @app.post(
+        "/matters/{slug}/ask",
+        dependencies=[Depends(require_csrf)],
+    )
+    def ask_question(
+        request: Request,
+        slug: str,
+        question: str = Form(..., max_length=MAX_QUESTION_CHARS),
+        conversation: str = Form("", max_length=80),
+        request_key: str = Form("", max_length=47),
+        source_set: str = Form("", max_length=80),
+        notebook_mode: str = Form("", max_length=24),
+        notebook_item: list[str] = Form(default=[]),
+    ):
+        wants_json = "application/json" in request.headers.get("accept", "")
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            if source_set:
+                try:
+                    bench.workspace.source_set(matter.matter_id, source_set)
+                except KeyError as exc:
+                    raise WorkspaceProblem(
+                        "That source set is empty or no longer available."
+                    ) from exc
+            readiness = bench.workspace.matter_readiness(matter.matter_id)
+            if not readiness.can_query:
+                if readiness.state == "empty":
+                    message = "Add at least one source before asking a question."
+                elif readiness.state == "preparing":
+                    message = (
+                        "Matter preparation is still active. Wait for uploading, OCR, "
+                        "transcription, and indexing to finish, then send this question."
+                    )
+                else:
+                    message = (
+                        "No source is searchable yet. Retry or remove an affected "
+                        "source, then send this question."
+                    )
+                raise WorkspaceProblem(message)
+            active = (
+                bench.workspace.get_conversation(matter.matter_id, conversation)
+                if conversation.strip()
+                else None
+            )
+            key = request_key or f"answer-request-{uuid.uuid4().hex}"
+            selected_notebook_items = tuple(
+                item_id for item_id in notebook_item if item_id.strip()
+            )
+            selected_notebook_mode = (
+                "selected" if selected_notebook_items else notebook_mode or None
+            )
+            job, created = bench.queue_answer(
+                matter,
+                active,
+                question,
+                key,
+                context.principal_id,
+                source_set or None,
+                selected_notebook_mode,
+                selected_notebook_items,
+            )
+            projected = answer_projection(request, matter, job)
+            if active is None and created:
+                audit(
+                    request,
+                    "conversation.create",
+                    "success",
+                    context=context,
+                    matter=matter,
+                    object_type="conversation",
+                    object_id=job.conversation_id,
+                    details={"state": "active"},
+                )
+            audit(
+                request,
+                "answer.submit",
+                "success",
+                context=context,
+                matter=matter,
+                object_type="answer_job",
+                object_id=job.job_id,
+                details={
+                    "created": created,
+                    "state": job.state,
+                    "count": len(selected_notebook_items),
+                },
+            )
+            if wants_json:
+                return JSONResponse(projected, status_code=202 if created else 200)
+            return RedirectResponse(projected["workspace_url"], status_code=303)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter or conversation not found") from exc
+        except WorkspaceProblem as exc:
+            if wants_json:
+                return JSONResponse({"message": str(exc)}, status_code=409)
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}", conversation=conversation, error=str(exc)),
+                status_code=303,
+            )
+
+    @app.get("/matters/{slug}/answer-jobs/{job_id}")
+    def answer_job_status(request: Request, slug: str, job_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            job = bench.workspace.get_answer_job(
+                matter.matter_id, context.principal_id, job_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Answer request not found") from exc
+        return answer_projection(request, matter, job)
+
+    @app.get("/matters/{slug}/answer-jobs/{job_id}/result")
+    def answer_job_result(request: Request, slug: str, job_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            job = bench.workspace.get_answer_job(
+                matter.matter_id, context.principal_id, job_id
+            )
+            projected = answer_projection(request, matter, job)
+        except KeyError as exc:
+            raise HTTPException(404, "Answer request not found") from exc
+        if job.state != "succeeded":
+            return JSONResponse(
+                {
+                    "message": "This answer is not ready yet.",
+                    "state": job.state,
+                    "status_url": projected["status_url"],
+                },
+                status_code=409,
+                headers={"Cache-Control": "no-store"},
+            )
+        return RedirectResponse(
+            projected["workspace_url"],
+            status_code=303,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/matters/{slug}/answer-jobs/{job_id}/cancel",
+        dependencies=[Depends(require_csrf)],
+    )
+    def cancel_answer_job(request: Request, slug: str, job_id: str):
+        wants_json = "application/json" in request.headers.get("accept", "")
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            job = bench.workspace.cancel_answer_job(
+                matter.matter_id, context.principal_id, job_id
+            )
+            projected = answer_projection(request, matter, job)
+        except KeyError as exc:
+            raise HTTPException(404, "Answer request not found") from exc
+        except WorkspaceProblem as exc:
+            if wants_json:
+                return JSONResponse({"message": str(exc)}, status_code=409)
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}", error=str(exc)), status_code=303
+            )
+        audit(
+            request,
+            "answer.cancel",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="answer_job",
+            object_id=job.job_id,
+            details={"state": job.state},
+        )
+        if wants_json:
+            return JSONResponse(projected)
+        return RedirectResponse(projected["workspace_url"], status_code=303)
+
+    @app.post(
+        "/matters/{slug}/answer-jobs/{job_id}/retry",
+        dependencies=[Depends(require_csrf)],
+    )
+    def retry_answer_job(request: Request, slug: str, job_id: str):
+        wants_json = "application/json" in request.headers.get("accept", "")
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            readiness = bench.workspace.matter_readiness(matter.matter_id)
+            if not readiness.can_query:
+                if readiness.state == "preparing":
+                    raise WorkspaceProblem(
+                        "Matter preparation is active. Wait for uploading, OCR, "
+                        "transcription, and indexing to finish, then retry this answer."
+                    )
+                raise WorkspaceProblem(
+                    "No source is searchable yet. Retry or remove an affected "
+                    "source before retrying this answer."
+                )
+            job = bench.workspace.retry_answer_job(
+                matter.matter_id, context.principal_id, job_id
+            )
+            if bench.answers is not None:
+                bench.answers.notify()
+            projected = answer_projection(request, matter, job)
+        except KeyError as exc:
+            raise HTTPException(404, "Answer request not found") from exc
+        except WorkspaceProblem as exc:
+            if wants_json:
+                return JSONResponse({"message": str(exc)}, status_code=409)
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}", error=str(exc)), status_code=303
+            )
+        audit(
+            request,
+            "answer.retry",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="answer_job",
+            object_id=job.job_id,
+            details={"state": job.state},
+        )
+        if wants_json:
+            return JSONResponse(projected)
+        return RedirectResponse(projected["workspace_url"], status_code=303)
+
+    return app
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=f"Run the Milestone A {PRODUCT_NAME} workbench")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8786)
+    parser.add_argument("--runtime", type=Path, default=DEFAULT_RUNTIME)
+    args = parser.parse_args()
+    if args.host != "127.0.0.1" and not (
+        args.host == "0.0.0.0"
+        and os.getenv("RECORDBENCH_ALLOW_CONTAINER_BIND", "") == "1"
+    ):
+        parser.error(
+            "non-loopback binding is allowed only in the isolated container profile"
+        )
+    uvicorn.run(
+        create_workbench_app(args.runtime),
+        host=args.host,
+        port=args.port,
+        access_log=False,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,73 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Review {{ source.row.name }} · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}source-review-page{% endblock %}
+
+{% block content %}
+<main class="source-review-main">
+  <header class="source-review-heading">
+    <div>
+      <a class="back-link" href="/matters/{{ matter.slug }}/setup?view=list&amp;collection={{ source.row.collection_id }}#source-library">← Review sources</a>
+      <p class="eyebrow">{{ source.row.collection_name }} · {{ source.row.kind }}</p>
+      <h1>{{ source.row.name }}</h1>
+      <p>{{ source.position_label }} · {{ source.row.state }}</p>
+    </div>
+    <div class="source-review-actions">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/ask">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="button button-ink" type="submit" {% if source.document.state != 'ready' %}disabled{% endif %}>Ask using this source</button>
+      </form>
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="state" value="{{ 'unreviewed' if source.row.review_state == 'reviewed' else 'reviewed' }}">
+        <button class="button button-secondary" type="submit">{{ 'Mark unreviewed' if source.row.review_state == 'reviewed' else 'Mark reviewed' }}</button>
+      </form>
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="state" value="flagged">
+        <button class="button button-secondary" type="submit">{{ 'Flagged' if source.row.review_state == 'flagged' else 'Flag for follow-up' }}</button>
+      </form>
+      <a class="button button-secondary" href="/matters/{{ matter.slug }}?mode=search&amp;q={{ source.row.name|urlencode }}">Search matter</a>
+    </div>
+  </header>
+  {% with active='sources' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% include "workbench_retention_notice.html" %}
+  {% include "workbench_review_sequence.html" %}
+
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+  {% if source.embedded_content_href %}
+  {% if source.row.kind == 'IMAGE' %}
+  <figure class="document-reader image-reader" aria-label="Image source viewer">
+    <img src="{{ source.embedded_content_href }}" alt="Uploaded source {{ source.row.name }}">
+  </figure>
+  {% else %}
+  <section class="document-reader" aria-label="PDF source viewer">
+    <iframe src="{{ source.embedded_content_href }}" title="{{ source.row.name }} PDF viewer"></iframe>
+  </section>
+  {% endif %}
+  {% endif %}
+
+  <section class="extracted-reader" aria-labelledby="extracted-reader-heading">
+    <header>
+      <div>
+        <p class="eyebrow">Searchable content</p>
+        <h2 id="extracted-reader-heading">{{ source.position_label }}</h2>
+      </div>
+      <nav class="reader-pagination" aria-label="Source section navigation">
+        {% if source.previous_href %}<a class="button button-secondary" href="{{ source.previous_href }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
+        {% if source.next_href %}<a class="button button-secondary" href="{{ source.next_href }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
+      </nav>
+    </header>
+    {% if source.unit %}
+    <pre>{{ source.unit.text }}</pre>
+    {% else %}
+    <div class="reader-empty">
+      <strong>{% if source.document.state == 'ready' %}No searchable text was recognized.{% else %}This source is not ready to review yet.{% endif %}</strong>
+      <span>{{ source.document.message or 'Return to the Source Library to check processing.' }}</span>
+    </div>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

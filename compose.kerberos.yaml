@@ -1,0 +1,39 @@
+services:
+  app:
+    volumes:
+      - /var/lib/sss/pipes:/var/lib/sss/pipes:ro
+      - /etc/nsswitch.conf:/etc/nsswitch.conf:ro
+
+  kerberos-proxy:
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/kerberos-proxy:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: deploy/kerberos-proxy
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, KILL, SETGID, SETUID]
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 128
+    environment:
+      KRB5RCACHEDIR: /run/recordbench-auth/rcache
+      RECORDBENCH_SERVER_NAME: ${RECORDBENCH_SERVER_NAME:?set RECORDBENCH_SERVER_NAME}
+      RECORDBENCH_KERBEROS_PRINCIPAL: ${RECORDBENCH_KERBEROS_PRINCIPAL:?set RECORDBENCH_KERBEROS_PRINCIPAL}
+    volumes:
+      - ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}:/run/recordbench-secrets:ro
+      - /etc/krb5.conf:/etc/krb5.conf:ro
+    tmpfs:
+      - /run/recordbench-auth:rw,noexec,nosuid,nodev,size=2m,mode=0750
+      - /var/lock/apache2:rw,noexec,nosuid,nodev,size=1m,mode=0755
+      - /var/log/apache2:rw,noexec,nosuid,nodev,size=8m,mode=0750
+      - /var/run/apache2:rw,noexec,nosuid,nodev,size=1m,mode=0755
+    depends_on:
+      app: {condition: service_healthy}
+    networks: [services]
+
+  gateway:
+    environment:
+      RECORDBENCH_UPSTREAM: kerberos-proxy:8080
+    depends_on:
+      kerberos-proxy: {condition: service_healthy}

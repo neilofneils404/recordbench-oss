@@ -1,0 +1,2302 @@
+(() => {
+  const body = document.body;
+  const csrfToken = body.dataset.csrfToken || "";
+  const railToggle = document.querySelector("[data-rail-toggle]");
+  const railSwitchers = Array.from(document.querySelectorAll("[data-rail-switcher]"));
+  const railCollapse = document.querySelector("[data-rail-collapse]");
+  const railScrim = document.querySelector("[data-rail-scrim]");
+  const matterRail = document.querySelector("[data-matter-rail]");
+  const matterList = document.querySelector(".matter-list");
+  const activeMatterLink = matterList?.querySelector('[aria-current="page"]');
+  const desktopRailMedia = window.matchMedia("(min-width: 901px)");
+  const railPreferenceKey = "case-intelligence:matter-rail-collapsed";
+
+  document.querySelectorAll("form[data-confirm]").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      if (!window.confirm(form.dataset.confirm || "Continue?")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    });
+  });
+
+  const revealActiveMatter = () => {
+    if (!matterList || !activeMatterLink) return;
+    const listBounds = matterList.getBoundingClientRect();
+    const activeBounds = activeMatterLink.getBoundingClientRect();
+    const activeTop = activeBounds.top - listBounds.top + matterList.scrollTop;
+    const activeBottom = activeTop + activeBounds.height;
+    if (activeTop < matterList.scrollTop) {
+      matterList.scrollTop = Math.max(0, activeTop - 4);
+    } else if (activeBottom > matterList.scrollTop + matterList.clientHeight) {
+      matterList.scrollTop = activeBottom - matterList.clientHeight + 4;
+    }
+  };
+
+  document.querySelectorAll("[data-working-form]").forEach((form) => {
+    form.addEventListener("submit", () => {
+      form.setAttribute("aria-busy", "true");
+      const button = form.querySelector('button[type="submit"]');
+      if (!button) return;
+      button.disabled = true;
+      button.textContent = form.dataset.workingLabel || "Working…";
+    });
+  });
+
+  const criterionTemplates = {
+    person: {
+      title: "References to [person or organization]",
+      instructions: "Mark a source for review when it names or clearly refers to [person or organization] in connection with [topic or event].",
+      include: "Count aliases, titles, initials, and clear contextual references to the same person or organization.",
+      exclude: "Leave out unrelated people or organizations with a similar name and incidental directory-style mentions.",
+    },
+    date: {
+      title: "Events during [date range]",
+      instructions: "Mark a source for review when it describes an event that occurred between [start date] and [end date].",
+      include: "Count explicit dates and events whose date can be established from the surrounding passage.",
+      exclude: "Leave out document creation dates and dates outside the range unless they describe an event inside the range.",
+    },
+    topic: {
+      title: "Materials about [topic or event]",
+      instructions: "Mark a source for review when it contains substantive information about [topic or event].",
+      include: "Count direct descriptions, attributed statements, and records that materially explain the topic or event.",
+      exclude: "Leave out passing mentions that add no substantive information and unrelated uses of the same words.",
+    },
+  };
+  document.querySelectorAll("[data-criterion-form]").forEach((form) => {
+    const fields = {
+      title: form.querySelector("[data-criterion-title]"),
+      instructions: form.querySelector("[data-criterion-instructions]"),
+      include: form.querySelector("[data-criterion-include]"),
+      exclude: form.querySelector("[data-criterion-exclude]"),
+    };
+    form.querySelectorAll("[data-criterion-template]").forEach((button) => {
+      button.setAttribute("aria-pressed", "false");
+      button.addEventListener("click", () => {
+        const template = criterionTemplates[button.dataset.criterionTemplate];
+        if (!template) return;
+        Object.entries(fields).forEach(([key, field]) => {
+          if (field) field.value = template[key] || "";
+        });
+        form.querySelectorAll("[data-criterion-template]").forEach((choice) => {
+          choice.setAttribute("aria-pressed", choice === button ? "true" : "false");
+        });
+        fields.title?.focus({ preventScroll: true });
+        fields.title?.select();
+      });
+    });
+  });
+
+  const notebookContext = document.querySelector(".composer-notebook-context");
+  const notebookSelections = Array.from(
+    notebookContext?.querySelectorAll('input[name="notebook_item"]') || [],
+  );
+  const notebookModes = Array.from(
+    notebookContext?.querySelectorAll('input[name="notebook_mode"]') || [],
+  );
+  notebookSelections.forEach((selection) => {
+    selection.addEventListener("change", () => {
+      if (selection.checked) notebookModes.forEach((mode) => { mode.checked = false; });
+      if (!notebookSelections.some((item) => item.checked) && !notebookModes.some((mode) => mode.checked)) {
+        const off = notebookModes.find((mode) => mode.value === "");
+        if (off) off.checked = true;
+      }
+    });
+  });
+  notebookModes.forEach((mode) => {
+    mode.addEventListener("change", () => {
+      if (mode.checked) notebookSelections.forEach((selection) => { selection.checked = false; });
+    });
+  });
+
+  const downloadStatus = document.querySelector("[data-download-status]");
+  let downloadStatusTimer;
+  document.querySelectorAll("[data-download]").forEach((link) => {
+    link.addEventListener("click", () => {
+      if (!downloadStatus) return;
+      window.clearTimeout(downloadStatusTimer);
+      downloadStatus.hidden = false;
+      downloadStatus.textContent = "Preparing your download. Your browser will show the file when it is ready.";
+      downloadStatusTimer = window.setTimeout(() => {
+        downloadStatus.textContent = "Download requested. If it did not appear, choose the export again.";
+      }, 2500);
+    });
+  });
+
+  const readDesktopRailPreference = () => {
+    try {
+      return window.localStorage.getItem(railPreferenceKey) === "true";
+    } catch (_error) {
+      return false;
+    }
+  };
+
+  const saveDesktopRailPreference = (collapsed) => {
+    try {
+      window.localStorage.setItem(railPreferenceKey, collapsed ? "true" : "false");
+    } catch (_error) {
+      // The navigation still works when browser storage is unavailable.
+    }
+  };
+
+  const railIsExpanded = () => (
+    desktopRailMedia.matches
+      ? !body.classList.contains("rail-collapsed")
+      : body.classList.contains("rail-open")
+  );
+
+  const syncRailState = () => {
+    const expanded = railIsExpanded();
+    [railToggle, ...railSwitchers].forEach((control) => {
+      control?.setAttribute("aria-expanded", expanded ? "true" : "false");
+    });
+    railToggle?.setAttribute("aria-label", expanded ? "Hide matters" : "Show matters");
+    railSwitchers.forEach((control) => {
+      control.setAttribute(
+        "aria-label",
+        expanded ? "Hide matter navigation" : "Show matter navigation",
+      );
+    });
+    if (matterRail) {
+      matterRail.setAttribute("aria-hidden", expanded ? "false" : "true");
+      matterRail.inert = !expanded;
+    }
+  };
+
+  const focusActiveMatter = () => {
+    revealActiveMatter();
+    activeMatterLink?.focus({ preventScroll: true });
+  };
+
+  const setRailOpen = (open, { focusMatter = false, restoreFocus = false } = {}) => {
+    if (!desktopRailMedia.matches && !open && matterRail?.contains(document.activeElement)) {
+      railToggle?.focus({ preventScroll: true });
+    }
+    body.classList.toggle("rail-open", open);
+    syncRailState();
+    if (open) {
+      window.requestAnimationFrame(focusMatter ? focusActiveMatter : revealActiveMatter);
+    } else if (restoreFocus) {
+      railToggle?.focus({ preventScroll: true });
+    }
+  };
+
+  const setDesktopRailCollapsed = (collapsed) => {
+    if (collapsed && matterRail?.contains(document.activeElement)) {
+      railToggle?.focus({ preventScroll: true });
+    }
+    body.classList.toggle("rail-collapsed", collapsed);
+    saveDesktopRailPreference(collapsed);
+    syncRailState();
+    if (!collapsed) window.requestAnimationFrame(revealActiveMatter);
+  };
+
+  const toggleRail = ({ focusMatter = false } = {}) => {
+    if (!desktopRailMedia.matches) {
+      setRailOpen(!body.classList.contains("rail-open"), { focusMatter });
+    } else {
+      setDesktopRailCollapsed(!body.classList.contains("rail-collapsed"));
+    }
+  };
+
+  if (desktopRailMedia.matches && readDesktopRailPreference()) {
+    body.classList.add("rail-collapsed");
+  }
+  syncRailState();
+  if (railIsExpanded()) window.requestAnimationFrame(revealActiveMatter);
+
+  railToggle?.addEventListener("click", () => toggleRail({ focusMatter: true }));
+  railSwitchers.forEach((control) => {
+    control.addEventListener("click", () => toggleRail({ focusMatter: true }));
+  });
+  railCollapse?.addEventListener("click", () => {
+    railToggle?.focus({ preventScroll: true });
+    if (desktopRailMedia.matches) setDesktopRailCollapsed(true);
+    else setRailOpen(false);
+  });
+  railScrim?.addEventListener("click", () => setRailOpen(false, { restoreFocus: true }));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && body.classList.contains("rail-open")) {
+      setRailOpen(false, { restoreFocus: true });
+    }
+  });
+  const handleRailBreakpoint = () => {
+    if (matterRail?.contains(document.activeElement)) railToggle?.focus({ preventScroll: true });
+    body.classList.remove("rail-open");
+    syncRailState();
+    if (railIsExpanded()) window.requestAnimationFrame(revealActiveMatter);
+  };
+  if (typeof desktopRailMedia.addEventListener === "function") {
+    desktopRailMedia.addEventListener("change", handleRailBreakpoint);
+  } else {
+    desktopRailMedia.addListener(handleRailBreakpoint);
+  }
+
+  const conversationLibrary = document.querySelector("[data-conversation-library]");
+  const conversationFilter = conversationLibrary?.querySelector("[data-conversation-filter]");
+  const conversationGroups = Array.from(
+    conversationLibrary?.querySelectorAll("[data-conversation-group]") || [],
+  );
+  const conversationFilterEmpty = conversationLibrary?.querySelector(
+    "[data-conversation-filter-empty]",
+  );
+
+  const filterConversations = () => {
+    const query = (conversationFilter?.value || "").trim().toLocaleLowerCase();
+    let visibleTotal = 0;
+    conversationGroups.forEach((group) => {
+      const items = Array.from(group.querySelectorAll("[data-conversation-item]"));
+      let visibleInGroup = 0;
+      items.forEach((item) => {
+        const title = item.querySelector(".conversation-history-item > span")?.textContent || "";
+        const visible = !query || title.toLocaleLowerCase().includes(query);
+        item.hidden = !visible;
+        if (visible) visibleInGroup += 1;
+      });
+      group.hidden = visibleInGroup === 0;
+      const count = group.querySelector("[data-conversation-group-count]");
+      if (count) count.textContent = String(visibleInGroup);
+      if (query && visibleInGroup && group.matches("details")) group.open = true;
+      visibleTotal += visibleInGroup;
+    });
+    if (conversationFilterEmpty) conversationFilterEmpty.hidden = visibleTotal !== 0;
+  };
+
+  conversationFilter?.addEventListener("input", filterConversations);
+  conversationFilter?.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !conversationFilter.value) return;
+    conversationFilter.value = "";
+    filterConversations();
+  });
+
+  const uploadForm = document.querySelector("[data-upload-form]");
+  const uploadDrop = document.querySelector("[data-upload-drop]");
+  const fileInput = document.querySelector("[data-file-input]");
+  const folderInput = document.querySelector("[data-folder-input]");
+  const fileSummary = document.querySelector("[data-file-summary]");
+  const uploadCollectionName = document.querySelector("[data-upload-collection-name]");
+  const uploadProgress = document.querySelector("[data-upload-progress]");
+  const uploadTitle = document.querySelector("[data-upload-title]");
+  const uploadStatus = document.querySelector("[data-upload-status]");
+  const uploadProgressBar = document.querySelector("[data-upload-progress-bar]");
+  const uploadCount = document.querySelector("[data-upload-count]");
+  const uploadBytes = document.querySelector("[data-upload-bytes]");
+  const uploadErrors = document.querySelector("[data-upload-errors]");
+  const uploadCancel = document.querySelector("[data-upload-cancel]");
+  const uploadReview = document.querySelector("[data-upload-review]");
+  const uploadSessionKey = uploadForm?.dataset.matterSlug
+    ? `case-intelligence:upload:${uploadForm.dataset.matterSlug}`
+    : "";
+  const uploadChunkBytes = 2 * 1024 * 1024;
+  const configuredUploadLimit = (name, fallback) => {
+    const value = Number(uploadForm?.dataset[name]);
+    return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+  };
+  const maximumUploadItems = configuredUploadLimit("maxUploadItems", 2000);
+  const maximumUploadBatchItems = configuredUploadLimit("maxUploadBatchItems", 2000);
+  const maximumUploadFileBytes = configuredUploadLimit("maxDocumentBytes", 25 * 1024 * 1024);
+  const maximumMediaFileBytes = configuredUploadLimit("maxMediaBytes", 5 * 1024 * 1024 * 1024);
+  const maximumUploadSessionBytes = configuredUploadLimit("maxCollectionBytes", 5 * 1024 * 1024 * 1024);
+  const documentLimitLabel = uploadForm?.dataset.documentLimitLabel || "25 MiB";
+  const mediaLimitLabel = uploadForm?.dataset.mediaLimitLabel || "5 GiB";
+  const collectionLimitLabel = uploadForm?.dataset.collectionLimitLabel || "5 GiB";
+  let selectedUploadFiles = [];
+  let uploadBatches = [];
+  let activeUploadBatchIndex = 0;
+  let selectedUploadTotalBytes = 0;
+  let activeUpload = null;
+  let uploadAbortController = null;
+  let uploadProcessingTimer = 0;
+  const securityCheckedSuffixes = new Set(["jpg", "jpeg", "png", "tif", "tiff", "eml", "csv", "tsv", "xlsx"]);
+  const requiresSecurityCheck = (name) => {
+    const normalized = String(name || "").toLowerCase();
+    const dot = normalized.lastIndexOf(".");
+    return dot >= 0 && securityCheckedSuffixes.has(normalized.slice(dot + 1));
+  };
+
+  const formatBytes = (value) => {
+    if (!Number.isFinite(value) || value <= 0) return "0 B";
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+    const amount = value / (1024 ** index);
+    return `${amount >= 10 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
+  };
+
+  const readUploadJson = async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload.message || payload.detail || "The upload could not continue.");
+      error.status = response.status;
+      throw error;
+    }
+    if (payload.delta && activeUpload?.upload_session_id === payload.upload_session_id) {
+      const changed = payload.items?.[0];
+      const items = changed
+        ? (activeUpload.items || []).map((item) => (
+          item.upload_item_id === changed.upload_item_id ? { ...item, ...changed } : item
+        ))
+        : (activeUpload.items || []);
+      return { ...activeUpload, ...payload, items, delta: false };
+    }
+    return payload;
+  };
+
+  const renderUpload = (session, errorMessage = "") => {
+    if (!session || !uploadProgress) return;
+    activeUpload = session;
+    uploadProgress.hidden = false;
+    const queued = Number(session.queued_count || 0);
+    const failed = Number(session.failed_count || 0);
+    const processing = Number(session.processing_count || 0);
+    const ready = Number(session.ready_count || 0);
+    const attention = Number(session.attention_count || 0);
+    const total = Number(session.item_count || 0);
+    const received = Number(session.received_bytes || 0);
+    const totalBytes = Number(session.total_bytes || 0);
+    const batchCount = Math.max(uploadBatches.length, 1);
+    const batchNumber = Math.min(activeUploadBatchIndex + 1, batchCount);
+    const batchPrefix = batchCount > 1 ? `Batch ${batchNumber} of ${batchCount} · ` : "";
+    const completedBeforeItems = uploadBatches
+      .slice(0, activeUploadBatchIndex)
+      .reduce((sum, batch) => sum + batch.length, 0);
+    const completedBeforeBytes = uploadBatches
+      .slice(0, activeUploadBatchIndex)
+      .reduce((sum, batch) => sum + batch.reduce((batchSum, file) => batchSum + file.size, 0), 0);
+    const intakeItems = uploadBatches.reduce((sum, batch) => sum + batch.length, 0) || total;
+    const intakeReceived = completedBeforeBytes + received;
+    const terminal = ["complete", "partial", "cancelled"].includes(session.state);
+    const finalBatch = activeUploadBatchIndex >= batchCount - 1;
+    const finalizing = (session.items || []).some((item) => item.state === "uploaded");
+    const securityChecking = (session.items || []).filter((item) => item.state === "uploaded" && requiresSecurityCheck(item.relative_path));
+    const activeWork = (session.items || []).find((item) => ["queued", "processing"].includes(item.work_state));
+    const workProgress = total
+      ? (session.items || []).reduce((sum, item) => sum + Math.max(0, Math.min(1, Number(item.work_progress || 0))), 0) / total
+      : 0;
+    const percent = batchCount > 1
+      ? selectedUploadTotalBytes
+        ? Math.min(100, (intakeReceived / selectedUploadTotalBytes) * 100)
+        : 0
+      : terminal
+        ? Math.min(100, workProgress * 100)
+        : totalBytes
+          ? Math.min(100, (received / totalBytes) * 100)
+          : 0;
+    if (uploadProgressBar) uploadProgressBar.style.width = `${percent}%`;
+    if (uploadCount) {
+      uploadCount.textContent = batchCount > 1
+        ? `${batchPrefix}${Math.min(completedBeforeItems + queued + failed, intakeItems).toLocaleString()} of ${intakeItems.toLocaleString()} saved${failed ? ` · ${failed} need attention in this batch` : ""}`
+        : finalizing
+          ? `${total} uploaded · finalizing`
+          : terminal
+            ? `${ready} ready · ${processing} processing${attention ? ` · ${attention} need attention` : ""}`
+            : `${queued} of ${total} queued${failed ? ` · ${failed} need attention` : ""}`;
+    }
+    if (uploadBytes) {
+      uploadBytes.textContent = batchCount > 1
+        ? `${formatBytes(intakeReceived)} of ${formatBytes(selectedUploadTotalBytes)}`
+        : terminal
+          ? `Upload complete · ${formatBytes(totalBytes)} saved`
+          : `${formatBytes(received)} of ${formatBytes(totalBytes)}`;
+    }
+    if (uploadTitle) {
+      uploadTitle.textContent = batchCount > 1 && terminal && finalBatch
+        ? `${intakeItems.toLocaleString()} sources saved`
+        : securityChecking.length
+        ? "Security checking uploads"
+        : finalizing
+        ? "Finalizing upload collection"
+        : processing
+        ? session.contains_media ? "Transcription in progress" : "Source processing in progress"
+        : ready === total && total
+          ? session.contains_media ? "Transcript ready" : "Sources ready"
+          : attention
+            ? "Upload collection needs attention"
+            : session.state === "complete"
+              ? "Upload collection queued"
+        : session.state === "partial"
+          ? "Upload collection needs attention"
+          : "Uploading selected records";
+    }
+    if (uploadStatus) {
+      uploadStatus.textContent = errorMessage || (
+        batchCount > 1 && terminal && finalBatch
+          ? "The full collection is durable. Source processing continues in the background while you review the matter."
+          : securityChecking.length
+          ? `${securityChecking.length.toLocaleString()} ${securityChecking.length === 1 ? "record is" : "records are"} being scanned before entering the matter. Large files may take a moment.`
+          : finalizing
+          ? "The selected records are saved. Checking them and creating their durable processing jobs."
+          : activeWork
+          ? `${activeWork.work_stage || "Processing"}${activeWork.work_progress ? ` · ${Math.round(Number(activeWork.work_progress) * 100)}%` : ""}. You may leave this page; the saved job will continue.`
+          : ready === total && total
+            ? session.contains_media
+              ? "The transcript is searchable and ready to review with the recording."
+              : "Every source is searchable and ready to review."
+            : session.state === "complete"
+          ? "Every source is saved in the durable processing queue."
+          : session.state === "partial"
+            ? "Usable sources were retained. Review the items that could not be added."
+            : "You may keep working in another matter; this saved collection can resume after a connection interruption."
+      );
+    }
+    const failures = (session.items || []).filter((item) => item.work_state === "attention" || ["failed", "cancelled"].includes(item.state));
+    if (uploadErrors) {
+      uploadErrors.replaceChildren();
+      failures.slice(0, 10).forEach((item) => {
+        const row = document.createElement("li");
+        row.textContent = `${item.relative_path}: ${item.work_stage || item.message || "Processing did not finish."}`;
+        uploadErrors.append(row);
+      });
+      if (failures.length > 10) {
+        const row = document.createElement("li");
+        row.textContent = `${failures.length - 10} additional item(s) need attention.`;
+        uploadErrors.append(row);
+      }
+      uploadErrors.hidden = failures.length === 0;
+    }
+    if (uploadCancel) uploadCancel.hidden = terminal;
+    if (uploadReview) {
+      uploadReview.textContent = processing && session.contains_media
+        ? "View transcription status"
+        : ready && session.contains_media
+          ? "Review transcript"
+          : "Review uploaded sources";
+      if (session.primary_review_url || session.library_url) {
+        uploadReview.href = session.primary_review_url || session.library_url;
+      }
+      uploadReview.hidden = !session.review_ready;
+    }
+  };
+
+  const uploadStatusRefresh = async (compact = true) => {
+    if (!activeUpload?.status_url) return activeUpload;
+    const separator = activeUpload.status_url.includes("?") ? "&" : "?";
+    const target = compact
+      ? `${activeUpload.status_url}${separator}compact=1`
+      : activeUpload.status_url;
+    const response = await fetch(target, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: uploadAbortController?.signal,
+    });
+    const session = await readUploadJson(response);
+    renderUpload(session);
+    return session;
+  };
+
+  const uploadOneFile = async (file, ordinal) => {
+    let item = activeUpload.items.find((candidate) => candidate.ordinal === ordinal);
+    if (!item || ["queued", "failed", "cancelled"].includes(item.state)) return;
+    let offset = Number(item.received_size || 0);
+    let failures = 0;
+    while (offset < file.size) {
+      const body = file.slice(offset, Math.min(offset + uploadChunkBytes, file.size));
+      try {
+        const response = await fetch(item.chunk_url, {
+          method: "PUT",
+          body,
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/octet-stream",
+            "X-CSRF-Token": csrfToken,
+            "X-Upload-Offset": String(offset),
+          },
+          signal: uploadAbortController.signal,
+        });
+        activeUpload = await readUploadJson(response);
+        item = activeUpload.items.find((candidate) => candidate.ordinal === ordinal);
+        offset = Number(item.received_size || 0);
+        failures = 0;
+        renderUpload(activeUpload);
+      } catch (error) {
+        if (error.name === "AbortError") throw error;
+        failures += 1;
+        try {
+          activeUpload = await uploadStatusRefresh();
+          item = activeUpload.items.find((candidate) => candidate.ordinal === ordinal);
+          offset = Number(item?.received_size || offset);
+        } catch (_statusError) {
+          // Retrying the exact offset is safe; the server will return its saved offset.
+        }
+        if (failures >= 4) throw error;
+        await new Promise((resolve) => window.setTimeout(resolve, failures * 500));
+      }
+    }
+    if (item?.state === "uploaded") {
+      let finalizeFailures = 0;
+      while (item?.state === "uploaded") {
+        try {
+          const response = await fetch(item.finalize_url, {
+            method: "POST",
+            headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+            signal: uploadAbortController.signal,
+          });
+          activeUpload = await readUploadJson(response);
+          renderUpload(activeUpload);
+          return;
+        } catch (error) {
+          if (error.name === "AbortError") throw error;
+          finalizeFailures += 1;
+          try {
+            // A compact poll intentionally omits item rows. After a finalize
+            // rejection, fetch the full session once so a terminal failed or
+            // isolated item replaces the browser's stale "uploaded" copy.
+            activeUpload = await uploadStatusRefresh(false);
+            item = activeUpload.items.find((candidate) => candidate.ordinal === ordinal);
+            if (["queued", "failed", "cancelled"].includes(item?.state)) return;
+          } catch (_statusError) {
+            // The finalization endpoint is retry-safe after a lost response.
+          }
+          if (finalizeFailures >= 4) throw error;
+          await new Promise((resolve) => window.setTimeout(resolve, finalizeFailures * 500));
+        }
+      }
+    }
+  };
+
+  const runUploadQueue = async (files) => {
+    let nextOrdinal = 1;
+    const worker = async () => {
+      while (nextOrdinal <= files.length) {
+        const ordinal = nextOrdinal;
+        nextOrdinal += 1;
+        await uploadOneFile(files[ordinal - 1], ordinal);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, files.length) }, worker));
+    activeUpload = await uploadStatusRefresh();
+  };
+
+  const pollUploadProcessing = async () => {
+    window.clearTimeout(uploadProcessingTimer);
+    if (!activeUpload?.status_url || !Number(activeUpload.processing_count || 0)) return;
+    try {
+      activeUpload = await uploadStatusRefresh();
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      if (uploadStatus) uploadStatus.textContent = "Status reconnecting; the saved processing job is still running.";
+    }
+    if (Number(activeUpload?.processing_count || 0)) {
+      uploadProcessingTimer = window.setTimeout(pollUploadProcessing, 2500);
+    }
+  };
+
+  const validateSelectedFiles = (files) => {
+    if (!files.length) throw new Error("Choose at least one supported file.");
+    if (files.length > maximumUploadItems) throw new Error(`Choose no more than ${maximumUploadItems.toLocaleString()} items in one collection.`);
+    const paths = new Set();
+    let total = 0;
+    files.forEach((file) => {
+      const path = file.webkitRelativePath || file.name;
+      const suffix = file.name.toLocaleLowerCase().split(".").pop();
+      const mediaSuffixes = ["wav", "mp3", "m4a", "ogg", "opus", "mp4", "mov", "webm"];
+      const reviewSuffixes = ["pdf", "docx", "txt", "jpg", "jpeg", "png", "tif", "tiff", "eml", "csv", "tsv", "xlsx"];
+      if (![...reviewSuffixes, ...mediaSuffixes].includes(suffix)) throw new Error(`${file.name} is not a supported review source.`);
+      if (!file.size) throw new Error(`${file.name} is empty.`);
+      const maximum = mediaSuffixes.includes(suffix) ? maximumMediaFileBytes : maximumUploadFileBytes;
+      if (file.size > maximum) throw new Error(`${file.name} is larger than ${mediaSuffixes.includes(suffix) ? mediaLimitLabel : documentLimitLabel}.`);
+      const key = path.toLocaleLowerCase();
+      if (paths.has(key)) throw new Error(`The selected records contain ${path} twice.`);
+      paths.add(key);
+      total += file.size;
+    });
+    return total;
+  };
+
+  const buildUploadBatches = (files) => {
+    const batches = [];
+    let batch = [];
+    let batchBytes = 0;
+    files.forEach((file) => {
+      if (
+        batch.length
+        && (batch.length >= maximumUploadBatchItems || batchBytes + file.size > maximumUploadSessionBytes)
+      ) {
+        batches.push(batch);
+        batch = [];
+        batchBytes = 0;
+      }
+      batch.push(file);
+      batchBytes += file.size;
+    });
+    if (batch.length) batches.push(batch);
+    return batches;
+  };
+
+  const startResumableUpload = async (files) => {
+    if (!uploadForm?.dataset.sessionUrl) return;
+    selectedUploadFiles = Array.from(files);
+    let totalBytes;
+    try {
+      totalBytes = validateSelectedFiles(selectedUploadFiles);
+    } catch (error) {
+      if (fileSummary) fileSummary.textContent = error.message;
+      uploadDrop?.classList.add("upload-error");
+      return;
+    }
+    uploadBatches = buildUploadBatches(selectedUploadFiles);
+    selectedUploadTotalBytes = totalBytes;
+    const names = selectedUploadFiles.slice(0, 3).map((file) => file.name);
+    const remainder = selectedUploadFiles.length - names.length;
+    if (fileSummary) fileSummary.textContent = `${names.join(", ")}${remainder > 0 ? ` and ${remainder.toLocaleString()} more` : ""} · ${formatBytes(totalBytes)}`;
+    uploadDrop?.classList.remove("upload-error");
+    uploadDrop?.classList.add("uploading");
+    uploadForm.setAttribute("aria-busy", "true");
+    uploadAbortController = new AbortController();
+    if (uploadProgress) uploadProgress.hidden = false;
+    if (uploadTitle) uploadTitle.textContent = "Saving upload collection";
+    if (uploadStatus) uploadStatus.textContent = "Creating a durable queue for the selected records.";
+    let resumeState = { session_id: "", collection_id: "", batch_index: 0 };
+    try {
+      const saved = uploadSessionKey ? window.localStorage.getItem(uploadSessionKey) || "" : "";
+      if (saved.startsWith("{")) {
+        const parsed = JSON.parse(saved);
+        resumeState = {
+          session_id: String(parsed.session_id || ""),
+          collection_id: String(parsed.collection_id || ""),
+          batch_index: Number.isSafeInteger(parsed.batch_index) ? parsed.batch_index : 0,
+        };
+      } else if (saved) {
+        resumeState.session_id = saved;
+      }
+    } catch (_error) {
+      // Upload still works without browser storage; only cross-refresh resume is lost.
+    }
+    if (resumeState.batch_index < 0 || resumeState.batch_index >= uploadBatches.length) {
+      resumeState = { session_id: "", collection_id: "", batch_index: 0 };
+    }
+    try {
+      let collectionId = resumeState.collection_id;
+      for (
+        activeUploadBatchIndex = resumeState.batch_index;
+        activeUploadBatchIndex < uploadBatches.length;
+        activeUploadBatchIndex += 1
+      ) {
+        selectedUploadFiles = uploadBatches[activeUploadBatchIndex];
+        if (uploadTitle && uploadBatches.length > 1) {
+          uploadTitle.textContent = `Creating batch ${activeUploadBatchIndex + 1} of ${uploadBatches.length}`;
+        }
+        const response = await fetch(uploadForm.dataset.sessionUrl, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken,
+          },
+          body: JSON.stringify({
+            collection_name: uploadCollectionName?.value || "Uploaded sources",
+            collection_id: collectionId,
+            resume_session_id: activeUploadBatchIndex === resumeState.batch_index
+              ? resumeState.session_id
+              : "",
+            files: selectedUploadFiles.map((file) => ({
+              name: file.name,
+              relative_path: file.webkitRelativePath || file.name,
+              size: file.size,
+              media_type: file.type,
+            })),
+          }),
+          signal: uploadAbortController.signal,
+        });
+        activeUpload = await readUploadJson(response);
+        collectionId = activeUpload.collection_id;
+        if (uploadSessionKey) {
+          try {
+            window.localStorage.setItem(uploadSessionKey, JSON.stringify({
+              version: 2,
+              session_id: activeUpload.upload_session_id,
+              collection_id: collectionId,
+              batch_index: activeUploadBatchIndex,
+            }));
+          } catch (_error) { /* no-op */ }
+        }
+        renderUpload(activeUpload);
+        await runUploadQueue(selectedUploadFiles);
+        if (uploadSessionKey && activeUploadBatchIndex + 1 < uploadBatches.length) {
+          try {
+            window.localStorage.setItem(uploadSessionKey, JSON.stringify({
+              version: 2,
+              session_id: "",
+              collection_id: collectionId,
+              batch_index: activeUploadBatchIndex + 1,
+            }));
+          } catch (_error) { /* no-op */ }
+        }
+      }
+      activeUploadBatchIndex = Math.max(uploadBatches.length - 1, 0);
+      renderUpload(activeUpload);
+      pollUploadProcessing();
+      if (["complete", "partial"].includes(activeUpload.state) && uploadSessionKey) {
+        try { window.localStorage.removeItem(uploadSessionKey); } catch (_error) { /* no-op */ }
+      }
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        if (uploadTitle) uploadTitle.textContent = "Upload paused";
+        if (uploadStatus) uploadStatus.textContent = `${error.message} Reselect the same records to resume from the saved offsets.`;
+      }
+    } finally {
+      uploadDrop?.classList.remove("uploading");
+      uploadForm.removeAttribute("aria-busy");
+    }
+  };
+
+  uploadForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (fileInput?.files?.length) startResumableUpload(fileInput.files);
+  });
+  fileInput?.addEventListener("change", () => startResumableUpload(fileInput.files));
+  folderInput?.addEventListener("change", () => startResumableUpload(folderInput.files));
+  ["dragenter", "dragover"].forEach((name) => uploadDrop?.addEventListener(name, (event) => {
+    event.preventDefault();
+    uploadDrop.classList.add("drag-active");
+  }));
+  ["dragleave", "drop"].forEach((name) => uploadDrop?.addEventListener(name, (event) => {
+    event.preventDefault();
+    uploadDrop.classList.remove("drag-active");
+  }));
+  uploadDrop?.addEventListener("drop", (event) => {
+    if (!event.dataTransfer?.files?.length) return;
+    startResumableUpload(event.dataTransfer.files);
+  });
+
+  uploadCancel?.addEventListener("click", async () => {
+    const cancelUrl = activeUpload?.cancel_url;
+    uploadAbortController?.abort();
+    if (!cancelUrl) return;
+    try {
+      const response = await fetch(cancelUrl, {
+        method: "POST",
+        headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+      });
+      activeUpload = await readUploadJson(response);
+      renderUpload(activeUpload, "Upload cancelled. Sources already queued remain in this matter.");
+      if (uploadSessionKey) {
+        try { window.localStorage.removeItem(uploadSessionKey); } catch (_error) { /* no-op */ }
+      }
+    } catch (error) {
+      if (uploadStatus) uploadStatus.textContent = error.message;
+    }
+  });
+
+  if (document.querySelector("[data-ingestion-active]")) {
+    const refreshIngestion = () => {
+      if (uploadForm?.getAttribute("aria-busy") === "true") {
+        window.setTimeout(refreshIngestion, 3000);
+        return;
+      }
+      window.location.reload();
+    };
+    window.setTimeout(refreshIngestion, 5000);
+  }
+
+  const sourceBulkForm = document.querySelector("[data-source-bulk-form]");
+  const sourceSelections = Array.from(document.querySelectorAll("[data-source-select]"));
+  const sourceSelectAll = document.querySelector("[data-source-select-all]");
+  const sourceSelectedCount = document.querySelector("[data-source-selected-count]");
+  const sourceBulkAction = document.querySelector("[data-source-bulk-action]");
+  const sourceBulkCollection = document.querySelector("[data-bulk-collection]");
+  const sourceBulkSet = document.querySelector("[data-bulk-source-set]");
+  const sourceBulkSetName = document.querySelector("[data-bulk-set-name]");
+  const sourceBulkSubmit = document.querySelector("[data-source-bulk-submit]");
+
+  const syncSourceBulk = () => {
+    const checked = sourceSelections.filter((item) => item.checked).length;
+    if (sourceSelectedCount) sourceSelectedCount.textContent = String(checked);
+    if (sourceSelectAll) {
+      sourceSelectAll.checked = Boolean(sourceSelections.length) && checked === sourceSelections.length;
+      sourceSelectAll.indeterminate = checked > 0 && checked < sourceSelections.length;
+    }
+    const action = sourceBulkAction?.value || "";
+    if (sourceBulkCollection) {
+      sourceBulkCollection.hidden = action !== "move";
+      sourceBulkCollection.required = action === "move";
+    }
+    if (sourceBulkSet) {
+      sourceBulkSet.hidden = action !== "add_to_set";
+      sourceBulkSet.required = action === "add_to_set";
+    }
+    if (sourceBulkSetName) {
+      sourceBulkSetName.hidden = action !== "create_set";
+      sourceBulkSetName.required = action === "create_set";
+    }
+    if (sourceBulkSubmit) sourceBulkSubmit.disabled = checked === 0 || !action;
+    sourceBulkForm?.classList.toggle("has-selection", checked > 0);
+  };
+
+  sourceSelections.forEach((item) => item.addEventListener("change", syncSourceBulk));
+  sourceSelectAll?.addEventListener("change", () => {
+    sourceSelections.forEach((item) => { item.checked = sourceSelectAll.checked; });
+    syncSourceBulk();
+  });
+  sourceBulkAction?.addEventListener("change", syncSourceBulk);
+  syncSourceBulk();
+
+  const textarea = document.querySelector("#matter-question");
+  const resizeTextarea = () => {
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 126)}px`;
+  };
+  textarea?.addEventListener("input", resizeTextarea);
+  resizeTextarea();
+
+  const questionForm = document.querySelector("[data-question-form]");
+  const answerWaitStatus = document.querySelector("[data-answer-wait-status]");
+  const answerWaitTitle = document.querySelector("[data-answer-wait-title]");
+  const answerWaitMessage = document.querySelector("[data-answer-wait-message]");
+  const answerWaitElapsed = document.querySelector("[data-answer-wait-elapsed]");
+  const answerWaitStages = Array.from(document.querySelectorAll("[data-answer-stage]"));
+  const answerCancelButton = document.querySelector("[data-answer-cancel]");
+  const answerRetryButton = document.querySelector("[data-answer-retry]");
+  const answerRequestKey = questionForm?.querySelector("[data-answer-request-key]");
+  const askButton = questionForm?.querySelector(".ask-button");
+  const askButtonLabel = askButton?.querySelector("span");
+  let sourcesReady = questionForm?.dataset.sourcesReady === "true";
+  let answerWaitTimer;
+  let answerPollTimer;
+  let answerCreatedAt = Date.parse(answerWaitStatus?.dataset.answerCreatedAt || "");
+  let activeAnswerStatusUrl = answerWaitStatus?.dataset.answerStatusUrl || "";
+
+  const newAnswerRequestKey = () => {
+    if (!answerRequestKey) return;
+    const identifier = window.crypto?.randomUUID?.();
+    const random = identifier?.replaceAll("-", "");
+    if (random) answerRequestKey.value = `answer-request-${random}`;
+  };
+
+  const setComposerWorking = (working) => {
+    questionForm?.classList.toggle("is-working", working);
+    if (working) {
+      questionForm?.setAttribute("aria-busy", "true");
+      textarea?.setAttribute("readonly", "");
+    } else {
+      questionForm?.removeAttribute("aria-busy");
+      textarea?.removeAttribute("readonly");
+    }
+    if (textarea) textarea.disabled = !sourcesReady;
+    if (askButton) {
+      askButton.disabled = working || !sourcesReady;
+      if (working) askButton.setAttribute("aria-label", "Answer request saved and in progress");
+      else askButton.removeAttribute("aria-label");
+    }
+    if (askButtonLabel) askButtonLabel.textContent = working ? "In progress" : "Ask";
+  };
+
+  window.addEventListener("recordbench:readiness", (event) => {
+    const readiness = event.detail || {};
+    sourcesReady = readiness.can_query === true;
+    if (questionForm) questionForm.dataset.sourcesReady = sourcesReady ? "true" : "false";
+    const working = questionForm?.getAttribute("aria-busy") === "true";
+    setComposerWorking(working);
+    const hint = document.querySelector("[data-composer-readiness-hint]");
+    if (hint) {
+      const partial = readiness.partial_query === true;
+      hint.classList.toggle("is-partial", partial);
+      hint.textContent = partial
+        ? readiness.coverage_notice || "Questions use the searchable sources; affected sources are excluded."
+        : sourcesReady
+          ? "Questions use the complete searchable record for this matter."
+          : readiness.state === "preparing"
+            ? "Questions will be available when active preparation finishes."
+            : readiness.guidance || "No source is searchable yet.";
+    }
+  });
+
+  const updateAnswerElapsed = (terminal = false) => {
+    if (!answerWaitElapsed || !Number.isFinite(answerCreatedAt)) return;
+    const seconds = Math.max(0, Math.floor((Date.now() - answerCreatedAt) / 1000));
+    answerWaitElapsed.textContent = terminal
+      ? `Finished after ${seconds} ${seconds === 1 ? "second" : "seconds"}`
+      : `Waiting ${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+  };
+
+  const startAnswerElapsed = () => {
+    window.clearInterval(answerWaitTimer);
+    updateAnswerElapsed();
+    answerWaitTimer = window.setInterval(() => updateAnswerElapsed(), 1000);
+  };
+
+  const renderAnswerJob = (job) => {
+    if (!answerWaitStatus || !job) return;
+    const terminal = ["succeeded", "failed", "cancelled"].includes(job.state);
+    activeAnswerStatusUrl = job.status_url || activeAnswerStatusUrl;
+    answerCreatedAt = Date.parse(job.created_at || "") || answerCreatedAt || Date.now();
+    answerWaitStatus.hidden = false;
+    answerWaitStatus.dataset.answerStatusUrl = activeAnswerStatusUrl;
+    answerWaitStatus.dataset.answerState = job.state;
+    answerWaitStatus.classList.toggle("is-terminal", terminal);
+    answerWaitStatus.classList.toggle("is-failed", job.state === "failed");
+    answerWaitStatus.classList.toggle("is-cancelled", job.state === "cancelled");
+    if (answerWaitTitle) answerWaitTitle.textContent = job.stage_label || "Answer in progress";
+    if (answerWaitMessage) {
+      answerWaitMessage.textContent = job.queue_position
+        ? `Currently ${job.queue_position} in the answer queue.`
+        : (job.message || "The saved answer request is being processed.");
+    }
+    const observedStages = new Set((job.events || []).map((event) => event.stage));
+    answerWaitStages.forEach((item) => {
+      const stage = item.dataset.answerStage;
+      item.classList.toggle("is-current", stage === job.stage && job.state === "running");
+      item.classList.toggle(
+        "is-complete",
+        observedStages.has(stage) && !(stage === job.stage && job.state === "running"),
+      );
+    });
+    if (answerCancelButton) {
+      answerCancelButton.hidden = !job.can_cancel;
+      answerCancelButton.dataset.actionUrl = job.cancel_url || "";
+      answerCancelButton.disabled = false;
+    }
+    if (answerRetryButton) {
+      answerRetryButton.hidden = !job.can_retry;
+      answerRetryButton.dataset.actionUrl = job.retry_url || "";
+      answerRetryButton.disabled = false;
+    }
+    setComposerWorking(job.state === "queued" || job.state === "running");
+    window.clearInterval(answerWaitTimer);
+    if (terminal) {
+      updateAnswerElapsed(true);
+      if (job.state !== "succeeded") newAnswerRequestKey();
+    } else {
+      startAnswerElapsed();
+    }
+  };
+
+  const readJson = async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || payload.detail || "The request could not be completed.");
+    return payload;
+  };
+
+  const pollAnswerJob = async () => {
+    window.clearTimeout(answerPollTimer);
+    if (!activeAnswerStatusUrl) return;
+    try {
+      const response = await fetch(activeAnswerStatusUrl, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const job = await readJson(response);
+      renderAnswerJob(job);
+      if (job.state === "succeeded") {
+        // The result route is a distinct request target. Navigating through it
+        // forces fresh server-rendered conversation HTML even when the final
+        // workspace URL differs only by a fragment.
+        window.location.assign(job.result_url || job.workspace_url);
+        return;
+      }
+      if (["failed", "cancelled"].includes(job.state)) return;
+      answerPollTimer = window.setTimeout(pollAnswerJob, 1000);
+    } catch (_error) {
+      if (answerWaitTitle) answerWaitTitle.textContent = "Reconnecting to saved request";
+      if (answerWaitMessage) {
+        answerWaitMessage.textContent = "Status is temporarily unavailable. The request remains saved; reconnecting automatically.";
+      }
+      answerPollTimer = window.setTimeout(pollAnswerJob, 4000);
+    }
+  };
+
+  questionForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!textarea?.value.trim()) {
+      textarea?.focus();
+      return;
+    }
+    setComposerWorking(true);
+    if (answerWaitStatus) {
+      answerWaitStatus.hidden = false;
+      answerWaitStatus.classList.remove("is-terminal", "is-failed", "is-cancelled");
+    }
+    if (answerWaitTitle) answerWaitTitle.textContent = "Saving request";
+    if (answerWaitMessage) answerWaitMessage.textContent = "Adding this question to the durable answer queue.";
+    answerCreatedAt = Date.now();
+    startAnswerElapsed();
+    try {
+      const response = await fetch(questionForm.action, {
+        method: "POST",
+        body: new FormData(questionForm),
+        headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+      });
+      const job = await readJson(response);
+      textarea.value = "";
+      resizeTextarea();
+      renderAnswerJob(job);
+      pollAnswerJob();
+    } catch (error) {
+      window.clearInterval(answerWaitTimer);
+      setComposerWorking(false);
+      if (answerWaitStatus) answerWaitStatus.classList.add("is-terminal", "is-failed");
+      if (answerWaitTitle) answerWaitTitle.textContent = "Request not confirmed";
+      if (answerWaitMessage) {
+        answerWaitMessage.textContent = `${error.message} You can safely send it again; the request key prevents duplicates.`;
+      }
+    }
+  });
+
+  const runAnswerAction = async (button) => {
+    const url = button?.dataset.actionUrl;
+    if (!url) return;
+    button.disabled = true;
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+      });
+      const job = await readJson(response);
+      renderAnswerJob(job);
+      if (["queued", "running"].includes(job.state)) pollAnswerJob();
+    } catch (error) {
+      button.disabled = false;
+      if (answerWaitTitle) answerWaitTitle.textContent = "Action not completed";
+      if (answerWaitMessage) answerWaitMessage.textContent = error.message;
+    }
+  };
+
+  answerCancelButton?.addEventListener("click", () => runAnswerAction(answerCancelButton));
+  answerRetryButton?.addEventListener("click", () => runAnswerAction(answerRetryButton));
+
+  if (activeAnswerStatusUrl) {
+    const activeState = answerWaitStatus?.dataset.answerState;
+    setComposerWorking(activeState === "queued" || activeState === "running");
+    startAnswerElapsed();
+    pollAnswerJob();
+  }
+
+  const mediaActivity = document.querySelector("[data-media-activity]");
+  const mediaActivityTitle = mediaActivity?.querySelector("[data-media-activity-title]");
+  const mediaActivityList = mediaActivity?.querySelector("[data-media-activity-list]");
+  const mediaActivityNote = mediaActivity?.querySelector("[data-media-activity-note]");
+  let mediaActivityTimer = 0;
+
+  const renderMediaActivity = (payload) => {
+    if (!mediaActivity || !mediaActivityList) return;
+    const active = Number(payload.active_count || 0);
+    const attention = Number(payload.attention_count || 0);
+    if (mediaActivityTitle) {
+      mediaActivityTitle.textContent = active
+        ? `Media processing · ${active} active`
+        : attention
+          ? "Media needs attention"
+          : "Transcript ready";
+    }
+    mediaActivityList.replaceChildren();
+    (payload.items || []).forEach((item) => {
+      const row = document.createElement("article");
+      const marker = document.createElement("span");
+      marker.className = ["queued", "running"].includes(item.state)
+        ? "processing-pulse"
+        : item.state === "failed"
+          ? "media-activity-marker attention"
+          : "media-activity-marker ready";
+      marker.setAttribute("aria-hidden", "true");
+      const copy = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = item.source_name || "Recording";
+      const stage = document.createElement("small");
+      const percent = ["queued", "running"].includes(item.state)
+        ? ` · ${Math.round(Math.max(0, Math.min(1, Number(item.progress || 0))) * 100)}%`
+        : "";
+      stage.textContent = `${item.stage || "Processing"}${percent}`;
+      copy.append(name, stage);
+      const link = document.createElement("a");
+      link.href = item.review_url;
+      link.textContent = item.state === "failed"
+        ? "Review issue"
+        : ["succeeded", "degraded"].includes(item.state)
+          ? "Open transcript"
+          : "View status";
+      row.append(marker, copy, link);
+      mediaActivityList.append(row);
+    });
+    if (mediaActivityNote) {
+      mediaActivityNote.textContent = active
+        ? "This is saved backend progress. You may leave this conversation and return later."
+        : attention
+          ? "Open the recording to review the failure and try again."
+          : "The transcript is now searchable and ready beside the recording.";
+    }
+  };
+
+  const pollMediaActivity = async () => {
+    window.clearTimeout(mediaActivityTimer);
+    if (!mediaActivity?.dataset.statusUrl) return;
+    try {
+      const response = await fetch(mediaActivity.dataset.statusUrl, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "Status unavailable");
+      renderMediaActivity(payload);
+      if (Number(payload.active_count || 0)) {
+        mediaActivityTimer = window.setTimeout(pollMediaActivity, 2500);
+      }
+    } catch (_error) {
+      if (mediaActivityNote) mediaActivityNote.textContent = "Status reconnecting; the saved media job will continue.";
+      mediaActivityTimer = window.setTimeout(pollMediaActivity, 3500);
+    }
+  };
+  if (mediaActivity) pollMediaActivity();
+
+  const mediaReview = document.querySelector("[data-media-review]");
+  const mediaPlayer = document.querySelector("[data-media-player]");
+  const mediaTime = document.querySelector("[data-media-time]");
+  const transcriptSegments = Array.from(document.querySelectorAll("[data-transcript-segment]"));
+  const transcriptFollow = document.querySelector("[data-transcript-follow]");
+  const mediaJob = document.querySelector("[data-media-job]");
+  const mediaStage = mediaJob?.querySelector("[data-media-stage]");
+  const mediaMessage = mediaJob?.querySelector("[data-media-message]");
+  const mediaPercent = mediaJob?.querySelector("[data-media-percent]");
+  const mediaProgress = mediaJob?.querySelector("[data-media-progress]");
+  const playbackStatus = document.querySelector("[data-playback-status]");
+  const playbackTitle = playbackStatus?.querySelector("[data-playback-title]");
+  const playbackMessage = playbackStatus?.querySelector("[data-playback-message]");
+  const mediaStatusUrl = mediaReview?.dataset.mediaStatusUrl || mediaJob?.dataset.statusUrl || "";
+  const mediaResumeUrl = mediaReview?.dataset.mediaResumeUrl || "";
+  let observedMediaJobState = mediaReview?.dataset.mediaJobState || "unavailable";
+  let observedPlaybackState = mediaReview?.dataset.playbackState || "unknown";
+  let observedSummaryState = mediaReview?.dataset.summaryState || "not_created";
+  let mediaPollTimer = 0;
+  let activeTranscriptSegment = null;
+  let mediaPageNavigation = false;
+  let mediaResumeApplied = false;
+  let mediaResumeLastSentAt = 0;
+  let mediaResumeLastPosition = Number(mediaReview?.dataset.startMs || 0);
+
+  const transcriptPage = Math.max(1, Number(mediaReview?.dataset.transcriptPage || 1));
+  const transcriptPages = Math.max(1, Number(mediaReview?.dataset.transcriptPages || 1));
+  const transcriptFiltered = mediaReview?.dataset.transcriptFiltered === "true";
+  const mediaFollowResumeKey = mediaReview
+    ? `case-intelligence:media-follow:${window.location.pathname}`
+    : "";
+
+  const formatMediaTime = (milliseconds) => {
+    const value = Math.max(0, Math.round(Number(milliseconds) || 0));
+    const hours = Math.floor(value / 3600000);
+    const minutes = Math.floor((value % 3600000) / 60000);
+    const seconds = Math.floor((value % 60000) / 1000);
+    return hours
+      ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+      : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  };
+
+  const seekMedia = (milliseconds, play = true) => {
+    if (!mediaPlayer) return;
+    const seconds = Math.max(0, Number(milliseconds) / 1000);
+    mediaPlayer.currentTime = seconds;
+    if (play) mediaPlayer.play().catch(() => {});
+  };
+
+  const saveMediaResume = (force = false) => {
+    if (!mediaResumeUrl || !mediaPlayer || !Number.isFinite(mediaPlayer.currentTime)) return;
+    const position = Math.max(0, Math.round(mediaPlayer.currentTime * 1000));
+    const now = Date.now();
+    if (
+      !force
+      && (now - mediaResumeLastSentAt < 15000 || Math.abs(position - mediaResumeLastPosition) < 5000)
+    ) return;
+    mediaResumeLastSentAt = now;
+    mediaResumeLastPosition = position;
+    fetch(mediaResumeUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ position_ms: position }),
+      credentials: "same-origin",
+      keepalive: true,
+    }).catch(() => {});
+  };
+
+  document.querySelectorAll("[data-seek-ms]").forEach((button) => {
+    button.addEventListener("click", () => seekMedia(button.dataset.seekMs));
+  });
+
+  const followTranscriptRow = (row) => {
+    if (!row || !transcriptFollow?.checked) return;
+    if (document.activeElement?.closest?.(".transcript-editor")) return;
+    const bounds = row.getBoundingClientRect();
+    const topbar = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--topbar-height"),
+    ) || 0;
+    const safeTop = topbar + 18;
+    const safeBottom = window.innerHeight - 24;
+    if (bounds.top >= safeTop && bounds.bottom <= safeBottom) return;
+    row.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "center",
+    });
+  };
+
+  const continueTranscriptOnPage = (targetPage, milliseconds) => {
+    if (mediaPageNavigation || transcriptFiltered || !mediaFollowResumeKey) return;
+    if (targetPage < 1 || targetPage > transcriptPages) return;
+    mediaPageNavigation = true;
+    try {
+      window.sessionStorage.setItem(mediaFollowResumeKey, JSON.stringify({
+        startMs: Math.max(0, Math.round(milliseconds)),
+        playing: !mediaPlayer.paused,
+      }));
+    } catch (_error) {
+      // The query string still preserves position when browser storage is unavailable.
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("page", String(targetPage));
+    url.searchParams.set("start_ms", String(Math.max(0, Math.round(milliseconds))));
+    url.searchParams.delete("segment");
+    url.hash = "";
+    window.location.assign(url.toString());
+  };
+
+  const followTranscriptPage = (milliseconds, activeRow) => {
+    if (
+      activeRow
+      || !mediaResumeApplied
+      || mediaPlayer?.paused
+      || !transcriptFollow?.checked
+      || transcriptFiltered
+      || !transcriptSegments.length
+    ) return;
+    const firstStart = Number(transcriptSegments[0].dataset.startMs || 0);
+    const last = transcriptSegments[transcriptSegments.length - 1];
+    const lastEnd = Number(last.dataset.endMs || last.dataset.startMs || 0);
+    if (milliseconds >= lastEnd && transcriptPage < transcriptPages) {
+      continueTranscriptOnPage(transcriptPage + 1, milliseconds);
+    } else if (milliseconds < firstStart && transcriptPage > 1) {
+      continueTranscriptOnPage(transcriptPage - 1, milliseconds);
+    }
+  };
+
+  const updateTranscriptPosition = () => {
+    if (!mediaPlayer) return;
+    const milliseconds = mediaPlayer.currentTime * 1000;
+    saveMediaResume();
+    if (mediaTime) mediaTime.textContent = formatMediaTime(milliseconds);
+    const next = transcriptSegments.find((row) => {
+      const start = Number(row.dataset.startMs || 0);
+      const end = Number(row.dataset.endMs || start);
+      return start <= milliseconds && milliseconds < end;
+    }) || null;
+    followTranscriptPage(milliseconds, next);
+    if (next === activeTranscriptSegment) return;
+    activeTranscriptSegment?.classList.remove("is-active");
+    next?.classList.add("is-active");
+    activeTranscriptSegment = next;
+    followTranscriptRow(next);
+  };
+
+  if (mediaPlayer && mediaReview) {
+    const initialStart = Number(mediaReview.dataset.startMs || 0);
+    const applyInitialStart = () => {
+      let resume = null;
+      if (mediaFollowResumeKey) {
+        try {
+          resume = JSON.parse(window.sessionStorage.getItem(mediaFollowResumeKey) || "null");
+          window.sessionStorage.removeItem(mediaFollowResumeKey);
+        } catch (_error) {
+          resume = null;
+        }
+      }
+      const resumeStart = Number(resume?.startMs || initialStart);
+      if (resumeStart > 0) mediaPlayer.currentTime = resumeStart / 1000;
+      mediaResumeApplied = true;
+      updateTranscriptPosition();
+      if (resume?.playing) mediaPlayer.play().catch(() => {});
+    };
+    if (mediaPlayer.readyState >= 1) applyInitialStart();
+    else mediaPlayer.addEventListener("loadedmetadata", applyInitialStart, { once: true });
+    mediaPlayer.addEventListener("timeupdate", updateTranscriptPosition);
+    mediaPlayer.addEventListener("seeked", updateTranscriptPosition);
+  }
+
+  transcriptFollow?.addEventListener("change", () => {
+    if (transcriptFollow.checked) followTranscriptRow(activeTranscriptSegment);
+  });
+
+  const clipStart = document.querySelector("[data-clip-start]");
+  const clipEnd = document.querySelector("[data-clip-end]");
+  const clipStartDisplay = document.querySelector("[data-clip-start-display]");
+  const clipEndDisplay = document.querySelector("[data-clip-end-display]");
+  const setClipBoundary = (input, display) => {
+    if (!mediaPlayer || !input || !display) return;
+    const milliseconds = Math.max(0, Math.round(mediaPlayer.currentTime * 1000));
+    input.value = String(milliseconds);
+    display.value = formatMediaTime(milliseconds);
+  };
+  document.querySelector("[data-set-clip-start]")?.addEventListener("click", () => {
+    setClipBoundary(clipStart, clipStartDisplay);
+  });
+  document.querySelector("[data-set-clip-end]")?.addEventListener("click", () => {
+    setClipBoundary(clipEnd, clipEndDisplay);
+  });
+
+  document.querySelector("[data-clip-form]")?.addEventListener("submit", (event) => {
+    const start = Number(clipStart?.value || 0);
+    const end = Number(clipEnd?.value || 0);
+    if (end - start < 1000 || end - start > 600000) {
+      event.preventDefault();
+      window.alert("Choose a clip between one second and ten minutes.");
+    }
+  });
+
+  const pollMediaJob = async () => {
+    if (!mediaStatusUrl) return;
+    try {
+      const response = await fetch(mediaStatusUrl, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "Status unavailable");
+      const progress = Math.max(0, Math.min(1, Number(payload.progress || 0)));
+      if (mediaStage) mediaStage.textContent = payload.stage || "Transcribing";
+      if (mediaMessage && payload.message) mediaMessage.textContent = payload.message;
+      if (mediaPercent) mediaPercent.textContent = `${Math.round(progress * 100)}%`;
+      if (mediaProgress) mediaProgress.style.width = `${progress * 100}%`;
+      const nextPlaybackState = payload.playback_state || "unknown";
+      if (playbackStatus) {
+        playbackStatus.dataset.state = nextPlaybackState;
+        playbackStatus.className = `playback-compatibility playback-${nextPlaybackState}`;
+        if (playbackTitle) {
+          playbackTitle.textContent = nextPlaybackState === "ready"
+            ? "Browser playback ready"
+            : nextPlaybackState === "original"
+              ? "Original format ready"
+              : nextPlaybackState === "failed"
+                ? "Compatibility copy needs attention"
+                : "Preparing browser playback";
+        }
+        if (playbackMessage && payload.playback_message) {
+          playbackMessage.textContent = payload.playback_message;
+        }
+      }
+      const transcriptChanged = payload.state !== observedMediaJobState
+        && ["succeeded", "degraded", "failed"].includes(payload.state);
+      const playbackChanged = nextPlaybackState !== observedPlaybackState
+        && ["original", "ready", "failed"].includes(nextPlaybackState);
+      const summaryChanged = payload.summary_state !== observedSummaryState
+        && ["ready", "failed", "stale"].includes(payload.summary_state);
+      observedMediaJobState = payload.state;
+      observedPlaybackState = nextPlaybackState;
+      observedSummaryState = payload.summary_state;
+      if (transcriptChanged || playbackChanged || summaryChanged) {
+        const url = new URL(window.location.href);
+        if (mediaPlayer && Number.isFinite(mediaPlayer.currentTime)) {
+          url.searchParams.set("start_ms", String(Math.max(0, Math.round(mediaPlayer.currentTime * 1000))));
+        }
+        const nextUrl = url.toString();
+        if (nextUrl === window.location.href) window.location.reload();
+        else window.location.replace(nextUrl);
+        return;
+      }
+      const active = ["queued", "running"].includes(payload.state)
+        || ["queued", "processing", "unknown"].includes(nextPlaybackState)
+        || ["queued", "running", "stale"].includes(payload.summary_state);
+      if (!active) return;
+    } catch (_error) {
+      if (mediaMessage) mediaMessage.textContent = "Status reconnecting; the durable job is still saved.";
+      if (playbackMessage) playbackMessage.textContent = "Playback status is reconnecting; the original video remains saved.";
+    }
+    mediaPollTimer = window.setTimeout(pollMediaJob, 2500);
+  };
+  if (
+    mediaStatusUrl
+    && (
+      ["queued", "running"].includes(observedMediaJobState)
+      || ["queued", "processing", "unknown"].includes(observedPlaybackState)
+      || ["queued", "running", "stale"].includes(observedSummaryState)
+    )
+  ) pollMediaJob();
+
+  const focusedHash = /^#segment-\d+$/.test(window.location.hash) ? window.location.hash : "";
+  const focusedTranscript = document.querySelector(".transcript-segment.focus-segment")
+    || (focusedHash ? document.querySelector(focusedHash) : null);
+  if (focusedTranscript) {
+    window.requestAnimationFrame(() => focusedTranscript.scrollIntoView({ block: "center" }));
+  }
+
+  window.caseIntelligenceMedia = { seekMedia, formatMediaTime, updateTranscriptPosition };
+
+  window.addEventListener("pagehide", () => {
+    saveMediaResume(true);
+    window.clearInterval(answerWaitTimer);
+    window.clearTimeout(answerPollTimer);
+    window.clearTimeout(mediaPollTimer);
+    window.clearTimeout(uploadProcessingTimer);
+    window.clearTimeout(mediaActivityTimer);
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted && activeAnswerStatusUrl) pollAnswerJob();
+  });
+
+  const supportPane = document.querySelector("[data-support-pane]");
+  const supportMedia = supportPane?.querySelector("[data-support-media]");
+  const supportMediaPlayer = supportPane?.querySelector("[data-support-media-player]");
+  const supportPlayButton = supportPane?.querySelector("[data-support-play]");
+  const positionSupportMedia = (play = false) => {
+    if (!supportMedia || !supportMediaPlayer) return;
+    const seconds = Math.max(0, Number(supportMedia.dataset.startMs || 0) / 1000);
+    supportMediaPlayer.currentTime = seconds;
+    if (play) supportMediaPlayer.play().catch(() => {});
+  };
+  if (supportMediaPlayer) {
+    const applySupportStart = () => positionSupportMedia(
+      supportMedia?.dataset.autoplay === "true",
+    );
+    if (supportMediaPlayer.readyState >= 1) applySupportStart();
+    else supportMediaPlayer.addEventListener("loadedmetadata", applySupportStart, { once: true });
+    supportPlayButton?.addEventListener("click", () => positionSupportMedia(true));
+  }
+  if (supportPane && window.location.hash === "#support-pane") {
+    window.requestAnimationFrame(() => {
+      if (window.matchMedia("(max-width: 900px)").matches) {
+        const latestAnswer = document.querySelector("#latest");
+        const workspace = document.querySelector(".workspace-main");
+        if (latestAnswer && workspace) {
+          const topbar = Number.parseFloat(
+            getComputedStyle(document.documentElement).getPropertyValue("--topbar-height")
+          ) || 62;
+          workspace.scrollTop += latestAnswer.getBoundingClientRect().top - topbar - 64;
+        }
+      }
+      supportPane.focus({ preventScroll: true });
+    });
+  }
+})();
+
+/* One matter-wide, durable preparation projection shared by every workspace. */
+(() => {
+  const readiness = document.querySelector("[data-matter-readiness]");
+  if (!readiness) return;
+  let readinessTimer = 0;
+  const details = readiness.querySelector("[data-processing-details]");
+
+  const setDetailsOpen = (open) => {
+    if (details) details.hidden = !open;
+    readiness.querySelectorAll("[data-processing-toggle]").forEach((control) => {
+      control.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  };
+
+  readiness.addEventListener("click", (event) => {
+    const control = event.target.closest("[data-processing-toggle]");
+    if (!control || !readiness.contains(control)) return;
+    setDetailsOpen(details?.hidden !== false);
+  });
+
+  const readinessMark = (state) => {
+    if (state === "ready") return '<svg viewBox="0 0 24 24"><path d="m5 12 4 4 10-10"/></svg>';
+    if (state === "attention") return '<svg viewBox="0 0 24 24"><path d="M12 4 3.5 20h17L12 4Z"/><path d="M12 9v5m0 3h.01"/></svg>';
+    if (state === "empty") return '<svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 11h6M12 8v6"/></svg>';
+    return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>';
+  };
+
+  const renderActions = (payload) => {
+    const holder = readiness.querySelector(".matter-readiness-actions");
+    if (!holder) return;
+    holder.replaceChildren();
+    if (payload.action_url) {
+      const link = document.createElement("a");
+      link.href = payload.action_url;
+      link.dataset.readinessAction = "true";
+      link.textContent = payload.action_label;
+      holder.append(link);
+    } else {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.processingToggle = "true";
+      button.setAttribute("aria-expanded", details?.hidden === false ? "true" : "false");
+      button.setAttribute("aria-controls", "matter-processing-center");
+      button.textContent = payload.action_label;
+      holder.append(button);
+    }
+    if (payload.state === "attention") {
+      const detailButton = document.createElement("button");
+      detailButton.type = "button";
+      detailButton.className = "readiness-details-action";
+      detailButton.dataset.processingToggle = "true";
+      detailButton.setAttribute("aria-expanded", details?.hidden === false ? "true" : "false");
+      detailButton.setAttribute("aria-controls", "matter-processing-center");
+      detailButton.textContent = "Details";
+      holder.append(detailButton);
+    }
+  };
+
+  const renderReadiness = (payload) => {
+    ["empty", "preparing", "attention", "ready"].forEach((state) => {
+      readiness.classList.toggle(`state-${state}`, payload.state === state);
+    });
+    readiness.dataset.state = payload.state || "";
+    readiness.dataset.canQuery = payload.can_query === true ? "true" : "false";
+    readiness.dataset.pollAfterMs = String(payload.poll_after_ms || 8000);
+    const headline = readiness.querySelector("[data-readiness-headline]");
+    const summary = readiness.querySelector("[data-readiness-summary]");
+    const guidance = readiness.querySelector("[data-readiness-guidance]");
+    const mark = readiness.querySelector("[data-readiness-mark]");
+    const progress = readiness.querySelector("[data-readiness-progress]");
+    if (headline) headline.textContent = payload.headline || "Matter status";
+    if (summary) summary.textContent = payload.summary || "";
+    if (guidance) guidance.textContent = payload.guidance || "";
+    if (mark) mark.innerHTML = readinessMark(payload.state);
+    if (progress) progress.style.width = `${Math.max(0, Math.min(100, payload.progress_percent || 0))}%`;
+    renderActions(payload);
+
+    const activity = readiness.querySelector("[data-readiness-activity]");
+    if (activity) {
+      activity.replaceChildren();
+      (payload.active_work || []).forEach((item) => {
+        const line = document.createElement("span");
+        line.dataset.workKey = item.key || "";
+        const count = document.createElement("strong");
+        count.textContent = String(item.count || 0);
+        line.append(count, document.createTextNode(` ${item.label || "Working"}`));
+        activity.append(line);
+      });
+      activity.hidden = !(payload.active_work || []).length;
+    }
+    (payload.stages || []).forEach((stage) => {
+      const row = readiness.querySelector(`[data-processing-stage="${stage.key}"]`);
+      if (!row) return;
+      ["waiting", "working", "complete", "attention"].forEach((state) => {
+        row.classList.toggle(`state-${state}`, stage.state === state);
+      });
+      const count = row.querySelector("[data-stage-count]");
+      const state = row.querySelector("[data-stage-state]");
+      if (count) count.textContent = stage.count_label || "";
+      if (state) state.textContent = stage.state_label || "";
+    });
+    const overview = readiness.querySelector("[data-processing-overview-note]");
+    if (overview) {
+      overview.textContent = payload.overview_note || "";
+      overview.hidden = !payload.overview_note;
+    }
+    const updated = readiness.querySelector("[data-readiness-updated]");
+    if (updated) updated.textContent = "Updated just now · Work continues if you leave this page.";
+
+    document.querySelectorAll(".matter-search-form input[name=\"q\"], .matter-search-form button[type=\"submit\"]").forEach((control) => {
+      control.disabled = payload.can_query !== true;
+    });
+    const partial = payload.partial_query === true;
+    const searchHint = document.querySelector("[data-search-readiness-hint]");
+    if (searchHint) {
+      searchHint.classList.toggle("is-partial", partial);
+      searchHint.textContent = partial
+        ? payload.coverage_notice || "Search uses the searchable sources; affected sources are excluded."
+        : payload.state === "preparing"
+          ? "Search will be available when active preparation finishes. You can continue reviewing individual sources in the meantime."
+          : payload.guidance || "No source is searchable yet.";
+      searchHint.hidden = payload.can_query === true && !partial;
+    }
+    const conversationCoverage = document.querySelector("[data-conversation-coverage]");
+    if (conversationCoverage) {
+      const copy = conversationCoverage.querySelector("[data-conversation-coverage-copy]");
+      const action = conversationCoverage.querySelector("[data-conversation-coverage-action]");
+      if (copy) copy.textContent = payload.coverage_notice || "";
+      if (action && payload.action_url) action.href = payload.action_url;
+      conversationCoverage.hidden = !partial;
+    }
+    window.dispatchEvent(new CustomEvent("recordbench:readiness", { detail: payload }));
+  };
+
+  const pollReadiness = async () => {
+    window.clearTimeout(readinessTimer);
+    try {
+      const response = await fetch(readiness.dataset.statusUrl, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || "Matter status is unavailable.");
+      renderReadiness(payload);
+      readinessTimer = window.setTimeout(pollReadiness, payload.poll_after_ms || 8000);
+    } catch (_error) {
+      const updated = readiness.querySelector("[data-readiness-updated]");
+      if (updated) updated.textContent = "Status update paused · Reconnecting automatically. Background work continues.";
+      readinessTimer = window.setTimeout(pollReadiness, 5000);
+    }
+  };
+
+  readinessTimer = window.setTimeout(pollReadiness, 1200);
+  window.addEventListener("pagehide", () => window.clearTimeout(readinessTimer));
+})();
+
+/* A workspace-wide activity drawer keeps background work visible across pages. */
+(() => {
+  const body = document.body;
+  const drawer = document.querySelector("[data-activity-drawer]");
+  const toggle = document.querySelector("[data-activity-toggle]");
+  const scrim = document.querySelector("[data-activity-scrim]");
+  const badge = document.querySelector("[data-activity-badge]");
+  if (!drawer || !toggle) return;
+
+  let activityTimer = 0;
+  let loaded = false;
+  let loading = false;
+
+  const setActivityOpen = (open, { restoreFocus = false } = {}) => {
+    body.classList.toggle("activity-open", open);
+    drawer.setAttribute("aria-hidden", open ? "false" : "true");
+    drawer.inert = !open;
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.setAttribute("aria-label", open ? "Close background activity" : "Open background activity");
+    if (open) {
+      refreshActivity();
+      window.requestAnimationFrame(() => drawer.querySelector("[data-activity-close]")?.focus({ preventScroll: true }));
+    } else if (restoreFocus) {
+      toggle.focus({ preventScroll: true });
+    }
+  };
+
+  const updateActivityBadge = (content) => {
+    if (!badge || !content) return;
+    const count = Number(content.dataset.badgeCount || 0);
+    badge.textContent = count > 99 ? "99+" : String(count);
+    badge.hidden = count <= 0;
+    toggle.classList.toggle("has-attention", Number(content.dataset.attentionCount || 0) > 0);
+    toggle.classList.toggle("is-working", Number(content.dataset.activeCount || 0) > 0);
+  };
+
+  const scheduleActivity = (delay) => {
+    window.clearTimeout(activityTimer);
+    activityTimer = window.setTimeout(refreshActivity, Math.max(Number(delay) || 15000, 1500));
+  };
+
+  async function refreshActivity() {
+    if (loading || document.visibilityState === "hidden") {
+      scheduleActivity(3000);
+      return;
+    }
+    loading = true;
+    try {
+      const response = await fetch(drawer.dataset.activityUrl, {
+        headers: { Accept: "text/html" },
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Activity is temporarily unavailable.");
+      const holder = document.createElement("div");
+      holder.innerHTML = await response.text();
+      const content = holder.querySelector("[data-activity-content]");
+      if (!content) throw new Error("Activity response was incomplete.");
+      drawer.replaceChildren(content);
+      updateActivityBadge(content);
+      loaded = true;
+      scheduleActivity(content.dataset.pollAfterMs);
+    } catch (_error) {
+      const loadingCopy = drawer.querySelector("[data-activity-loading] strong");
+      if (loadingCopy) loadingCopy.textContent = "Activity update paused. Reconnecting…";
+      if (loaded) drawer.querySelector("[data-activity-content]")?.classList.add("is-stale");
+      scheduleActivity(5000);
+    } finally {
+      loading = false;
+    }
+  }
+
+  toggle.addEventListener("click", () => {
+    setActivityOpen(!body.classList.contains("activity-open"), { restoreFocus: true });
+  });
+  scrim?.addEventListener("click", () => setActivityOpen(false, { restoreFocus: true }));
+  drawer.addEventListener("click", (event) => {
+    if (event.target.closest("[data-activity-close]")) {
+      setActivityOpen(false, { restoreFocus: true });
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && body.classList.contains("activity-open")) {
+      setActivityOpen(false, { restoreFocus: true });
+    }
+  });
+  window.addEventListener("recordbench:readiness", () => scheduleActivity(400));
+  window.addEventListener("pagehide", () => window.clearTimeout(activityTimer));
+  scheduleActivity(600);
+})();
+
+/* Compact matter navigation, persisted appearance, and the cross-workspace assistant. */
+(() => {
+  const body = document.body;
+  const csrfToken = body.dataset.csrfToken || "";
+
+  const matterFilter = document.querySelector("[data-matter-filter]");
+  const matterItems = Array.from(document.querySelectorAll("[data-matter-item]"));
+  const matterFilterEmpty = document.querySelector("[data-matter-filter-empty]");
+  matterFilter?.addEventListener("input", () => {
+    const query = matterFilter.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    matterItems.forEach((item) => {
+      const matches = !query || (item.dataset.searchText || "").toLocaleLowerCase().includes(query);
+      item.hidden = !matches;
+      if (matches) visible += 1;
+    });
+    if (matterFilterEmpty) matterFilterEmpty.hidden = visible !== 0;
+  });
+
+  document.querySelectorAll("[data-theme-picker]").forEach((themePicker) => {
+    themePicker.addEventListener("change", () => {
+      document.documentElement.dataset.theme = themePicker.value;
+      themePicker.closest("[data-theme-form]")?.requestSubmit();
+    });
+  });
+
+  const assistantPreferenceKey = "recordbench:assistant:display:v2";
+  let assistantDock = document.querySelector("[data-assistant-dock]");
+  let assistantPollTimer = 0;
+  let assistantDraft = false;
+  let assistantDraftBuffer = null;
+
+  const assistantConversationPreferenceKey = () => {
+    const matterId = assistantDock?.dataset.matterId || "";
+    return matterId ? `recordbench:assistant:conversation:${matterId}` : "";
+  };
+
+  const readAssistantPreference = () => {
+    try {
+      const saved = window.localStorage.getItem(assistantPreferenceKey);
+      if (saved === "collapsed") return true;
+      if (saved === "open") return false;
+      return body.dataset.assistantDefault === "collapsed"
+        || window.matchMedia("(max-width: 900px)").matches;
+    } catch (_error) {
+      return body.dataset.assistantDefault === "collapsed"
+        || window.matchMedia("(max-width: 900px)").matches;
+    }
+  };
+
+  const saveAssistantPreference = (collapsed) => {
+    try {
+      window.localStorage.setItem(assistantPreferenceKey, collapsed ? "collapsed" : "open");
+    } catch (_error) {
+      // The assistant remains usable when browser preference storage is unavailable.
+    }
+  };
+
+  const readAssistantConversationPreference = () => {
+    try {
+      const key = assistantConversationPreferenceKey();
+      return key ? window.localStorage.getItem(key) || "" : "";
+    } catch (_error) {
+      return "";
+    }
+  };
+
+  const saveAssistantConversationPreference = (conversationId) => {
+    try {
+      const key = assistantConversationPreferenceKey();
+      if (key && conversationId) window.localStorage.setItem(key, conversationId);
+    } catch (_error) {
+      // The selected chat still works for this page without local storage.
+    }
+  };
+
+  const assistantFragmentUrl = (conversationId) => {
+    const current = assistantDock?.dataset.fragmentUrl;
+    if (!current) return "";
+    const url = new URL(current, window.location.origin);
+    url.searchParams.set("conversation", conversationId);
+    return `${url.pathname}${url.search}`;
+  };
+
+  const setAssistantCollapsed = (collapsed, { focus = false, persist = true } = {}) => {
+    const pageX = window.scrollX;
+    const pageY = window.scrollY;
+    body.classList.toggle("assistant-collapsed", collapsed);
+    if (persist) saveAssistantPreference(collapsed);
+    window.scrollTo(pageX, pageY);
+    if (focus) {
+      window.requestAnimationFrame(() => {
+        window.scrollTo(pageX, pageY);
+        const target = collapsed
+          ? assistantDock?.querySelector("[data-assistant-expand]")
+          : assistantDock?.querySelector("textarea");
+        target?.focus({ preventScroll: true });
+      });
+    }
+  };
+
+  const assistantJson = async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.message || payload.detail || "The request could not be completed.");
+    }
+    return payload;
+  };
+
+  const assistantStatusMessage = (job) => {
+    if (job.queue_position) return `${job.stage_label || "Request saved"} · ${job.queue_position} in queue`;
+    if (["failed", "cancelled"].includes(job.state)) return job.message || (job.state === "cancelled" ? "Request cancelled" : "Request needs attention");
+    return job.stage_label || job.message || "Working from the matter sources";
+  };
+
+  const newAssistantRequestKey = () => {
+    const field = assistantDock?.querySelector("[data-assistant-request-key]");
+    if (!field || !window.crypto?.getRandomValues) return;
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    field.value = `answer-request-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+  };
+
+  const appendAssistantUserMessage = (question) => {
+    const thread = assistantDock?.querySelector("[data-assistant-thread]");
+    if (!thread) return;
+    if (thread.dataset.hasMessages !== "true") thread.replaceChildren();
+    const article = document.createElement("article");
+    article.className = "assistant-message assistant-user-message";
+    const avatar = document.createElement("span");
+    avatar.className = "assistant-message-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.textContent = "You";
+    const content = document.createElement("div");
+    const label = document.createElement("strong");
+    label.textContent = "You";
+    const bodyCopy = document.createElement("p");
+    bodyCopy.textContent = question;
+    content.append(label, bodyCopy);
+    article.append(avatar, content);
+    thread.append(article);
+    thread.dataset.hasMessages = "true";
+    thread.scrollTop = thread.scrollHeight;
+  };
+
+  const ensureAssistantDraftOption = () => {
+    if (!assistantDraftBuffer || !assistantDock) return;
+    const picker = assistantDock.querySelector("[data-assistant-conversation-picker]");
+    if (!picker || picker.querySelector('[value="__draft__"]')) return;
+    const option = document.createElement("option");
+    option.value = "__draft__";
+    option.textContent = "Draft · Unsaved";
+    option.dataset.assistantDraftOption = "true";
+    picker.prepend(option);
+  };
+
+  const beginAssistantDraft = () => {
+    if (!assistantDock) return;
+    if (assistantDraft) {
+      assistantDock.querySelector("textarea")?.focus({ preventScroll: true });
+      return;
+    }
+    const buffered = assistantDraftBuffer;
+    assistantDraftBuffer = null;
+    window.clearTimeout(assistantPollTimer);
+    assistantDraft = true;
+    assistantDock.classList.add("is-draft");
+    assistantDock.dataset.conversationId = "";
+    const picker = assistantDock.querySelector("[data-assistant-conversation-picker]");
+    picker?.querySelector("[data-assistant-draft-option]")?.remove();
+    if (picker) {
+      const option = document.createElement("option");
+      option.value = "__draft__";
+      option.textContent = "Draft · Unsaved";
+      option.dataset.assistantDraftOption = "true";
+      picker.prepend(option);
+      picker.value = "__draft__";
+      picker.disabled = false;
+    }
+    const thread = assistantDock.querySelector("[data-assistant-thread]");
+    if (thread) {
+      thread.innerHTML = '<div class="assistant-empty assistant-draft-empty"><span class="assistant-brand-mark" aria-hidden="true">RB</span><h2>New chat</h2><p>This draft is saved with the matter when you send its first question.</p></div>';
+      thread.dataset.hasMessages = "false";
+    }
+    const status = assistantDock.querySelector("[data-assistant-status]");
+    if (status) {
+      status.hidden = true;
+      status.dataset.statusUrl = "";
+      status.dataset.state = "";
+      status.classList.remove("is-terminal", "is-failed");
+    }
+    const recovery = assistantDock.querySelector("[data-assistant-recovery]");
+    if (recovery) recovery.hidden = true;
+    const form = assistantDock.querySelector("[data-assistant-question-form]");
+    const conversation = form?.querySelector('input[name="conversation"]');
+    const textarea = form?.querySelector("textarea");
+    const submit = form?.querySelector('button[type="submit"]');
+    if (conversation) conversation.value = "";
+    if (textarea) {
+      textarea.value = buffered?.question || "";
+      textarea.disabled = form?.dataset.sourcesReady !== "true";
+      resizeAssistantTextarea(textarea);
+    }
+    if (submit) submit.disabled = form?.dataset.sourcesReady !== "true";
+    form?.removeAttribute("aria-busy");
+    const scope = form?.querySelector('select[name="source_set"]');
+    if (scope) {
+      scope.value = buffered?.sourceSet || "";
+      if (scope.selectedIndex < 0) scope.selectedIndex = 0;
+    }
+    const requestKey = form?.querySelector("[data-assistant-request-key]");
+    if (requestKey && buffered?.requestKey) requestKey.value = buffered.requestKey;
+    else newAssistantRequestKey();
+    textarea?.focus({ preventScroll: true });
+  };
+
+  const saveAcceptedAssistantDraft = (job) => {
+    if (!assistantDock || !job?.conversation_id) return;
+    assistantDraft = false;
+    assistantDraftBuffer = null;
+    assistantDock.classList.remove("is-draft");
+    assistantDock.dataset.conversationId = job.conversation_id;
+    if (job.fragment_url) assistantDock.dataset.fragmentUrl = job.fragment_url;
+    const form = assistantDock.querySelector("[data-assistant-question-form]");
+    const conversation = form?.querySelector('input[name="conversation"]');
+    if (conversation) conversation.value = job.conversation_id;
+    const picker = assistantDock.querySelector("[data-assistant-conversation-picker]");
+    const draftOption = picker?.querySelector("[data-assistant-draft-option]");
+    if (draftOption) {
+      draftOption.value = job.conversation_id;
+      draftOption.textContent = `${job.conversation_title || "New chat"} · 1 message`;
+      draftOption.removeAttribute("data-assistant-draft-option");
+      draftOption.selected = true;
+    }
+    saveAssistantConversationPreference(job.conversation_id);
+  };
+
+  const renderAssistantJob = (job) => {
+    if (!assistantDock || !job) return;
+    const status = assistantDock.querySelector("[data-assistant-status]");
+    const copy = assistantDock.querySelector("[data-assistant-status-copy]");
+    const form = assistantDock.querySelector("[data-assistant-question-form]");
+    const textarea = form?.querySelector("textarea");
+    const submit = form?.querySelector('button[type="submit"]');
+    const working = ["queued", "running"].includes(job.state);
+    if (status) {
+      status.hidden = false;
+      status.dataset.statusUrl = job.status_url || "";
+      status.dataset.state = job.state || "";
+      status.classList.toggle("is-terminal", !working);
+      status.classList.toggle("is-failed", job.state === "failed");
+    }
+    if (copy) copy.textContent = assistantStatusMessage(job);
+    if (textarea) textarea.disabled = working || form.dataset.sourcesReady !== "true";
+    if (submit) submit.disabled = working || form.dataset.sourcesReady !== "true";
+    form?.toggleAttribute("aria-busy", working);
+  };
+
+  const refreshAssistant = async (requestedFragmentUrl = "") => {
+    window.clearTimeout(assistantPollTimer);
+    const fragmentUrl = requestedFragmentUrl || assistantDock?.dataset.fragmentUrl;
+    if (!fragmentUrl) return;
+    const response = await fetch(fragmentUrl, {
+      headers: { Accept: "text/html" },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error("Assistant status is temporarily unavailable.");
+    const holder = document.createElement("div");
+    holder.innerHTML = await response.text();
+    const replacement = holder.querySelector("[data-assistant-dock]");
+    if (!replacement || !assistantDock) throw new Error("Assistant response was incomplete.");
+    assistantDock.replaceWith(replacement);
+    assistantDock = replacement;
+    assistantDraft = false;
+    saveAssistantConversationPreference(assistantDock.dataset.conversationId || "");
+    ensureAssistantDraftOption();
+    bindAssistant();
+    const thread = assistantDock.querySelector("[data-assistant-thread]");
+    if (thread?.dataset.hasMessages === "true") thread.scrollTop = thread.scrollHeight;
+  };
+
+  const pollAssistant = async () => {
+    window.clearTimeout(assistantPollTimer);
+    const status = assistantDock?.querySelector("[data-assistant-status]");
+    const statusUrl = status?.dataset.statusUrl;
+    if (!statusUrl) return;
+    try {
+      const response = await fetch(statusUrl, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const job = await assistantJson(response);
+      renderAssistantJob(job);
+      if (job.state === "succeeded") {
+        await refreshAssistant();
+        return;
+      }
+      if (["failed", "cancelled"].includes(job.state)) {
+        await refreshAssistant();
+        return;
+      }
+      assistantPollTimer = window.setTimeout(pollAssistant, 1000);
+    } catch (_error) {
+      const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
+      if (copy) copy.textContent = "Reconnecting to the saved request…";
+      assistantPollTimer = window.setTimeout(pollAssistant, 3500);
+    }
+  };
+
+  const resizeAssistantTextarea = (textarea) => {
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 102)}px`;
+  };
+
+  function bindAssistant() {
+    if (!assistantDock || assistantDock.dataset.bound === "true") return;
+    assistantDock.dataset.bound = "true";
+    assistantDock.querySelector("[data-assistant-collapse]")?.addEventListener("click", () => {
+      setAssistantCollapsed(true, { focus: true });
+    });
+    assistantDock.querySelector("[data-assistant-expand]")?.addEventListener("click", () => {
+      setAssistantCollapsed(false, { focus: true });
+    });
+
+    const conversationPicker = assistantDock.querySelector("[data-assistant-conversation-picker]");
+    conversationPicker?.addEventListener("change", async () => {
+      const conversationId = conversationPicker.value;
+      if (conversationId === "__draft__") {
+        beginAssistantDraft();
+        return;
+      }
+      if (!conversationId || conversationId === assistantDock?.dataset.conversationId) return;
+      if (assistantDraft) {
+        const form = assistantDock.querySelector("[data-assistant-question-form]");
+        const question = form?.querySelector("textarea")?.value || "";
+        if (question.trim()) {
+          assistantDraftBuffer = {
+            question,
+            requestKey: form?.querySelector("[data-assistant-request-key]")?.value || "",
+            sourceSet: form?.querySelector('select[name="source_set"]')?.value || "",
+          };
+        }
+      }
+      conversationPicker.disabled = true;
+      try {
+        saveAssistantConversationPreference(conversationId);
+        await refreshAssistant(assistantFragmentUrl(conversationId));
+      } catch (_error) {
+        conversationPicker.disabled = false;
+        const status = assistantDock?.querySelector("[data-assistant-status]");
+        const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
+        if (status) {
+          status.hidden = false;
+          status.classList.add("is-terminal", "is-failed");
+        }
+        if (copy) copy.textContent = "That saved chat could not be opened. Try again.";
+      }
+    });
+
+    assistantDock.querySelector("[data-assistant-new-chat]")?.addEventListener("click", () => {
+      beginAssistantDraft();
+    });
+
+    const form = assistantDock.querySelector("[data-assistant-question-form]");
+    const textarea = form?.querySelector("textarea");
+    textarea?.addEventListener("input", () => resizeAssistantTextarea(textarea));
+    resizeAssistantTextarea(textarea);
+    assistantDock.querySelectorAll("[data-assistant-suggestion]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!textarea || textarea.disabled) return;
+        textarea.value = button.dataset.assistantSuggestion || "";
+        resizeAssistantTextarea(textarea);
+        textarea.focus({ preventScroll: true });
+      });
+    });
+
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!textarea?.value.trim()) {
+        textarea?.focus();
+        return;
+      }
+      const submittedQuestion = textarea.value.trim();
+      const submittedDraft = !form.querySelector('input[name="conversation"]')?.value;
+      // Capture successful controls before the busy state disables the
+      // textarea. Disabled controls are intentionally omitted by FormData.
+      const submission = new FormData(form);
+      const status = assistantDock.querySelector("[data-assistant-status]");
+      const copy = assistantDock.querySelector("[data-assistant-status-copy]");
+      const submit = form.querySelector('button[type="submit"]');
+      const recovery = assistantDock.querySelector("[data-assistant-recovery]");
+      if (recovery) recovery.hidden = true;
+      status.hidden = false;
+      status.classList.remove("is-terminal", "is-failed");
+      if (copy) copy.textContent = "Saving your question…";
+      textarea.disabled = true;
+      if (submit) submit.disabled = true;
+      form.setAttribute("aria-busy", "true");
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          body: submission,
+          headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+        });
+        const job = await assistantJson(response);
+        if (submittedDraft) saveAcceptedAssistantDraft(job);
+        textarea.value = "";
+        resizeAssistantTextarea(textarea);
+        appendAssistantUserMessage(submittedQuestion);
+        renderAssistantJob(job);
+        pollAssistant();
+      } catch (error) {
+        form.removeAttribute("aria-busy");
+        textarea.disabled = form.dataset.sourcesReady !== "true";
+        if (submit) submit.disabled = form.dataset.sourcesReady !== "true";
+        if (submittedDraft || assistantDraft) {
+          status.hidden = true;
+          if (recovery) recovery.hidden = false;
+        } else {
+          status.classList.add("is-terminal", "is-failed");
+          if (copy) copy.textContent = `${error.message} You can safely send the question again.`;
+        }
+      }
+    });
+
+    assistantDock.querySelector("[data-assistant-retry-submit]")?.addEventListener("click", () => {
+      const currentForm = assistantDock?.querySelector("[data-assistant-question-form]");
+      if (currentForm?.querySelector("textarea")?.value.trim()) currentForm.requestSubmit();
+    });
+    assistantDock.querySelector("[data-assistant-dismiss-error]")?.addEventListener("click", () => {
+      const recovery = assistantDock?.querySelector("[data-assistant-recovery]");
+      if (recovery) recovery.hidden = true;
+      assistantDock?.querySelector("textarea")?.focus({ preventScroll: true });
+    });
+
+    assistantDock.querySelector("[data-assistant-cancel]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const actionUrl = button.dataset.actionUrl;
+      if (!actionUrl) return;
+      button.disabled = true;
+      try {
+        const response = await fetch(actionUrl, {
+          method: "POST",
+          headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+        });
+        renderAssistantJob(await assistantJson(response));
+        await refreshAssistant();
+      } catch (error) {
+        button.disabled = false;
+        const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
+        if (copy) copy.textContent = error.message;
+      }
+    });
+
+    const status = assistantDock.querySelector("[data-assistant-status]");
+    if (["queued", "running"].includes(status?.dataset.state || "")) pollAssistant();
+  }
+
+  window.addEventListener("recordbench:readiness", (event) => {
+    if (!assistantDock) return;
+    const readiness = event.detail || {};
+    const ready = readiness.can_query === true;
+    assistantDock.dataset.matterReady = ready ? "true" : "false";
+    const form = assistantDock.querySelector("[data-assistant-question-form]");
+    if (form) form.dataset.sourcesReady = ready ? "true" : "false";
+    const status = assistantDock.querySelector("[data-assistant-status]");
+    const working = ["queued", "running"].includes(status?.dataset.state || "");
+    const textarea = form?.querySelector("textarea");
+    const submit = form?.querySelector('button[type="submit"]');
+    if (textarea) textarea.disabled = !ready || working;
+    if (submit) submit.disabled = !ready || working;
+    const hint = assistantDock.querySelector("[data-assistant-readiness-hint]");
+    if (hint) {
+      hint.textContent = readiness.partial_query === true
+        ? readiness.coverage_notice || "Answers use the searchable sources; affected sources are excluded."
+        : ready
+          ? "Answers stay grounded in the selected matter sources."
+          : readiness.state === "preparing"
+            ? "Questions will be available when active preparation finishes."
+            : readiness.guidance || "No source is searchable yet.";
+    }
+    const collapsedCopy = assistantDock.querySelector("[data-assistant-readiness-copy]");
+    if (collapsedCopy) {
+      const excluded = readiness.partial_query === true
+        ? ` · ${readiness.excluded_count || 0} excluded`
+        : "";
+      collapsedCopy.textContent = `${readiness.searchable_count || 0} of ${readiness.total_count || 0} searchable${excluded}`;
+    }
+    const coverage = assistantDock.querySelector("[data-assistant-coverage]");
+    if (coverage) {
+      const copy = coverage.querySelector("[data-assistant-coverage-copy]");
+      const action = coverage.querySelector("[data-assistant-coverage-action]");
+      if (copy) copy.textContent = readiness.coverage_notice || "";
+      if (action && readiness.action_url) action.href = readiness.action_url;
+      coverage.hidden = readiness.partial_query !== true;
+    }
+    const allSources = form?.querySelector('select[name="source_set"] option[value=""]');
+    if (allSources) allSources.textContent = `All searchable sources (${readiness.searchable_count || 0})`;
+  });
+
+  if (assistantDock) {
+    setAssistantCollapsed(readAssistantPreference(), { persist: false });
+    bindAssistant();
+    const thread = assistantDock.querySelector("[data-assistant-thread]");
+    if (thread?.dataset.hasMessages === "true") thread.scrollTop = thread.scrollHeight;
+    const preferredConversation = readAssistantConversationPreference();
+    const currentConversation = assistantDock.dataset.conversationId || "";
+    const preferredOption = preferredConversation
+      ? Array.from(assistantDock.querySelectorAll("[data-assistant-conversation-picker] option"))
+          .some((option) => option.value === preferredConversation)
+      : false;
+    if (preferredConversation && preferredConversation !== currentConversation && preferredOption) {
+      refreshAssistant(assistantFragmentUrl(preferredConversation)).catch(() => {
+        saveAssistantConversationPreference(currentConversation);
+      });
+    } else {
+      saveAssistantConversationPreference(currentConversation);
+    }
+  }
+
+  const workflowMonitors = Array.from(document.querySelectorAll("[data-workflow-monitor]"));
+  const workflowTimers = [];
+  const monitorWorkflow = (panel) => {
+    if (!panel?.dataset.statusUrl || panel.dataset.terminal === "true") return;
+    panel.setAttribute("aria-live", "polite");
+    const poll = async () => {
+      if (document.visibilityState === "hidden") {
+        workflowTimers.push(window.setTimeout(poll, 2500));
+        return;
+      }
+      try {
+        const response = await fetch(panel.dataset.statusUrl, {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("Workflow status unavailable");
+        const status = await response.json();
+        const state = panel.querySelector("[data-workflow-state]");
+        const stage = panel.querySelector("[data-workflow-stage]");
+        const label = panel.querySelector("[data-workflow-progress-label]");
+        const progress = panel.querySelector("[data-workflow-progress]");
+        let eta = panel.querySelector("[data-workflow-eta]");
+        if (!eta && progress?.parentElement) {
+          eta = document.createElement("small");
+          eta.className = "workflow-eta";
+          eta.dataset.workflowEta = "";
+          progress.parentElement.append(eta);
+        }
+        if (state) {
+          state.textContent = String(status.state || "working").replaceAll("_", " ");
+          state.className = `workflow-state-badge state-${status.state || "running"}`;
+        }
+        if (stage) stage.textContent = status.message || "Working…";
+        const completed = status.completed_steps ?? status.reviewed_count ?? 0;
+        const total = status.total_steps ?? status.snapshot_count ?? 0;
+        if (label) {
+          label.textContent = `${Number(completed).toLocaleString()} / ${total ? Number(total).toLocaleString() : "—"} ${"snapshot_count" in status ? "sources" : "steps"}`;
+        }
+        if (progress) {
+          progress.max = Math.max(Number(total) || 1, 1);
+          progress.value = Number(completed) || 0;
+        }
+        if (eta) eta.textContent = status.eta_label || "";
+        const counts = panel.querySelectorAll(".run-counts strong");
+        const liveValues = "snapshot_count" in status
+          ? [status.included_count, status.excluded_count, status.attention_count]
+          : [status.candidate_count, status.evidence_count];
+        liveValues.forEach((value, index) => {
+          if (counts[index] && value !== undefined) {
+            counts[index].textContent = Number(value).toLocaleString();
+          }
+        });
+        if (status.terminal === true) {
+          panel.dataset.terminal = "true";
+          if (status.result_url) window.location.assign(status.result_url);
+          return;
+        }
+      } catch (_error) {
+        // Durable workflow state remains available after refresh; a transient
+        // polling failure should not imply that the underlying run failed.
+      }
+      workflowTimers.push(window.setTimeout(poll, 2000));
+    };
+    workflowTimers.push(window.setTimeout(poll, 900));
+  };
+  workflowMonitors.forEach(monitorWorkflow);
+
+  window.addEventListener("pagehide", () => {
+    window.clearTimeout(assistantPollTimer);
+    workflowTimers.forEach((timer) => window.clearTimeout(timer));
+  });
+})();

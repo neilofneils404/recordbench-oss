@@ -1,0 +1,29 @@
+{
+  "fixture_id": "slice1a-intake-v1",
+  "provenance": "synthetic",
+  "confidential_data": false,
+  "requires_network": false,
+  "requires_model": false,
+  "matters": [
+    {
+      "matter_id": "matter-alpha",
+      "canary": "CITRINE-FALCON-731",
+      "root": "matter-alpha/input",
+      "files": [
+        {"path": "audio.wav", "status": "not_processed", "byte_size": 8044, "sha256": "d959e7258ec4ad502f79a133bee06ccfcd2eac7e7c4ef5040c4829f8c29915ee"},
+        {"path": "image.svg", "status": "not_processed", "byte_size": 100, "sha256": "ade38c8ba07ffcc0c23ae204abdb1ee3d6aecc2211e7bdeb1c95754eb8795961"},
+        {"path": "nested/report.txt", "status": "derive_text", "byte_size": 99, "sha256": "44669776071fa477637879dc5b8a4051c249c2e88cf25aad8e228c070ff8ecd4"}
+      ]
+    },
+    {
+      "matter_id": "matter-bravo",
+      "canary": "VIOLET-HARBOR-842",
+      "root": "matter-bravo/input",
+      "files": [
+        {"path": "audio.wav", "status": "not_processed", "byte_size": 8044, "sha256": "80e42dc28717052db991fceeacadfdb47505505bd0a971f86a79705b4b9cf25a"},
+        {"path": "image.svg", "status": "not_processed", "byte_size": 99, "sha256": "71848c2074a1dfb89221e84ece6b1a6b2d52e2e336f24632dab9b3d21314e735"},
+        {"path": "nested/report.txt", "status": "derive_text", "byte_size": 101, "sha256": "e3acdccee4141278bafaf724e216baa487578c60e5144fbd00d1bcb01a87a641"}
+      ]
+    }
+  ]
+}

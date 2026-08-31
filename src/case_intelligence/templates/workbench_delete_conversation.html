@@ -1,0 +1,56 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Delete {{ conversation.title }} · {{ product_name }}{% endblock %}
+{% block body_class %}close-matter-page delete-conversation-page{% endblock %}
+
+{% block content %}
+<main class="single-page-main close-matter-main">
+  <section class="close-matter-card delete-conversation-card" aria-labelledby="delete-conversation-heading">
+    <p class="eyebrow">Conversation lifecycle</p>
+    <h1 id="delete-conversation-heading">Permanently delete this conversation?</h1>
+    <p class="close-matter-name">{{ conversation.title }}</p>
+
+    {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+    {% if counts.active_answers %}
+    <div class="notice notice-neutral" role="status">An answer is still in progress. Finish or cancel it before deleting this conversation.</div>
+    {% endif %}
+
+    <div class="close-summary conversation-delete-summary" aria-label="Conversation content scheduled for deletion">
+      <div><strong>{{ counts.messages }}</strong><span>saved message{% if counts.messages != 1 %}s{% endif %}</span></div>
+      <div><strong>{{ counts.answer_jobs }}</strong><span>answer request{% if counts.answer_jobs != 1 %}s{% endif %}</span></div>
+    </div>
+
+    <section class="close-explanation" aria-labelledby="conversation-delete-explanation">
+      <h2 id="conversation-delete-explanation">What deletion removes</h2>
+      <p>This removes only this conversation, its messages, and its saved answer-job history. Matter sources, other conversations, membership, and exported files are not changed.</p>
+      <p>Archive is the reversible choice. Permanent deletion cannot be undone from the workbench.</p>
+    </section>
+
+    <section class="final-export-callout" aria-labelledby="conversation-export-heading">
+      <div>
+        <h2 id="conversation-export-heading">Save it before deleting</h2>
+        <p>Export a portable copy of this conversation first if any part may become work product.</p>
+      </div>
+      <div class="conversation-delete-exports">
+        <a class="button button-secondary" href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/export?format=docx" data-download>Save as Word</a>
+        <a class="button button-secondary" href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/export?format=markdown" data-download>Markdown</a>
+      </div>
+    </section>
+    <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
+
+    <form class="close-matter-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/delete" data-working-form data-working-label="Deleting conversation…">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="confirmed-title">Type <strong>{{ conversation.title }}</strong> to confirm</label>
+      <input id="confirmed-title" name="confirmed_title" type="text" maxlength="120" required autocomplete="off" spellcheck="false">
+      <label class="delete-acknowledgement">
+        <input type="checkbox" name="acknowledge" value="yes" required>
+        <span>I understand this permanently deletes this shared conversation and cannot be undone.</span>
+      </label>
+      <div class="close-matter-actions">
+        <button class="button button-danger" type="submit" {% if counts.active_answers %}disabled{% endif %}>Delete conversation</button>
+        <a class="button button-secondary" href="/matters/{{ matter.slug }}?conversation={{ conversation.conversation_id }}#evidence-conversation">Keep conversation</a>
+      </div>
+    </form>
+  </section>
+</main>
+{% endblock %}

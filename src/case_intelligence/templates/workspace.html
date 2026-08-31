@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ matter.name }} · Case Review Bench</title>
+  <link rel="icon" href="{{ url_for('static', path='/favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', path='/review-bench.css') }}">
+  <script src="{{ url_for('static', path='/review-bench.js') }}" defer></script>
+</head>
+<body data-initial-seek="{{ '' if seek is none else seek }}">
+  <header class="topbar">
+    <a class="brand" href="/matters/alpha" aria-label="Case Review Bench home">
+      <span class="brand-mark">CI</span>
+      <span><strong>Case Review Bench</strong><small>{% if pilot_mode %}Supervised local pilot{% else %}Synthetic staff preview{% endif %}</small></span>
+    </a>
+    <nav class="matter-switcher" aria-label="Matter workspaces">
+      {% for matter_slug, option in matters.items() %}
+        <a href="/matters/{{ matter_slug }}" class="matter-link{% if matter_slug == slug %} active{% endif %}">
+          {{ option.name }}
+        </a>
+      {% endfor %}
+    </nav>
+    <span class="privacy-chip">{% if pilot_mode %}Local pilot data{% else %}Local synthetic data{% endif %}</span>
+  </header>
+
+  <main class="shell">
+    <section class="matter-hero">
+      <div>
+        <p class="eyebrow">Matter workspace</p>
+        <h1>{{ matter.name }}</h1>
+        <p>{{ matter.subtitle }} · Searchable documents and synchronized media review.</p>
+      </div>
+      <div class="hero-status"><span></span> {% if pilot_mode %}Upload pilot ready{% else %}Page-aware preview ready{% endif %}</div>
+    </section>
+
+    {% if notice %}<div class="empty-state"><strong>{{ notice }}</strong></div>{% endif %}
+    {% if error %}<div class="empty-state"><strong>Action not completed.</strong><span>{{ error }}</span></div>{% endif %}
+
+    {% if pilot_mode %}
+    <section class="results-panel" id="pilot-upload">
+      <div class="section-heading"><div><p class="eyebrow">Add sources</p><h2>Upload PDF or TXT</h2></div><span class="updated">Localhost only</span></div>
+      <form action="/matters/pilot/uploads" method="post" enctype="multipart/form-data">
+        <div class="input-row"><input id="pilot-files" name="files" type="file" accept=".pdf,.txt,application/pdf,text/plain" multiple required><button type="submit">Upload</button></div>
+        <p class="help">Up to 10 files; 25 MiB each and 100 MiB total. PDF and UTF-8 TXT; scanned PDF recognition is limited.</p>
+      </form>
+    </section>
+    {% endif %}
+
+    <section class="tool-grid" aria-label="Matter tools">
+      <form class="tool-card search-card" action="/matters/{{ slug }}" method="get">
+        <label for="matter-search">Word + meaning search</label>
+        <div class="input-row">
+          <input id="matter-search" name="q" value="{{ query }}" placeholder="Try “shared red bicycle”" autocomplete="off">
+          <button type="submit">Search</button>
+        </div>
+        <p class="help">Find exact wording and related passages in this matter only.</p>
+      </form>
+      <form class="tool-card ask-card" action="/matters/{{ slug }}" method="get">
+        <label for="matter-question">Ask about this matter</label>
+        <div class="input-row">
+          <input id="matter-question" name="question" value="{{ question }}" placeholder="Where was the shared red bicycle logged?" autocomplete="off">
+          <button type="submit">Ask</button>
+        </div>
+        <p class="help">Answers are assembled only from the sources shown below.</p>
+      </form>
+    </section>
+
+    {% if query %}
+    <section class="results-panel" id="search-results">
+      <div class="section-heading">
+        <div><p class="eyebrow">Search results</p><h2>Matches for “{{ query }}”</h2></div>
+        <span class="result-count">{{ search_results|length }} found</span>
+      </div>
+      {% if search_results %}
+        <div class="result-list">
+          {% for result in search_results %}
+          <article class="result-card">
+            <div class="result-icon">{% if result.media_start is not none %}▶{% else %}¶{% endif %}</div>
+            <div>
+              <p class="result-meta">{{ result.source_name }} · {{ result.location }}</p>
+              <p>{{ result.excerpt }}</p>
+              <a class="source-link{% if result.media_start is not none %} seek-link{% endif %}"
+                 href="{{ result.href }}"
+                 {% if result.media_start is not none %}data-seek="{{ result.media_start }}" data-target="{{ result.cue_anchor }}"{% endif %}>
+                {% if result.media_start is not none %}Play this moment{% else %}Open excerpt{% endif %} →
+              </a>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state"><strong>No matching record found.</strong><span>Try fewer or more specific words.</span></div>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if answer %}
+    <section class="answer-panel" id="grounded-answer">
+      <div class="answer-label"><span>Answer</span><small>Grounded in this matter</small></div>
+      <h2>{{ question }}</h2>
+      <p class="answer-text">{{ answer.text }}</p>
+      {% if answer.citations %}
+      <div class="citations" aria-label="Answer support">
+        {% for citation in answer.citations %}
+        <a href="{{ citation.href }}"
+           class="citation{% if citation.media_start is not none %} seek-link{% endif %}"
+           {% if citation.media_start is not none %}data-seek="{{ citation.media_start }}" data-target="{{ citation.cue_anchor }}"{% endif %}>
+          <span>{{ loop.index }}</span>
+          <strong>{{ citation.source_name }}</strong>
+          <small>{{ citation.location }}</small>
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <p class="review-note">Review the cited passages before relying on this answer.</p>
+    </section>
+    {% endif %}
+
+    <section class="review-grid">
+      <article class="panel source-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">Source set</p><h2>{{ sources|length }} sources</h2></div>
+          <span class="updated">Current</span>
+        </div>
+        <div class="source-list">
+          {% for source in sources %}
+          <div class="source-row">
+            <div class="file-icon {{ source.kind|lower }}">{% if source.kind == 'Audio' %}♪{% elif source.kind == 'Document' %}T{% else %}▧{% endif %}</div>
+            <div><strong>{{ source.name }}</strong><span>{{ source.kind }}</span></div>
+            <span class="state {{ source.state_tone }}"><i></i>{{ source.state }}</span>
+            {% if pilot_mode and source.document_id %}
+            <div class="source-actions">
+              {% if source.retryable %}<form action="/matters/pilot/sources/{{ source.document_id }}/retry" method="post"><button class="source-action" type="submit">Try again</button></form>{% endif %}
+              <form action="/matters/pilot/sources/{{ source.document_id }}/remove" method="post"><button class="source-action danger" type="submit">Remove</button></form>
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </article>
+
+      {% if not pilot_mode %}
+      <article class="panel media-panel" id="media-review">
+        <div class="section-heading">
+          <div><p class="eyebrow">Media review</p><h2>Recorded interview</h2></div>
+          <span class="duration">00:08</span>
+        </div>
+        <div class="player-wrap">
+          <div class="waveform" aria-hidden="true">
+            {% for height in [18,32,24,45,28,53,35,22,48,31,55,26,42,20,38,50,29,44,23,36,52,30,46,25,40,33] %}<i style="height:{{ height }}%"></i>{% endfor %}
+          </div>
+          <audio id="review-media" controls preload="metadata">
+            <source src="{{ url_for('static', path='/demo-audio.wav') }}" type="audio/wav">
+          </audio>
+        </div>
+        <div class="transcript-header">
+          <h3>Synchronized transcript</h3>
+          <span>Click a cue to play that moment</span>
+        </div>
+        <div class="transcript" id="transcript-list">
+          {% for cue in cues %}
+          <button class="cue" id="{{ cue.anchor }}" type="button" data-seek="{{ cue.start }}">
+            <time>{{ cue.timestamp }}</time>
+            <span><strong>{{ cue.speaker }}</strong>{{ cue.text }}</span>
+          </button>
+          {% endfor %}
+        </div>
+      </article>
+      {% endif %}
+    </section>
+  </main>
+  <footer>Case Review Bench · {% if pilot_mode %}Supervised localhost pilot · No authentication or HTTPS{% else %}Synthetic preview · No case files or external services{% endif %}</footer>
+</body>
+</html>

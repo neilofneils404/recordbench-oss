@@ -1,0 +1,5 @@
+<nav class="work-product-tabs" aria-label="Work product sections">
+  <a class="{% if work_product_active == 'notes' %}selected{% endif %}" href="/matters/{{ matter.slug }}/notebook">Case notes</a>
+  <a class="{% if work_product_active == 'analysis' %}selected{% endif %}" href="/matters/{{ matter.slug }}/analysis">Review map</a>
+  <a class="{% if work_product_active == 'reports' %}selected{% endif %}" href="/matters/{{ matter.slug }}/reports">Reports</a>
+</nav>

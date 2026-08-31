@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ document.name }} · {{ matter.name }}</title>
+  <link rel="icon" href="{{ url_for('static', path='/favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', path='/review-bench.css') }}">
+</head>
+<body class="viewer-body">
+  <header class="topbar">
+    <a class="brand" href="/matters/{{ slug }}">
+      <span class="brand-mark">CI</span>
+      <span><strong>Case Review Bench</strong><small>{{ matter.name }}</small></span>
+    </a>
+    <a class="back-link" href="/matters/{{ slug }}">← Back to workspace</a>
+  </header>
+  <main class="viewer-shell">
+    <div class="viewer-heading">
+      <p class="eyebrow">Source excerpt</p>
+      <h1>{{ document.name }}</h1>
+      {% if document.page_number %}
+      <p>Page {{ document.page_number }} of {{ document.page_count }} · Cited page focused for review.</p>
+      {% else %}
+      <p>The cited lines are highlighted for review.</p>
+      {% endif %}
+    </div>
+    <article class="document-page" aria-label="Document excerpt">
+      {% for number, text in document.lines %}
+      <div class="document-line{% if number == focus_line %} focused{% endif %}" id="line-{{ number }}">
+        <span>{{ number }}</span><p>{{ text }}</p>
+      </div>
+      {% endfor %}
+    </article>
+  </main>
+</body>
+</html>

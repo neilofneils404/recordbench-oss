@@ -1,0 +1,555 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}{{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}workspace-page {% if support %}support-is-open{% endif %} {% if support and support.evidence_kind == 'transcript' %}support-media-is-open{% endif %}{% endblock %}
+
+{% block content %}
+<main class="workspace-shell {% if support %}with-support{% endif %}">
+  <section class="workspace-main">
+    <header class="matter-heading">
+      <div>
+        <h1>{{ matter.display_name }}</h1>
+        <p>{{ matter.descriptor or 'Active case review' }}</p>
+      </div>
+      <div class="matter-actions">
+        <a class="button button-secondary export-matter-button" href="/matters/{{ matter.slug }}/export" data-download>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>
+          Export work product
+        </a>
+        <a class="button button-secondary" href="/matters/{{ matter.slug }}/setup">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          Add sources
+        </a>
+        <a class="button button-ink" href="/matters/{{ matter.slug }}?mode=search#search-results">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+          Search matter
+        </a>
+        {% if can_close_matter %}<a class="button close-matter-link" href="/matters/{{ matter.slug }}/close">Close matter</a>{% endif %}
+      </div>
+    </header>
+    {% with active='review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+    {% include "workbench_review_modes.html" %}
+    {% include "workbench_retention_notice.html" %}
+
+    {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+    {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+    <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
+    {% if capabilities.search != 'word + meaning' %}
+    <div class="notice notice-neutral" role="status">Meaning search is temporarily unavailable. Exact word search still works.</div>
+    {% endif %}
+    {% if capabilities.answering != 'ready' %}
+    <div class="notice notice-neutral" role="status">Answering is temporarily unavailable. Search and source review still work.</div>
+    {% endif %}
+
+    {% if media_activity.active_count or media_activity.attention_count %}
+    <section class="matter-media-activity" data-media-activity data-status-url="{{ media_activity.status_url }}" aria-live="polite" aria-labelledby="matter-media-activity-heading">
+      <header>
+        <div><p class="eyebrow">Recordings</p><h2 id="matter-media-activity-heading" data-media-activity-title>Media processing</h2></div>
+        <a href="{{ media_activity.library_url }}">Open recordings</a>
+      </header>
+      <div class="matter-media-activity-list" data-media-activity-list>
+        {% for item in media_activity['items'] %}
+        <article>
+          <span class="processing-pulse" aria-hidden="true"></span>
+          <div><strong>{{ item.source_name }}</strong><small>{{ item.stage }}{% if item.state in ('queued', 'running') %} · {{ (item.progress * 100)|round|int }}%{% endif %}</small></div>
+          <a href="{{ item.review_url }}">{{ 'Review issue' if item.state == 'failed' else 'View status' }}</a>
+        </article>
+        {% endfor %}
+      </div>
+      <p data-media-activity-note>The workbench reports saved processor stages. You may leave this conversation and return later.</p>
+    </section>
+    {% endif %}
+
+    <section class="source-ledger" aria-labelledby="source-ledger-heading">
+      <div class="section-heading-row">
+        <h2 id="source-ledger-heading">Recent sources</h2>
+        <a href="/matters/{{ matter.slug }}/setup?view=list#source-library">Review all sources ({{ source_total }})</a>
+      </div>
+      <div class="source-table compact" role="table" aria-label="Matter sources">
+        <div class="source-table-head" role="row">
+          <span role="columnheader">Source name</span>
+          <span role="columnheader">Type</span>
+          <span role="columnheader">Pages</span>
+          <span role="columnheader">Status</span>
+          <span aria-hidden="true"></span>
+        </div>
+        {% for source in sources[:4] %}
+        <div class="source-table-row" role="row">
+          <span class="source-name-cell" role="cell"><span class="file-mark file-{{ source.kind|lower }}">{{ source.kind }}</span><strong>{{ source.name }}</strong></span>
+          <span class="source-type" role="cell">{{ source.kind }}</span>
+          <span class="source-count" role="cell">{{ source.count_label }}</span>
+          <span class="source-state state-{{ source.tone }}" role="cell"><i aria-hidden="true"></i>{{ source.state }}</span>
+          <span class="row-actions" role="cell">
+            {% if source.retryable %}<form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Try again</button></form>{% endif %}
+            <a class="source-open-action" href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}" aria-label="{% if source.kind == 'VIDEO' %}Play video{% elif source.kind == 'AUDIO' %}Play audio{% elif source.kind == 'PDF' %}Open PDF{% else %}Read document{% endif %} {{ source.name }}">{% if source.kind == 'VIDEO' %}Play video{% elif source.kind == 'AUDIO' %}Play audio{% elif source.kind == 'PDF' %}Open PDF{% else %}Read{% endif %}</a>
+          </span>
+        </div>
+        {% else %}
+        <div class="source-table-empty">No sources yet. Add a PDF, DOCX, or TXT file to begin.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    {% if mode == 'search' %}
+    <section class="search-mode" id="search-results" aria-labelledby="search-heading">
+      <div class="search-mode-heading">
+        <div>
+          <h2 id="search-heading">Search this matter</h2>
+          <p>Find an exact word, name, date, phrase, or related passage.</p>
+        </div>
+        <a href="/matters/{{ matter.slug }}?mode=ask">Back to conversation</a>
+      </div>
+      <form class="matter-search-form" method="get" action="/matters/{{ matter.slug }}">
+        <input type="hidden" name="mode" value="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+        <input id="matter-search" name="q" value="{{ query }}" maxlength="512" placeholder="Search names, dates, phrases, or evidence…" {% if not readiness.can_query %}disabled{% endif %} autofocus>
+        <button class="button button-ink" type="submit" {% if not readiness.can_query %}disabled{% endif %}>Search</button>
+      </form>
+      <p class="search-readiness-hint{% if readiness.partial_query %} is-partial{% endif %}" data-search-readiness-hint {% if readiness.can_query and not readiness.partial_query %}hidden{% endif %}>{% if readiness.partial_query %}{{ readiness.coverage_notice }}{% elif readiness.state == 'preparing' %}Search will be available when active preparation finishes. You can continue reviewing individual sources in the meantime.{% else %}{{ readiness.guidance }}{% endif %}</p>
+      {% if query %}
+      <div class="result-list">
+        {% for result in search_results %}
+        <article class="search-result">
+          <div>
+            <h3>{{ result.source_name }}</h3>
+            <span>{{ result.location }}</span>
+          </div>
+          <p>{{ result.excerpt }}</p>
+          <a class="open-support-link" href="{{ citation_href(result, matter.slug, conversation.conversation_id) }}">
+            {{ 'Play cited moment' if result.evidence_kind == 'transcript' else 'Open support' }}
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg>
+          </a>
+        </article>
+        {% else %}
+        <div class="empty-result"><strong>No matching record found.</strong><span>Try fewer words, a name, a date, or another phrase from the source.</span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+    {% elif mode == 'sources' %}
+    <section class="mobile-sources-mode">
+      <h2>Sources</h2>
+      <p>Review processing state or add more records.</p>
+      <a class="button button-primary" href="/matters/{{ matter.slug }}/setup">Manage sources</a>
+    </section>
+    {% else %}
+    <section class="conversation-region" id="evidence-conversation" aria-labelledby="conversation-heading">
+      <div class="conversation-heading-row">
+        <div>
+          <h2 id="conversation-heading">Ask the record</h2>
+          <p>Each saved conversation keeps its questions, answers, and cited passages with this matter until it is closed.</p>
+        </div>
+        <form method="post" action="/matters/{{ matter.slug }}/conversations">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="button button-secondary conversation-new" type="submit">New conversation</button>
+        </form>
+      </div>
+
+      <div class="source-coverage-notice" data-conversation-coverage {% if not readiness.partial_query %}hidden{% endif %} role="note">
+        <div>
+          <strong>Reviewing the searchable record</strong>
+          <span data-conversation-coverage-copy>{{ readiness.coverage_notice }}</span>
+        </div>
+        <a data-conversation-coverage-action href="{{ readiness.action_url or readiness.sources_url }}">Review excluded sources</a>
+      </div>
+
+      <div class="conversation-workspace">
+        <aside class="conversation-history" aria-label="Saved conversations" data-conversation-library>
+          <div class="conversation-history-heading">
+            <strong>Saved conversations</strong>
+            <small>{{ conversations|length }}</small>
+          </div>
+          <label class="visually-hidden" for="conversation-filter">Find a saved conversation</label>
+          <div class="conversation-filter-wrap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+            <input id="conversation-filter" type="search" placeholder="Find conversation…" autocomplete="off" data-conversation-filter>
+          </div>
+          <nav data-conversation-list>
+            {% if pinned_conversations %}
+            <section class="conversation-history-group" aria-labelledby="pinned-conversations-heading" data-conversation-group>
+              <div class="conversation-group-heading">
+                <strong id="pinned-conversations-heading">Pinned</strong>
+                <small data-conversation-group-count>{{ pinned_conversations|length }}</small>
+              </div>
+              {% for item in pinned_conversations %}
+              <div class="conversation-list-entry" data-conversation-item>
+                <a
+                  href="/matters/{{ matter.slug }}?conversation={{ item.conversation_id }}#evidence-conversation"
+                  class="conversation-history-item {% if item.conversation_id == conversation.conversation_id %}selected{% endif %}"
+                  {% if item.conversation_id == conversation.conversation_id %}aria-current="true"{% endif %}
+                >
+                  <span>{{ item.title }}</span>
+                  <small>{{ item.message_count }} message{% if item.message_count != 1 %}s{% endif %} · <time datetime="{{ item.updated_at }}">{{ item.updated_at[5:10] }}</time></small>
+                </a>
+              </div>
+              {% endfor %}
+            </section>
+            {% endif %}
+
+            {% if recent_conversations %}
+            <section class="conversation-history-group" aria-labelledby="recent-conversations-heading" data-conversation-group>
+              <div class="conversation-group-heading">
+                <strong id="recent-conversations-heading">Recent</strong>
+                <small data-conversation-group-count>{{ recent_conversations|length }}</small>
+              </div>
+              {% for item in recent_conversations %}
+              <div class="conversation-list-entry" data-conversation-item>
+                <a
+                  href="/matters/{{ matter.slug }}?conversation={{ item.conversation_id }}#evidence-conversation"
+                  class="conversation-history-item {% if item.conversation_id == conversation.conversation_id %}selected{% endif %}"
+                  {% if item.conversation_id == conversation.conversation_id %}aria-current="true"{% endif %}
+                >
+                  <span>{{ item.title }}</span>
+                  <small>{{ item.message_count }} message{% if item.message_count != 1 %}s{% endif %} · <time datetime="{{ item.updated_at }}">{{ item.updated_at[5:10] }}</time></small>
+                </a>
+              </div>
+              {% endfor %}
+            </section>
+            {% endif %}
+
+            {% if archived_conversations %}
+            <details class="conversation-history-group archived-conversation-group" data-conversation-group data-archived-conversation-group>
+              <summary class="conversation-group-heading">
+                <strong>Archived</strong>
+                <small data-conversation-group-count>{{ archived_conversations|length }}</small>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+              </summary>
+              <div class="archived-conversation-list">
+                {% for item in archived_conversations %}
+                <div class="conversation-list-entry archived" data-conversation-item>
+                  <div class="conversation-history-item archived">
+                    <span>{{ item.title }}</span>
+                    <small>{{ item.message_count }} message{% if item.message_count != 1 %}s{% endif %} · archived <time datetime="{{ item.archived_at }}">{{ item.archived_at[5:10] }}</time></small>
+                  </div>
+                  <div class="archived-conversation-actions">
+                    <form method="post" action="/matters/{{ matter.slug }}/conversations/{{ item.conversation_id }}/restore" data-working-form data-working-label="Restoring…">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <button type="submit">Restore</button>
+                    </form>
+                    <a href="/matters/{{ matter.slug }}/conversations/{{ item.conversation_id }}/export?format=docx" data-download>Word</a>
+                    {% if can_delete_conversations %}<a class="danger-link" href="/matters/{{ matter.slug }}/conversations/{{ item.conversation_id }}/delete">Delete</a>{% endif %}
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+            </details>
+            {% endif %}
+          </nav>
+          <p class="conversation-filter-empty" data-conversation-filter-empty hidden>No saved conversations match that title.</p>
+        </aside>
+
+        <div class="conversation-active">
+          <header class="active-conversation-heading">
+            <div>
+              <span>Current conversation</span>
+              <h3>{{ conversation.title }}</h3>
+            </div>
+            <div class="active-conversation-actions">
+              <a href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/export?format=docx" data-download>Save as Word</a>
+              <a href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/export?format=markdown" data-download>Markdown</a>
+              <form method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/{{ 'unpin' if conversation_summary.is_pinned else 'pin' }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button class="conversation-text-action" type="submit">{{ 'Unpin' if conversation_summary.is_pinned else 'Pin' }}</button>
+              </form>
+              <form method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/archive" data-working-form data-working-label="Archiving…">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button class="conversation-text-action" type="submit">Archive</button>
+              </form>
+              <details class="conversation-rename">
+                <summary>Rename</summary>
+                <form method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/rename" data-working-form data-working-label="Saving…">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <label for="conversation-title">Conversation title</label>
+                  <input id="conversation-title" name="title" value="{{ conversation.title }}" maxlength="120" required>
+                  <button class="button button-primary" type="submit">Save title</button>
+                </form>
+              </details>
+              {% if can_delete_conversations %}<a class="danger-link" href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/delete">Delete</a>{% endif %}
+            </div>
+          </header>
+
+          <div class="conversation-thread">
+            {% for message in messages %}
+            {% if message.role == 'user' %}
+            <article class="conversation-turn user-turn">
+              <div class="turn-avatar user-avatar" aria-hidden="true">{{ actor_initials }}</div>
+              <div class="turn-content">
+                <strong>You asked</strong>
+                <p class="user-question">{{ message.content }}</p>
+              </div>
+            </article>
+            {% else %}
+            <article class="conversation-turn assistant-turn" {% if message.payload.kind == 'generated' %}data-answer-mode="generated"{% endif %} {% if loop.last %}id="latest"{% endif %}>
+              <div class="turn-avatar assistant-avatar" aria-hidden="true">RB</div>
+              <div class="turn-content answer-content">
+                <strong>{{ product_name }}</strong>
+                {% if message.payload.source_coverage and message.payload.source_coverage.mode == 'partial' %}
+                <div class="answer-source-coverage" role="note">
+                  <strong>Source coverage when this answer was created</strong>
+                  <p>{{ message.payload.source_coverage.notice }}</p>
+                </div>
+                {% endif %}
+                {% if message.payload.review_scope %}
+                <details class="answer-scope-summary{% if message.payload.review_scope.collection_wide_request %} collection-wide{% endif %}"{% if message.payload.review_scope.collection_wide_request %} open{% endif %}>
+                  <summary>
+                    <span>{{ 'Completeness caution' if message.payload.review_scope.collection_wide_request else 'Answer basis' }}</span>
+                    <strong>{{ message.payload.review_scope.cited_source_count }} cited source{% if message.payload.review_scope.cited_source_count != 1 %}s{% endif %} · {{ message.payload.review_scope.candidate_passage_count }} top passage{% if message.payload.review_scope.candidate_passage_count != 1 %}s{% endif %} considered</strong>
+                  </summary>
+                  <p>{{ message.payload.review_scope.notice }}</p>
+                </details>
+                {% endif %}
+                {% if message.payload.kind == 'generated' %}
+                  <p class="answer-introduction">{{ message.payload.introduction }}</p>
+                  {% if message.payload.evidence_notice %}
+                  <div class="answer-evidence-notice" role="note">
+                    <strong>Machine transcript</strong>
+                    <p>{{ message.payload.evidence_notice }}</p>
+                  </div>
+                  {% endif %}
+                  {% if message.payload.notebook_context %}
+                  <details class="answer-context-summary">
+                    <summary>Used {{ message.payload.notebook_context.count }} user-selected notebook item{% if message.payload.notebook_context.count != 1 %}s{% endif %} as orientation</summary>
+                    <ul>{% for item in message.payload.notebook_context['items'] %}<li><span>{{ item.item_type|replace('_', ' ')|title }}</span> {{ item.title }}</li>{% endfor %}</ul>
+                    <p>Notebook items helped frame retrieval. Every answer claim still required independent source support.</p>
+                  </details>
+                  {% endif %}
+                  <ol class="answer-claims" id="answer-support-{{ message.message_id }}">
+                    {% for claim in message.payload.claims %}
+                    {% set claim_index = loop.index0 %}
+                    <li>
+                      <p>{{ claim.text }}</p>
+                      <form class="save-claim-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/notebook/claims/{{ claim_index }}" data-working-form data-working-label="Saving…">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit">Save passage to case notes</button>
+                      </form>
+                      {% if claim.citations %}
+                      <div class="citation-list">
+                        {% for citation in claim.citations %}
+                        <div class="citation-with-save">
+                          <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id) }}">
+                            {% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg>
+                          </a>
+                          <form method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/notebook/claims/{{ claim_index }}/citations/{{ loop.index0 }}" data-working-form data-working-label="Saving…">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" aria-label="Save {{ citation.source_name }} {{ citation.location }} to notebook">Save</button>
+                          </form>
+                        </div>
+                        {% endfor %}
+                      </div>
+                      {% endif %}
+                    </li>
+                    {% endfor %}
+                  </ol>
+                  {% if message.payload.limitation %}
+                  <div class="answer-limitation">
+                    <p><strong>Limitation:</strong> {{ message.payload.limitation.text }}</p>
+                    {% if message.payload.limitation.citations %}
+                    <div class="citation-list">
+                      {% for citation in message.payload.limitation.citations %}
+                      <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
+                      {% endfor %}
+                    </div>
+                    {% endif %}
+                  </div>
+                  {% endif %}
+                {% elif message.payload.kind == 'not-supported' %}
+                  <p class="answer-not-supported">{{ message.payload.missing_information or message.content }}</p>
+                  {% if message.payload.source_matches %}
+                  <div class="answer-source-matches">
+                    <strong>Related source passages</strong>
+                    <p>These passages were retrieved from this matter, but they are not presented as a verified generated answer.</p>
+                    <div class="citation-list">
+                      {% for citation in message.payload.source_matches %}
+                      <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  {% endif %}
+                {% else %}
+                  <p class="answer-error">{{ message.content }}</p>
+                {% endif %}
+                {% if message.payload.kind == 'generated' %}
+                <nav class="workflow-completion-bar answer-completion-bar" aria-label="Completed answer actions">
+                  <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>Answer ready</strong><small>Citations stay attached</small></span></span>
+                  <a href="#answer-support-{{ message.message_id }}">Review support</a>
+                  {% if reports %}
+                  <details class="answer-report-menu"><summary>Save to report</summary><div>{% for report in reports %}<form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/from-answer/{{ conversation.conversation_id }}/{{ message.message_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">{{ report.title }}</button></form>{% endfor %}</div></details>
+                  {% else %}<a href="/matters/{{ matter.slug }}/reports">Save to report</a>{% endif %}
+                  <details><summary>Export</summary><div><a href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/export?format=docx" data-download>Word</a><a href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/export?format=markdown" data-download>Markdown</a></div></details>
+                  <a href="#matter-question">Continue reviewing</a>
+                </nav>
+                {% else %}
+                <div class="answer-export-actions" aria-label="Save this response">
+                  <span>Save response</span>
+                  <a href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/export?format=docx" data-download>Word</a>
+                  <a href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/export?format=markdown" data-download>Markdown</a>
+                </div>
+                {% endif %}
+              </div>
+            </article>
+            {% endif %}
+            {% else %}
+            <div class="conversation-empty">
+              <div class="turn-avatar assistant-avatar" aria-hidden="true">RB</div>
+              <div>
+                <h3>Ask about this matter</h3>
+                <p>{{ product_name }} will search the sources, compose a direct answer, and keep each supported claim connected to the record.</p>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="composer-wrap">
+      <div
+        class="answer-wait-status"
+        id="answer-wait-status"
+        data-answer-wait-status
+        data-answer-status-url="{{ active_answer.status_url if active_answer else '' }}"
+        data-answer-state="{{ active_answer.state if active_answer else '' }}"
+        data-answer-created-at="{{ active_answer.created_at if active_answer else '' }}"
+        role="status"
+        aria-live="polite"
+        aria-relevant="additions text"
+        {% if not active_answer %}hidden{% endif %}
+      >
+        <span class="answer-wait-spinner" aria-hidden="true"></span>
+        <div class="answer-wait-body">
+          <div class="answer-wait-heading">
+            <strong data-answer-wait-title>{{ active_answer.stage_label if active_answer else 'Request sent' }}</strong>
+            <span data-answer-wait-elapsed aria-hidden="true">Waiting 0 seconds</span>
+          </div>
+          <p data-answer-wait-message>
+            {% if active_answer and active_answer.queue_position %}Currently {{ active_answer.queue_position }} in the answer queue.
+            {% elif active_answer %}{{ active_answer.message }}
+            {% else %}Saving this request to the matter.{% endif %}
+          </p>
+          <div class="answer-wait-progress" aria-hidden="true"><span></span></div>
+          <ol class="answer-wait-stages" aria-label="Grounded answer workflow">
+            <li data-answer-stage="retrieving"><span>1</span>Find candidate evidence</li>
+            <li data-answer-stage="reranking"><span>2</span>Order it for relevance</li>
+            <li data-answer-stage="generating"><span>3</span>Draft from the best support</li>
+            <li data-answer-stage="verifying"><span>4</span>Verify claims and citations</li>
+          </ol>
+          <div class="answer-wait-actions">
+            <button
+              class="quiet-action"
+              type="button"
+              data-answer-cancel
+              data-action-url="{{ active_answer.cancel_url if active_answer else '' }}"
+              {% if not active_answer or not active_answer.can_cancel %}hidden{% endif %}
+            >Cancel request</button>
+            <button
+              class="quiet-action"
+              type="button"
+              data-answer-retry
+              data-action-url="{{ active_answer.retry_url if active_answer else '' }}"
+              {% if not active_answer or not active_answer.can_retry %}hidden{% endif %}
+            >Try again</button>
+          </div>
+          <p class="answer-wait-note">This request is saved. You can leave this page and return to the conversation.</p>
+        </div>
+      </div>
+      <form class="question-composer" method="post" action="/matters/{{ matter.slug }}/ask" data-question-form data-sources-ready="{{ 'true' if readiness.can_query else 'false' }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="conversation" value="{{ conversation.conversation_id }}">
+        <input type="hidden" name="request_key" value="{{ answer_request_key }}" data-answer-request-key>
+        <label class="visually-hidden" for="answer-source-set">Sources for this answer</label>
+        <select id="answer-source-set" class="source-scope" name="source_set" aria-label="Sources for this answer">
+          <option value="">All searchable sources ({{ searchable_source_count }})</option>
+          {% for set in source_sets %}<option value="{{ set.source_set_id }}" {% if set.source_set_id == selected_source_set_id %}selected{% endif %}>{{ set.name }} ({{ set.source_count }})</option>{% endfor %}
+        </select>
+        <details class="composer-notebook-context">
+          <summary>Use case notes for orientation{% if confirmed_notebook_count %} · {{ confirmed_notebook_count }} confirmed{% endif %}</summary>
+          <div>
+            <p>Case notes can help frame the question, but they never replace independent source support.</p>
+            <label><input type="radio" name="notebook_mode" value="" checked> Do not use case notes</label>
+            <label><input type="radio" name="notebook_mode" value="confirmed" {% if not confirmed_notebook_count %}disabled{% endif %}> Use confirmed items{% if confirmed_notebook_count %} (up to 50){% endif %}</label>
+            {% if notebook_context_items %}
+            <fieldset>
+              <legend>Or check specific items</legend>
+              <p>Checking any item uses only those selections.</p>
+              <div class="composer-notebook-items">
+                {% for item in notebook_context_items %}
+                <label><input type="checkbox" name="notebook_item" value="{{ item.item_id }}"><span><strong>{{ item.title }}</strong><small>{{ item.item_type|replace('_', ' ')|title }} · {{ item.status|replace('_', ' ')|title }}</small></span></label>
+                {% endfor %}
+              </div>
+            </fieldset>
+            {% endif %}
+            <a href="/matters/{{ matter.slug }}/notebook">Open case notes</a>
+          </div>
+        </details>
+        <textarea id="matter-question" name="question" maxlength="2000" rows="1" required placeholder="Ask about this matter…" aria-label="Ask about this matter" aria-describedby="answer-wait-status composer-readiness-hint" {% if not readiness.can_query %}disabled{% elif active_answer and active_answer.state in ['queued', 'running'] %}readonly{% endif %}></textarea>
+        <button class="ask-button" type="submit" {% if not readiness.can_query or (active_answer and active_answer.state in ['queued', 'running']) %}disabled{% endif %}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-3.2-7.3L3 10.5 21 3Zm-10.7 10.7L15 9"/></svg>
+          <span>Ask</span>
+        </button>
+      </form>
+      <small class="composer-readiness-hint{% if readiness.partial_query %} is-partial{% endif %}" id="composer-readiness-hint" data-composer-readiness-hint>{% if readiness.partial_query %}{{ readiness.coverage_notice }}{% elif readiness.can_query %}Questions use the complete searchable record for this matter.{% elif readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ readiness.guidance }}{% endif %}</small>
+      <a class="search-instead" href="/matters/{{ matter.slug }}?mode=search#search-results">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+        Search instead
+      </a>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if support %}
+  <aside class="support-pane" id="support-pane" aria-labelledby="support-heading" tabindex="-1" data-support-pane>
+    <div class="drawer-handle" aria-hidden="true"></div>
+    <header class="support-header">
+      <div>
+        <span class="support-label">{{ 'Cited recording' if support.evidence_kind == 'transcript' else 'Supporting source' }}</span>
+        <h2 id="support-heading">{{ support.source_name }}</h2>
+        <p>{{ support.position_label }}</p>
+        <a class="support-header-open" href="{{ support.source_review_href }}">{% if support.evidence_kind == 'transcript' %}Open full recording and transcript{% elif support.kind == 'PDF' %}Open full PDF{% else %}Read full document{% endif %}</a>
+      </div>
+      <a class="icon-button support-close" href="/matters/{{ matter.slug }}?conversation={{ conversation.conversation_id }}" aria-label="Close supporting source">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </a>
+    </header>
+    <div class="support-toolbar">
+      {% if support.previous_href %}<a class="icon-button" href="{{ support.previous_href }}" aria-label="Previous section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></a>{% else %}<span class="icon-button disabled"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></span>{% endif %}
+      <span class="support-position">{{ support.location }}</span>
+      <form method="post" action="/matters/{{ matter.slug }}/notebook/from-support/{{ support.support_token }}" data-working-form data-working-label="Saving…">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="support-save-button" type="submit">Save to case notes</button>
+      </form>
+      {% if support.next_href %}<a class="icon-button" href="{{ support.next_href }}" aria-label="Next section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></a>{% else %}<span class="icon-button disabled"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></span>{% endif %}
+    </div>
+    <div class="source-paper">
+      <div class="paper-heading">
+        <span>{{ support.kind }}</span>
+        <strong>{{ support.source_name }}</strong>
+      </div>
+      {% if support.evidence_kind == 'transcript' %}
+      <section class="support-media-player" data-support-media data-start-ms="{{ support.start_ms }}" data-autoplay="{{ 'true' if support.autoplay else 'false' }}" aria-label="Cited recording playback">
+        {% if support.player_kind == 'video' %}
+        <video controls preload="metadata" data-support-media-player>
+          <source src="{{ support.playback_href }}" type="{{ support.playback_media_type }}">
+          Your browser cannot play this recording.
+        </video>
+        {% else %}
+        <audio controls preload="metadata" data-support-media-player>
+          <source src="{{ support.playback_href }}" type="{{ support.playback_media_type }}">
+          Your browser cannot play this recording.
+        </audio>
+        {% endif %}
+        <div class="support-media-actions">
+          <button class="button button-primary" type="button" data-support-play>▶ Play cited moment · {{ support.location }}</button>
+          <a href="{{ support.source_review_href }}">Open full recording and transcript</a>
+        </div>
+        <p>This passage comes from a machine transcript. Listen at the cited time before relying on wording or speaker identity.</p>
+      </section>
+      {% endif %}
+      <div class="support-excerpt">
+        {% for line in support.lines %}<p><mark>{{ line }}</mark></p>{% endfor %}
+      </div>
+    </div>
+  </aside>
+  {% endif %}
+</main>
+{% endblock %}

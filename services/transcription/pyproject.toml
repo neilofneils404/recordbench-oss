@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recordbench-transcription-v2"
+version = "0.1.0"
+description = "Local, review-first transcription and diarization with ephemeral delivery"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = "Apache-2.0"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "python-multipart>=0.0.20,<1",
+  "requests>=2.31,<3",
+  "streamlit>=1.51,<2",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+# Installed only in the isolated worker environment. Model weights are staged
+# separately after license review; importing the API/UI does not import ML code.
+ml = [
+  # onnxruntime 1.24+ no longer publishes CPython 3.10 Linux wheels. Keep the
+  # isolated worker installable on this host's proven Python 3.10 runtime.
+  "onnxruntime>=1.16,<1.24",
+  "whisperx==3.8.6",
+]
+dev = [
+  "pytest>=8,<10",
+  "httpx>=0.27,<1",
+]
+
+[project.scripts]
+transcription-v2 = "transcription_v2.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

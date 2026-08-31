@@ -1,0 +1,79 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Reports · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}reports-page{% endblock %}
+
+{% block content %}
+<main class="reports-shell">
+  <header class="matter-heading reports-heading">
+    <div><p class="eyebrow">Work product</p><h1>{{ matter.display_name }}</h1><p>Assemble editable, citation-backed sections and export a portable Word or Markdown report at any point.</p></div>
+    {% if report %}<div class="report-export-actions"><a class="button button-secondary" href="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/export?format=docx" data-download>Export Word</a><a class="button button-secondary" href="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/export?format=markdown" data-download>Export Markdown</a></div>{% endif %}
+  </header>
+  {% with active='reports' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% with work_product_active='reports' %}{% include "workbench_work_product_tabs.html" %}{% endwith %}
+  {% include "workbench_retention_notice.html" %}
+
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+  <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
+
+  <div class="reports-layout">
+    <aside class="report-library">
+      <section class="report-create-card">
+        <p class="eyebrow">New report</p><h2>Start a draft</h2>
+        <form method="post" action="/matters/{{ matter.slug }}/reports" data-working-form data-working-label="Creating…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label>Title<input name="title" maxlength="200" required placeholder="Case review memorandum"></label>
+          <label>Purpose<textarea name="purpose" maxlength="2000" rows="3" placeholder="What question or deliverable is this report addressing?"></textarea></label>
+          <button class="button button-primary" type="submit">Create report</button>
+        </form>
+      </section>
+      <nav class="report-list" aria-label="Matter reports">
+        {% for item in reports %}<a class="{% if report and item.report_id == report.report_id %}selected{% endif %}" href="/matters/{{ matter.slug }}/reports?report={{ item.report_id }}"><strong>{{ item.title }}</strong><span>{{ item.status|title }} · {{ item.section_count }} section{% if item.section_count != 1 %}s{% endif %}</span></a>{% else %}<p>No reports yet.</p>{% endfor %}
+      </nav>
+    </aside>
+
+    <section class="report-builder">
+      {% if report %}
+      <section class="report-settings">
+        <form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label>Report title<input name="title" value="{{ report.title }}" maxlength="200" required></label>
+          <label>Purpose<textarea name="purpose" maxlength="2000" rows="3">{{ report.purpose }}</textarea></label>
+          <label>Status<select name="status"><option value="draft" {% if report.status == 'draft' %}selected{% endif %}>Draft</option><option value="final" {% if report.status == 'final' %}selected{% endif %}>Final work product</option></select></label>
+          <button class="button button-ink" type="submit">Save details</button>
+        </form>
+        <form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/delete" data-confirm="Delete this report and all of its assembled sections? Source material, notes, conversations, and clips will remain."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger-link" type="submit">Delete report</button></form>
+      </section>
+
+      <section class="report-add-material">
+        <details open><summary><strong>Add a written section</strong><span>Draft or paste work product</span></summary><form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/sections"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Heading<input name="heading" maxlength="200" required></label><label>Text<textarea name="body" maxlength="50000" rows="5"></textarea></label><button class="button button-secondary" type="submit">Add section</button></form></details>
+        <details><summary><strong>Add cited material</strong><span>Reuse reviewed notes, findings, and media clips</span></summary>
+          <div class="report-material-groups">
+            <section><h3>Case notes</h3>{% for item in notebook_items[:50] %}<form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/from-notebook/{{ item.item_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><span><strong>{{ item.title }}</strong><small>{{ item.item_type|title }} · {{ item.status|replace('_', ' ')|title }}</small></span><button type="submit">Add</button></form>{% else %}<p>No active case notes.</p>{% endfor %}</section>
+            <section><h3>Review-map findings</h3>{% for finding in findings[:50] %}<form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/from-finding/{{ finding.finding_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><span><strong>{{ finding.title }}</strong><small>{{ finding.kind|title }} · {{ finding.status|replace('_', ' ')|title }}</small></span><button type="submit">Add</button></form>{% else %}<p>No active review findings.</p>{% endfor %}</section>
+            <section><h3>Saved media clips</h3>{% for item in clips %}<form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/from-clip/{{ item.clip.clip_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><span><strong>{{ item.clip.title }}</strong><small>{{ item.source_name }} · {{ item.location }}</small></span><button type="submit">Add</button></form>{% else %}<p>No saved clips.</p>{% endfor %}</section>
+          </div>
+        </details>
+      </section>
+
+      <section class="report-section-list" aria-labelledby="report-sections-heading">
+        <header><div><p class="eyebrow">Report body</p><h2 id="report-sections-heading">{{ sections|length }} assembled section{% if sections|length != 1 %}s{% endif %}</h2></div><span>Drag-free controls preserve keyboard access</span></header>
+        {% for section in sections %}
+        <article class="report-section-card" id="{{ section.section_id }}">
+          <div class="report-section-order"><span>{{ section.ordinal }}</span><form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/sections/{{ section.section_id }}/move"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="direction" value="up"><button type="submit" {% if loop.first %}disabled{% endif %} aria-label="Move {{ section.heading }} up">↑</button></form><form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/sections/{{ section.section_id }}/move"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="direction" value="down"><button type="submit" {% if loop.last %}disabled{% endif %} aria-label="Move {{ section.heading }} down">↓</button></form></div>
+          <div class="report-section-content">
+            <form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/sections/{{ section.section_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Heading<input name="heading" value="{{ section.heading }}" maxlength="200" required></label><label>Section text<textarea name="body" maxlength="50000" rows="6">{{ section.body }}</textarea></label><div><span>{{ section.origin|replace('_', ' ')|title }} material</span><button class="button button-secondary" type="submit">Save section</button></div></form>
+            {% if citations[section.section_id] %}<div class="report-citations"><strong>Source support</strong>{% for citation in citations[section.section_id] %}{% if citation_hrefs[citation.citation_id] %}<a href="{{ citation_hrefs[citation.citation_id] }}"><span>{{ citation.source_name }}</span><small>{{ citation.location }}{% if citation.kind == 'media_clip' %} · play saved segment{% endif %}</small></a>{% else %}<span class="notebook-stale-reference"><span>{{ citation.source_name }}</span><small>{{ citation.location }} · source unavailable</small></span>{% endif %}{% endfor %}</div>{% endif %}
+            <form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/sections/{{ section.section_id }}/delete" data-confirm="Remove this section from the report? Its originating material will remain in the matter."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger-link" type="submit">Remove section</button></form>
+          </div>
+        </article>
+        {% else %}<div class="analysis-empty"><strong>This report is empty</strong><span>Add a written section, case note, review finding, answer, or timestamped media clip.</span></div>{% endfor %}
+      </section>
+      {% else %}
+      <div class="report-zero-state"><span>▤</span><h2>Create the first report</h2><p>A report is editable work product assembled from the matter. It does not change source evidence or case notes.</p></div>
+      {% endif %}
+    </section>
+  </div>
+</main>
+{% endblock %}

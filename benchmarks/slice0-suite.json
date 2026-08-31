@@ -1,0 +1,538 @@
+{
+  "cases": [
+    {
+      "case_id": "alpha-shared-term",
+      "category": "retrieval",
+      "expected_outcome": "matched",
+      "matter_id": "matter-alpha",
+      "operation": "search",
+      "parameters": {
+        "actor_id": "actor-alpha",
+        "expected_source_version_ids": [
+          "version-matter-alpha-text",
+          "version-matter-alpha-image",
+          "version-matter-alpha-audio"
+        ],
+        "query": "shared red bicycle"
+      }
+    },
+    {
+      "case_id": "bravo-shared-term",
+      "category": "retrieval",
+      "expected_outcome": "matched",
+      "matter_id": "matter-bravo",
+      "operation": "search",
+      "parameters": {
+        "actor_id": "actor-bravo",
+        "expected_source_version_ids": [
+          "version-matter-bravo-text",
+          "version-matter-bravo-image",
+          "version-matter-bravo-audio"
+        ],
+        "query": "shared red bicycle"
+      }
+    },
+    {
+      "case_id": "alpha-search-bravo",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-bravo",
+      "operation": "search",
+      "parameters": {
+        "actor_id": "actor-alpha",
+        "query": "shared red bicycle"
+      }
+    },
+    {
+      "case_id": "bravo-search-alpha",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "search",
+      "parameters": {
+        "actor_id": "actor-bravo",
+        "query": "shared red bicycle"
+      }
+    },
+    {
+      "case_id": "alpha-source-bravo",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-bravo",
+      "operation": "source_lookup",
+      "parameters": {
+        "actor_id": "actor-alpha",
+        "source_version_id": "version-matter-bravo-text"
+      }
+    },
+    {
+      "case_id": "bravo-source-alpha",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "source_lookup",
+      "parameters": {
+        "actor_id": "actor-bravo",
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "alpha-foreign-source",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "source_lookup",
+      "parameters": {
+        "actor_id": "actor-alpha",
+        "source_version_id": "version-matter-bravo-text"
+      }
+    },
+    {
+      "case_id": "bravo-foreign-source",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-bravo",
+      "operation": "source_lookup",
+      "parameters": {
+        "actor_id": "actor-bravo",
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "mixed-retrieval-results",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "mixed_results",
+      "parameters": {}
+    },
+    {
+      "case_id": "closing-retrieval",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "content_guard",
+      "parameters": {
+        "content_operation": "retrieve",
+        "state": "closing"
+      }
+    },
+    {
+      "case_id": "closed-retrieval",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "content_guard",
+      "parameters": {
+        "content_operation": "retrieve",
+        "state": "closed"
+      }
+    },
+    {
+      "case_id": "closing-source-resolution",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "content_guard",
+      "parameters": {
+        "content_operation": "resolve_source",
+        "state": "closing"
+      }
+    },
+    {
+      "case_id": "closed-source-resolution",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "content_guard",
+      "parameters": {
+        "content_operation": "resolve_source",
+        "state": "closed"
+      }
+    },
+    {
+      "case_id": "unknown-actor-search",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "search",
+      "parameters": {
+        "actor_id": "unknown-actor",
+        "query": "shared red bicycle"
+      }
+    },
+    {
+      "case_id": "ticket-wrong-actor",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "wrong_actor",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-wrong-action",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "wrong_action",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-changed-object",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "changed_object",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-changed-revision",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "changed_revision",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-closing-ticket",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "closing_ticket",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-unknown-ticket",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "unknown_ticket",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-malformed-uri",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "malformed_uri",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-expired",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "expired",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-replay",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "replay",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-revoked-ticket",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "revoked_ticket",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-wrong-helper-lease",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "wrong_helper_lease",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-changed-revision-lease",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "changed_revision_lease",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-revoked-actor-lease",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "revoked_actor_lease",
+      "parameters": {}
+    },
+    {
+      "case_id": "ticket-closing-lease",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "matter_id": "matter-alpha",
+      "operation": "closing_lease",
+      "parameters": {}
+    },
+    {
+      "case_id": "valid-page",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "page": 1
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "valid-printed-page",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "printed_page": "A-1"
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "valid-bates",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "bates_start": "ALPHA0001"
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "valid-character-range",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "character_end": 10,
+          "character_start": 0
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "valid-line-range",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "line_end": 2,
+          "line_start": 1
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "valid-image-region",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "image_region": [
+            0.1,
+            0.1,
+            0.9,
+            0.9
+          ]
+        },
+        "source_version_id": "version-matter-alpha-image"
+      }
+    },
+    {
+      "case_id": "valid-image-representation",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "representation_id": "representation-matter-alpha-image"
+        },
+        "source_version_id": "version-matter-alpha-image"
+      }
+    },
+    {
+      "case_id": "valid-image-segment",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "representation_id": "representation-matter-alpha-image",
+          "segment_id": "segment-matter-alpha-image-1"
+        },
+        "source_version_id": "version-matter-alpha-image"
+      }
+    },
+    {
+      "case_id": "valid-audio-timestamp",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "timestamp_end_ms": 100,
+          "timestamp_start_ms": 0
+        },
+        "source_version_id": "version-matter-alpha-audio"
+      }
+    },
+    {
+      "case_id": "valid-audio-segment",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "representation_id": "representation-matter-alpha-audio",
+          "segment_id": "segment-matter-alpha-audio-1",
+          "timestamp_end_ms": 100,
+          "timestamp_start_ms": 0
+        },
+        "source_version_id": "version-matter-alpha-audio"
+      }
+    },
+    {
+      "case_id": "invalid-impossible-page",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "page": 999999999
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "invalid-printed-page",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "printed_page": "Z-999"
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "invalid-bates",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "bates_start": "MISSING999"
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "invalid-character-range",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "character_end": 10000,
+          "character_start": 9999
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "invalid-line-range",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "line_end": 1000,
+          "line_start": 999
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "invalid-image-on-text",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "image_region": [
+            0.1,
+            0.1,
+            0.9,
+            0.9
+          ]
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    },
+    {
+      "case_id": "invalid-audio-timestamp",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "locator": {
+          "timestamp_end_ms": 102,
+          "timestamp_start_ms": 101
+        },
+        "source_version_id": "version-matter-alpha-audio"
+      }
+    },
+    {
+      "case_id": "invalid-foreign-matter",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "unauthorized",
+      "matter_id": "matter-alpha",
+      "operation": "resolve_reference",
+      "parameters": {
+        "authorized_matter_id": "matter-bravo",
+        "locator": {
+          "page": 1
+        },
+        "source_version_id": "version-matter-alpha-text"
+      }
+    }
+  ],
+  "description": "Executable deterministic synthetic policy checks only; no production retrieval, reranking, generation, or model selection.",
+  "evaluation_time": "2026-08-25T16:00:00Z",
+  "fixture_id": "slice0-two-matter-v1",
+  "schema_version": "2.0",
+  "suite_id": "slice0-suite",
+  "suite_version": "2.0"
+}

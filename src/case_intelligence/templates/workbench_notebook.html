@@ -1,0 +1,167 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Case notes · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}notebook-page{% endblock %}
+
+{% block content %}
+<main class="notebook-shell">
+  <header class="matter-heading notebook-heading">
+    <div>
+      <p class="eyebrow">Case notes</p>
+      <h1>{{ matter.display_name }}</h1>
+      <p>Keep working observations, follow-up issues, people, places, dates, and cited passages together as you review.</p>
+    </div>
+    <div class="matter-actions">
+      <details class="notebook-export-menu">
+        <summary class="button button-secondary">Export case notes</summary>
+        <div>
+          <a href="/matters/{{ matter.slug }}/notebook/export?format=docx" data-download>Word document</a>
+          <a href="/matters/{{ matter.slug }}/notebook/export?format=markdown" data-download>Markdown</a>
+          <a href="/matters/{{ matter.slug }}/notebook/export?format=csv" data-download>Spreadsheet CSV</a>
+        </div>
+      </details>
+    </div>
+  </header>
+  {% with active='notes' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% with work_product_active='notes' %}{% include "workbench_work_product_tabs.html" %}{% endwith %}
+  {% include "workbench_retention_notice.html" %}
+
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+  <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
+
+  <section class="case-notes-guide" aria-labelledby="case-notes-guide-heading">
+    <div><p class="eyebrow">How to use this space</p><h2 id="case-notes-guide-heading">Build review work product as you go</h2></div>
+    <ol>
+      <li><strong>Capture</strong><span>Save a cited answer or source passage, or write your own working note.</span></li>
+      <li><strong>Review</strong><span>Confirm, dispute, pin, edit, or dismiss items as your understanding changes.</span></li>
+      <li><strong>Reuse</strong><span>Optionally use confirmed notes to orient a later question; answers still require source support.</span></li>
+      <li><strong>Export</strong><span>Download one item or the complete set at any point in the review.</span></li>
+    </ol>
+  </section>
+
+  <section class="notebook-stats" aria-label="Case note review status">
+    <a href="/matters/{{ matter.slug }}/notebook" class="{% if not notebook.status %}selected{% endif %}"><strong>{{ notebook.counts.all - notebook.counts.dismissed }}</strong><span>Active items</span></a>
+    <a href="/matters/{{ matter.slug }}/notebook?status=suggested" class="status-suggested {% if notebook.status == 'suggested' %}selected{% endif %}"><strong>{{ notebook.counts.suggested }}</strong><span>Suggestions</span></a>
+    <a href="/matters/{{ matter.slug }}/notebook?status=confirmed" class="status-confirmed {% if notebook.status == 'confirmed' %}selected{% endif %}"><strong>{{ notebook.counts.confirmed }}</strong><span>Confirmed</span></a>
+    <a href="/matters/{{ matter.slug }}/notebook?status=needs_review" class="status-needs-review {% if notebook.status == 'needs_review' %}selected{% endif %}"><strong>{{ notebook.counts.needs_review }}</strong><span>Needs review</span></a>
+    <a href="/matters/{{ matter.slug }}/notebook?status=disputed" class="status-disputed {% if notebook.status == 'disputed' %}selected{% endif %}"><strong>{{ notebook.counts.disputed }}</strong><span>Disputed</span></a>
+  </section>
+
+  <div class="notebook-layout">
+    <aside class="notebook-tools">
+      <section class="notebook-tool-card">
+        <div class="notebook-tool-heading">
+          <span class="notebook-tool-icon">+</span>
+          <div><h2>Add a case note</h2><p>Record an observation, question, person, place, date, event, or general note.</p></div>
+        </div>
+        <form method="post" action="/matters/{{ matter.slug }}/notebook/items" class="notebook-item-form" data-working-form data-working-label="Saving…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <div class="notebook-form-row">
+            <label>Type<select name="item_type">{% for value in notebook_types %}<option value="{{ value }}" {% if value == 'note' %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
+            <label>Status<select name="status">{% for value in notebook_statuses %}{% if value != 'dismissed' %}<option value="{{ value }}" {% if value == 'needs_review' %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endif %}{% endfor %}</select></label>
+          </div>
+          <label>Title<input name="title" maxlength="160" required placeholder="Short, recognizable title"></label>
+          <label>Date or time <span>(optional)</span><input name="date_label" maxlength="100" placeholder="e.g. August 14, 2026 at 10:12 p.m."></label>
+          <label>Details<textarea name="body" maxlength="20000" rows="5" placeholder="What should the team remember or investigate?"></textarea></label>
+          <label class="notebook-check"><input type="checkbox" name="pinned" value="yes"> Pin near the top</label>
+          <button class="button button-primary" type="submit">Save case note</button>
+        </form>
+      </section>
+
+      <section class="notebook-tool-card suggestion-tool">
+        <div class="notebook-tool-heading">
+          <span class="notebook-tool-icon sparkle">✦</span>
+          <div><h2>Find names, places, and dates</h2><p>Optionally scan searchable text for references that may deserve a case note.</p></div>
+        </div>
+        <p class="tool-caution">These are candidates, not facts. Confirm, dispute, or dismiss each one after checking its source.</p>
+        <form method="post" action="/matters/{{ matter.slug }}/notebook/suggestions" data-working-form data-working-label="Scanning sources…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label>Source scope
+            <select name="source_set">
+              <option value="">All searchable sources</option>
+              {% for set in source_sets %}<option value="{{ set.source_set_id }}">{{ set.name }} ({{ set.source_count }})</option>{% endfor %}
+            </select>
+          </label>
+          <button class="button button-secondary" type="submit">Find review suggestions</button>
+        </form>
+      </section>
+    </aside>
+
+    <section class="notebook-library" aria-labelledby="notebook-library-heading">
+      <div class="notebook-library-heading">
+        <div><h2 id="notebook-library-heading">Saved case notes</h2><p>{{ notebook.total }} result{% if notebook.total != 1 %}s{% endif %} in this view</p></div>
+        <form method="get" action="/matters/{{ matter.slug }}/notebook" class="notebook-filter-form">
+          <label class="notebook-search"><span class="visually-hidden">Search case notes</span><input type="search" name="q" value="{{ notebook.query }}" maxlength="200" placeholder="Search case notes…"></label>
+          <select name="type" aria-label="Filter by type"><option value="">All types</option>{% for value in notebook_types %}<option value="{{ value }}" {% if notebook.item_type == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }} ({{ notebook.type_counts[value] }})</option>{% endfor %}</select>
+          <select name="status" aria-label="Filter by status"><option value="" {% if not notebook.status %}selected{% endif %}>Active statuses</option><option value="all" {% if notebook.status == 'all' %}selected{% endif %}>All, including dismissed</option>{% for value in notebook_statuses %}<option value="{{ value }}" {% if notebook.status == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }} ({{ notebook.counts[value] }})</option>{% endfor %}</select>
+          <button class="button button-ink" type="submit">Filter</button>
+        </form>
+      </div>
+
+      {% if edit_item %}
+      <section class="notebook-edit-panel" aria-labelledby="edit-notebook-heading">
+        <div class="section-heading-row"><h2 id="edit-notebook-heading">Edit notebook item</h2><a href="/matters/{{ matter.slug }}/notebook#{{ edit_item.item_id }}">Cancel</a></div>
+        <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ edit_item.item_id }}" class="notebook-item-form" data-working-form data-working-label="Saving changes…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <div class="notebook-form-row">
+            <label>Type<select name="item_type">{% for value in notebook_types %}<option value="{{ value }}" {% if edit_item.item_type == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
+            <label>Status<select name="status">{% for value in notebook_statuses %}<option value="{{ value }}" {% if edit_item.status == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
+          </div>
+          <label>Title<input name="title" value="{{ edit_item.title }}" maxlength="160" required></label>
+          <label>Date or time <span>(optional)</span><input name="date_label" value="{{ edit_item.date_label }}" maxlength="100"></label>
+          <label>Details<textarea name="body" maxlength="20000" rows="6">{{ edit_item.body }}</textarea></label>
+          <label class="notebook-check"><input type="checkbox" name="pinned" value="yes" {% if edit_item.is_pinned %}checked{% endif %}> Pin near the top</label>
+          <button class="button button-primary" type="submit">Save changes</button>
+        </form>
+      </section>
+      {% endif %}
+
+      <div class="notebook-item-list">
+        {% for item in notebook.items %}
+        <article class="notebook-item status-{{ item.status|replace('_', '-') }} {% if item.is_pinned %}pinned{% endif %}" id="{{ item.item_id }}">
+          <header>
+            <div class="notebook-item-labels"><span class="notebook-type">{{ item.item_type|replace('_', ' ')|title }}</span><span class="notebook-status">{{ item.status|replace('_', ' ')|title }}</span>{% if item.is_pinned %}<span class="notebook-pinned">Pinned</span>{% endif %}</div>
+            <h3>{{ item.title }}</h3>
+            {% if item.date_label %}<p class="notebook-date">{{ item.date_label }}</p>{% endif %}
+          </header>
+          {% if item.body %}<p class="notebook-body">{{ item.body }}</p>{% endif %}
+          {% if references[item.item_id] %}
+          <div class="notebook-provenance">
+            <strong>Source support</strong>
+            {% for reference in references[item.item_id] %}
+            {% if reference.support_token in available_support_tokens %}<a href="/matters/{{ matter.slug }}?support={{ reference.support_token }}#support-pane"><span>{{ reference.source_name }}</span><small>{{ reference.location }}</small></a>{% else %}<span class="notebook-stale-reference"><span>{{ reference.source_name }}</span><small>{{ reference.location }} · source unavailable</small></span>{% endif %}
+            {% endfor %}
+          </div>
+          {% elif item.origin != 'manual' %}<p class="notebook-source-warning">The original source is no longer available in this matter.</p>{% endif %}
+          <footer>
+            <span>Updated by {{ item.updated_by_name }} · <time datetime="{{ item.updated_at }}">{{ item.updated_at[:10] }}</time></span>
+            <div class="notebook-item-actions">
+              {% if item.status == 'suggested' %}
+              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="confirmed"><button type="submit" class="confirm-action">Confirm</button></form>
+              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="dismissed"><button type="submit">Dismiss</button></form>
+              {% elif item.status != 'confirmed' and item.status != 'dismissed' %}
+              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="confirmed"><button type="submit" class="confirm-action">Confirm</button></form>
+              {% endif %}
+              <a href="/matters/{{ matter.slug }}/notebook?edit={{ item.item_id }}#edit-notebook-heading">Edit</a>
+              <a href="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/export?format=docx" data-download>Export</a>
+              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/delete" data-confirm="Permanently delete this notebook item? Its source material and prior conversations will not be deleted."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="danger-link">Delete</button></form>
+            </div>
+          </footer>
+        </article>
+        {% else %}
+        <div class="notebook-empty"><span>◇</span><h3>No case notes in this view</h3><p>Add a working note, save a supported answer passage, or change the filters.</p></div>
+        {% endfor %}
+      </div>
+
+      {% if notebook.total_pages > 1 %}
+      <nav class="source-pagination" aria-label="Notebook pages">
+        {% if notebook.page > 1 %}<a class="button button-secondary" href="{{ notebook_url(notebook.page - 1) }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
+        <span>Page {{ notebook.page }} of {{ notebook.total_pages }}</span>
+        {% if notebook.page < notebook.total_pages %}<a class="button button-secondary" href="{{ notebook_url(notebook.page + 1) }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
+      </nav>
+      {% endif %}
+    </section>
+  </div>
+</main>
+{% endblock %}

@@ -1,0 +1,1559 @@
+from __future__ import annotations
+
+import io
+import json
+import re
+import subprocess
+import threading
+import time
+import zipfile
+from dataclasses import replace
+from pathlib import Path
+from typing import Mapping
+
+import pytest
+from fastapi.testclient import TestClient
+
+from case_intelligence.generation import UnavailableGenerator
+from case_intelligence.media_evidence import (
+    export_transcript,
+    transcript_summary_basis,
+    transcript_summary_windows,
+)
+from case_intelligence.workbench import create_workbench_app
+from case_intelligence.workspace_store import WorkspaceProblem
+
+
+ROOT = Path(__file__).parents[1]
+WAV = ROOT / "src/case_intelligence/static/demo-audio.wav"
+ACTOR = "development-taylor-morgan"
+
+
+class EvidenceEchoGenerator:
+    available = True
+
+    def generate(self, **kwargs):
+        evidence = kwargs["evidence"]
+        if not evidence:
+            return {
+                "answerable": False,
+                "claims": [],
+                "limitation": None,
+                "missing_information": "No support was found.",
+            }
+        return {
+            "answerable": True,
+            "claims": [
+                {
+                    "text": (
+                        "The machine transcript appears to say that "
+                        + evidence[0].excerpt
+                        if evidence[0].evidence_kind == "transcript"
+                        else evidence[0].excerpt
+                    ),
+                    "evidence_ids": [evidence[0].evidence_id],
+                }
+            ],
+            "limitation": None,
+            "missing_information": "",
+        }
+
+
+class BlockingSummaryGenerator(EvidenceEchoGenerator):
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def generate(self, **kwargs):
+        if "orientation overview" in kwargs["question"]:
+            self.started.set()
+            if not self.release.wait(timeout=5):
+                raise RuntimeError("generated summary test was not released")
+        return super().generate(**kwargs)
+
+
+class RejectingCaptureGenerator:
+    available = True
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        if "orientation overview" in kwargs["question"]:
+            evidence = kwargs["evidence"]
+            return {
+                "answerable": True,
+                "claims": [
+                    {
+                        "text": (
+                            "The machine transcript appears to say that "
+                            + evidence[0].excerpt
+                        ),
+                        "evidence_ids": [evidence[0].evidence_id],
+                    }
+                ],
+                "limitation": None,
+                "missing_information": "",
+            }
+        return {
+            "answerable": True,
+            "claims": [
+                {
+                    "text": "A helicopter supplied an unsupported account at 11:45 p.m.",
+                    "evidence_ids": ["S1"],
+                }
+            ],
+            "limitation": None,
+            "missing_information": "",
+        }
+
+
+class RepairingCaptureGenerator:
+    available = True
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        evidence = kwargs["evidence"]
+        if "orientation overview" in kwargs["question"]:
+            return {
+                "answerable": True,
+                "claims": [
+                    {
+                        "text": (
+                            "The machine transcript appears to say that "
+                            + evidence[0].excerpt
+                        ),
+                        "evidence_ids": [evidence[0].evidence_id],
+                    }
+                ],
+                "limitation": None,
+                "missing_information": "",
+            }
+        text = (
+            "The machine transcript appears to say that " + evidence[1].excerpt
+            if kwargs["grounding_repair"]
+            else "A bystander describes an unidentified object beside the bicycle."
+        )
+        return {
+            "answerable": True,
+            "claims": [{"text": text, "evidence_ids": [evidence[1].evidence_id]}],
+            "limitation": None,
+            "missing_information": "",
+        }
+
+
+class ImmediateMediaProcessor:
+    available = True
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.jobs: dict[tuple[str, str], dict[str, object]] = {}
+        self.deleted: list[tuple[str, str]] = []
+        self.submissions = 0
+
+    def ready(self, owner: str) -> bool:
+        return True
+
+    def find_job(
+        self, owner: str, source_sha256: str, byte_size: int
+    ) -> Mapping[str, object] | None:
+        with self._lock:
+            matches = [
+                value
+                for (candidate_owner, _), value in self.jobs.items()
+                if candidate_owner == owner
+                and value["source_sha256"] == source_sha256
+                and value["size_bytes"] == byte_size
+            ]
+        return matches[0] if matches else None
+
+    def submit(
+        self, owner: str, source: Path, media_type: str, source_sha256: str
+    ) -> Mapping[str, object]:
+        assert source.is_file()
+        assert media_type == "audio/wav"
+        external = f"job_{self.submissions + 1:032x}"
+        view = {
+            "id": external,
+            "job_id": external,
+            "status": "review_ready",
+            "stage": {
+                "code": "exporting",
+                "label": "Exporting",
+                "status": "succeeded",
+                "progress": 1.0,
+            },
+            "source_sha256": source_sha256,
+            "size_bytes": source.stat().st_size,
+            "degraded": False,
+            "user_message": None,
+        }
+        with self._lock:
+            self.submissions += 1
+            self.jobs[(owner, external)] = view
+        return view
+
+    def job(self, owner: str, external_job_id: str) -> Mapping[str, object]:
+        with self._lock:
+            return dict(self.jobs[(owner, external_job_id)])
+
+    def transcript(self, owner: str, external_job_id: str) -> Mapping[str, object]:
+        assert (owner, external_job_id) in self.jobs
+        return {
+            "job_id": external_job_id,
+            "revision": 3,
+            "review_state": "Machine draft",
+            "segments": [
+                {
+                    "id": "processor-segment-1",
+                    "segment_id": "processor-segment-1",
+                    "start": 0.0,
+                    "end": 2.0,
+                    "text": "The red bicycle was logged at the north entrance.",
+                    "model_text": "The red bicycle was logged at the north entrance.",
+                    "translated_text": None,
+                    "confidence": 0.97,
+                    "low_confidence": False,
+                    "overlap": False,
+                    "speaker": {
+                        "cluster_id": "SPEAKER_00",
+                        "display_name": "SPEAKER_00",
+                        "identity_state": "cluster",
+                    },
+                },
+                {
+                    "id": "processor-segment-2",
+                    "segment_id": "processor-segment-2",
+                    "start": 2.0,
+                    "end": 4.0,
+                    "text": "Officer Lane collected the property receipt.",
+                    "model_text": "Officer Lane collected the property receipt.",
+                    "translated_text": None,
+                    "confidence": 0.62,
+                    "low_confidence": True,
+                    "overlap": True,
+                    "speaker": {
+                        "cluster_id": "SPEAKER_01",
+                        "display_name": "SPEAKER_01",
+                        "identity_state": "cluster",
+                    },
+                },
+                {
+                    "id": "processor-segment-3",
+                    "segment_id": "processor-segment-3",
+                    "start": 4.0,
+                    "end": 7.8,
+                    "text": "The interview ended after the inventory was confirmed.",
+                    "model_text": "The interview ended after the inventory was confirmed.",
+                    "translated_text": None,
+                    "confidence": 0.91,
+                    "low_confidence": False,
+                    "overlap": False,
+                    "speaker": {
+                        "cluster_id": "SPEAKER_00",
+                        "display_name": "SPEAKER_00",
+                        "identity_state": "cluster",
+                    },
+                },
+            ],
+            "speakers": [],
+            "warnings": [],
+            "quality": {"review_recommended": True},
+            "provenance": {"pipeline": "synthetic-test-whisperx"},
+            "media_url": "/temporary-link-that-must-not-be-used",
+        }
+
+    def delete(self, owner: str, external_job_id: str) -> None:
+        with self._lock:
+            self.deleted.append((owner, external_job_id))
+            self.jobs.pop((owner, external_job_id), None)
+
+    def cancel(self, owner: str, external_job_id: str) -> None:
+        return None
+
+
+class RestartMediaProcessor(ImmediateMediaProcessor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = False
+        self.progress = 0.35
+
+    def job(self, owner: str, external_job_id: str) -> Mapping[str, object]:
+        view = dict(super().job(owner, external_job_id))
+        if not self.release:
+            view["status"] = "running"
+            view["stage"] = {
+                "code": "transcribing",
+                "label": "Transcribing",
+                "status": "running",
+                "progress": self.progress,
+            }
+        return view
+
+
+class OfflineMediaProcessor:
+    available = False
+
+
+def _incompatible_video(path: Path) -> Path:
+    target = path / "synthetic-incompatible.mov"
+    subprocess.run(
+        [
+            "/usr/bin/ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=navy:s=320x240:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "pcm_s16le",
+            str(target),
+        ],
+        check=True,
+        timeout=15,
+    )
+    return target
+
+
+def _browser_video(
+    path: Path,
+    *,
+    name: str,
+    audio_codec: str = "aac",
+) -> Path:
+    target = path / name
+    subprocess.run(
+        [
+            "/usr/bin/ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=teal:s=320x240:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=660:duration=1",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            audio_codec,
+            "-shortest",
+            str(target),
+        ],
+        check=True,
+        timeout=15,
+    )
+    return target
+
+
+def _stream_codecs(path: Path) -> tuple[str, str]:
+    completed = subprocess.run(
+        [
+            "/usr/bin/ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,codec_name",
+            "-of",
+            "json",
+            "--",
+            str(path),
+        ],
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    streams = json.loads(completed.stdout)["streams"]
+    video = next(item["codec_name"] for item in streams if item["codec_type"] == "video")
+    audio = next(item["codec_name"] for item in streams if item["codec_type"] == "audio")
+    return video, audio
+
+
+def _video_stream_digest(path: Path) -> str:
+    completed = subprocess.run(
+        [
+            "/usr/bin/ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-c",
+            "copy",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-",
+        ],
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    return completed.stdout.decode("ascii").strip()
+
+
+def _matter(client: TestClient, name: str = "Media evidence matter") -> str:
+    response = client.post(
+        "/matters",
+        data={"name": name, "descriptor": "Generated media workflow test"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    return response.headers["location"].split("/")[2]
+
+
+def _upload_and_wait(client: TestClient, slug: str) -> tuple[object, str]:
+    uploaded = client.post(
+        f"/matters/{slug}/uploads",
+        files=[("files", ("Interview.wav", WAV.read_bytes(), "audio/wav"))],
+        follow_redirects=False,
+    )
+    assert uploaded.status_code == 303
+    bench = client.app.state.workbench
+    matter = bench.matter(slug, ACTOR)
+    document = next(iter(bench.source_store(matter).documents.values()))
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        job = bench.workspace.media_job(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        if document.state == "ready" and job is not None and job.state in {"succeeded", "degraded"}:
+            break
+        time.sleep(0.01)
+    assert document.state == "ready", document.message
+    job = bench.workspace.media_job(
+        matter.matter_id, document.document_id, document.version_id
+    )
+    assert job is not None and job.state in {"succeeded", "degraded"}
+    return document, bench.source_store(matter).action_token(document)
+
+
+def _wait_for_summary(bench, matter, document, *states: str):
+    expected = set(states or ("ready",))
+    deadline = time.monotonic() + 5
+    summary = None
+    while time.monotonic() < deadline:
+        summary = bench.workspace.media_summary(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        if summary is not None and summary.state in expected:
+            return summary
+        time.sleep(0.01)
+    raise AssertionError(
+        f"transcript overview did not reach {sorted(expected)}; "
+        f"last state was {summary.state if summary is not None else 'missing'}"
+    )
+
+
+def test_transcript_overview_runs_independently_after_transcript_is_ready(tmp_path):
+    generator = BlockingSummaryGenerator()
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=generator,
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    try:
+        with TestClient(app) as client:
+            slug = _matter(client, "Independent automatic overview matter")
+            uploaded = client.post(
+                f"/matters/{slug}/uploads",
+                files=[("files", ("Interview.wav", WAV.read_bytes(), "audio/wav"))],
+                follow_redirects=False,
+            )
+            assert uploaded.status_code == 303
+            bench = client.app.state.workbench
+            matter = bench.matter(slug, ACTOR)
+            document = next(iter(bench.source_store(matter).documents.values()))
+            assert generator.started.wait(timeout=5)
+
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                media_job = bench.workspace.media_job(
+                    matter.matter_id, document.document_id, document.version_id
+                )
+                summary = bench.workspace.media_summary(
+                    matter.matter_id, document.document_id, document.version_id
+                )
+                if (
+                    media_job is not None
+                    and media_job.state in {"succeeded", "degraded"}
+                    and summary is not None
+                    and summary.state == "running"
+                ):
+                    break
+                time.sleep(0.01)
+            assert document.state == "ready"
+            assert media_job is not None and media_job.state in {"succeeded", "degraded"}
+            assert summary is not None and summary.state == "running"
+            status = client.get(
+                f"/matters/{slug}/sources/{bench.source_store(matter).action_token(document)}/media-status"
+            )
+            assert status.status_code == 200
+            assert status.json()["summary_state"] == "running"
+
+            generator.release.set()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                summary = bench.workspace.media_summary(
+                    matter.matter_id, document.document_id, document.version_id
+                )
+                if summary is not None and summary.state == "ready":
+                    break
+                time.sleep(0.01)
+            assert summary is not None and summary.state == "ready"
+    finally:
+        generator.release.set()
+
+
+def test_video_playback_survives_transcription_failure_with_browser_copy(tmp_path):
+    source = _incompatible_video(tmp_path)
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=OfflineMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Independent playback matter")
+        uploaded = client.post(
+            f"/matters/{slug}/uploads",
+            files=[
+                (
+                    "files",
+                    ("Synthetic recording.mov", source.read_bytes(), "video/quicktime"),
+                )
+            ],
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = next(iter(bench.source_store(matter).documents.values()))
+        token = bench.source_store(matter).action_token(document)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            job = bench.workspace.media_job(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if (
+                job is not None
+                and job.state == "failed"
+                and document.playback_state == "ready"
+            ):
+                break
+            time.sleep(0.02)
+        assert job is not None and job.state == "failed"
+        assert document.state == "failed"
+        assert document.playback_state == "ready"
+        assert document.playback_media_type == "video/mp4"
+        assert document.playback_message == "Browser playback is ready after video conversion."
+        compatible = bench.source_store(matter).derived / document.playback_name
+        assert _stream_codecs(compatible) == ("h264", "aac")
+
+        review = client.get(f"/matters/{slug}/sources/{token}")
+        assert review.status_code == 200
+        assert "The uploaded recording remains available for playback" in review.text
+        assert "You can still play and review the uploaded recording" in review.text
+        assert 'type="video/mp4"' in review.text
+
+        head = client.head(f"/matters/{slug}/sources/{token}/content")
+        assert head.status_code == 200
+        assert head.headers["content-type"].startswith("video/mp4")
+        assert head.headers["x-recordbench-playback"] == "compatible-copy"
+        assert int(head.headers["content-length"]) == document.playback_size
+        prefix = client.get(
+            f"/matters/{slug}/sources/{token}/content",
+            headers={"Range": "bytes=0-31"},
+        )
+        assert prefix.status_code == 206
+        assert b"ftyp" in prefix.content
+
+
+def test_browser_ready_mp4_uses_the_original_without_conversion(tmp_path):
+    source = _browser_video(tmp_path, name="synthetic-direct.mp4")
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=OfflineMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Direct video matter")
+        uploaded = client.post(
+            f"/matters/{slug}/uploads",
+            files=[("files", ("Synthetic direct.mp4", source.read_bytes(), "video/mp4"))],
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = next(iter(bench.source_store(matter).documents.values()))
+        assert document.playback_state == "original"
+        assert document.playback_name == ""
+        assert document.playback_message == "The original video is ready without conversion."
+        token = bench.source_store(matter).action_token(document)
+        forced = client.post(
+            f"/matters/{slug}/sources/{token}/playback/retry",
+            follow_redirects=False,
+        )
+        assert forced.status_code == 303
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and document.playback_state != "ready":
+            time.sleep(0.02)
+        assert document.playback_state == "ready", document.playback_message
+        assert document.playback_name
+        assert document.playback_message == "Browser playback is ready after video conversion."
+
+
+def test_h264_aac_mov_is_remuxed_without_reencoding_video(tmp_path):
+    source = _browser_video(tmp_path, name="synthetic-remux.mov")
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=OfflineMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Remux video matter")
+        uploaded = client.post(
+            f"/matters/{slug}/uploads",
+            files=[("files", ("Synthetic remux.mov", source.read_bytes(), "video/quicktime"))],
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = next(iter(bench.source_store(matter).documents.values()))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and document.playback_state != "ready":
+            time.sleep(0.02)
+        assert document.playback_state == "ready", document.playback_message
+        assert document.playback_message == "Browser playback is ready without re-encoding video."
+        compatible = bench.source_store(matter).derived / document.playback_name
+        assert _stream_codecs(compatible) == ("h264", "aac")
+        assert _video_stream_digest(compatible) == _video_stream_digest(source)
+
+
+def test_failed_remux_falls_back_to_full_video_conversion(tmp_path, monkeypatch):
+    from case_intelligence import pilot_uploads
+
+    source = _browser_video(tmp_path, name="synthetic-remux-fallback.mov")
+    actual_command = pilot_uploads._browser_playback_command
+    attempted_methods: list[str] = []
+
+    def command(method, source_path, destination, maximum_output_bytes):
+        attempted_methods.append(method)
+        if method == "remux":
+            return ["/usr/bin/false"]
+        return actual_command(
+            method,
+            source_path,
+            destination,
+            maximum_output_bytes,
+        )
+
+    monkeypatch.setattr(pilot_uploads, "_browser_playback_command", command)
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=OfflineMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Remux fallback matter")
+        uploaded = client.post(
+            f"/matters/{slug}/uploads",
+            files=[
+                (
+                    "files",
+                    (
+                        "Synthetic remux fallback.mov",
+                        source.read_bytes(),
+                        "video/quicktime",
+                    ),
+                )
+            ],
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = next(iter(bench.source_store(matter).documents.values()))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and document.playback_state != "ready":
+            time.sleep(0.02)
+        assert document.playback_state == "ready", document.playback_message
+        assert attempted_methods == ["remux", "full_transcode"]
+        assert document.playback_message == (
+            "Browser playback is ready after video conversion."
+        )
+        compatible = bench.source_store(matter).derived / document.playback_name
+        assert _stream_codecs(compatible) == ("h264", "aac")
+
+
+def test_h264_mov_with_pcm_converts_only_audio(tmp_path):
+    source = _browser_video(
+        tmp_path,
+        name="synthetic-audio-only.mov",
+        audio_codec="pcm_s16le",
+    )
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=OfflineMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Audio-only conversion matter")
+        uploaded = client.post(
+            f"/matters/{slug}/uploads",
+            files=[
+                (
+                    "files",
+                    ("Synthetic audio only.mov", source.read_bytes(), "video/quicktime"),
+                )
+            ],
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = next(iter(bench.source_store(matter).documents.values()))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and document.playback_state != "ready":
+            time.sleep(0.02)
+        assert document.playback_state == "ready", document.playback_message
+        assert document.playback_message == (
+            "Browser playback is ready; only the audio track was converted."
+        )
+        compatible = bench.source_store(matter).derived / document.playback_name
+        assert _stream_codecs(compatible) == ("h264", "aac")
+        assert _video_stream_digest(compatible) == _video_stream_digest(source)
+
+
+def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_path):
+    for migration_name in (
+        "0011_matter_media.sql",
+        "0012_matter_media_purge_repair.sql",
+        "0013_media_transcript_summary.sql",
+    ):
+        assert (
+            ROOT / "src/case_intelligence/migrations/sqlite" / migration_name
+        ).read_bytes() == (ROOT / "migrations/sqlite" / migration_name).read_bytes()
+    processor = ImmediateMediaProcessor()
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+        media_processor=processor,
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client)
+        document, token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+
+        assert document.has_video is False
+        assert 7_900 <= document.duration_ms <= 8_100
+        assert len(document.parsed_units()) == 3
+        assert processor.submissions == 1
+        assert len(processor.deleted) == 1
+        assert processor.jobs == {}
+        summary = _wait_for_summary(bench, matter, document, "ready")
+        assert summary.attempts == 1
+        assert summary.covered_segment_count == summary.total_segment_count == 3
+        assert summary.payload["coverage"]["mode"] == "full"
+        assert "this overview reports" in summary.payload["evidence_notice"]
+        original_summary_basis = summary.basis_digest
+
+        review = client.get(f"/matters/{slug}/sources/{token}")
+        assert review.status_code == 200
+        assert "Authenticated playback" in review.text
+        assert "Synchronized transcript" in review.text
+        assert "Speaker labels" in review.text
+        assert "temporary-link-that-must-not-be-used" not in review.text
+        assert 'data-media-player' in review.text
+        assert 'data-transcript-follow' in review.text
+        assert "The red bicycle was logged" in review.text
+        assert "AI transcript overview" in review.text
+        assert "Transcript-based orientation" in review.text
+        assert "Export overview to Word" in review.text
+
+        head = client.head(f"/matters/{slug}/sources/{token}/content")
+        assert head.status_code == 200
+        assert head.headers["accept-ranges"] == "bytes"
+        assert head.headers["cache-control"] == "no-store"
+        assert int(head.headers["content-length"]) == WAV.stat().st_size
+        partial = client.get(
+            f"/matters/{slug}/sources/{token}/content",
+            headers={"Range": "bytes=20-39"},
+        )
+        assert partial.status_code == 206
+        assert partial.headers["content-range"] == f"bytes 20-39/{WAV.stat().st_size}"
+        assert partial.content == WAV.read_bytes()[20:40]
+
+        evidence = bench.search(matter, "red bicycle north entrance")
+        assert evidence
+        assert evidence[0].location == "00:00–00:02"
+        assert evidence[0].href.startswith(f"/matters/{slug}?support=")
+        assert "play=1" in evidence[0].href
+        assert evidence[0].href.endswith("#support-pane")
+        support = client.get(evidence[0].href)
+        assert support.status_code == 200
+        assert 'data-support-media' in support.text
+        assert 'data-start-ms="0"' in support.text
+        assert "Play cited moment" in support.text
+        assert "Open full recording and transcript" in support.text
+        assert f"/matters/{slug}/sources/{token}/content" in support.text
+
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        answer = client.post(
+            f"/matters/{slug}/ask",
+            data={
+                "conversation": conversation.conversation_id,
+                "question": "Where was the red bicycle logged?",
+                "request_key": "answer-request-" + "a" * 32,
+            },
+            headers={"Accept": "application/json"},
+        )
+        assert answer.status_code == 202
+        answer_job = answer.json()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and answer_job["state"] not in {"succeeded", "failed"}:
+            time.sleep(0.01)
+            answer_job = client.get(answer_job["status_url"]).json()
+        assert answer_job["state"] == "succeeded"
+        answer_messages = bench.workspace.messages(
+            matter.matter_id, conversation.conversation_id
+        )
+        generated = answer_messages[-1]
+        citation = generated.payload["claims"][0]["citations"][0]
+        assert citation["location"] == "00:00–00:02"
+        assert citation["href"].startswith(f"/matters/{slug}?support=")
+        assert citation["support_token"]
+        assert "play=1" in citation["href"]
+        rendered_answer = client.get(answer_job["result_url"])
+        assert "Play cited moment" in rendered_answer.text
+        assert f"support={citation['support_token']}" in rendered_answer.text
+        assert f"conversation={conversation.conversation_id}" in rendered_answer.text
+
+        segments = bench.workspace.transcript_segments(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        corrected = client.post(
+            f"/matters/{slug}/sources/{token}/segments/{segments[0].segment_id}",
+            data={
+                "expected_revision": "0",
+                "text": "The crimson bicycle was logged at the north entrance.",
+            },
+            follow_redirects=False,
+        )
+        assert corrected.status_code == 303
+        updated = bench.workspace.transcript_segments(
+            matter.matter_id, document.document_id, document.version_id
+        )[0]
+        assert updated.current_revision == 1
+        assert updated.model_text.startswith("The red bicycle")
+        assert updated.current_text.startswith("The crimson bicycle")
+        assert document.parsed_units()[0].text.startswith("SPEAKER_00: The crimson")
+        changing_summary = bench.workspace.media_summary(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        assert changing_summary is not None
+        assert changing_summary.state in {"stale", "running", "ready"}
+
+        stale = client.post(
+            f"/matters/{slug}/sources/{token}/segments/{segments[0].segment_id}",
+            data={"expected_revision": "0", "text": "stale edit"},
+            follow_redirects=False,
+        )
+        assert stale.status_code == 303
+        assert "error=" in stale.headers["location"]
+
+        speakers = bench.workspace.transcript_speakers(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        speaker = next(item for item in speakers if item.speaker_cluster == "SPEAKER_00")
+        labeled = client.post(
+            f"/matters/{slug}/sources/{token}/speakers",
+            data={
+                "speaker_cluster": speaker.speaker_cluster,
+                "expected_revision": str(speaker.revision),
+                "display_name": "Witness Jordan",
+                "identity_state": "confirmed",
+            },
+            follow_redirects=False,
+        )
+        assert labeled.status_code == 303
+        assert document.parsed_units()[0].text.startswith("Witness Jordan:")
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            refreshed_summary = bench.workspace.media_summary(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            current_segments = bench.workspace.transcript_segments(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            expected_basis = transcript_summary_basis(current_segments)
+            if (
+                refreshed_summary is not None
+                and refreshed_summary.state == "ready"
+                and refreshed_summary.basis_digest == expected_basis
+            ):
+                break
+            time.sleep(0.01)
+        assert refreshed_summary is not None and refreshed_summary.state == "ready"
+        assert refreshed_summary.attempts >= 2
+        assert refreshed_summary.basis_digest != original_summary_basis
+
+        for format_name, marker in (
+            ("docx", b"PK"),
+            ("markdown", b"# Transcript overview"),
+        ):
+            overview_export = client.get(
+                f"/matters/{slug}/sources/{token}/summary-export",
+                params={"format": format_name},
+            )
+            assert overview_export.status_code == 200
+            assert marker in overview_export.content
+            assert (
+                overview_export.headers["x-case-intelligence-export"]
+                == "work-product"
+            )
+
+        for format_name, marker in (
+            ("docx", b"PK"),
+            ("markdown", b"# Transcript"),
+            ("txt", b"Witness Jordan"),
+            ("srt", b"00:00:00,000 --> 00:00:02,000"),
+            ("vtt", b"WEBVTT"),
+            ("csv", b"machine_text"),
+            ("json", b'"machine_text"'),
+        ):
+            exported = client.get(
+                f"/matters/{slug}/sources/{token}/transcript-export",
+                params={"format": format_name},
+            )
+            assert exported.status_code == 200
+            assert marker in exported.content
+            assert exported.headers["x-case-intelligence-export"] == "work-product"
+
+        created = client.post(
+            f"/matters/{slug}/sources/{token}/clips",
+            data={"title": "Bicycle statement", "start_ms": "0", "end_ms": "2000"},
+            follow_redirects=False,
+        )
+        assert created.status_code == 303
+        clip = bench.workspace.media_clips(
+            matter.matter_id, document.document_id, document.version_id
+        )[0]
+        clip_download = client.get(
+            f"/matters/{slug}/sources/{token}/clips/{clip.clip_id}/download"
+        )
+        assert clip_download.status_code == 200
+        assert clip_download.headers["content-type"].startswith("audio/wav")
+        assert clip_download.content.startswith(b"RIFF")
+
+        bundle = client.get(f"/matters/{slug}/export")
+        assert bundle.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+            names = set(archive.namelist())
+            assert any(name.startswith("transcripts/") and name.endswith(".md") for name in names)
+            assert any(
+                name.startswith("transcript-overviews/") and name.endswith(".md")
+                for name in names
+            )
+            assert "media/clip-inventory.csv" in names
+            assert "media/media-work-product.json" in names
+            manifest = json.loads(archive.read("manifest.json"))
+            assert manifest["transcript_count"] == 1
+            assert manifest["transcript_overview_count"] == 1
+            assert manifest["clip_count"] == 1
+            assert manifest["original_source_files_included"] is False
+
+        events = bench.workspace.audit_events(matter.matter_id)
+        assert {
+                "transcript.segment_edit",
+                "transcript.speaker_review",
+                "transcript.export",
+                "transcript.summary_automatic",
+                "work_product.export",
+            "media.clip_create",
+            "media.clip_export",
+        }.issubset({item.action for item in events})
+
+        closed = client.post(
+            f"/matters/{slug}/close",
+            data={"confirmed_name": matter.display_name, "acknowledge": "yes"},
+            follow_redirects=False,
+        )
+        assert closed.status_code == 303
+        assert closed.headers["location"].startswith("/matters/new?")
+        for table in (
+            "workbench_media_job",
+            "workbench_media_transcript",
+            "workbench_media_summary",
+            "workbench_transcript_segment",
+            "workbench_transcript_segment_revision",
+            "workbench_speaker_mapping_revision",
+            "workbench_media_clip",
+        ):
+            assert bench.workspace.connection.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE matter_id=?",
+                (matter.matter_id,),
+            ).fetchone()[0] == 0
+
+
+def test_resumable_media_upload_reports_durable_processing_across_matter_views(tmp_path):
+    processor = RestartMediaProcessor()
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+        background_ingestion=True,
+        media_processor=processor,
+        media_poll_seconds=0.01,
+    )
+    body = WAV.read_bytes()
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated media status matter")
+        created = client.post(
+            f"/matters/{slug}/upload-sessions",
+            json={
+                "collection_name": "Generated recordings",
+                "files": [
+                    {
+                        "name": "Generated interview.wav",
+                        "relative_path": "Generated interview.wav",
+                        "size": len(body),
+                        "media_type": "audio/wav",
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 201
+        item = created.json()["items"][0]
+        uploaded = client.put(
+            item["chunk_url"],
+            content=body,
+            headers={
+                "Content-Type": "application/octet-stream",
+                "X-Upload-Offset": "0",
+            },
+        )
+        assert uploaded.status_code == 200
+        assert uploaded.json()["review_ready"] is False
+        finalized = client.post(item["finalize_url"])
+        assert finalized.status_code == 200
+        projection = finalized.json()
+        assert projection["contains_media"] is True
+        assert projection["review_ready"] is True
+        assert projection["processing_count"] == 1
+        assert projection["ready_count"] == 0
+        assert projection["primary_review_url"].startswith(
+            f"/matters/{slug}/sources/"
+        )
+        assert projection["items"][0]["work_state"] in {"queued", "processing"}
+        assert projection["items"][0]["work_stage"]
+        assert projection["items"][0]["review_url"] == projection["primary_review_url"]
+
+        workspace = client.get(f"/matters/{slug}")
+        assert workspace.status_code == 200
+        assert 'data-media-activity' in workspace.text
+        assert "Media processing" in workspace.text
+        activity = client.get(f"/matters/{slug}/media-activity")
+        assert activity.status_code == 200
+        assert activity.json()["active_count"] == 1
+        assert activity.json()["items"][0]["stage"]
+
+        processor.progress = 0.68
+        progress_deadline = time.monotonic() + 5
+        while time.monotonic() < progress_deadline:
+            progress_view = client.get(projection["status_url"]).json()
+            if progress_view["items"][0]["work_progress"] >= 0.68:
+                break
+            time.sleep(0.01)
+        assert progress_view["items"][0]["work_stage"] == "Transcribing"
+        assert progress_view["items"][0]["work_progress"] == pytest.approx(0.68)
+
+        processor.release = True
+        client.app.state.workbench.media.notify()
+        deadline = time.monotonic() + 5
+        status = projection
+        while time.monotonic() < deadline:
+            status = client.get(projection["status_url"]).json()
+            if status["ready_count"] == 1:
+                break
+            time.sleep(0.01)
+        assert status["processing_count"] == 0
+        assert status["ready_count"] == 1
+        assert status["items"][0]["work_state"] == "ready"
+        assert status["items"][0]["work_progress"] == 1
+
+
+def test_media_answer_packs_neighboring_timestamps_and_keeps_matches_on_rejection(tmp_path):
+    generator = RejectingCaptureGenerator()
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=generator,
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated media answer matter")
+        document, _token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        queued = client.post(
+            f"/matters/{slug}/ask",
+            data={
+                "conversation": conversation.conversation_id,
+                "question": "What happened near the red bicycle?",
+                "request_key": "answer-request-" + "e" * 32,
+            },
+            headers={"Accept": "application/json"},
+        )
+        assert queued.status_code == 202
+        job = queued.json()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and job["state"] not in {
+            "succeeded",
+            "failed",
+        }:
+            time.sleep(0.01)
+            job = client.get(job["status_url"]).json()
+        assert job["state"] == "succeeded"
+        answer_calls = [
+            call for call in generator.calls
+            if "orientation overview" not in call["question"]
+        ]
+        assert len(answer_calls) == 2
+        assert [call["grounding_repair"] for call in answer_calls] == [False, True]
+        evidence = answer_calls[0]["evidence"]
+        assert len(evidence) == 3
+        assert {item.location for item in evidence} == {
+            "00:00–00:02",
+            "00:02–00:04",
+            "00:04–00:07",
+        }
+
+        answer = bench.workspace.messages(
+            matter.matter_id, conversation.conversation_id
+        )[-1]
+        assert answer.payload["kind"] == "not-supported"
+        assert len(answer.payload["source_matches"]) == 3
+        assert all(match["href"] for match in answer.payload["source_matches"])
+        assert "potentially relevant source passages" in answer.content
+
+        rendered = client.get(
+            f"/matters/{slug}",
+            params={"conversation": conversation.conversation_id},
+        )
+        assert rendered.status_code == 200
+        assert "Related source passages" in rendered.text
+        assert "00:00–00:02" in rendered.text
+
+        exported = client.get(
+            f"/matters/{slug}/conversations/{conversation.conversation_id}/messages/"
+            f"{answer.message_id}/export",
+            params={"format": "markdown"},
+        )
+        assert exported.status_code == 200
+        assert b"Related source passage" in exported.content
+        assert document.state == "ready"
+
+
+def test_media_answer_repairs_to_a_verified_timestamped_transcript_claim(tmp_path):
+    generator = RepairingCaptureGenerator()
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=generator,
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated transcript repair matter")
+        _document, _token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        queued = client.post(
+            f"/matters/{slug}/ask",
+            data={
+                "conversation": conversation.conversation_id,
+                "question": "What happened near the red bicycle?",
+                "request_key": "answer-request-" + "f" * 32,
+            },
+            headers={"Accept": "application/json"},
+        )
+        assert queued.status_code == 202
+        job = queued.json()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and job["state"] not in {
+            "succeeded",
+            "failed",
+        }:
+            time.sleep(0.01)
+            job = client.get(job["status_url"]).json()
+
+        assert job["state"] == "succeeded"
+        answer_calls = [
+            call for call in generator.calls
+            if "orientation overview" not in call["question"]
+        ]
+        assert [call["grounding_repair"] for call in answer_calls] == [False, True]
+        events = bench.workspace.answer_events(
+            matter.matter_id, ACTOR, job["job_id"]
+        )
+        assert any(
+            event.stage == "generating"
+            and event.message == "Rewriting the draft in source-close language for verification."
+            for event in events
+        )
+
+        answer = bench.workspace.messages(
+            matter.matter_id, conversation.conversation_id
+        )[-1]
+        assert answer.payload["kind"] == "generated"
+        assert answer.payload["claims"]
+        citations = answer.payload["claims"][0]["citations"]
+        assert citations[0]["location"] == "00:02–00:04"
+        assert citations[0]["href"].endswith("#support-pane")
+        assert "play=1" in citations[0]["href"]
+
+
+def test_existing_transcript_overview_is_backfilled_automatically_on_restart(tmp_path):
+    runtime = tmp_path / "runtime"
+    app = create_workbench_app(
+        runtime,
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated legacy transcript matter")
+        document, token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        transcript = bench.workspace.media_transcript(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        assert transcript is not None
+        _wait_for_summary(bench, matter, document, "ready")
+
+        # Simulate a transcript created before migration 0013. Schema migration
+        # still does not call the model; coordinator startup owns the backfill.
+        with bench.workspace.connection:
+            bench.workspace.connection.execute(
+                "DELETE FROM workbench_media_summary WHERE transcript_id=?",
+                (transcript.transcript_id,),
+            )
+        assert bench.workspace.media_summary(
+            matter.matter_id, document.document_id, document.version_id
+        ) is None
+        matter_id = matter.matter_id
+        document_id = document.document_id
+        source_version_id = document.version_id
+
+    restarted = create_workbench_app(
+        runtime,
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+        media_processor=OfflineMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(restarted) as client:
+        bench = client.app.state.workbench
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            summary = bench.workspace.media_summary(
+                matter_id, document_id, source_version_id
+            )
+            if summary is not None and summary.state == "ready":
+                break
+            time.sleep(0.01)
+        assert summary is not None and summary.state == "ready"
+        assert summary.attempts == 1
+        media_job = bench.workspace.media_job(matter_id, document_id, source_version_id)
+        assert media_job is not None and media_job.state in {"succeeded", "degraded"}
+        review = client.get(f"/matters/{slug}/sources/{token}")
+        assert review.status_code == 200
+        assert "AI transcript overview" in review.text
+        assert "Create overview" not in review.text
+        assert client.get("/health").json()["media_summaries"]["ready"] == 1
+
+
+def test_failed_automatic_overview_gets_a_bounded_restart_retry(tmp_path):
+    runtime = tmp_path / "runtime"
+    unavailable = create_workbench_app(
+        runtime,
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(unavailable) as client:
+        slug = _matter(client, "Generated overview recovery matter")
+        document, _token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        failed = _wait_for_summary(bench, matter, document, "failed")
+        assert failed.attempts == 1
+        matter_id = matter.matter_id
+        document_id = document.document_id
+        source_version_id = document.version_id
+
+    recovered = create_workbench_app(
+        runtime,
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+        media_processor=OfflineMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(recovered) as client:
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = bench.source_store(matter).get(document_id)
+        summary = _wait_for_summary(bench, matter, document, "ready")
+        assert summary.matter_id == matter_id
+        assert summary.source_version_id == source_version_id
+        assert summary.attempts == 2
+
+
+def test_transcript_and_clip_routes_fail_closed_across_matters(tmp_path):
+    processor = ImmediateMediaProcessor()
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=processor,
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        alpha_slug = _matter(client, "Alpha media matter")
+        alpha_document, alpha_token = _upload_and_wait(client, alpha_slug)
+        bench = client.app.state.workbench
+        alpha = bench.matter(alpha_slug, ACTOR)
+        alpha_segment = bench.workspace.transcript_segments(
+            alpha.matter_id, alpha_document.document_id, alpha_document.version_id
+        )[0]
+        alpha_summary = _wait_for_summary(
+            bench, alpha, alpha_document, "failed"
+        )
+        assert alpha_document.state == "ready"
+        clip = bench.workspace.create_media_clip(
+            alpha.matter_id,
+            alpha_document.document_id,
+            alpha_document.version_id,
+            title="Alpha only",
+            start_ms=0,
+            end_ms=2_000,
+            actor_id=ACTOR,
+        )
+
+        bravo_slug = _matter(client, "Bravo media matter")
+        bravo_document, bravo_token = _upload_and_wait(client, bravo_slug)
+        bravo = bench.matter(bravo_slug, ACTOR)
+
+        crossed_edit = client.post(
+            f"/matters/{bravo_slug}/sources/{bravo_token}/segments/{alpha_segment.segment_id}",
+            data={"expected_revision": "0", "text": "crossed matter"},
+        )
+        assert crossed_edit.status_code == 404
+        crossed_clip = client.get(
+            f"/matters/{bravo_slug}/sources/{bravo_token}/clips/{clip.clip_id}/download"
+        )
+        assert crossed_clip.status_code == 404
+        crossed_summary = client.get(
+            f"/matters/{bravo_slug}/sources/{alpha_token}/summary-export"
+        )
+        assert crossed_summary.status_code == 404
+        assert bench.workspace.transcript_segments(
+            alpha.matter_id, alpha_document.document_id, alpha_document.version_id
+        )[0].current_text.startswith("The red bicycle")
+        assert bravo_document.document_id != alpha_document.document_id
+
+
+def test_machine_segments_are_immutable_and_revision_conflicts_are_explicit(tmp_path):
+    processor = ImmediateMediaProcessor()
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=processor,
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client)
+        document, _ = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        original = bench.workspace.transcript_segments(
+            matter.matter_id, document.document_id, document.version_id
+        )[1]
+        revised = bench.workspace.revise_transcript_segment(
+            matter.matter_id,
+            document.document_id,
+            document.version_id,
+            original.segment_id,
+            expected_revision=0,
+            text="Officer Lane retained the corrected property receipt.",
+            actor_id=ACTOR,
+        )
+        assert revised.current_revision == 1
+        assert revised.model_text == original.model_text
+        with pytest.raises(WorkspaceProblem, match="another session"):
+            bench.workspace.revise_transcript_segment(
+                matter.matter_id,
+                document.document_id,
+                document.version_id,
+                original.segment_id,
+                expected_revision=0,
+                text="Conflicting text",
+                actor_id=ACTOR,
+            )
+        csv_export = export_transcript(
+            document.display_name,
+            bench.workspace.transcript_segments(
+                matter.matter_id, document.document_id, document.version_id
+            ),
+            "csv",
+        )
+        assert original.model_text.encode() in csv_export.body
+        assert b"corrected property receipt" in csv_export.body
+
+
+def test_long_transcript_overview_packet_is_bounded_and_spans_the_timeline(tmp_path):
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated long transcript packet matter")
+        document, _token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        seed = bench.workspace.transcript_segments(
+            matter.matter_id, document.document_id, document.version_id
+        )[0]
+        segments = tuple(
+            replace(
+                seed,
+                segment_id=f"media-segment-{index:032x}",
+                ordinal=index + 1,
+                start_ms=index * 1_000,
+                end_ms=(index + 1) * 1_000,
+                current_text=(
+                    f"Generated passage {index + 1} describes a synthetic review topic "
+                    "with enough words to exercise bounded timeline selection."
+                ),
+            )
+            for index in range(2_000)
+        )
+        windows = transcript_summary_windows(segments)
+        assert len(windows) == 12
+        assert windows[0].start_ms == 0
+        assert windows[-1].end_ms == 2_000_000
+        assert sum(window.segment_count for window in windows) < len(segments)
+        assert all(len(window.excerpt) <= 3_600 for window in windows)
+        assert [window.evidence_id for window in windows] == [
+            f"S{index}" for index in range(1, 13)
+        ]
+
+
+def test_running_media_job_reconciles_after_workbench_restart(tmp_path):
+    runtime = tmp_path / "runtime"
+    processor = RestartMediaProcessor()
+    app = create_workbench_app(
+        runtime,
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=processor,
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client)
+        uploaded = client.post(
+            f"/matters/{slug}/uploads",
+            files=[("files", ("Restart.wav", WAV.read_bytes(), "audio/wav"))],
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = next(iter(bench.source_store(matter).documents.values()))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            job = bench.workspace.media_job(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if job is not None and job.state == "running" and job.external_job_id:
+                break
+            time.sleep(0.01)
+        assert job is not None and job.external_job_id
+        assert processor.submissions == 1
+        assert document.state == "processing"
+
+    processor.release = True
+    restarted = create_workbench_app(
+        runtime,
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=processor,
+        media_poll_seconds=0.01,
+    )
+    with TestClient(restarted) as client:
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = next(iter(bench.source_store(matter).documents.values()))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            job = bench.workspace.media_job(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if job is not None and job.state == "succeeded":
+                break
+            time.sleep(0.01)
+        assert job is not None and job.state == "succeeded"
+        assert document.state == "ready"
+        assert len(document.parsed_units()) == 3
+        assert processor.submissions == 1
+        assert len(processor.deleted) == 1

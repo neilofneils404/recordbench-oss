@@ -1,0 +1,452 @@
+name: ${RECORDBENCH_COMPOSE_PROJECT:-recordbench}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: recordbench
+      POSTGRES_USER: recordbench
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [services]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recordbench -d recordbench"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  clamav:
+    image: clamav/clamav:stable@sha256:594d54aff5ad3b1a5211d67cdc6d49a9a332276da35d821c3dd4cf6c4cdf6237
+    restart: unless-stopped
+    cpus: "${RECORDBENCH_CLAMAV_CPUS:-4.0}"
+    mem_limit: ${RECORDBENCH_CLAMAV_MEMORY:-6g}
+    pids_limit: 256
+    # The upstream entrypoint must adjust signature-volume ownership and render
+    # its clamd/freshclam configuration before dropping to the clamav account.
+    # Keep the host boundary narrow while allowing that documented lifecycle.
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      CLAMAV_NO_MILTERD: "true"
+      CLAMAV_NO_FRESHCLAMD: "true"
+      CLAMD_STARTUP_TIMEOUT: "600"
+      CLAMD_CONF_TCPAddr: "0.0.0.0"
+      CLAMD_CONF_StreamMaxLength: "550M"
+      CLAMD_CONF_MaxScanSize: "550M"
+      CLAMD_CONF_MaxFileSize: "550M"
+      CLAMD_CONF_MaxScanTime: "180000"
+      CLAMD_CONF_MaxThreads: "2"
+      CLAMD_CONF_MaxQueue: "8"
+      CLAMD_CONF_ExitOnOOM: "yes"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /run/clamav:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - clamav-signatures:/var/lib/clamav
+    depends_on:
+      clamav-updater: {condition: service_healthy}
+    networks: [services]
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 180s
+
+  # Keep the hostile-file parser offline. Only this updater receives egress,
+  # and it shares signatures—not uploaded evidence—with the scanner.
+  clamav-updater:
+    image: clamav/clamav:stable@sha256:594d54aff5ad3b1a5211d67cdc6d49a9a332276da35d821c3dd4cf6c4cdf6237
+    restart: unless-stopped
+    cpus: "${RECORDBENCH_CLAMAV_UPDATE_CPUS:-1.0}"
+    mem_limit: ${RECORDBENCH_CLAMAV_UPDATE_MEMORY:-1g}
+    pids_limit: 128
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    command: ["freshclam", "--daemon", "--foreground", "--stdout", "--checks=6", "--user=clamav"]
+    volumes:
+      - clamav-signatures:/var/lib/clamav
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /run/clamav:rw,noexec,nosuid,nodev,size=16m
+    networks: [updates]
+    healthcheck:
+      test: ["CMD-SHELL", "find /var/lib/clamav -maxdepth 1 -type f -name 'daily.*' -mmin -4320 -size +1c | grep -q ."]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+
+  retrieval:
+    profiles: [ai]
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/retrieval:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: .
+      target: retrieval
+    restart: unless-stopped
+    user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 512
+    shm_size: 4gb
+    gpus: all
+    environment:
+      RECORDBENCH_ALLOW_CONTAINER_BIND: "1"
+      CASE_REVIEW_MODEL_DEVICE: ${RECORDBENCH_RETRIEVAL_DEVICE:-cpu}
+      CASE_REVIEW_EMBEDDING_MODEL: ${RECORDBENCH_EMBEDDING_MODEL:-ibm-granite/granite-embedding-english-r2}
+      CASE_REVIEW_EMBEDDING_REVISION: ${RECORDBENCH_EMBEDDING_REVISION:-47ea694b257b703fee9253d75c2b1f2985180498}
+      CASE_REVIEW_RERANKER_MODEL: ${RECORDBENCH_RERANKER_MODEL:-Alibaba-NLP/gte-reranker-modernbert-base}
+      CASE_REVIEW_RERANKER_REVISION: ${RECORDBENCH_RERANKER_REVISION:-f7481e6055501a30fb19d090657df9ec1f79ab2c}
+      CUDA_VISIBLE_DEVICES: ${RECORDBENCH_RETRIEVAL_GPU:-0}
+      HF_HOME: /models/huggingface
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - type: bind
+        source: ${RECORDBENCH_MODEL_ROOT:?set RECORDBENCH_MODEL_ROOT}
+        target: /models
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=2g
+      - /tmp/recordbench-home:rw,noexec,nosuid,nodev,size=32m
+    networks: [models]
+
+  generator:
+    profiles: [ai]
+    image: vllm/vllm-openai:v0.22.0-cu129-ubuntu2404@sha256:10594428c162e0c76fd62aadfed12bddd8e617c51b99d7ea415ed9ff86b6a574
+    restart: unless-stopped
+    runtime: nvidia
+    shm_size: 8gb
+    cpus: "${RECORDBENCH_GENERATOR_CPUS:-8.0}"
+    mem_limit: ${RECORDBENCH_GENERATOR_MEMORY:-64g}
+    environment:
+      CUDA_VISIBLE_DEVICES: ${RECORDBENCH_GENERATOR_GPU:-0}
+      HF_HOME: /models/huggingface
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      VLLM_CACHE_ROOT: /tmp/vllm-cache
+      VLLM_NO_USAGE_STATS: "1"
+    volumes:
+      - type: bind
+        source: ${RECORDBENCH_MODEL_ROOT:?set RECORDBENCH_MODEL_ROOT}
+        target: /models
+        read_only: true
+    tmpfs:
+      - /tmp/vllm-cache:rw,noexec,nosuid,nodev,size=8g
+    networks: [models]
+    command:
+      - --model
+      - ${RECORDBENCH_GENERATOR_MODEL_ID:-Qwen/Qwen3.5-4B}
+      - --revision
+      - ${RECORDBENCH_GENERATOR_REVISION:-851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a}
+      - --served-model-name
+      - ${RECORDBENCH_GENERATOR_SERVED_NAME:-recordbench-qwen35-4b}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --dtype
+      - ${RECORDBENCH_GENERATOR_DTYPE:-bfloat16}
+      - --language-model-only
+      - --max-model-len
+      - ${RECORDBENCH_GENERATOR_CONTEXT:-16384}
+      - --max-num-seqs
+      - ${RECORDBENCH_GENERATOR_SEQUENCES:-8}
+      - --gpu-memory-utilization
+      - ${RECORDBENCH_GENERATOR_GPU_UTILIZATION:-0.52}
+      - --tensor-parallel-size
+      - ${RECORDBENCH_GENERATOR_TENSOR_PARALLEL:-1}
+      - --enable-prefix-caching
+      - --generation-config
+      - vllm
+      - --no-enable-log-requests
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import json,urllib.request; p=json.load(urllib.request.urlopen('http://127.0.0.1:8000/v1/models',timeout=5)); assert any(x.get('id') == '${RECORDBENCH_GENERATOR_SERVED_NAME:-recordbench-qwen35-4b}' for x in p.get('data',[]))\""]
+      interval: 15s
+      timeout: 8s
+      retries: 60
+      start_period: 240s
+
+  transcription-api:
+    profiles: [transcription]
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/transcription-api:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: services/transcription
+      target: api
+    restart: unless-stopped
+    user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 256
+    env_file:
+      - ${RECORDBENCH_CONFIG_ROOT:?set RECORDBENCH_CONFIG_ROOT}/transcription.env
+    environment:
+      TRANSCRIPTION_V2_BIND_HOST: 0.0.0.0
+      TRANSCRIPTION_V2_BIND_PORT: "8510"
+      TRANSCRIPTION_V2_API_TOKEN_FILE: /run/recordbench-secrets/transcription-token
+      TRANSCRIPTION_V2_DATA_ROOT: /var/lib/recordbench/transcription
+      TRANSCRIPTION_V2_DATABASE: /var/lib/recordbench/transcription/jobs.sqlite3
+      TRANSCRIPTION_V2_MODEL_CACHE: /models/huggingface/hub
+    volumes:
+      - type: bind
+        source: ${RECORDBENCH_TRANSCRIPTION_ROOT:?set RECORDBENCH_TRANSCRIPTION_ROOT}
+        target: /var/lib/recordbench/transcription
+      - type: bind
+        source: ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}
+        target: /run/recordbench-secrets
+        read_only: true
+      - type: bind
+        source: ${RECORDBENCH_MODEL_ROOT:?set RECORDBENCH_MODEL_ROOT}
+        target: /models
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=2g
+      - /tmp/transcription-home:rw,noexec,nosuid,nodev,size=32m
+    networks: [services]
+
+  transcription-worker:
+    profiles: [transcription]
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/transcription-worker:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: services/transcription
+      target: worker
+    restart: unless-stopped
+    user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 1024
+    shm_size: 8gb
+    gpus: all
+    network_mode: none
+    env_file:
+      - ${RECORDBENCH_CONFIG_ROOT:?set RECORDBENCH_CONFIG_ROOT}/transcription.env
+    environment:
+      TRANSCRIPTION_V2_API_TOKEN_FILE: /run/recordbench-secrets/transcription-token
+      TRANSCRIPTION_V2_DATA_ROOT: /var/lib/recordbench/transcription
+      TRANSCRIPTION_V2_DATABASE: /var/lib/recordbench/transcription/jobs.sqlite3
+      TRANSCRIPTION_V2_MODEL_CACHE: /models/huggingface/hub
+      CUDA_VISIBLE_DEVICES: ${RECORDBENCH_TRANSCRIPTION_GPU:-0}
+      HF_HOME: /models/huggingface
+      TORCH_HOME: /models/torch
+      NLTK_DATA: /models/nltk_data
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_DATASETS_OFFLINE: "1"
+      PYANNOTE_METRICS_ENABLED: "0"
+    volumes:
+      - type: bind
+        source: ${RECORDBENCH_TRANSCRIPTION_ROOT:?set RECORDBENCH_TRANSCRIPTION_ROOT}
+        target: /var/lib/recordbench/transcription
+      - type: bind
+        source: ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}
+        target: /run/recordbench-secrets
+        read_only: true
+      - type: bind
+        source: ${RECORDBENCH_MODEL_ROOT:?set RECORDBENCH_MODEL_ROOT}
+        target: /models
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8g
+      - /tmp/transcription-home:rw,noexec,nosuid,nodev,size=32m
+
+  transcription-cleanup:
+    profiles: [transcription-tools]
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/transcription-api:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: services/transcription
+      target: api
+    user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
+    read_only: true
+    network_mode: none
+    env_file:
+      - ${RECORDBENCH_CONFIG_ROOT:?set RECORDBENCH_CONFIG_ROOT}/transcription.env
+    environment:
+      TRANSCRIPTION_V2_API_TOKEN_FILE: /run/recordbench-secrets/transcription-token
+      TRANSCRIPTION_V2_DATA_ROOT: /var/lib/recordbench/transcription
+      TRANSCRIPTION_V2_DATABASE: /var/lib/recordbench/transcription/jobs.sqlite3
+      TRANSCRIPTION_V2_MODEL_CACHE: /models/huggingface/hub
+    volumes:
+      - ${RECORDBENCH_TRANSCRIPTION_ROOT:?set RECORDBENCH_TRANSCRIPTION_ROOT}:/var/lib/recordbench/transcription
+      - ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}:/run/recordbench-secrets:ro
+      - ${RECORDBENCH_MODEL_ROOT:?set RECORDBENCH_MODEL_ROOT}:/models:ro
+    command: ["transcription-v2", "purge-expired"]
+
+  transcription-cleanup-daemon:
+    profiles: [transcription]
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/transcription-api:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: services/transcription
+      target: api
+    restart: unless-stopped
+    user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
+    read_only: true
+    network_mode: none
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    env_file:
+      - ${RECORDBENCH_CONFIG_ROOT:?set RECORDBENCH_CONFIG_ROOT}/transcription.env
+    environment:
+      TRANSCRIPTION_V2_API_TOKEN_FILE: /run/recordbench-secrets/transcription-token
+      TRANSCRIPTION_V2_DATA_ROOT: /var/lib/recordbench/transcription
+      TRANSCRIPTION_V2_DATABASE: /var/lib/recordbench/transcription/jobs.sqlite3
+      TRANSCRIPTION_V2_MODEL_CACHE: /models/huggingface/hub
+    volumes:
+      - ${RECORDBENCH_TRANSCRIPTION_ROOT:?set RECORDBENCH_TRANSCRIPTION_ROOT}:/var/lib/recordbench/transcription
+      - ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}:/run/recordbench-secrets:ro
+      - ${RECORDBENCH_MODEL_ROOT:?set RECORDBENCH_MODEL_ROOT}:/models:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - while true; do transcription-v2 purge-expired; sleep 300; done
+
+  app:
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/app:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: .
+      target: application
+    restart: unless-stopped
+    user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 1024
+    env_file:
+      - ${RECORDBENCH_CONFIG_ROOT:?set RECORDBENCH_CONFIG_ROOT}/recordbench.env
+    environment:
+      RECORDBENCH_ALLOW_CONTAINER_BIND: "1"
+      RECORDBENCH_BACKUP_STATUS_FILE: /var/lib/recordbench/state/backup-status.json
+      CASE_INTELLIGENCE_POSTGRES_DSN_FILE: /run/recordbench-secrets/postgres-dsn
+      CASE_INTELLIGENCE_CLAMAV_HOST: clamav
+      CASE_INTELLIGENCE_CLAMAV_PORT: "3310"
+      CASE_INTELLIGENCE_CLAMAV_ALLOWED_HOSTS: clamav
+      CASE_INTELLIGENCE_RETRIEVAL_WORKER_URL: http://retrieval:8787
+      CASE_INTELLIGENCE_RETRIEVAL_ALLOWED_HOSTS: retrieval
+      CASE_INTELLIGENCE_GENERATOR_ALLOWED_HOSTS: generator
+      CASE_INTELLIGENCE_TRANSCRIPTION_ALLOWED_HOSTS: transcription-api
+      CASE_INTELLIGENCE_TRANSCRIPTION_TOKEN_FILE: /run/recordbench-secrets/transcription-token
+      CASE_INTELLIGENCE_MANAGED_STORAGE_ROOT: /var/lib/recordbench/matter-storage
+    depends_on:
+      postgres: {condition: service_healthy}
+      clamav: {condition: service_healthy}
+      retrieval: {condition: service_healthy, required: false}
+      generator: {condition: service_healthy, required: false}
+      transcription-api: {condition: service_healthy, required: false}
+    volumes:
+      - type: bind
+        source: ${RECORDBENCH_RUNTIME_ROOT:?set RECORDBENCH_RUNTIME_ROOT}
+        target: /var/lib/recordbench/runtime
+      - type: bind
+        source: ${RECORDBENCH_STORAGE_ROOT:?set RECORDBENCH_STORAGE_ROOT}
+        target: /var/lib/recordbench/matter-storage
+      - type: bind
+        source: ${RECORDBENCH_STATE_ROOT:?set RECORDBENCH_STATE_ROOT}
+        target: /var/lib/recordbench/state
+      - type: bind
+        source: ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}
+        target: /run/recordbench-secrets
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8g
+      - /tmp/recordbench-home:rw,noexec,nosuid,nodev,size=32m
+    networks: [front, services, models]
+
+  gateway:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, NET_BIND_SERVICE, SETGID, SETUID]
+    pids_limit: 128
+    environment:
+      RECORDBENCH_SERVER_NAME: ${RECORDBENCH_SERVER_NAME:-recordbench.example.test}
+      RECORDBENCH_UPSTREAM: ${RECORDBENCH_GATEWAY_UPSTREAM:-app:8786}
+      NGINX_ENVSUBST_FILTER: ^RECORDBENCH_
+    ports:
+      - "${RECORDBENCH_BIND_ADDRESS:-127.0.0.1}:${RECORDBENCH_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - ./deploy/gateway/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${RECORDBENCH_TLS_CERT:?set RECORDBENCH_TLS_CERT}:/run/tls/tls.crt:ro
+      - ${RECORDBENCH_TLS_KEY:?set RECORDBENCH_TLS_KEY}:/run/tls/tls.key:ro
+    tmpfs:
+      - /etc/nginx/conf.d:rw,noexec,nosuid,nodev,size=1m
+      - /var/cache/nginx:rw,noexec,nosuid,nodev,size=32m
+      - /var/run:rw,noexec,nosuid,nodev,size=8m
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    depends_on:
+      app: {condition: service_healthy}
+    networks: [front, services]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O - https://127.0.0.1:8443/health >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  model-stager:
+    profiles: [tools]
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/model-stager:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: deploy/model-stager
+    user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 256
+    volumes:
+      - .:/workspace:ro
+      - type: bind
+        source: ${RECORDBENCH_MODEL_ROOT:?set RECORDBENCH_MODEL_ROOT}
+        target: /models
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=2g
+    networks: [front]
+
+  account-admin:
+    profiles: [tools]
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/app:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: .
+      target: application
+    user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
+    read_only: true
+    network_mode: none
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    volumes:
+      - type: bind
+        source: ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}
+        target: /run/recordbench-secrets
+      - type: bind
+        source: ${RECORDBENCH_STORAGE_ROOT:?set RECORDBENCH_STORAGE_ROOT}
+        target: /var/lib/recordbench/matter-storage
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /tmp/recordbench-home:rw,noexec,nosuid,nodev,size=16m
+    entrypoint: ["recordbench"]
+
+volumes:
+  postgres-data:
+  clamav-signatures:
+
+networks:
+  front:
+  updates:
+  services:
+    internal: true
+  models:
+    internal: true
+
+secrets:
+  postgres_password:
+    file: ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}/postgres-password

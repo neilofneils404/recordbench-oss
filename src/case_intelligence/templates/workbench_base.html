@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en" data-theme="{{ theme|default('light') }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}{{ product_name }}{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', path='favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='case-intelligence.css') }}">
+  <script src="{{ url_for('static', path='case-intelligence.js') }}" defer></script>
+</head>
+<body class="{% block body_class %}{% endblock %}{% if show_assistant_dock %} assistant-available{% endif %}" data-csrf-token="{{ csrf_token }}" data-assistant-default="{{ assistant_default|default('open') }}">
+  <header class="topbar">
+    <div class="brand-zone">
+      <button class="icon-button menu-button" type="button" aria-label="Hide matters" aria-controls="matter-rail" aria-expanded="true" data-rail-toggle>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <a class="brand" href="/" aria-label="{{ product_name }} home">
+        <img class="brand-mark" src="{{ url_for('static', path='favicon.svg') }}" alt="">
+        <span>{{ product_name }}</span>
+      </a>
+    </div>
+    <div class="context-zone">
+      {% if active_matter %}
+      <button class="matter-switcher" type="button" aria-label="Choose another matter" aria-controls="matter-rail" aria-expanded="true" data-rail-switcher>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6V4.8A1.8 1.8 0 0 1 10.8 3h2.4A1.8 1.8 0 0 1 15 4.8V6M4 8.5h16v10.2A2.3 2.3 0 0 1 17.7 21H6.3A2.3 2.3 0 0 1 4 18.7V8.5Zm0 4.5c4.8 2.3 11.2 2.3 16 0"/></svg>
+        <span>{{ active_matter.display_name }}</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+      </button>
+      {% else %}
+      <button class="matter-switcher quiet" type="button" aria-label="Show matters" aria-controls="matter-rail" aria-expanded="true" data-rail-switcher>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6V4.8A1.8 1.8 0 0 1 10.8 3h2.4A1.8 1.8 0 0 1 15 4.8V6M4 8.5h16v10.2A2.3 2.3 0 0 1 17.7 21H6.3A2.3 2.3 0 0 1 4 18.7V8.5Z"/></svg>
+        <span>No matter selected</span>
+      </button>
+      {% endif %}
+    </div>
+    <div class="user-zone">
+      {% if auth_mode == 'preview' %}<span class="development-label">LOCAL</span>{% endif %}
+      {% if administrator_view %}<span class="administrator-view-label" title="Read-only until you join this case team">Administrator view · read-only</span>{% endif %}
+      <button class="activity-button" type="button" aria-label="Open background activity" aria-controls="workspace-activity-drawer" aria-expanded="false" data-activity-toggle>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-7 7v3l-2 3h18l-2-3v-3a7 7 0 0 0-7-7Zm-2 16h4"/></svg>
+        <span>Activity</span>
+        <strong data-activity-badge {% if not activity_initial_count %}hidden{% endif %}>{{ activity_initial_count }}</strong>
+      </button>
+      <form class="theme-picker" method="post" action="/preferences/theme" data-theme-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="{{ current_path }}">
+        <label class="visually-hidden" for="appearance-theme">Appearance</label>
+        <select id="appearance-theme" name="theme" aria-label="Appearance theme" data-theme-picker>
+          <option value="light" {% if theme == 'light' %}selected{% endif %}>Light</option>
+          <option value="dusk" {% if theme == 'dusk' %}selected{% endif %}>Dusk</option>
+        </select>
+      </form>
+      <details class="account-menu">
+        <summary aria-label="Open account menu">
+          <span class="identity-avatar compact" aria-hidden="true">{{ actor_initials }}</span>
+          <span class="user-name">{{ actor_name }}</span>
+          <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+        </summary>
+        <div class="account-menu-panel">
+          <strong>{{ actor_name }}</strong>
+          <span>{{ 'Windows domain account' if auth_mode == 'kerberos' else 'Organization account' if auth_mode == 'oidc' else 'Local account' if auth_mode == 'local' else 'Local preview identity' }}</span>
+          <form class="account-theme-form" method="post" action="/preferences/theme" data-theme-form>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="next" value="{{ current_path }}">
+            <label for="account-appearance-theme">Appearance</label>
+            <select id="account-appearance-theme" name="theme" data-theme-picker>
+              <option value="light" {% if theme == 'light' %}selected{% endif %}>Light</option>
+              <option value="dusk" {% if theme == 'dusk' %}selected{% endif %}>Dusk</option>
+            </select>
+          </form>
+          {% if is_administrator %}<a href="/admin">Administrator</a>{% endif %}
+          <form class="logout-form" method="post" action="/auth/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit">{{ session_action_label }}</button>
+          </form>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <div class="app-frame">
+    <aside class="matter-rail" id="matter-rail" data-matter-rail>
+      <div class="rail-content">
+        <div class="rail-heading"><p class="rail-label">Matters</p><span>{{ matter_navigation|length }}</span></div>
+        <a class="new-matter-button" href="/matters/new">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span>New matter</span>
+        </a>
+        {% if is_administrator %}
+        <a class="rail-administrator-link" href="/admin">
+          <span aria-hidden="true">⚙</span>
+          <span>Administration</span>
+        </a>
+        {% endif %}
+        <label class="matter-filter" for="matter-filter">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+          <span class="visually-hidden">Find a matter</span>
+          <input id="matter-filter" type="search" placeholder="Find matter…" autocomplete="off" data-matter-filter>
+        </label>
+        <nav class="matter-list" aria-label="Matters">
+          {% for row in matter_navigation %}
+          {% set item = row.matter %}
+          <a class="matter-link {% if active_matter and item.slug == active_matter.slug %}selected{% endif %}" href="/matters/{{ item.slug }}/home" title="{{ item.display_name }}" data-matter-item data-search-text="{{ item.display_name }} {{ item.descriptor }}"{% if active_matter and item.slug == active_matter.slug %} aria-current="page"{% endif %}>
+            <span class="matter-link-copy"><strong>{{ item.display_name }}</strong><small title="{{ item.descriptor or 'Active review' }}">{{ item.descriptor or 'Active review' }}</small></span>
+            <span class="matter-retention-chip tone-{{ row.retention.tone }}">{{ row.retention.short_label }}</span>
+          </a>
+          {% endfor %}
+          {% if not matter_navigation %}
+          <p class="rail-empty">No active matters yet.</p>
+          {% endif %}
+          <p class="rail-empty" data-matter-filter-empty hidden>No matters match that search.</p>
+        </nav>
+      </div>
+      <button class="rail-collapse" type="button" aria-label="Collapse matter navigation" aria-controls="matter-rail" data-rail-collapse>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+        <span>Collapse</span>
+      </button>
+    </aside>
+    <button class="rail-scrim" type="button" aria-label="Close matters" data-rail-scrim></button>
+
+    {% block content %}{% endblock %}
+    {% if show_assistant_dock %}{% include "workbench_assistant.html" %}{% endif %}
+    <button class="activity-scrim" type="button" aria-label="Close activity" data-activity-scrim></button>
+    <aside class="activity-drawer" id="workspace-activity-drawer" data-activity-drawer data-activity-url="{{ activity_url }}" aria-labelledby="activity-drawer-heading" aria-hidden="true" inert>
+      <div class="activity-loading" data-activity-loading>
+        <span class="activity-loading-mark" aria-hidden="true"></span>
+        <strong>Checking background work…</strong>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>

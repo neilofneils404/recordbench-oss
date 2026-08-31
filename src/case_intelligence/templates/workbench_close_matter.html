@@ -1,0 +1,75 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Close {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}close-matter-page{% endblock %}
+
+{% block content %}
+<main class="single-page-main close-matter-main">
+  <section class="close-matter-card" aria-labelledby="close-matter-heading">
+    <p class="eyebrow">Temporary matter lifecycle</p>
+    <h1 id="close-matter-heading">Close and delete this matter</h1>
+    <p class="close-matter-name">{{ matter.display_name }}</p>
+
+    {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+    {% if lifecycle.state == 'purge_failed' %}
+    <div class="notice notice-error" role="alert">
+      The previous deletion did not finish. This matter is closed to ordinary review. Retry below to finish removing its remaining workbench data.
+    </div>
+    {% elif lifecycle.state == 'purging' %}
+    <div class="notice notice-neutral" role="status">Deletion is already in progress. Refresh this page in a moment.</div>
+    {% endif %}
+
+    <div class="close-summary" aria-label="Matter content scheduled for deletion">
+      <div><strong>{{ source_count }}</strong><span>processing source{% if source_count != 1 %}s{% endif %}</span></div>
+      <div><strong>{{ conversation_count }}</strong><span>conversation{% if conversation_count != 1 %}s{% endif %}</span></div>
+      <div><strong>{{ message_count }}</strong><span>saved message{% if message_count != 1 %}s{% endif %}</span></div>
+      <div><strong>{{ notebook_count }}</strong><span>notebook item{% if notebook_count != 1 %}s{% endif %}</span></div>
+    </div>
+
+    <section class="close-explanation" aria-labelledby="delete-heading">
+      <h2 id="delete-heading">What deletion removes</h2>
+      <ul>
+        <li>uploaded processing copies and extracted/OCR text;</li>
+        <li>search and embedding index rows;</li>
+        <li>saved conversations, answers, deep research, full-review decisions, matter notebook items, jobs, source inventory, and case-team access.</li>
+      </ul>
+      <p>Original files outside this workbench are never deleted. A content-free closure receipt and the append-only security audit remain.</p>
+    </section>
+
+    {% if lifecycle.state == 'active' %}
+    <section class="final-export-callout" aria-labelledby="final-export-heading">
+      <div>
+        <h2 id="final-export-heading">Take your work product with you</h2>
+        <p>Download the matter report, every saved conversation, the matter notebook, and portable JSON before closing. Original source files are not included.</p>
+      </div>
+      <a class="button button-secondary" href="/matters/{{ matter.slug }}/export" data-download>Download final bundle</a>
+    </section>
+    <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
+    {% endif %}
+
+    {% if active_work.uploads or active_work.ingestion or active_work.answers or active_work.research or active_work.reviews %}
+    <div class="notice notice-neutral" role="status">
+      Wait for active work to finish before deleting: {{ active_work.uploads }} upload{% if active_work.uploads != 1 %}s{% endif %}, {{ active_work.ingestion }} source task{% if active_work.ingestion != 1 %}s{% endif %}, {{ active_work.answers }} answer{% if active_work.answers != 1 %}s{% endif %}, {{ active_work.research }} research run{% if active_work.research != 1 %}s{% endif %}, and {{ active_work.reviews }} full review{% if active_work.reviews != 1 %}s{% endif %}.
+    </div>
+    {% endif %}
+
+    {% if lifecycle.state != 'purging' %}
+    <form class="close-matter-form" method="post" action="/matters/{{ matter.slug }}/close" data-working-form data-working-label="Deleting matter…">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="confirmed-name">Type <strong>{{ matter.display_name }}</strong> to confirm</label>
+      <input id="confirmed-name" name="confirmed_name" type="text" maxlength="140" required autocomplete="off" spellcheck="false">
+      <label class="delete-acknowledgement">
+        <input type="checkbox" name="acknowledge" value="yes" required>
+        <span>I understand this permanently deletes the workbench matter and cannot be undone.</span>
+      </label>
+      <div class="close-matter-actions">
+        <button class="button button-danger" type="submit" {% if active_work.uploads or active_work.ingestion or active_work.answers or active_work.research or active_work.reviews %}disabled{% endif %}>
+          {{ 'Try deletion again' if lifecycle.state == 'purge_failed' else 'Delete matter' }}
+        </button>
+        {% if lifecycle.state == 'active' %}<a class="button button-secondary" href="/matters/{{ matter.slug }}">Keep matter open</a>{% else %}<a class="button button-secondary" href="/matters/new">Return to matters</a>{% endif %}
+      </div>
+    </form>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

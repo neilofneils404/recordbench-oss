@@ -1,0 +1,192 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Administration · {{ product_name }}{% endblock %}
+{% block body_class %}administrator-page{% endblock %}
+
+{% block content %}
+<main class="administrator-main">
+  <header class="administrator-heading compact-heading">
+    <div>
+      <p class="eyebrow">Administration</p>
+      <h1>Workspace oversight</h1>
+      <p>Capacity, lifecycle, access, and processing health in one operational view.</p>
+    </div>
+    <span class="administrator-badge">Administrator</span>
+  </header>
+
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+  <section class="administrator-metrics" aria-label="System activity">
+    <article><strong>{{ admin_matters|length }}</strong><span>Active matters</span></article>
+    <article><strong>{{ stale_matters|length }}</strong><span>Lifecycle attention</span></article>
+    <article><strong>{{ abandoned_uploads|length }}</strong><span>Old uploads</span></article>
+    <article><strong>{{ ingest_counts.get('queued', 0) + ingest_counts.get('running', 0) }}</strong><span>Document jobs</span></article>
+    <article><strong>{{ media_counts.get('queued', 0) + media_counts.get('running', 0) }}</strong><span>Media jobs</span></article>
+    <article><strong>{{ media_summary_counts.get('queued', 0) + media_summary_counts.get('running', 0) + media_summary_counts.get('stale', 0) }}</strong><span>Transcript overviews</span></article>
+    <article><strong>{{ answer_counts.get('queued', 0) + answer_counts.get('running', 0) }}</strong><span>Answers</span></article>
+    <article><strong>{{ research_counts.get('queued', 0) + research_counts.get('running', 0) }}</strong><span>Deep research</span></article>
+    <article><strong>{{ review_counts.get('queued', 0) + review_counts.get('running', 0) }}</strong><span>Full reviews</span></article>
+  </section>
+
+  <section class="administrator-panel lifecycle-attention" id="lifecycle-attention" aria-labelledby="lifecycle-heading">
+    <div class="administrator-panel-heading">
+      <div><p class="eyebrow">Temporary workspace lifecycle</p><h2 id="lifecycle-heading">{{ 'Attention needed' if stale_matters or abandoned_uploads else 'Lifecycle is clear' }}</h2></div>
+      <span class="maintenance-health {{ 'attention' if maintenance_status.last_error else 'ready' }}">{{ 'Automatic maintenance on' if maintenance_status.enabled else 'Automatic maintenance off' }}</span>
+    </div>
+    {% if maintenance_status.last_error %}<div class="notice notice-error" role="alert">{{ maintenance_status.last_error }}</div>{% endif %}
+
+    {% if stale_matters %}
+    <div class="lifecycle-list">
+      {% for row in stale_matters %}
+      <article class="lifecycle-row">
+        <div>
+          <strong>{{ row.matter.display_name }}</strong>
+          <small>{{ row.owner.display_name }} · last activity {{ row.activity_at[:10] }}</small>
+          <ul>{% for reason in row.stale_reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+        </div>
+        <form method="post" action="/admin/matters/{{ row.matter.slug }}/retention" data-working-form data-working-label="Saving…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label for="admin-retention-{{ loop.index }}">Review end date</label>
+          <input id="admin-retention-{{ loop.index }}" type="date" name="expires_on" min="{{ row.retention.minimum_date }}" max="{{ row.retention.maximum_date }}" value="{{ row.retention.expires_on }}" required>
+          <button class="button button-secondary" type="submit">Save date</button>
+        </form>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="administrator-empty">No inactive, unscheduled, or near-expiry matters need attention.</p>
+    {% endif %}
+
+    {% if abandoned_uploads %}
+    <div class="abandoned-upload-summary">
+      <div>
+        <strong>{{ abandoned_uploads|length }} upload {{ 'session is' if abandoned_uploads|length == 1 else 'sessions are' }} older than 24 hours</strong>
+        <p>Only unfinished staging bytes are removed. Sources already accepted into a matter remain in place.</p>
+        <ul>
+          {% for row in abandoned_upload_rows %}
+          <li>{{ row.matter.display_name if row.matter else 'Active matter' }} · {{ row.session.item_count }} item{% if row.session.item_count != 1 %}s{% endif %} · {{ format_bytes(row.session.total_bytes) }} · last activity {{ row.session.updated_at[:16]|replace('T', ' ') }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      <form method="post" action="/admin/maintenance/uploads" data-working-form data-working-label="Cleaning…" data-confirm="Clean unfinished upload staging older than 24 hours?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="button button-secondary" type="submit">Clean old uploads</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="administrator-panel administrator-storage-panel" aria-labelledby="admin-storage-heading">
+    <div class="administrator-panel-heading">
+      <div><p class="eyebrow">Managed processing storage</p><h2 id="admin-storage-heading">{{ 'Ready for uploads' if storage_capacity.ready else 'Capacity needs attention' }}</h2></div>
+      <span class="storage-health {{ 'ready' if storage_capacity.ready else 'attention' }}">{{ 'Reserve protected' if storage_capacity.ready else 'New writes protected' }}</span>
+    </div>
+    <div class="administrator-storage-grid">
+      <article><strong>{{ storage_capacity.available_label }}</strong><span>Available above reserve</span></article>
+      <article><strong>{{ storage_capacity.reserve_label }}</strong><span>Protected reserve</span></article>
+      <article><strong>{{ storage_capacity.managed_label }}</strong><span>RecordBench data</span></article>
+      <article><strong>{{ format_bytes(storage_policy.matter_quota_bytes) }}</strong><span>Per-matter allowance</span></article>
+    </div>
+    <p>Uploads use opaque matter identities. Large-file finalization is {{ 'copy-free on this tier' if storage_capacity.optimized_finalize else 'using the compatible copy fallback' }}.</p>
+  </section>
+
+  <section class="administrator-panel administrator-security-panel" aria-labelledby="admin-security-heading">
+    <div class="administrator-panel-heading">
+      <div><p class="eyebrow">Secure intake</p><h2 id="admin-security-heading">{{ 'Security scanner ready' if malware_status.ready else 'Security scanner needs attention' }}</h2></div>
+      <span class="storage-health {{ 'ready' if malware_status.ready else 'attention' }}">{{ 'Fail-closed checks active' if malware_status.ready else 'Extended intake protected' }}</span>
+    </div>
+    {% if malware_status.ready %}
+    <div class="administrator-security-grid">
+      <article><strong>ClamAV {{ malware_status.engine_version or 'available' }}</strong><span>Scanning engine</span></article>
+      <article><strong>{{ malware_status.signature_version or 'Loaded' }}</strong><span>Signature database</span></article>
+      <article><strong>{{ malware_status.signature_updated_at[:16]|replace('T', ' ') if malware_status.signature_updated_at else 'Update managed automatically' }}</strong><span>Signature release (UTC)</span></article>
+      <article><strong>{{ malware_scan_mode|capitalize }}</strong><span>Scanning policy</span></article>
+    </div>
+    <p>Selected intake types are streamed to a loopback-only scanner before extraction. The scanner receives bytes, never matter paths, and unavailable or detected files do not enter the searchable record.</p>
+    {% else %}
+    <div class="notice notice-error" role="alert"><strong>Images, email, and spreadsheets are temporarily blocked.</strong> {{ malware_status.message }} Documents, audio, and video remain available under the current extended scanning policy.</div>
+    {% endif %}
+  </section>
+
+  <section class="administrator-panel administrator-ai-panel" aria-labelledby="admin-ai-heading">
+    <div class="administrator-panel-heading">
+      <div><p class="eyebrow">Local AI portfolio</p><h2 id="admin-ai-heading">{{ model_portfolio.headline }}</h2></div>
+      <span class="storage-health {{ 'ready' if model_portfolio.ready else 'attention' }}">{{ 'Configured services available' if model_portfolio.ready else 'Operator review needed' }}</span>
+    </div>
+    <div class="administrator-ai-grid">
+      {% for lane in model_portfolio.lanes %}
+      <article>
+        <div><strong>{{ lane.name }}</strong><span class="ai-lane-state {{ lane.tone }}">{{ 'Ready' if lane.tone == 'ready' else 'Attention' }}</span></div>
+        <b>{{ lane.engine }}</b>
+        <p>{{ lane.detail }}</p>
+        <small>{{ lane.capacity }}</small>
+      </article>
+      {% endfor %}
+    </div>
+    <div class="administrator-ai-receipt" aria-label="Model evaluation status">
+      <span><strong>Required</strong> deployment quality evaluation</span>
+      <span><strong>{{ model_portfolio.evaluation.suite_fingerprint[:12] }}</strong> synthetic suite fingerprint</span>
+      <span><strong>Not published</strong> retrieval and answer metrics</span>
+      <span><strong>Not published</strong> throughput and hardware metrics</span>
+    </div>
+    <details class="administrator-ai-details">
+      <summary>Configuration and candidate decision</summary>
+      <p><strong>Resident generator:</strong> {{ model_portfolio.generator.repository }} at a pinned revision, text-only on local vLLM, {{ model_portfolio.generator.context_tokens }} tokens, direct structured generation, and {{ model_portfolio.generator.maximum_active }} shared calls.</p>
+      <p><strong>Evidence contract:</strong> at most {{ model_portfolio.evidence.maximum_items }} reranked passages and {{ model_portfolio.evidence.maximum_characters }} characters per answer; generated claims still pass the independent source verifier.</p>
+      <p><strong>Specialized lanes:</strong> document OCR and extraction stay separate from WhisperX media transcription. Media processing is {{ 'ready' if model_portfolio.media_ready else 'temporarily unavailable' }} and cannot be displaced by an oversized answer model.</p>
+      <p><strong>Evaluation status:</strong> {{ model_portfolio.evaluation.detail }}</p>
+      <p>{{ model_portfolio.candidate_note }}</p>
+    </details>
+  </section>
+
+  <section class="administrator-panel administrator-backup-panel" aria-labelledby="admin-backup-heading">
+    <div class="administrator-panel-heading">
+      <div><p class="eyebrow">Disaster recovery</p><h2 id="admin-backup-heading">{{ backup_status.headline }}</h2></div>
+      <span class="backup-health {{ backup_status.tone }}">{{ 'Encrypted NAS backup current' if backup_status.tone == 'ready' else 'Administrator review' }}</span>
+    </div>
+    <div class="administrator-backup-grid">
+      <article><strong>{{ backup_status.completed_at[:16]|replace('T', ' ') if backup_status.completed_at else 'Not completed' }}</strong><span>Last backup</span></article>
+      <article><strong>{{ backup_status.duration_seconds }} sec</strong><span>Last duration</span></article>
+      <article><strong>{{ backup_status.retention }}</strong><span>Encrypted retention</span></article>
+      <article><strong>{{ backup_status.snapshot_short or 'Pending' }}</strong><span>Snapshot receipt</span></article>
+    </div>
+    <p>{{ backup_status.message }} Matter deletion is immediate in RecordBench; encrypted disaster-recovery residuals expire with the short retention window.</p>
+  </section>
+
+  <section class="administrator-panel" aria-labelledby="admin-matters-heading">
+    <div class="administrator-panel-heading">
+      <div><p class="eyebrow">Matter access</p><h2 id="admin-matters-heading">Active matters</h2></div>
+      <small>Administrator entry is read-only until you join the case team.</small>
+    </div>
+    {% if admin_matters %}
+    <div class="administrator-table matter-oversight-table" role="table" aria-label="Active matters">
+      <div class="administrator-table-head" role="row">
+        <span role="columnheader">Matter</span><span role="columnheader">Owner &amp; activity</span><span role="columnheader">Lifecycle</span><span role="columnheader">Storage</span><span role="columnheader">Access</span>
+      </div>
+      {% for row in admin_matters %}
+      <div class="administrator-table-row" role="row">
+        <span role="cell"><strong>{{ row.matter.display_name }}</strong><small>{{ row.matter.descriptor or 'Active review' }}</small><small>{{ row.member_count }} {{ 'member' if row.member_count == 1 else 'members' }}</small></span>
+        <span role="cell"><strong>{{ row.owner.display_name }}</strong><small>{{ row.inactive_days }} {{ 'day' if row.inactive_days == 1 else 'days' }} since activity</small></span>
+        <span role="cell"><strong class="lifecycle-label tone-{{ row.retention.tone }}">{{ row.retention.label }}</strong><small>{% if row.retention.record %}Deletion {{ row.retention.purge_on }}{% else %}No automatic deletion{% endif %}</small></span>
+        <span role="cell"><strong>{{ row.storage.used_label }}</strong><small>{{ row.storage.remaining_label }} remaining</small></span>
+        <span role="cell"><a class="button button-secondary" href="/matters/{{ row.matter.slug }}">{{ 'Open' if row.current_is_member else 'Review' }}</a></span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}<p class="administrator-empty">There are no active matters.</p>{% endif %}
+  </section>
+
+  <details class="administrator-panel administrator-users" aria-labelledby="admin-users-heading">
+    <summary class="administrator-panel-heading">
+      <div><p class="eyebrow">Identity</p><h2 id="admin-users-heading">Known domain users · {{ admin_principals|length }}</h2></div>
+      <small>Roles are managed by AD security groups.</small>
+    </summary>
+    {% if admin_principals %}
+    <div class="administrator-user-grid">
+      {% for principal in admin_principals %}<article><span class="identity-avatar" aria-hidden="true">{{ principal.display_name.split()[0][0] }}{{ principal.display_name.split()[-1][0] }}</span><span><strong>{{ principal.display_name }}</strong><small>{{ principal.login_name }}</small></span></article>{% endfor %}
+    </div>
+    {% else %}<p class="administrator-empty">No domain users have signed in yet.</p>{% endif %}
+  </details>
+</main>
+{% endblock %}

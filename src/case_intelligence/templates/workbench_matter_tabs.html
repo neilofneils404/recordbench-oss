@@ -1,0 +1,19 @@
+<nav class="matter-section-tabs" aria-label="Matter workspace sections">
+  <a class="{% if active == 'home' %}selected{% endif %}" href="/matters/{{ matter.slug }}/home"{% if active == 'home' %} aria-current="page"{% endif %}>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 10 8-6 8 6v10h-6v-6h-4v6H4V10Z"/></svg>
+    <span>Home</span>
+  </a>
+  <a class="{% if active == 'review' %}selected{% endif %}" href="/matters/{{ matter.slug }}"{% if active == 'review' %} aria-current="page"{% endif %}>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5Z"/></svg>
+    <span>Review</span>
+  </a>
+  <a class="{% if active == 'sources' %}selected{% endif %}" href="/matters/{{ matter.slug }}/setup?view=list#source-library"{% if active == 'sources' %} aria-current="page"{% endif %}>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v13H4zM8 3h8v3M8 10h8M8 14h6"/></svg>
+    <span>Sources</span>
+  </a>
+  <a class="{% if active in ('work_product', 'notes', 'analysis', 'reports') %}selected{% endif %}" href="/matters/{{ matter.slug }}/work-product"{% if active in ('work_product', 'notes', 'analysis', 'reports') %} aria-current="page"{% endif %}>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6M9 18h4"/></svg>
+    <span>Work product</span>
+  </a>
+</nav>
+{% include "workbench_processing_status.html" %}

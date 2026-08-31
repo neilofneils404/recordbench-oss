@@ -1,0 +1,17 @@
+{% set current_token = media.row.action_token if media is defined else source.row.action_token %}
+<nav class="review-sequence" aria-label="Source review sequence">
+  {% if source_sequence.previous %}
+  <a class="review-sequence-neighbor previous" href="{{ source_sequence.previous.href }}" title="{{ source_sequence.previous.title }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg><span><small>Previous source</small><strong>{{ source_sequence.previous.title }}</strong></span></a>
+  {% else %}
+  <span class="review-sequence-neighbor previous disabled" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg><span><small>Previous source</small><strong>Start of matter</strong></span></span>
+  {% endif %}
+  <form method="post" action="/matters/{{ matter.slug }}/sources/{{ current_token }}/review-next">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="button button-primary" type="submit">Mark reviewed and continue</button>
+  </form>
+  {% if source_sequence.next %}
+  <a class="review-sequence-neighbor next" href="{{ source_sequence.next.href }}" title="{{ source_sequence.next.title }}"><span><small>Next source</small><strong>{{ source_sequence.next.title }}</strong></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a>
+  {% else %}
+  <span class="review-sequence-neighbor next disabled" aria-disabled="true"><span><small>Next source</small><strong>End of matter</strong></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+  {% endif %}
+</nav>

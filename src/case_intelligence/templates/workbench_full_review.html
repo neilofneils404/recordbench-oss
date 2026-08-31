@@ -1,0 +1,131 @@
+{% extends "workbench_base.html" %}
+
+{% macro criterion_form() -%}
+<form method="post" action="/matters/{{ matter.slug }}/full-review/criteria" data-working-form data-working-label="Saving criterion…" data-criterion-form>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <fieldset class="criterion-example-picker">
+    <legend>Start from an example</legend>
+    <div>
+      <button type="button" data-criterion-template="person">Person or organization</button>
+      <button type="button" data-criterion-template="date">Date range</button>
+      <button type="button" data-criterion-template="topic">Topic or event</button>
+    </div>
+    <small>Examples fill the form so you can edit the wording before anything runs.</small>
+  </fieldset>
+  <label><span>Name this review</span><input name="title" maxlength="160" required placeholder="Example: Records mentioning vehicle ownership" data-criterion-title></label>
+  <label><span>What should RecordBench mark for review?</span><textarea name="instructions" maxlength="8000" rows="5" required placeholder="Describe the material you want a reviewer to see." data-criterion-instructions></textarea><small>Write one clear rule. RecordBench will apply this same wording to every source.</small></label>
+  <label><span>What definitely counts? <em>Optional</em></span><textarea name="include_guidance" maxlength="4000" rows="3" placeholder="Add examples, names, phrases, dates, or circumstances that should count." data-criterion-include></textarea></label>
+  <label><span>What should RecordBench leave out? <em>Optional</em></span><textarea name="exclude_guidance" maxlength="4000" rows="3" placeholder="Describe look-alikes or situations that should not count." data-criterion-exclude></textarea></label>
+  <button class="button button-primary" type="submit">Save review criterion</button>
+</form>
+{%- endmacro %}
+
+{% block title %}Full review · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}workflow-page full-review-page{% endblock %}
+
+{% block content %}
+<main class="workflow-shell">
+  <header class="matter-heading workflow-heading"><div><p class="eyebrow">Review workspace</p><h1>{{ matter.display_name }}</h1><p>{{ matter.descriptor or 'Active case review' }}</p></div><div class="matter-actions"><a class="button button-secondary" href="/matters/{{ matter.slug }}/setup?view=list#source-library">Sources</a><a class="button button-secondary" href="/matters/{{ matter.slug }}/work-product">Work product</a></div></header>
+  {% with active='review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% include "workbench_review_modes.html" %}
+  {% include "workbench_retention_notice.html" %}
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+  <section class="workflow-intro full-review-intro {% if active_run %}has-active-work{% endif %}"><div><p class="eyebrow">Collection-wide workflow</p><h2>Apply one saved criterion to every eligible source.</h2><p>Full Review freezes the searchable population, keeps the criterion version, records one machine decision per source, and leaves the human validation decision separate.</p></div><div class="workflow-scope-card"><span>Eligible now</span><strong>{{ readiness.searchable_count|default(0) }}</strong><small>{% if readiness.attention_count %}{{ readiness.attention_count }} attention source(s) excluded{% else %}searchable sources{% endif %}</small></div></section>
+
+  <ol class="full-review-steps" aria-label="How full review works">
+    <li><span>1</span><div><strong>Define one clear rule</strong><small>Say what should count and what should be left out.</small></div></li>
+    <li><span>2</span><div><strong>Recommended: test on up to 50</strong><small>Validate a sample and refine the rule before scaling up.</small></div></li>
+    <li><span>3</span><div><strong>Run the saved population</strong><small>The source list is frozen when the run starts; later uploads are not added.</small></div></li>
+  </ol>
+
+  <div class="workflow-grid full-review-grid">
+    <aside class="workflow-library criterion-library">
+      <div class="workflow-library-heading"><div><p class="eyebrow">Saved logic</p><h2>Criteria</h2></div><span>{{ criteria|length }}</span></div>
+      <nav>{% for item in criteria %}<a class="workflow-run-link {% if active_criterion and item.criterion_id == active_criterion.criterion_id %}selected{% endif %}" href="/matters/{{ matter.slug }}/full-review?criterion={{ item.criterion_id }}"><span class="criterion-version">v{{ item.current_version_number }}</span><span><strong>{{ item.title }}</strong><small>{{ item.version_count }} saved version{% if item.version_count != 1 %}s{% endif %}</small></span></a>{% else %}<p class="workflow-empty-small">Create the first criterion to begin.</p>{% endfor %}</nav>
+      {% if criteria %}<details class="criterion-editor">
+        <summary>New review criterion</summary>
+        {{ criterion_form() }}
+      </details>{% endif %}
+    </aside>
+
+    <section class="workflow-canvas {% if active_run %}has-active-run{% endif %} {% if selected_decision %}has-selected-decision{% endif %}">
+      {% if active_criterion %}
+      <section class="criterion-card" id="review-controls">
+        <header>
+          <div><p class="eyebrow">Current criterion · v{{ active_version.version_number }}</p><h2>{{ active_criterion.title }}</h2></div>
+          <details>
+            <summary>Edit as a new version</summary>
+            <form method="post" action="/matters/{{ matter.slug }}/full-review/criteria/{{ active_criterion.criterion_id }}/versions">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="title" value="{{ active_criterion.title }}">
+              <label><span>What should RecordBench mark for review?</span><textarea name="instructions" maxlength="8000" rows="5" required>{{ active_version.instructions }}</textarea></label>
+              <label><span>What definitely counts?</span><textarea name="include_guidance" maxlength="4000" rows="3">{{ active_version.include_guidance }}</textarea></label>
+              <label><span>What should RecordBench leave out?</span><textarea name="exclude_guidance" maxlength="4000" rows="3">{{ active_version.exclude_guidance }}</textarea></label>
+              <button class="button button-primary" type="submit">Save new version</button>
+            </form>
+          </details>
+        </header>
+        <p>{{ active_version.instructions }}</p>
+        <div class="criterion-guidance"><span><strong>Count as a match</strong>{{ active_version.include_guidance or 'No additional examples were added.' }}</span><span><strong>Leave out</strong>{{ active_version.exclude_guidance or 'No additional exclusions were added.' }}</span></div>
+        <div class="review-snapshot-confirmation">
+          <span aria-hidden="true">{{ readiness.searchable_count }}</span>
+          <div><strong>Exact population at start: {{ readiness.searchable_count }} searchable source{% if readiness.searchable_count != 1 %}s{% endif %}</strong><small>The source list is frozen when the run starts. Later uploads are not silently added.</small></div>
+        </div>
+        <form class="review-launcher" method="post" action="/matters/{{ matter.slug }}/full-review/runs" data-working-form data-working-label="Freezing sources…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="criterion_version_id" value="{{ active_version.criterion_version_id }}">
+          <label><span>Which sources?</span><select name="source_set"><option value="">All searchable sources · {{ readiness.searchable_count }}</option>{% for source_set in source_sets %}<option value="{{ source_set.source_set_id }}">{{ source_set.name }} · {{ source_set.source_count }}</option>{% endfor %}</select></label>
+          <button class="button button-secondary recommended-run" name="run_kind" value="sample" {% if not readiness.can_query or capabilities.answering != 'ready' %}disabled{% endif %}><strong>Recommended: test on up to 50</strong><small>Check the rule before the full collection</small></button>
+          <button class="button button-primary" name="run_kind" value="full" {% if not readiness.can_query or capabilities.answering != 'ready' %}disabled{% endif %}><strong>Review all {{ readiness.searchable_count }} eligible</strong><small>One saved decision per source</small></button>
+        </form>
+      </section>
+
+      {% if review_runs %}<nav class="review-run-strip" aria-label="Review runs">{% for item in review_runs %}<a class="{% if active_run and item.run_id == active_run.run_id %}selected{% endif %}" href="/matters/{{ matter.slug }}/full-review?criterion={{ active_criterion.criterion_id }}&run={{ item.run_id }}"><span class="workflow-state-dot state-{{ item.state }}"></span><span><strong>{{ item.run_kind|title }} · {{ item.snapshot_count }} sources</strong><small>{{ item.state|title }} · {{ item.created_at[5:10] }}</small></span></a>{% endfor %}</nav>{% endif %}
+
+      {% if active_run %}
+      <article class="workflow-run-card" data-workflow-monitor data-status-url="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/status" data-terminal="{{ 'true' if active_run.state in ('succeeded','failed','cancelled') else 'false' }}"><header class="workflow-run-header"><div><p class="eyebrow">Frozen population · {{ active_criterion.title }} · v{{ active_version.version_number }}</p><h2>{{ active_run.run_kind|title }} review</h2><p>{{ active_run.message }}</p></div><div class="workflow-run-actions"><span class="workflow-state-badge state-{{ active_run.state }}" data-workflow-state>{{ active_run.state|title }}</span><a href="#review-controls">New run or edit rule</a></div></header><div class="workflow-progress"><div><span data-workflow-stage>{{ active_run.message }}</span><strong data-workflow-progress-label>{{ active_run.reviewed_count }} / {{ active_run.snapshot_count }} sources</strong></div><progress max="{{ active_run.snapshot_count or 1 }}" value="{{ active_run.reviewed_count }}" data-workflow-progress></progress><small class="workflow-eta" data-workflow-eta>{% if active_run.state == 'queued' %}Waiting for an available workflow worker.{% elif active_run.state == 'running' %}Calculating remaining time…{% endif %}</small></div><div class="run-counts"><span><strong>{{ active_run.included_count }}</strong> Included</span><span><strong>{{ active_run.excluded_count }}</strong> Not identified</span><span><strong>{{ active_run.attention_count }}</strong> Attention</span></div>{% if active_run.state in ('queued','running') %}<form method="post" action="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Cancel safely</button></form>{% elif active_run.state in ('failed','cancelled') %}<form method="post" action="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">Resume saved run</button></form>{% endif %}</article>
+
+      {% if active_run.state == 'succeeded' %}
+      <nav class="workflow-completion-bar" aria-label="Completed full review actions">
+        <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>Review complete</strong><small>{{ active_run.snapshot_count }} frozen source{% if active_run.snapshot_count != 1 %}s{% endif %}</small></span></span>
+        <a href="#decision-ledger">Review support</a>
+        <form method="post" action="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/report"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Save to report</button></form>
+        <details><summary>Export</summary><div><a href="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/export?format=csv" data-download>Complete CSV</a><a href="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/export?format=docx" data-download>Word summary</a><a href="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/export?format=json" data-download>Complete JSON</a></div></details>
+        <a href="#review-controls">Continue reviewing</a>
+      </nav>
+      {% endif %}
+
+      <section class="validation-panel">
+        <header class="workflow-section-heading"><div><p class="eyebrow">Human validation</p><h2>Measure before you rely</h2></div><strong>{{ validation.reviewed_total }} / {{ validation.sample_total }} reviewed</strong></header>
+        <div class="validation-metrics">
+          {% for label,key in [('Precision','precision'),('Recall','recall'),('Elusion','elusion'),('Richness','richness'),('Error','error_rate')] %}<div><span>{{ label }}</span><strong>{% if validation[key] is none %}—{% else %}{{ (validation[key] * 100)|round(1) }}%{% endif %}</strong></div>{% endfor %}
+        </div>
+        <p>Numbers appear after you validate enough sample decisions. Your decision never erases the original RecordBench label.</p>
+        <details class="validation-glossary">
+          <summary>What these numbers mean</summary>
+          <dl>
+            <div><dt>Precision</dt><dd>Of the sources RecordBench included, the share your validation also included.</dd></div>
+            <div><dt>Recall</dt><dd>Of all validated sources that should be included, the share RecordBench found.</dd></div>
+            <div><dt>Elusion</dt><dd>The share of sources labeled “Not identified” that your validation says should have been included.</dd></div>
+            <div><dt>Richness</dt><dd>The share of the validated sample that actually meets the criterion.</dd></div>
+            <div><dt>Error</dt><dd>The overall share of validated labels that disagree with your decision.</dd></div>
+          </dl>
+        </details>
+      </section>
+
+      <section class="decision-ledger" id="decision-ledger"><header class="workflow-section-heading"><div><p class="eyebrow">Every-source ledger</p><h2>Review decisions</h2></div><span>{{ active_run.snapshot_count }} frozen sources</span></header>
+        <p class="decision-ledger-note">RecordBench labels help you prioritize review; they are not final determinations. Your validation remains separate and exportable.</p>
+        <form class="decision-filters" method="get" action="/matters/{{ matter.slug }}/full-review"><input type="hidden" name="criterion" value="{{ active_criterion.criterion_id }}"><input type="hidden" name="run" value="{{ active_run.run_id }}"><select name="decision"><option value="">All decisions</option>{% for state,label in [('included','Included'),('excluded','Not identified'),('needs_attention','Needs attention'),('pending','Pending')] %}<option value="{{ state }}" {% if decision_page.decision_filter == state %}selected{% endif %}>{{ label }} · {{ decision_page.counts[state] }}</option>{% endfor %}</select><label><input type="checkbox" name="validation" value="1" {% if decision_page.validation_only %}checked{% endif %}> Validation sample only</label><button type="submit">Apply</button></form>
+        <div class="decision-table"><div class="decision-table-head"><span>Source</span><span>RecordBench label</span><span>Your validation</span><span></span></div>{% for item in decision_page.items %}<article class="decision-row {% if selected_decision and selected_decision.document_id == item.document_id %}selected{% endif %}"><a class="decision-source" href="/matters/{{ matter.slug }}/full-review?criterion={{ active_criterion.criterion_id }}&run={{ active_run.run_id }}&decision={{ decision_page.decision_filter }}&validation={{ '1' if decision_page.validation_only else '0' }}&page={{ decision_page.page }}&source={{ item.document_id }}#decision-inspector"><span class="file-mark file-{{ item.source_kind|lower }}">{{ item.source_kind }}</span><span><strong>{{ item.source_name }}</strong><small>#{{ item.ordinal }} · {% if item.validation_sample %}validation sample{% else %}frozen source{% endif %}</small></span></a><span class="decision-chip state-{{ item.machine_decision }}">{{ 'Not identified' if item.machine_decision == 'excluded' else item.machine_decision|replace('_',' ')|title }}</span><span>{{ item.human_decision|replace('_',' ')|title if item.human_decision else 'Not reviewed' }}</span><a href="/matters/{{ matter.slug }}/sources/{{ item.action_token }}">Open</a></article>{% else %}<p class="workflow-empty-small">No decisions match this filter.</p>{% endfor %}</div>
+        {% if decision_page.total_pages > 1 %}<nav class="workflow-pagination" aria-label="Decision pages">{% if decision_page.page > 1 %}<a href="/matters/{{ matter.slug }}/full-review?criterion={{ active_criterion.criterion_id }}&run={{ active_run.run_id }}&decision={{ decision_page.decision_filter }}&validation={{ '1' if decision_page.validation_only else '0' }}&page={{ decision_page.page - 1 }}">Previous</a>{% endif %}<span>Page {{ decision_page.page }} of {{ decision_page.total_pages }} · {{ decision_page.total }} rows</span>{% if decision_page.page < decision_page.total_pages %}<a href="/matters/{{ matter.slug }}/full-review?criterion={{ active_criterion.criterion_id }}&run={{ active_run.run_id }}&decision={{ decision_page.decision_filter }}&validation={{ '1' if decision_page.validation_only else '0' }}&page={{ decision_page.page + 1 }}">Next</a>{% endif %}</nav>{% endif %}
+      </section>
+
+      {% if selected_decision %}<aside class="decision-inspector" id="decision-inspector"><header><div><p class="eyebrow">Source decision #{{ selected_decision.ordinal }}</p><h2>{{ selected_decision.source_name }}</h2></div><a href="/matters/{{ matter.slug }}/sources/{{ selected_decision.action_token }}">Open source</a></header><div class="decision-inspector-grid"><section><h3>RecordBench label</h3><span class="decision-chip state-{{ selected_decision.machine_decision }}">{{ 'Not identified' if selected_decision.machine_decision == 'excluded' else selected_decision.machine_decision|replace('_',' ')|title }}</span><p>{{ selected_decision.rationale or 'This source is still pending.' }}</p>{% if selected_decision.error_message %}<p class="workflow-caution">{{ selected_decision.error_message }}</p>{% endif %}<div class="decision-citations">{% for citation in selected_decision.citations %}<a href="{{ citation_href(citation, matter.slug) }}"><strong>{{ citation.source_name }}</strong><span>{{ citation.location }}</span><p>{{ citation.excerpt }}</p></a>{% endfor %}</div></section><form method="post" action="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/decisions/{{ selected_decision.document_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h3>Your validation</h3><p>Keep your decision separate from the RecordBench label.</p>{% for value,label in [('agree','Agree'),('include','Override: include'),('exclude','Override: exclude'),('uncertain','Uncertain')] %}<label class="validation-choice"><input type="radio" name="human_decision" value="{{ value }}" {% if selected_decision.human_decision == value %}checked{% endif %} required><span>{{ label }}</span></label>{% endfor %}<label><span>Review note</span><textarea name="note" maxlength="2000" rows="4">{{ selected_decision.human_note }}</textarea></label><button class="button button-primary" type="submit">Save validation</button></form></div></aside>{% endif %}
+      {% endif %}
+      {% else %}<section class="criterion-onboarding" id="review-controls"><header><span class="workflow-orbit" aria-hidden="true">✓</span><div><h2>Start with a precise, reviewable criterion.</h2><p>Use plain language. You can test and revise the rule before asking RecordBench to screen the full collection.</p></div></header>{{ criterion_form() }}</section>{% endif %}
+    </section>
+  </div>
+</main>
+{% endblock %}

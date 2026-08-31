@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://internal.invalid/case-intelligence/benchmark-result.schema.json",
+  "title": "Case Intelligence Executable Benchmark Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "suite_version",
+    "suite_sha256",
+    "run_id",
+    "fixture_id",
+    "created_at",
+    "environment",
+    "matter_count",
+    "case_count",
+    "components",
+    "cases",
+    "metrics",
+    "limitations",
+    "passed"
+  ],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "suite_id": {"type": "string", "minLength": 1},
+    "suite_version": {"type": "string", "minLength": 1},
+    "suite_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "run_id": {"type": "string", "minLength": 1},
+    "fixture_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_classification", "confidential_data", "network_calls", "model_calls", "production_selection"],
+      "properties": {
+        "dataset_classification": {"const": "synthetic"},
+        "confidential_data": {"const": false},
+        "network_calls": {"const": 0},
+        "model_calls": {"const": 0},
+        "production_selection": {"const": false}
+      }
+    },
+    "matter_count": {"type": "integer", "minimum": 1},
+    "case_count": {"type": "integer", "minimum": 1},
+    "components": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "implementation", "network_calls", "model_calls"],
+        "properties": {
+          "stage": {"enum": ["authorization", "retrieval", "reranking", "generation", "source_resolution", "ticket"]},
+          "implementation": {"type": "string", "minLength": 1},
+          "network_calls": {"const": 0},
+          "model_calls": {"const": 0}
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case_id",
+          "category",
+          "operation",
+          "matter_id",
+          "expected_outcome",
+          "observed_outcome",
+          "expected_source_version_ids",
+          "observed_source_version_ids",
+          "passed"
+        ],
+        "properties": {
+          "case_id": {"type": "string", "minLength": 1},
+          "category": {"enum": ["retrieval", "cross_matter_bypass", "ticket_lease_bypass", "valid_reference_resolution", "invalid_reference_rejection"]},
+          "operation": {"type": "string", "minLength": 1},
+          "matter_id": {"type": "string", "minLength": 1},
+          "expected_outcome": {"type": "string", "minLength": 1},
+          "observed_outcome": {"type": "string", "minLength": 1},
+          "expected_source_version_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "observed_source_version_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "passed": {"type": "boolean"}
+        }
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric_id", "numerator", "denominator", "value", "passed"],
+        "properties": {
+          "metric_id": {"enum": ["cross_matter_bypass", "ticket_lease_bypass", "valid_reference_resolution", "invalid_reference_rejection"]},
+          "numerator": {"type": "integer", "minimum": 0},
+          "denominator": {"type": "integer", "minimum": 1},
+          "value": {"type": "number", "minimum": 0, "maximum": 1},
+          "passed": {"type": "boolean"}
+        }
+      }
+    },
+    "limitations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "passed": {"type": "boolean"}
+  }
+}

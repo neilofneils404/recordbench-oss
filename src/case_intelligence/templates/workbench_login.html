@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Sign in · {{ product_name }}</title>
+  <link rel="icon" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/case-intelligence.css">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-card" aria-labelledby="login-heading">
+      <img class="login-brand-mark" src="/static/favicon.svg" alt="">
+      <p class="eyebrow">{{ product_name }}</p>
+      <p class="login-tagline">{{ product_tagline }}</p>
+      {% if auth_mode == 'kerberos' %}
+      {% if signed_out %}
+      <h1 id="login-heading">Signed out of {{ product_name }}</h1>
+      <p class="login-introduction">Your RecordBench session is closed. Windows remains signed in on this computer, so RecordBench cannot require your password again.</p>
+
+      <div class="preview-boundary" role="note">
+        <strong>No case workspace is open.</strong>
+        <span>Continue when you are ready to create a fresh, auditable RecordBench session as the current Windows user. To use another account, switch Windows users first.</span>
+      </div>
+
+      <div class="identity-choices">
+        <a class="identity-choice" href="{{ kerberos_continue_url }}">
+          <span class="identity-avatar" aria-hidden="true">RB</span>
+          <span><strong>Open a new RecordBench session</strong><small>Continue as the current Windows user</small></span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+        </a>
+      </div>
+      {% else %}
+      <h1 id="login-heading">Windows sign-in</h1>
+      <p class="login-introduction">{{ product_name }} is verifying the Windows account already signed in on this domain computer.</p>
+
+      <div class="preview-boundary" role="note">
+        <strong>Your domain password is never entered here.</strong>
+        <span>The internal gateway validates a Kerberos ticket and RecordBench creates its own revocable, audited session.</span>
+      </div>
+
+      {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+      <div class="identity-choices">
+        <a class="identity-choice" href="{{ kerberos_continue_url }}">
+          <span class="identity-avatar" aria-hidden="true">RB</span>
+          <span><strong>Try Windows sign-in again</strong><small>Organization domain single sign-on</small></span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+        </a>
+      </div>
+
+      <p class="login-footnote">If this continues, confirm that this browser is allowed to use Windows Integrated Authentication for your RecordBench hostname.</p>
+      {% endif %}
+      {% elif auth_mode == 'oidc' %}
+      <h1 id="login-heading">Sign in with your organization account</h1>
+      <p class="login-introduction">Use your existing organization identity. {{ product_name }} keeps its own revocable session and applies matter membership after sign-in.</p>
+
+      <div class="preview-boundary" role="note">
+        <strong>Your password stays with the organization identity provider.</strong>
+        <span>{{ product_name }} receives a signed identity result; it does not collect or store your domain password.</span>
+      </div>
+
+      {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+      <div class="identity-choices">
+        <a class="identity-choice" href="{{ oidc_start_url }}">
+          <span class="identity-avatar" aria-hidden="true">RB</span>
+          <span><strong>Continue to organization sign-in</strong><small>OIDC identity provider</small></span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+        </a>
+      </div>
+
+      <p class="login-footnote">Access to each matter still requires an explicit case-team membership.</p>
+      {% elif auth_mode == 'local' %}
+      <h1 id="login-heading">Sign in to {{ product_name }}</h1>
+      <p class="login-introduction">Use the account issued by your RecordBench administrator. Your password is verified locally with Argon2id and is never stored in readable form.</p>
+
+      <div class="preview-boundary" role="note">
+        <strong>Private installation account.</strong>
+        <span>This mode is intended for offices without an identity provider. Matter membership and every attributed action still use a revocable server-side session.</span>
+      </div>
+
+      {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+      <form method="post" action="/auth/local" class="local-login-form">
+        <input type="hidden" name="login_challenge" value="{{ login_challenge }}">
+        <input type="hidden" name="next" value="{{ next_path }}">
+        <label for="local-username">Username</label>
+        <input id="local-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="128">
+        <label for="local-password">Password</label>
+        <input id="local-password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+        <button class="button button-primary" type="submit">Open RecordBench</button>
+      </form>
+
+      <p class="login-footnote">Access to each matter still requires an explicit case-team membership.</p>
+      {% else %}
+      <h1 id="login-heading">Choose a preview identity</h1>
+      <p class="login-introduction">This evaluation mode uses server-side sessions, matter membership, and audit attribution. The synthetic identities exercise those controls without connecting an external identity provider.</p>
+
+      <div class="preview-boundary" role="note">
+        <strong>Temporary evaluation access — not production authentication.</strong>
+        <span>Keep this mode bound to loopback. Choosing a synthetic identity is not authentication and must never protect confidential material.</span>
+      </div>
+
+      {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+      <div class="identity-choices" aria-label="Preview identities">
+        {% for identity in identities %}
+        <form method="post" action="/auth/login">
+          <input type="hidden" name="login_challenge" value="{{ login_challenge }}">
+          <input type="hidden" name="next" value="{{ next_path }}">
+          <button class="identity-choice" type="submit" name="identity_subject" value="{{ identity.provider_subject }}">
+            <span class="identity-avatar" aria-hidden="true">{{ identity.display_name.split()[0][0] }}{{ identity.display_name.split()[-1][0] }}</span>
+            <span><strong>{{ identity.display_name }}</strong><small>{{ identity.login_name }}</small></span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </form>
+        {% endfor %}
+      </div>
+
+      <p class="login-footnote">Do not enter real credentials in evaluation mode.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

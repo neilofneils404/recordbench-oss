@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+server_name="${RECORDBENCH_SERVER_NAME:-}"
+expected_principal="${RECORDBENCH_KERBEROS_PRINCIPAL:-}"
+source_keytab=/run/recordbench-secrets/recordbench.keytab
+source_secret=/run/recordbench-secrets/kerberos-proxy-secret
+runtime=/run/recordbench-auth
+
+if [[ ! "$server_name" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{1,252}[A-Za-z0-9]$ \
+    || ! "$expected_principal" =~ ^HTTP/[A-Za-z0-9.-]+@[A-Z0-9.-]+$ ]]; then
+    printf 'RecordBench Kerberos service identity is invalid.\n' >&2
+    exit 1
+fi
+for source in "$source_keytab" "$source_secret"; do
+    if [[ -L "$source" || ! -f "$source" || ! -r "$source" \
+        || "$(stat -c '%a' "$source")" != 600 ]]; then
+        printf 'RecordBench Kerberos material is unavailable or unsafe.\n' >&2
+        exit 1
+    fi
+done
+if ! klist -k "$source_keytab" 2>/dev/null | grep -Fq "$expected_principal"; then
+    printf 'The keytab does not contain the configured HTTP service principal.\n' >&2
+    exit 1
+fi
+
+proxy_secret="$(tr -d '\r\n' < "$source_secret")"
+if [[ ! "$proxy_secret" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
+    printf 'The Kerberos proxy secret is invalid.\n' >&2
+    exit 1
+fi
+install -d -m 0750 -o root -g www-data "$runtime"
+install -d -m 0700 -o www-data -g www-data "$runtime/rcache"
+install -m 0440 -o root -g www-data "$source_keytab" "$runtime/recordbench.keytab"
+printf 'RequestHeader set X-RecordBench-Proxy-Secret "%s"\n' "$proxy_secret" > "$runtime/proxy-secret.conf"
+chmod 0600 "$runtime/proxy-secret.conf"
+sed "s/__SERVER_NAME__/$server_name/g" \
+    /etc/apache2/sites-available/recordbench-auth.conf.template \
+    > /etc/apache2/sites-available/recordbench-auth.conf
+printf 'ServerName %s\n' "$server_name" > /etc/apache2/conf-available/recordbench-server-name.conf
+a2ensite recordbench-auth >/dev/null
+a2enconf recordbench-server-name >/dev/null
+unset proxy_secret
+apachectl configtest >/dev/null
+exec "$@"

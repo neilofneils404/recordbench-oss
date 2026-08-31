@@ -1,0 +1,41 @@
+limit_req_zone $binary_remote_addr zone=recordbench_login:10m rate=10r/m;
+
+server {
+    listen 8443 ssl;
+    server_name ${RECORDBENCH_SERVER_NAME};
+
+    ssl_certificate /run/tls/tls.crt;
+    ssl_certificate_key /run/tls/tls.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_tickets off;
+
+    server_tokens off;
+    client_max_body_size 101g;
+    proxy_request_buffering off;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+
+    location = /auth/local {
+        limit_req zone=recordbench_login burst=5 nodelay;
+        proxy_pass http://${RECORDBENCH_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location / {
+        proxy_pass http://${RECORDBENCH_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-RecordBench-Authenticated-User "";
+        proxy_set_header X-RecordBench-Proxy-Secret "";
+    }
+}

@@ -1,0 +1,66 @@
+{% if matter_readiness %}
+<section
+  class="matter-readiness state-{{ matter_readiness.state }}"
+  data-matter-readiness
+  data-status-url="{{ matter_readiness.status_url }}"
+  data-state="{{ matter_readiness.state }}"
+  data-can-query="{{ 'true' if matter_readiness.can_query else 'false' }}"
+  data-poll-after-ms="{{ matter_readiness.poll_after_ms }}"
+  aria-labelledby="matter-readiness-heading"
+>
+  <div class="matter-readiness-summary">
+    <span class="matter-readiness-mark" data-readiness-mark aria-hidden="true">
+      {% if matter_readiness.state == 'ready' %}
+      <svg viewBox="0 0 24 24"><path d="m5 12 4 4 10-10"/></svg>
+      {% elif matter_readiness.state == 'attention' %}
+      <svg viewBox="0 0 24 24"><path d="M12 4 3.5 20h17L12 4Z"/><path d="M12 9v5m0 3h.01"/></svg>
+      {% elif matter_readiness.state == 'empty' %}
+      <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 11h6M12 8v6"/></svg>
+      {% else %}
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>
+      {% endif %}
+    </span>
+    <div class="matter-readiness-copy" aria-live="polite" aria-atomic="true">
+      <strong id="matter-readiness-heading" data-readiness-headline>{{ matter_readiness.headline }}</strong>
+      <span data-readiness-summary>{{ matter_readiness.summary }}</span>
+      <small data-readiness-guidance>{{ matter_readiness.guidance }}</small>
+    </div>
+    <div class="matter-readiness-actions">
+      {% if matter_readiness.action_url %}
+      <a href="{{ matter_readiness.action_url }}" data-readiness-action>{{ matter_readiness.action_label }}</a>
+      {% else %}
+      <button type="button" data-processing-toggle aria-expanded="false" aria-controls="matter-processing-center">{{ matter_readiness.action_label }}</button>
+      {% endif %}
+      {% if matter_readiness.state == 'attention' %}
+      <button class="readiness-details-action" type="button" data-processing-toggle aria-expanded="false" aria-controls="matter-processing-center">Details</button>
+      {% endif %}
+    </div>
+  </div>
+  <div class="matter-readiness-track" aria-hidden="true"><span data-readiness-progress style="width: {{ matter_readiness.progress_percent }}%"></span></div>
+  <div class="matter-readiness-activity" data-readiness-activity {% if not matter_readiness.active_work %}hidden{% endif %}>
+    {% for item in matter_readiness.active_work %}<span data-work-key="{{ item.key }}"><strong>{{ item.count }}</strong> {{ item.label }}</span>{% endfor %}
+  </div>
+  <div class="matter-processing-center" id="matter-processing-center" data-processing-details hidden>
+    <div class="processing-stage-list" data-processing-stages>
+      {% for stage in matter_readiness.stages %}
+      <article class="processing-stage state-{{ stage.state }}" data-processing-stage="{{ stage.key }}">
+        <span class="processing-stage-icon" aria-hidden="true">
+          {% if stage.key == 'saved' %}<svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 11h6M9 15h6"/></svg>
+          {% elif stage.key == 'text' %}<svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM8 9h8M8 13h8M8 17h5"/></svg>
+          {% elif stage.key == 'index' %}<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5M7.5 10.5h6M10.5 7.5v6"/></svg>
+          {% else %}<svg viewBox="0 0 24 24"><path d="m5 12 4 4 10-10"/></svg>{% endif %}
+        </span>
+        <div><strong data-stage-label>{{ stage.label }}</strong><small data-stage-description>{{ stage.description }}</small></div>
+        <span class="processing-stage-count" data-stage-count>{{ stage.count_label }}</span>
+        <span class="processing-stage-state" data-stage-state>{{ stage.state_label }}</span>
+      </article>
+      {% endfor %}
+    </div>
+    <p class="processing-overview-note" data-processing-overview-note {% if not matter_readiness.overview_note %}hidden{% endif %}>{{ matter_readiness.overview_note }}</p>
+    <footer>
+      <span data-readiness-updated>Updated just now · Work continues if you leave this page.</span>
+      <a href="{{ matter_readiness.sources_url }}">Open Source Library</a>
+    </footer>
+  </div>
+</section>
+{% endif %}

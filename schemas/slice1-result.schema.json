@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://internal.invalid/case-intelligence/slice1-result.schema.json",
+  "title": "Slice 1A Executable Benchmark Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite_id", "suite_version", "suite_sha256", "fixture_id", "created_at", "case_count", "environment", "cases", "metrics", "limitations", "passed"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "suite_id": {"const": "slice1a-suite"},
+    "suite_version": {"type": "string", "minLength": 1},
+    "suite_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fixture_id": {"const": "slice1a-intake-v1"},
+    "created_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "case_count": {"const": 29},
+    "environment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dataset_classification", "confidential_data", "network_calls", "model_calls", "external_service_calls", "container_calls", "nas_calls", "mnt_calls", "production_selection"],
+      "properties": {
+        "dataset_classification": {"const": "synthetic"}, "confidential_data": {"const": false},
+        "network_calls": {"const": 0}, "model_calls": {"const": 0}, "external_service_calls": {"const": 0},
+        "container_calls": {"const": 0}, "nas_calls": {"const": 0}, "mnt_calls": {"const": 0},
+        "production_selection": {"const": false}
+      }
+    },
+    "cases": {
+      "type": "array", "minItems": 29, "maxItems": 29,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["case_id", "category", "operation", "matter_id", "expected_outcome", "observed_outcome", "passed"],
+        "properties": {
+          "case_id": {"type": "string", "minLength": 1},
+          "category": {"enum": ["inventory", "versioning", "job_ledger", "answerable", "unanswerable", "cross_matter", "unauthorized_scoring", "valid_citation", "invalid_citation", "ticket_bypass", "projection", "persistence"]},
+          "operation": {"type": "string", "minLength": 1}, "matter_id": {"type": "string", "minLength": 1},
+          "expected_outcome": {"const": "passed"}, "observed_outcome": {"enum": ["passed", "failed"]}, "passed": {"type": "boolean"}
+        }
+      }
+    },
+    "metrics": {
+      "type": "array", "minItems": 14, "maxItems": 14,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["metric_id", "numerator", "denominator", "passed"],
+        "properties": {
+          "metric_id": {"enum": ["inventory_outcomes", "versioning_outcomes", "job_ledger_outcomes", "answerable_selected_source_correctness", "correct_no_match_outcomes", "successful_cross_matter_reads", "unauthorized_requests_reaching_candidate_scoring", "valid_exact_citations_resolved", "invalid_or_stale_citations_rejected", "successful_ticket_authorization_or_replay_bypasses", "staff_projections_containing_forbidden_fields", "sqlite_persistence_restart_outcomes", "exact_lane_contributions", "lexical_lane_contributions"]},
+          "numerator": {"type": "integer", "minimum": 0}, "denominator": {"type": "integer", "minimum": 1}, "passed": {"type": "boolean"}
+        }
+      }
+    },
+    "limitations": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+    "passed": {"type": "boolean"}
+  }
+}

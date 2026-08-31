@@ -1,0 +1,229 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Review {{ media.row.name }} · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}source-review-page media-review-page{% endblock %}
+
+{% block content %}
+<main class="source-review-main media-review-main" data-media-review data-start-ms="{{ media.start_ms }}" data-transcript-page="{{ segment_page }}" data-transcript-pages="{{ segment_pages }}" data-transcript-filtered="{{ 'true' if transcript_query or transcript_speaker or transcript_flag else 'false' }}" data-media-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status" data-media-resume-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/resume" data-media-job-state="{{ media.job.state if media.job else 'unavailable' }}" data-playback-state="{{ media.document.playback_state or 'unknown' }}" data-summary-state="{{ media.summary.state if media.summary else 'not_created' }}">
+  <header class="source-review-heading media-review-heading">
+    <div>
+      <a class="back-link" href="/matters/{{ matter.slug }}/setup?view=list&amp;collection={{ media.row.collection_id }}#source-library">← Review sources</a>
+      <p class="eyebrow">{{ media.row.collection_name }} · {{ media.row.kind }} · {{ format_timestamp(media.document.duration_ms) }}</p>
+      <h1>{{ media.row.name }}</h1>
+      <p>{{ media.row.state }}{% if media.transcript %} · {{ media.transcript.segment_count }} transcript passage{% if media.transcript.segment_count != 1 %}s{% endif %} · {{ media.transcript.review_state|replace('_', ' ')|title }}{% endif %}</p>
+    </div>
+    <div class="source-review-actions">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/ask">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="button button-ink" type="submit" {% if media.document.state != 'ready' %}disabled{% endif %}>Ask using this source</button>
+      </form>
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/review-state">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="state" value="{{ 'unreviewed' if media.row.review_state == 'reviewed' else 'reviewed' }}">
+        <button class="button button-secondary" type="submit">{{ 'Mark unreviewed' if media.row.review_state == 'reviewed' else 'Mark reviewed' }}</button>
+      </form>
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/review-state">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="state" value="flagged">
+        <button class="button button-secondary" type="submit">{{ 'Flagged' if media.row.review_state == 'flagged' else 'Flag for follow-up' }}</button>
+      </form>
+    </div>
+  </header>
+  {% with active='sources' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% include "workbench_retention_notice.html" %}
+  {% include "workbench_review_sequence.html" %}
+
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+  {% if media.job and media.job.state in ('queued', 'running') %}
+  <section class="media-processing-card" aria-live="polite" data-media-job data-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status">
+    <div class="media-processing-copy">
+      <span class="processing-pulse" aria-hidden="true"></span>
+      <div><p class="eyebrow">Local media processing</p><h2 data-media-stage>{{ media.job.stage }}</h2><p data-media-message>{{ media.job.message or 'This recording is saved. You may leave this page while the durable job continues.' }}</p></div>
+      <strong data-media-percent>{{ (media.job.progress * 100)|round|int }}%</strong>
+    </div>
+    <div class="media-progress-track"><span data-media-progress style="width: {{ (media.job.progress * 100)|round|int }}%"></span></div>
+    <p class="media-processing-note">The workbench reports actual transcription and overview stages; this is not an estimated timer.</p>
+  </section>
+  {% elif media.job and media.job.state == 'failed' %}
+  <section class="media-processing-card media-processing-failed" role="alert">
+    <div><p class="eyebrow">Transcription needs attention</p><h2>{{ media.job.stage }}</h2><p>{{ media.job.message }}</p><p class="media-independent-note">The uploaded recording remains available for playback even without a transcript.</p></div>
+    <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">Try again</button></form>
+  </section>
+  {% endif %}
+
+  <div class="media-review-layout">
+    <aside class="media-player-column">
+      <section class="media-player-card" aria-labelledby="media-player-heading">
+        <header><div><p class="eyebrow">Matter source</p><h2 id="media-player-heading">Authenticated playback</h2></div><span class="media-current-time" data-media-time>00:00</span></header>
+        {% if media.player_kind == 'video' %}
+        <video id="matter-media-player" controls preload="metadata" data-media-player>
+          <source src="{{ media.playback_href }}" type="{{ media.playback_media_type }}">
+          Your browser cannot play this recording.
+        </video>
+        {% else %}
+        <audio id="matter-media-player" controls preload="metadata" data-media-player>
+          <source src="{{ media.playback_href }}" type="{{ media.playback_media_type }}">
+          Your browser cannot play this recording.
+        </audio>
+        {% endif %}
+        {% if media.player_kind == 'video' %}
+        <div class="playback-compatibility playback-{{ media.document.playback_state or 'unknown' }}" data-playback-status data-state="{{ media.document.playback_state or 'unknown' }}" aria-live="polite">
+          {% if media.document.playback_state in ('queued', 'processing', '') %}<span class="processing-pulse" aria-hidden="true"></span>{% else %}<span class="playback-status-mark" aria-hidden="true">{{ '✓' if media.document.playback_state in ('original', 'ready') else '!' }}</span>{% endif %}
+          <div><strong data-playback-title>{% if media.document.playback_state == 'ready' %}Browser playback ready{% elif media.document.playback_state == 'original' %}Original format ready{% elif media.document.playback_state == 'failed' %}Compatibility copy needs attention{% else %}Preparing browser playback{% endif %}</strong><small data-playback-message>{{ media.document.playback_message or 'Checking this video for browser-compatible playback.' }}</small></div>
+          {% if media.document.playback_state in ('failed', 'original', 'ready') %}<form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/playback/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="quiet-action" type="submit">{{ 'Try playback again' if media.document.playback_state == 'failed' else 'Playback trouble? Convert video' }}</button></form>{% endif %}
+        </div>
+        {% endif %}
+        <p class="media-security-note">Playback is available independently from transcription. It is membership-checked and byte-range streamed from this matter; when a browser copy is needed, RecordBench reuses compatible streams and converts only what is necessary while the original remains unchanged.</p>
+      </section>
+
+      {% if media.transcript %}
+      <section class="media-summary-card{% if media.summary and media.summary.state == 'stale' %} media-summary-stale{% endif %}" aria-labelledby="media-summary-heading">
+        <div class="media-card-heading">
+          <div><p class="eyebrow">Quick orientation</p><h2 id="media-summary-heading">AI transcript overview</h2></div>
+          {% if media.summary %}<span class="summary-state summary-{{ media.summary.state }}">{{ media.summary.state|title }}</span>{% endif %}
+        </div>
+        {% if media.summary and media.summary.state in ('ready', 'stale') %}
+          {% if media.summary.state == 'stale' %}
+          <div class="media-summary-warning" role="status"><strong>Refreshing after transcript changes.</strong> The previous overview is shown temporarily while RecordBench creates a current one.</div>
+          {% endif %}
+          <p class="media-summary-caution">{{ media.summary.payload.get('evidence_notice') or 'This is orientation from a machine-generated transcript, not a finding that an event occurred. Transcription and speaker labels may be mistaken; review the recording at the cited timestamps.' }}</p>
+          <ol class="media-summary-points">
+            {% for claim in media.summary.payload.get('claims', []) %}
+            <li>
+              <p>{{ claim.get('text') }}</p>
+              <div class="media-summary-citations">
+                {% for citation in claim.get('citations', []) %}
+                <button type="button" data-seek-ms="{{ citation.get('start_ms', 0) }}" aria-label="Play transcript at {{ citation.get('location', 'cited time') }}">▶ {{ citation.get('location', 'Transcript passage') }}</button>
+                {% endfor %}
+              </div>
+            </li>
+            {% endfor %}
+          </ol>
+          {% set coverage = media.summary.payload.get('coverage', {}) %}
+          <p class="media-summary-coverage">
+            {% if coverage.get('mode') == 'full' %}
+            Based on all {{ coverage.get('total_segment_count', media.transcript.segment_count) }} transcript passages.
+            {% else %}
+            Based on {{ coverage.get('covered_segment_count', 0) }} representative passages from {{ coverage.get('total_segment_count', media.transcript.segment_count) }} total. Search or review the full transcript for details.
+            {% endif %}
+          </p>
+          {% if media.summary.state == 'ready' %}
+          <div class="media-export-links">
+            <a class="button button-secondary" href="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/summary-export?format=docx">Export overview to Word</a>
+            <a class="button button-secondary" href="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/summary-export?format=markdown">Markdown</a>
+          </div>
+          {% else %}
+          <p class="media-summary-empty">Automatic refresh is queued. You may continue reviewing or leave this page.</p>
+          {% endif %}
+        {% elif media.summary and media.summary.state in ('queued', 'running') %}
+          <div class="media-summary-pending" aria-live="polite"><span class="processing-pulse" aria-hidden="true"></span><p><strong>Creating the overview now.</strong><br>You may continue reviewing or leave this page; the saved job will continue.</p></div>
+        {% elif media.summary and media.summary.state == 'failed' %}
+          <p class="media-summary-empty"><strong>The transcript is ready, but its overview could not be created.</strong> {{ media.summary.message }}</p>
+          <form class="media-summary-action" method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/summary">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="button button-primary" type="submit">Try overview again</button>
+          </form>
+        {% else %}
+          <div class="media-summary-pending" aria-live="polite"><span class="processing-pulse" aria-hidden="true"></span><p><strong>Preparing an automatic overview.</strong><br>The current transcript—not the original recording—will be sent to the local answer model.</p></div>
+        {% endif %}
+      </section>
+
+      <section class="speaker-review-card" aria-labelledby="speaker-review-heading">
+        <div class="media-card-heading"><div><p class="eyebrow">Human review</p><h2 id="speaker-review-heading">Speaker labels</h2></div><span>{{ media.speakers|length }} cluster{% if media.speakers|length != 1 %}s{% endif %}</span></div>
+        <p>Clusters are anonymous model output. A name becomes a case label only after you confirm it here.</p>
+        <div class="speaker-mapping-list">
+          {% for mapping in media.speakers %}
+          <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/speakers" class="speaker-mapping-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="speaker_cluster" value="{{ mapping.speaker_cluster }}">
+            <input type="hidden" name="expected_revision" value="{{ mapping.revision }}">
+            <input type="hidden" name="identity_state" value="confirmed">
+            <label><span>{{ mapping.speaker_cluster }} · {{ mapping.segment_count }} passage{% if mapping.segment_count != 1 %}s{% endif %}</span><input name="display_name" maxlength="120" value="{{ mapping.display_name }}" required></label>
+            <button class="button button-secondary" type="submit">{{ 'Update' if mapping.identity_state == 'confirmed' else 'Confirm' }}</button>
+            <small class="speaker-state speaker-{{ mapping.identity_state }}">{{ mapping.identity_state|title }}</small>
+          </form>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="media-export-card" aria-labelledby="media-export-heading">
+        <div class="media-card-heading"><div><p class="eyebrow">Work product</p><h2 id="media-export-heading">Export transcript</h2></div></div>
+        <p>Exports use the current reviewed text and confirmed case labels. Machine text remains available in CSV and JSON.</p>
+        <div class="media-export-links">
+          {% for value, label in [('docx', 'Word report'), ('markdown', 'Markdown'), ('txt', 'Text'), ('srt', 'SRT'), ('vtt', 'VTT'), ('csv', 'CSV'), ('json', 'JSON')] %}
+          <a class="button button-secondary" href="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/transcript-export?format={{ value }}">{{ label }}</a>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="media-clip-card" id="media-clips" aria-labelledby="media-clips-heading">
+        <div class="media-card-heading"><div><p class="eyebrow">Time-bounded export</p><h2 id="media-clips-heading">Clips</h2></div><span>{{ media.clips|length }}</span></div>
+        <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/clips" class="clip-builder" data-clip-form>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label><span>Clip title</span><input name="title" maxlength="160" placeholder="Interview excerpt" required></label>
+          <div class="clip-boundaries">
+            <label><span>Start</span><input value="{{ format_timestamp(media.start_ms) }}" readonly data-clip-start-display><input type="hidden" name="start_ms" value="{{ media.start_ms }}" data-clip-start></label>
+            <label><span>End</span><input value="{{ format_timestamp([media.start_ms + 30000, media.document.duration_ms]|min) }}" readonly data-clip-end-display><input type="hidden" name="end_ms" value="{{ [media.start_ms + 30000, media.document.duration_ms]|min }}" data-clip-end></label>
+          </div>
+          <div class="clip-builder-actions"><button class="quiet-action" type="button" data-set-clip-start>Use current time as start</button><button class="quiet-action" type="button" data-set-clip-end>Use current time as end</button><button class="button button-primary" type="submit">Save clip</button></div>
+          <small>One second to ten minutes. Clip media is rendered only when downloaded and is not retained as a second source.</small>
+        </form>
+        <div class="clip-list">
+          {% for clip in media.clips %}
+          <article><button type="button" class="clip-play" data-seek-ms="{{ clip.start_ms }}"><span>▶</span><strong>{{ clip.title }}</strong><small>{{ format_timestamp(clip.start_ms) }}–{{ format_timestamp(clip.end_ms) }}</small></button><div><a href="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/clips/{{ clip.clip_id }}/download">Export media</a><form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/clips/{{ clip.clip_id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Delete</button></form></div></article>
+          {% else %}
+          <p class="clip-empty">No clips saved yet. Play the recording, set start and end, and save the interval.</p>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+    </aside>
+
+    <section class="transcript-workspace" aria-labelledby="transcript-heading">
+      <header class="transcript-heading">
+        <div><p class="eyebrow">Searchable evidence</p><h2 id="transcript-heading">Synchronized transcript</h2></div>
+        {% if media.transcript %}
+        <div class="transcript-heading-actions">
+          <span>{{ segment_first }}–{{ segment_last }} of {{ segment_total }}</span>
+          <label class="transcript-follow"><input type="checkbox" data-transcript-follow checked> Follow playback</label>
+        </div>
+        {% endif %}
+      </header>
+      {% if media.transcript %}
+      <form class="transcript-filters" method="get" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}">
+        <label><span>Find in transcript</span><input type="search" name="q" value="{{ transcript_query }}" maxlength="240" placeholder="Words or speaker…"></label>
+        <label><span>Speaker</span><select name="speaker"><option value="">All speakers</option>{% for mapping in media.speakers %}<option value="{{ mapping.speaker_cluster }}" {% if transcript_speaker == mapping.speaker_cluster %}selected{% endif %}>{{ mapping.display_name }}</option>{% endfor %}</select></label>
+        <label><span>Review signal</span><select name="flag"><option value="">All passages</option><option value="low" {% if transcript_flag == 'low' %}selected{% endif %}>Low confidence</option><option value="overlap" {% if transcript_flag == 'overlap' %}selected{% endif %}>Overlapping speech</option><option value="edited" {% if transcript_flag == 'edited' %}selected{% endif %}>Human corrected</option></select></label>
+        <button class="button button-secondary" type="submit">Apply</button>
+        {% if transcript_query or transcript_speaker or transcript_flag %}<a href="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}">Clear</a>{% endif %}
+      </form>
+      <div class="transcript-list" data-transcript-list>
+        {% for segment in segments %}
+        <article id="segment-{{ segment.ordinal }}" class="transcript-segment{% if segment.segment_id == media.focus_segment_id %} focus-segment{% endif %}" data-transcript-segment data-start-ms="{{ segment.start_ms }}" data-end-ms="{{ segment.end_ms }}">
+          <button class="transcript-time" type="button" data-seek-ms="{{ segment.start_ms }}" aria-label="Play at {{ format_timestamp(segment.start_ms) }}">{{ format_timestamp(segment.start_ms) }}</button>
+          <div class="transcript-segment-body">
+            <div class="transcript-segment-meta"><strong>{{ segment.speaker_display_name }}</strong><span class="speaker-state speaker-{{ segment.speaker_identity_state }}">{{ segment.speaker_identity_state|title }}</span>{% if segment.low_confidence %}<span class="transcript-flag low">Low confidence</span>{% endif %}{% if segment.overlap %}<span class="transcript-flag overlap">Overlap</span>{% endif %}{% if segment.current_revision %}<span class="transcript-flag edited">Corrected r{{ segment.current_revision }}</span>{% endif %}</div>
+            <p>{{ segment.current_text }}</p>
+            <details class="transcript-editor"><summary>Review text</summary><form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/segments/{{ segment.segment_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_revision" value="{{ segment.current_revision }}"><label><span>Current reviewed text</span><textarea name="text" maxlength="20000" required>{{ segment.current_text }}</textarea></label><div><small>The machine draft is immutable. Saving adds an attributed revision and refreshes retrieval.</small><button class="button button-primary" type="submit">Save correction</button></div>{% if segment.current_revision %}<details class="machine-draft"><summary>Compare machine draft</summary><p>{{ segment.model_text }}</p></details>{% endif %}</form></details>
+          </div>
+        </article>
+        {% else %}
+        <div class="reader-empty"><strong>No transcript passages match these filters.</strong><span>Clear one or more filters to continue reviewing.</span></div>
+        {% endfor %}
+      </div>
+      {% if segment_pages > 1 %}
+      <nav class="source-pagination transcript-pagination" aria-label="Transcript pages">
+        {% if segment_page > 1 %}<a class="button button-secondary" href="?page={{ segment_page - 1 }}&amp;q={{ transcript_query|urlencode }}&amp;speaker={{ transcript_speaker|urlencode }}&amp;flag={{ transcript_flag|urlencode }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
+        <span>Page {{ segment_page }} of {{ segment_pages }}</span>
+        {% if segment_page < segment_pages %}<a class="button button-secondary" href="?page={{ segment_page + 1 }}&amp;q={{ transcript_query|urlencode }}&amp;speaker={{ transcript_speaker|urlencode }}&amp;flag={{ transcript_flag|urlencode }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
+      </nav>
+      {% endif %}
+      {% else %}
+      <div class="reader-empty transcript-empty"><strong>{{ media.document.processing_stage or 'Transcript is not ready yet.' }}</strong><span>{{ media.document.message or 'The durable transcription queue will update this review page.' }}</span><span>You can still play and review the uploaded recording on the left.</span></div>
+      {% endif %}
+    </section>
+  </div>
+</main>
+{% endblock %}

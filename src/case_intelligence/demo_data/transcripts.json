@@ -1,0 +1,14 @@
+{
+  "alpha": [
+    {"start": 0.0, "end": 2.0, "speaker": "Dispatcher", "text": "The initial call references the north entrance."},
+    {"start": 2.0, "end": 4.0, "speaker": "Witness", "text": "I logged a shared red bicycle near the north entrance."},
+    {"start": 4.0, "end": 6.0, "speaker": "Investigator", "text": "The bicycle entry was logged before the camera clock was checked."},
+    {"start": 6.0, "end": 8.0, "speaker": "Witness", "text": "That is the end of my synthetic statement."}
+  ],
+  "bravo": [
+    {"start": 0.0, "end": 2.0, "speaker": "Dispatcher", "text": "The initial call references the south entrance."},
+    {"start": 2.0, "end": 4.0, "speaker": "Witness", "text": "I logged a shared red bicycle near the south entrance."},
+    {"start": 4.0, "end": 6.0, "speaker": "Investigator", "text": "The bicycle entry was logged after the camera clock was checked."},
+    {"start": 6.0, "end": 8.0, "speaker": "Witness", "text": "That is the end of my separate synthetic statement."}
+  ]
+}

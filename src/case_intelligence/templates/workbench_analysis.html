@@ -1,0 +1,94 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Review map · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}analysis-page{% endblock %}
+
+{% block content %}
+<main class="analysis-shell">
+  <header class="matter-heading analysis-heading">
+    <div>
+      <p class="eyebrow">Review map</p>
+      <h1>{{ matter.display_name }}</h1>
+      <p>Orient the review around candidate people, places, dates, source comparisons, and wording conflicts.</p>
+    </div>
+    <form method="post" action="/matters/{{ matter.slug }}/analysis/refresh" data-working-form data-working-label="Scanning bounded source text…">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="button button-primary" type="submit" {% if not source_stats.ready %}disabled{% endif %}>Refresh review map</button>
+    </form>
+  </header>
+  {% with active='analysis' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% with work_product_active='analysis' %}{% include "workbench_work_product_tabs.html" %}{% endwith %}
+  {% include "workbench_retention_notice.html" %}
+
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+  <section class="analysis-caution">
+    <strong>Review candidates, not established facts.</strong>
+    <span>Names and dates come from extracted text; transcript errors, OCR errors, context, and differing source quality can change their meaning. Confirm or dismiss findings only after opening the cited passages.</span>
+  </section>
+
+  <section class="analysis-stats" aria-label="Review map status">
+    <div><strong>{{ source_stats.ready }}</strong><span>searchable sources</span></div>
+    <div><strong>{{ entities|length }}</strong><span>people and places</span></div>
+    <div><strong>{{ timeline|length }}</strong><span>date and event references</span></div>
+    <div><strong>{{ findings|length }}</strong><span>comparison candidates</span></div>
+  </section>
+
+  {% if latest_run %}
+  <p class="analysis-run-status">Last scan: {{ latest_run.finished_at[:16]|replace('T', ' ') if latest_run.finished_at else 'in progress' }} · {{ latest_run.unit_count }} extracted section{% if latest_run.unit_count != 1 %}s{% endif %}{% if latest_run.capped %} · bounded limit reached{% endif %}</p>
+  {% endif %}
+
+  <div class="analysis-grid">
+    <section class="analysis-panel" aria-labelledby="analysis-timeline-heading">
+      <header><div><p class="eyebrow">Chronology</p><h2 id="analysis-timeline-heading">Dates and events</h2></div><a href="/matters/{{ matter.slug }}/notebook?type=date">Open case notes</a></header>
+      <div class="analysis-list timeline-list">
+        {% for item in timeline[:100] %}
+        <article>
+          <span class="analysis-marker"></span>
+          <div><small>{{ item.date_label or item.item_type|title }} · {{ item.status|replace('_', ' ')|title }}</small><h3>{{ item.title }}</h3>{% if item.body %}<p>{{ item.body }}</p>{% endif %}
+            {% for reference in notebook_references[item.item_id][:2] %}{% if reference.support_token in available_support_tokens %}<a href="/matters/{{ matter.slug }}?support={{ reference.support_token }}#support-pane">{{ reference.source_name }} · {{ reference.location }}</a>{% endif %}{% endfor %}
+          </div>
+        </article>
+        {% else %}<div class="analysis-empty"><strong>No chronology candidates yet</strong><span>Refresh after sources become searchable, or add a dated case note.</span></div>{% endfor %}
+      </div>
+    </section>
+
+    <section class="analysis-panel" aria-labelledby="analysis-entities-heading">
+      <header><div><p class="eyebrow">Reference index</p><h2 id="analysis-entities-heading">People and places</h2></div><a href="/matters/{{ matter.slug }}/notebook">Manage notes</a></header>
+      <div class="entity-chip-grid">
+        {% for item in entities[:150] %}
+        <article><span>{{ item.item_type|title }}</span><h3>{{ item.title }}</h3><small>{{ item.status|replace('_', ' ')|title }} · {{ item.reference_count }} source reference{% if item.reference_count != 1 %}s{% endif %}</small>
+          {% for reference in notebook_references[item.item_id][:1] %}{% if reference.support_token in available_support_tokens %}<a href="/matters/{{ matter.slug }}?support={{ reference.support_token }}#support-pane">Open cited passage</a>{% endif %}{% endfor %}
+        </article>
+        {% else %}<div class="analysis-empty"><strong>No reference candidates yet</strong><span>The bounded scan looks for recognizable titles, names, places, and dates.</span></div>{% endfor %}
+      </div>
+    </section>
+  </div>
+
+  <section class="analysis-panel finding-panel" aria-labelledby="analysis-findings-heading">
+    <header><div><p class="eyebrow">Cross-source review</p><h2 id="analysis-findings-heading">Comparisons and possible conflicts</h2></div><span>{{ findings|length }} active</span></header>
+    <div class="finding-list">
+      {% for finding in findings %}
+      <article class="finding-card status-{{ finding.status|replace('_', '-') }}" id="{{ finding.finding_id }}">
+        <header><div><span class="finding-kind">{{ 'Possible conflict' if finding.kind == 'contradiction' else 'Compare sources' }}</span><span class="finding-status">{{ finding.status|replace('_', ' ')|title }}</span></div><h3>{{ finding.title }}</h3></header>
+        <p>{{ finding.summary }}</p>
+        <div class="finding-sources">
+          {% for reference in finding_references[finding.finding_id] %}
+          {% if reference.support_token in available_support_tokens %}<a href="/matters/{{ matter.slug }}?support={{ reference.support_token }}#support-pane"><strong>{{ reference.source_name }}</strong><span>{{ reference.location }}</span><q>{{ reference.excerpt[:260] }}{% if reference.excerpt|length > 260 %}…{% endif %}</q></a>{% else %}<span class="notebook-stale-reference">Source passage no longer available</span>{% endif %}
+          {% endfor %}
+        </div>
+        <footer>
+          <span>Machine-suggested review aid</span>
+          <div>
+            {% if finding.status != 'confirmed' %}<form method="post" action="/matters/{{ matter.slug }}/analysis/findings/{{ finding.finding_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="confirmed"><button class="confirm-action" type="submit">Confirm as reviewed</button></form>{% endif %}
+            {% if finding.status != 'needs_review' %}<form method="post" action="/matters/{{ matter.slug }}/analysis/findings/{{ finding.finding_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="needs_review"><button type="submit">Needs follow-up</button></form>{% endif %}
+            {% if finding.status != 'dismissed' %}<form method="post" action="/matters/{{ matter.slug }}/analysis/findings/{{ finding.finding_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="dismissed"><button type="submit">Dismiss</button></form>{% endif %}
+          </div>
+        </footer>
+      </article>
+      {% else %}<div class="analysis-empty"><strong>No cross-source candidates yet</strong><span>Refresh the map after two or more sources are searchable. A blank result does not mean the sources agree.</span></div>{% endfor %}
+    </div>
+  </section>
+</main>
+{% endblock %}

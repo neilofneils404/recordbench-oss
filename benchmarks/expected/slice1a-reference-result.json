@@ -1,0 +1,374 @@
+{
+  "case_count": 29,
+  "cases": [
+    {
+      "case_id": "inventory-new",
+      "category": "inventory",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "new_inventory",
+      "passed": true
+    },
+    {
+      "case_id": "inventory-unchanged",
+      "category": "inventory",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "unchanged_inventory",
+      "passed": true
+    },
+    {
+      "case_id": "inventory-unsupported",
+      "category": "inventory",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "unsupported_inventory",
+      "passed": true
+    },
+    {
+      "case_id": "version-changed",
+      "category": "versioning",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "changed_version",
+      "passed": true
+    },
+    {
+      "case_id": "version-missing",
+      "category": "versioning",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "missing",
+      "passed": true
+    },
+    {
+      "case_id": "version-reappeared",
+      "category": "versioning",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "reappeared",
+      "passed": true
+    },
+    {
+      "case_id": "version-no-move",
+      "category": "versioning",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "no_move_inference",
+      "passed": true
+    },
+    {
+      "case_id": "ledger-success",
+      "category": "job_ledger",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "derive_success",
+      "passed": true
+    },
+    {
+      "case_id": "ledger-idempotent",
+      "category": "job_ledger",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "derive_idempotent",
+      "passed": true
+    },
+    {
+      "case_id": "ledger-restart",
+      "category": "job_ledger",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "ledger_restart",
+      "passed": true
+    },
+    {
+      "case_id": "answer-alpha-exact",
+      "category": "answerable",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "alpha_exact",
+      "passed": true
+    },
+    {
+      "case_id": "answer-bravo-lexical",
+      "category": "answerable",
+      "expected_outcome": "passed",
+      "matter_id": "matter-bravo",
+      "observed_outcome": "passed",
+      "operation": "bravo_lexical",
+      "passed": true
+    },
+    {
+      "case_id": "no-match",
+      "category": "unanswerable",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "no_match",
+      "passed": true
+    },
+    {
+      "case_id": "cross-search",
+      "category": "cross_matter",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "cross_search",
+      "passed": true
+    },
+    {
+      "case_id": "cross-selection",
+      "category": "cross_matter",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "cross_selection",
+      "passed": true
+    },
+    {
+      "case_id": "cross-candidate",
+      "category": "cross_matter",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "mixed_candidate",
+      "passed": true
+    },
+    {
+      "case_id": "unauthorized-alpha",
+      "category": "unauthorized_scoring",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "unauthorized_alpha",
+      "passed": true
+    },
+    {
+      "case_id": "unauthorized-bravo",
+      "category": "unauthorized_scoring",
+      "expected_outcome": "passed",
+      "matter_id": "matter-bravo",
+      "observed_outcome": "passed",
+      "operation": "unauthorized_bravo",
+      "passed": true
+    },
+    {
+      "case_id": "citation-alpha",
+      "category": "valid_citation",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "valid_alpha",
+      "passed": true
+    },
+    {
+      "case_id": "citation-bravo",
+      "category": "valid_citation",
+      "expected_outcome": "passed",
+      "matter_id": "matter-bravo",
+      "observed_outcome": "passed",
+      "operation": "valid_bravo",
+      "passed": true
+    },
+    {
+      "case_id": "citation-tampered",
+      "category": "invalid_citation",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "tampered_excerpt",
+      "passed": true
+    },
+    {
+      "case_id": "citation-stale",
+      "category": "invalid_citation",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "stale_version",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-wrong-actor",
+      "category": "ticket_bypass",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "ticket_wrong_actor",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-stale",
+      "category": "ticket_bypass",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "ticket_stale",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-search",
+      "category": "ticket_bypass",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "search_mints_ticket",
+      "passed": true
+    },
+    {
+      "case_id": "projection-search",
+      "category": "projection",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "search_projection",
+      "passed": true
+    },
+    {
+      "case_id": "projection-ticket",
+      "category": "projection",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "ticket_projection",
+      "passed": true
+    },
+    {
+      "case_id": "persistence-catalog",
+      "category": "persistence",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "catalog_reopen",
+      "passed": true
+    },
+    {
+      "case_id": "persistence-derived",
+      "category": "persistence",
+      "expected_outcome": "passed",
+      "matter_id": "matter-alpha",
+      "observed_outcome": "passed",
+      "operation": "derived_reopen",
+      "passed": true
+    }
+  ],
+  "created_at": "2026-08-25T20:00:00Z",
+  "environment": {
+    "confidential_data": false,
+    "container_calls": 0,
+    "dataset_classification": "synthetic",
+    "external_service_calls": 0,
+    "mnt_calls": 0,
+    "model_calls": 0,
+    "nas_calls": 0,
+    "network_calls": 0,
+    "production_selection": false
+  },
+  "fixture_id": "slice1a-intake-v1",
+  "limitations": [
+    "SQLite is a development adapter; PostgreSQL remains the proposed production target.",
+    "Measured only on committed synthetic fixtures; no generated answer or production pipeline selection."
+  ],
+  "metrics": [
+    {
+      "denominator": 3,
+      "metric_id": "inventory_outcomes",
+      "numerator": 3,
+      "passed": true
+    },
+    {
+      "denominator": 4,
+      "metric_id": "versioning_outcomes",
+      "numerator": 4,
+      "passed": true
+    },
+    {
+      "denominator": 3,
+      "metric_id": "job_ledger_outcomes",
+      "numerator": 3,
+      "passed": true
+    },
+    {
+      "denominator": 2,
+      "metric_id": "answerable_selected_source_correctness",
+      "numerator": 2,
+      "passed": true
+    },
+    {
+      "denominator": 1,
+      "metric_id": "correct_no_match_outcomes",
+      "numerator": 1,
+      "passed": true
+    },
+    {
+      "denominator": 3,
+      "metric_id": "successful_cross_matter_reads",
+      "numerator": 0,
+      "passed": true
+    },
+    {
+      "denominator": 2,
+      "metric_id": "unauthorized_requests_reaching_candidate_scoring",
+      "numerator": 0,
+      "passed": true
+    },
+    {
+      "denominator": 2,
+      "metric_id": "valid_exact_citations_resolved",
+      "numerator": 2,
+      "passed": true
+    },
+    {
+      "denominator": 2,
+      "metric_id": "invalid_or_stale_citations_rejected",
+      "numerator": 2,
+      "passed": true
+    },
+    {
+      "denominator": 3,
+      "metric_id": "successful_ticket_authorization_or_replay_bypasses",
+      "numerator": 0,
+      "passed": true
+    },
+    {
+      "denominator": 2,
+      "metric_id": "staff_projections_containing_forbidden_fields",
+      "numerator": 0,
+      "passed": true
+    },
+    {
+      "denominator": 2,
+      "metric_id": "sqlite_persistence_restart_outcomes",
+      "numerator": 2,
+      "passed": true
+    },
+    {
+      "denominator": 1,
+      "metric_id": "exact_lane_contributions",
+      "numerator": 1,
+      "passed": true
+    },
+    {
+      "denominator": 1,
+      "metric_id": "lexical_lane_contributions",
+      "numerator": 1,
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "schema_version": "1.0",
+  "suite_id": "slice1a-suite",
+  "suite_sha256": "224a9f79b1c12e7ff449e78840359293cce5d27e47911d02b8fa371771b17976",
+  "suite_version": "1.0"
+}

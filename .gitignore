@@ -1,0 +1,63 @@
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build and packaging outputs
+build/
+dist/
+*.egg-info/
+
+# Coverage and local test output
+.coverage
+htmlcov/
+
+# Editors and operating-system metadata
+.vscode/
+.idea/
+.DS_Store
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cer
+*.der
+*.jks
+*.keystore
+config/source-locations.json
+config/recordbench.env
+config/transcription.env
+secrets/
+*.keytab
+*.pfx
+*.p12
+*.crt
+*.sqlite
+*.sqlite3
+*.db
+*.log
+compose.env
+installation.json
+
+# Generated local artifacts
+artifacts/
+.tmp/
+recordbench-node/
+runtime/
+state/
+backups/
+releases/
+
+# Transfer and recovery archives are outputs, not source.
+*.7z
+*.gz
+*.rar
+*.tar
+*.tgz
+*.zip

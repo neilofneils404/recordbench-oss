@@ -1,0 +1,170 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}{{ matter.display_name }} · Home · {{ product_name }}{% endblock %}
+{% block body_class %}matter-home-page{% endblock %}
+
+{% macro kind_icon(kind) -%}
+  {% if kind in ('AUDIO', 'VIDEO') %}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6v12l10-6-10-6Z"/></svg>
+  {% elif kind == 'CONVERSATION' %}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5Z"/></svg>
+  {% elif kind in ('NOTE', 'REPORT', 'ANALYSIS') %}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6"/></svg>
+  {% else %}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6M9 18h4"/></svg>{% endif %}
+{%- endmacro %}
+
+{% block content %}
+<main class="matter-home-main">
+  <header class="cockpit-heading">
+    <div>
+      <p class="eyebrow">Matter home</p>
+      <h1>{{ matter.display_name }}</h1>
+      <p>{{ matter.descriptor or 'Temporary, secure review workspace' }}</p>
+    </div>
+    <div class="cockpit-heading-status" aria-label="Matter source status">
+      <span class="status-dot{% if stats.attention %} attention{% elif stats.processing %} processing{% endif %}" aria-hidden="true"></span>
+      <span>{{ status_line or 'Ready for sources' }}</span>
+    </div>
+  </header>
+  {% with active='home' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% include "workbench_retention_notice.html" %}
+
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+  <section class="cockpit-hero" aria-labelledby="cockpit-hero-heading">
+    <div class="cockpit-thread-node" aria-hidden="true"></div>
+    <div class="cockpit-hero-copy">
+      <p class="eyebrow">Your next step</p>
+      <h2 id="cockpit-hero-heading">Pick up where you left off</h2>
+      {% if continue_item %}
+      <p>Return to <strong>{{ continue_item.title }}</strong><span> · {{ continue_item.detail }}</span></p>
+      {% elif stats.total %}
+      <p>Your sources are saved. Start with the oldest item waiting for review.</p>
+      {% else %}
+      <p>Add the material you want RecordBench to process and review.</p>
+      {% endif %}
+    </div>
+    <a class="button button-primary cockpit-primary-action" href="{{ continue_url }}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7L8 5Z"/></svg>
+      <span>{{ 'Continue review' if stats.total or continue_item else 'Start review' }}</span>
+    </a>
+  </section>
+
+  <section class="cockpit-task-launcher" data-task-launcher aria-labelledby="task-launcher-heading">
+    <header>
+      <h2 id="task-launcher-heading">What do you want to accomplish?</h2>
+      <p>Choose the kind of review that matches the job. You can move between them without losing work.</p>
+    </header>
+    <nav aria-label="Choose a review job">
+      <a href="/matters/{{ matter.slug }}#matter-question">
+        <span class="task-launcher-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v10H9l-4 4V5Z"/></svg></span>
+        <span><strong>Ask a focused question</strong><small>A direct cited answer from the best supporting passages.</small><em>Usually under a minute · not a collection-wide screen</em></span>
+        <svg class="task-launcher-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+      </a>
+      <a href="/matters/{{ matter.slug }}/research#new-research">
+        <span class="task-launcher-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4M8 11h6M11 8v6"/></svg></span>
+        <span><strong>Investigate a topic</strong><small>Several searches and comparisons with a saved evidence ledger.</small><em>Takes longer · broader than one answer, but not every source</em></span>
+        <svg class="task-launcher-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+      </a>
+      <a href="/matters/{{ matter.slug }}/full-review#review-controls">
+        <span class="task-launcher-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 7 2 2 4-4M13 7h6M5 13l2 2 4-4M13 13h6M5 19l2 2 4-4M13 19h6"/></svg></span>
+        <span><strong>Screen every source</strong><small>Apply one saved criterion to each searchable source.</small><em>Test on 50 first · time scales with the collection</em></span>
+        <svg class="task-launcher-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+      </a>
+      <a href="/matters/{{ matter.slug }}/setup?view=list&amp;sort=oldest#source-library">
+        <span class="task-launcher-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 11h6M9 15h6"/></svg></span>
+        <span><strong>Review records manually</strong><small>Open documents and recordings one at a time and track progress.</small><em>Complete at your pace · no model summary required</em></span>
+        <svg class="task-launcher-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+      </a>
+    </nav>
+  </section>
+
+  <div class="cockpit-thread">
+    <section class="cockpit-section continue-section" aria-labelledby="continue-heading">
+      <header><div><p class="eyebrow">Resume</p><h2 id="continue-heading">Continue working</h2></div></header>
+      {% if continue_item %}
+      <a class="cockpit-row continue-row" href="{{ continue_item.href }}" title="{{ continue_item.title }}">
+        <span class="cockpit-kind-icon">{{ kind_icon(continue_item.kind) }}</span>
+        <span class="cockpit-row-copy"><strong>{{ continue_item.title }}</strong><small>{{ continue_item.category|default('Review') }} · {{ continue_item.detail }}</small></span>
+        <span class="cockpit-row-action">Open <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+      </a>
+      {% elif stats.total %}
+      <a class="cockpit-row continue-row" href="/matters/{{ matter.slug }}">
+        <span class="cockpit-kind-icon">{{ kind_icon('CONVERSATION') }}</span>
+        <span class="cockpit-row-copy"><strong>Start reviewing this matter</strong><small>Ask questions or search across ready sources.</small></span>
+        <span class="cockpit-row-action">Open <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+      </a>
+      {% else %}
+      <a class="cockpit-row continue-row" href="/matters/{{ matter.slug }}/setup">
+        <span class="cockpit-kind-icon">{{ kind_icon('PDF') }}</span>
+        <span class="cockpit-row-copy"><strong>Add your first sources</strong><small>Documents, images, recordings, email, and spreadsheets.</small></span>
+        <span class="cockpit-row-action">Add <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+      </a>
+      {% endif %}
+    </section>
+
+    {% if attention_items or media_activity.active_count %}
+    <section class="cockpit-section attention-section" aria-labelledby="attention-heading">
+      <header>
+        <div><p class="eyebrow">Resolve first</p><h2 id="attention-heading">Needs attention</h2></div>
+        <span>{{ attention_items|length + media_activity.active_count }}</span>
+      </header>
+      {% if media_activity.active_count %}
+      <a class="cockpit-row attention-row processing" href="{{ media_activity.library_url }}">
+        <span class="cockpit-state-icon"><span class="processing-pulse" aria-hidden="true"></span></span>
+        <span class="cockpit-row-copy"><strong>{{ media_activity.active_count }} recording{% if media_activity.active_count != 1 %}s{% endif %} processing</strong><small>Saved background work is continuing. You may review other material.</small></span>
+        <span class="cockpit-row-action">View status <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+      </a>
+      {% endif %}
+      {% for item in attention_items %}
+      <a class="cockpit-row attention-row" href="{{ item.href }}" title="{{ item.title }}">
+        <span class="cockpit-state-icon warning" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 2.7 20h18.6L12 3Zm0 6v5m0 3h.01"/></svg></span>
+        <span class="cockpit-row-copy"><strong>{{ item.title }}</strong><small>{{ item.state }}</small></span>
+        <span class="cockpit-row-action">Review issue <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+      </a>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="cockpit-section queue-section" aria-labelledby="queue-heading">
+      <header>
+        <div><p class="eyebrow">Oldest ready first</p><h2 id="queue-heading">Review queue</h2></div>
+        <a href="/matters/{{ matter.slug }}/setup?view=list&amp;status=ready&amp;review=unreviewed&amp;sort=oldest#source-library">View full queue</a>
+      </header>
+      {% if queue_items %}
+      <div class="queue-table" role="table" aria-label="Sources waiting for review">
+        <div class="queue-table-head" role="row"><span role="columnheader">Source</span><span role="columnheader">Type</span><span role="columnheader">Size</span><span role="columnheader">Action</span></div>
+        {% for item in queue_items %}
+        <a class="queue-row" href="{{ item.href }}" role="row" title="{{ item.title }}">
+          <span class="queue-source" role="cell"><span class="cockpit-kind-icon">{{ kind_icon(item.kind) }}</span><span><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></span></span>
+          <span role="cell">{{ item.kind|title }}</span>
+          <span role="cell">{{ item.state }}</span>
+          <span class="queue-action" role="cell">Review next <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="cockpit-empty"><strong>{{ 'Review queue complete' if stats.total else 'No sources yet' }}</strong><span>{{ 'Every ready source is reviewed or flagged.' if stats.total else 'Add only the material you want to process in this temporary matter.' }}</span><a href="/matters/{{ matter.slug }}/setup">{{ 'Open sources' if stats.total else 'Add sources' }}</a></div>
+      {% endif %}
+    </section>
+
+    <section class="cockpit-section progress-section" aria-labelledby="progress-heading">
+      <header><div><p class="eyebrow">Matter progress</p><h2 id="progress-heading">{{ progress_percent }}% reviewed</h2></div><span>{{ stats.reviewed }} of {{ stats.total }}</span></header>
+      <div class="matter-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ progress_percent }}"><span style="width: {{ progress_percent }}%"></span></div>
+      <div class="progress-facts"><span><strong>{{ stats.reviewed }}</strong> reviewed</span><span><strong>{{ stats.flagged }}</strong> flagged</span><span><strong>{{ stats.attention }}</strong> need attention</span><span><strong>{{ stats.processing }}</strong> processing</span></div>
+    </section>
+
+    <section class="cockpit-section recent-section" aria-labelledby="recent-heading">
+      <header><div><p class="eyebrow">Your activity</p><h2 id="recent-heading">Recent work</h2></div></header>
+      {% for item in recent_work %}
+      <a class="cockpit-row recent-row" href="{{ item.href }}" title="{{ item.title }}">
+        <span class="cockpit-kind-icon">{{ kind_icon(item.kind) }}</span>
+        <span class="cockpit-row-copy"><strong>{{ item.title }}</strong><small>{{ item.category }} · {{ item.detail }}</small></span>
+        <time datetime="{{ item.updated_at }}">{{ item.updated_at[:16]|replace('T', ' ') }}</time>
+      </a>
+      {% else %}
+      <div class="cockpit-empty compact"><strong>Your review trail starts here</strong><span>Opened sources, conversations, notes, review maps, and reports will appear for you.</span></div>
+      {% endfor %}
+    </section>
+  </div>
+
+</main>
+{% endblock %}

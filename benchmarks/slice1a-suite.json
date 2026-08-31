@@ -1,0 +1,213 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "slice1a-suite",
+  "suite_version": "1.0",
+  "fixture_id": "slice1a-intake-v1",
+  "fixture_path": "tests/fixtures/synthetic/slice1-intake/v1",
+  "evaluation_time": "2026-08-25T20:00:00Z",
+  "cases": [
+    {
+      "case_id": "inventory-new",
+      "category": "inventory",
+      "operation": "new_inventory",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "inventory-unchanged",
+      "category": "inventory",
+      "operation": "unchanged_inventory",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "inventory-unsupported",
+      "category": "inventory",
+      "operation": "unsupported_inventory",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "version-changed",
+      "category": "versioning",
+      "operation": "changed_version",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "version-missing",
+      "category": "versioning",
+      "operation": "missing",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "version-reappeared",
+      "category": "versioning",
+      "operation": "reappeared",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "version-no-move",
+      "category": "versioning",
+      "operation": "no_move_inference",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "ledger-success",
+      "category": "job_ledger",
+      "operation": "derive_success",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "ledger-idempotent",
+      "category": "job_ledger",
+      "operation": "derive_idempotent",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "ledger-restart",
+      "category": "job_ledger",
+      "operation": "ledger_restart",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "answer-alpha-exact",
+      "category": "answerable",
+      "operation": "alpha_exact",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "answer-bravo-lexical",
+      "category": "answerable",
+      "operation": "bravo_lexical",
+      "matter_id": "matter-bravo",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "no-match",
+      "category": "unanswerable",
+      "operation": "no_match",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "cross-search",
+      "category": "cross_matter",
+      "operation": "cross_search",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "cross-selection",
+      "category": "cross_matter",
+      "operation": "cross_selection",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "cross-candidate",
+      "category": "cross_matter",
+      "operation": "mixed_candidate",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "unauthorized-alpha",
+      "category": "unauthorized_scoring",
+      "operation": "unauthorized_alpha",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "unauthorized-bravo",
+      "category": "unauthorized_scoring",
+      "operation": "unauthorized_bravo",
+      "matter_id": "matter-bravo",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "citation-alpha",
+      "category": "valid_citation",
+      "operation": "valid_alpha",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "citation-bravo",
+      "category": "valid_citation",
+      "operation": "valid_bravo",
+      "matter_id": "matter-bravo",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "citation-tampered",
+      "category": "invalid_citation",
+      "operation": "tampered_excerpt",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "citation-stale",
+      "category": "invalid_citation",
+      "operation": "stale_version",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "ticket-wrong-actor",
+      "category": "ticket_bypass",
+      "operation": "ticket_wrong_actor",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "ticket-stale",
+      "category": "ticket_bypass",
+      "operation": "ticket_stale",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "ticket-search",
+      "category": "ticket_bypass",
+      "operation": "search_mints_ticket",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "projection-search",
+      "category": "projection",
+      "operation": "search_projection",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "projection-ticket",
+      "category": "projection",
+      "operation": "ticket_projection",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "persistence-catalog",
+      "category": "persistence",
+      "operation": "catalog_reopen",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    },
+    {
+      "case_id": "persistence-derived",
+      "category": "persistence",
+      "operation": "derived_reopen",
+      "matter_id": "matter-alpha",
+      "expected_outcome": "passed"
+    }
+  ]
+}

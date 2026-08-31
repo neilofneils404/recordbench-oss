@@ -1,0 +1,120 @@
+{
+  "confidential_data": false,
+  "fixture_id": "slice0-two-matter-v1",
+  "matters": [
+    {
+      "canary": "CITRINE-FALCON-731",
+      "display_name": "Synthetic Matter Alpha",
+      "matter_id": "matter-alpha",
+      "sources": [
+        {
+          "byte_size": 114,
+          "kind": "text",
+          "path": "matter-alpha/report.txt",
+          "representation": {
+            "byte_size": 114,
+            "path": "matter-alpha/report-page.txt",
+            "representation_id": "representation-matter-alpha-text",
+            "segment_id": "segment-matter-alpha-text-1",
+            "sha256": "28d64b1f5b72b5182899fdb6465fa1c0bc23e72e8de80e39cfb7793275fe8cd2"
+          },
+          "searchable_text": "Fictional report for Synthetic Matter Alpha. Canary CITRINE-FALCON-731. A witness mentioned a shared red bicycle.\n CITRINE-FALCON-731\nshared red bicycle\n {\"segments\":[{\"end_ms\":100,\"segment_id\":\"segment-matter-alpha-audio-1\",\"start_ms\":0,\"text\":\"CITRINE-FALCON-731 shared red bicycle\"}]}\n",
+          "sha256": "28d64b1f5b72b5182899fdb6465fa1c0bc23e72e8de80e39cfb7793275fe8cd2",
+          "source_id": "source-matter-alpha-text",
+          "source_version_id": "version-matter-alpha-text"
+        },
+        {
+          "byte_size": 158,
+          "kind": "image",
+          "path": "matter-alpha/image.svg",
+          "representation": {
+            "byte_size": 38,
+            "path": "matter-alpha/image-ocr.txt",
+            "representation_id": "representation-matter-alpha-image",
+            "segment_id": "segment-matter-alpha-image-1",
+            "sha256": "b794db5f1a37b6d239f12a94708be86874535f06384e72f590e963796cd1a53c"
+          },
+          "searchable_text": "Fictional report for Synthetic Matter Alpha. Canary CITRINE-FALCON-731. A witness mentioned a shared red bicycle.\n CITRINE-FALCON-731\nshared red bicycle\n {\"segments\":[{\"end_ms\":100,\"segment_id\":\"segment-matter-alpha-audio-1\",\"start_ms\":0,\"text\":\"CITRINE-FALCON-731 shared red bicycle\"}]}\n",
+          "sha256": "52aa5307e7768814acc9e59c34491ef9420dc34661f767bf4e61d28fd86db0c0",
+          "source_id": "source-matter-alpha-image",
+          "source_version_id": "version-matter-alpha-image"
+        },
+        {
+          "byte_size": 1644,
+          "kind": "audio",
+          "path": "matter-alpha/audio.wav",
+          "representation": {
+            "byte_size": 134,
+            "path": "matter-alpha/audio-transcript.json",
+            "representation_id": "representation-matter-alpha-audio",
+            "segment_id": "segment-matter-alpha-audio-1",
+            "sha256": "af49acf1ab25a581ba18b6cd2931cb5423794381dcf11a387e79b60117eb91b0"
+          },
+          "searchable_text": "Fictional report for Synthetic Matter Alpha. Canary CITRINE-FALCON-731. A witness mentioned a shared red bicycle.\n CITRINE-FALCON-731\nshared red bicycle\n {\"segments\":[{\"end_ms\":100,\"segment_id\":\"segment-matter-alpha-audio-1\",\"start_ms\":0,\"text\":\"CITRINE-FALCON-731 shared red bicycle\"}]}\n",
+          "sha256": "20702f3b44ece6beba2239c39e23aaad68455abfcc1ebc3c656de60eb36a73c8",
+          "source_id": "source-matter-alpha-audio",
+          "source_version_id": "version-matter-alpha-audio"
+        }
+      ]
+    },
+    {
+      "canary": "VIOLET-HARBOR-842",
+      "display_name": "Synthetic Matter Bravo",
+      "matter_id": "matter-bravo",
+      "sources": [
+        {
+          "byte_size": 113,
+          "kind": "text",
+          "path": "matter-bravo/report.txt",
+          "representation": {
+            "byte_size": 113,
+            "path": "matter-bravo/report-page.txt",
+            "representation_id": "representation-matter-bravo-text",
+            "segment_id": "segment-matter-bravo-text-1",
+            "sha256": "3bc7b2b2a2b734089d5bf093072e4b2a3d0358ba10ef1cf09e07c283ffd3538c"
+          },
+          "searchable_text": "Fictional report for Synthetic Matter Bravo. Canary VIOLET-HARBOR-842. A witness mentioned a shared red bicycle.\n VIOLET-HARBOR-842\nshared red bicycle\n {\"segments\":[{\"end_ms\":100,\"segment_id\":\"segment-matter-bravo-audio-1\",\"start_ms\":0,\"text\":\"VIOLET-HARBOR-842 shared red bicycle\"}]}\n",
+          "sha256": "3bc7b2b2a2b734089d5bf093072e4b2a3d0358ba10ef1cf09e07c283ffd3538c",
+          "source_id": "source-matter-bravo-text",
+          "source_version_id": "version-matter-bravo-text"
+        },
+        {
+          "byte_size": 157,
+          "kind": "image",
+          "path": "matter-bravo/image.svg",
+          "representation": {
+            "byte_size": 37,
+            "path": "matter-bravo/image-ocr.txt",
+            "representation_id": "representation-matter-bravo-image",
+            "segment_id": "segment-matter-bravo-image-1",
+            "sha256": "bf86c3a396a113517bdf2fda7553b8b7d6162b474cde4ea9ccbff1c86eff0715"
+          },
+          "searchable_text": "Fictional report for Synthetic Matter Bravo. Canary VIOLET-HARBOR-842. A witness mentioned a shared red bicycle.\n VIOLET-HARBOR-842\nshared red bicycle\n {\"segments\":[{\"end_ms\":100,\"segment_id\":\"segment-matter-bravo-audio-1\",\"start_ms\":0,\"text\":\"VIOLET-HARBOR-842 shared red bicycle\"}]}\n",
+          "sha256": "0835fdcf0d4a4270fa7c59c9b0163cab5683df4d166a9e7ca7159c001ecd1274",
+          "source_id": "source-matter-bravo-image",
+          "source_version_id": "version-matter-bravo-image"
+        },
+        {
+          "byte_size": 1644,
+          "kind": "audio",
+          "path": "matter-bravo/audio.wav",
+          "representation": {
+            "byte_size": 133,
+            "path": "matter-bravo/audio-transcript.json",
+            "representation_id": "representation-matter-bravo-audio",
+            "segment_id": "segment-matter-bravo-audio-1",
+            "sha256": "1a515925629baac54a27054fd582f249d8fb1382bee7edba1996b1b943fece7b"
+          },
+          "searchable_text": "Fictional report for Synthetic Matter Bravo. Canary VIOLET-HARBOR-842. A witness mentioned a shared red bicycle.\n VIOLET-HARBOR-842\nshared red bicycle\n {\"segments\":[{\"end_ms\":100,\"segment_id\":\"segment-matter-bravo-audio-1\",\"start_ms\":0,\"text\":\"VIOLET-HARBOR-842 shared red bicycle\"}]}\n",
+          "sha256": "2f1852e8cc385984143fe19889ee238ad369436499a671a3d8cea7e92130fa1f",
+          "source_id": "source-matter-bravo-audio",
+          "source_version_id": "version-matter-bravo-audio"
+        }
+      ]
+    }
+  ],
+  "provenance": "synthetic",
+  "requires_model": false,
+  "requires_network": false,
+  "schema_version": "1.0"
+}

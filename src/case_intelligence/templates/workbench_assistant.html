@@ -1,0 +1,127 @@
+<aside class="matter-assistant" data-assistant-dock data-assistant-presentation="{{ assistant.presentation }}" data-fragment-url="{{ assistant.fragment_url }}" data-matter-id="{{ matter.matter_id }}" data-conversation-id="{{ assistant.conversation.conversation_id }}" data-matter-ready="{{ 'true' if assistant.matter_ready else 'false' }}" aria-label="Ask RecordBench">
+  <button class="assistant-collapsed-tab" type="button" data-assistant-expand aria-label="Open Ask RecordBench">
+    <span class="assistant-brand-mark" aria-hidden="true">RB</span>
+    <span><strong>{{ assistant.display_label }}</strong><small data-assistant-readiness-copy>{{ assistant.searchable_source_count }} of {{ assistant.readiness.total_count }} searchable{% if assistant.readiness.partial_query %} · {{ assistant.readiness.excluded_count }} excluded{% endif %}</small></span>
+  </button>
+  <div class="assistant-panel">
+    <header class="assistant-header">
+      <div><span>Ask RecordBench</span><strong>{{ assistant.display_label }}</strong></div>
+      <div>
+        <a href="{{ assistant.open_url }}" aria-label="Open full Review and manage chats">Full conversation</a>
+        <button type="button" data-assistant-collapse aria-label="Collapse Ask RecordBench">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 6-6 6 6 6"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="assistant-conversation-bar">
+      <label for="assistant-conversation-picker">Chat</label>
+      <select id="assistant-conversation-picker" data-assistant-conversation-picker aria-label="Choose a saved chat">
+        {% for item in assistant.conversation_choices %}
+        <option value="{{ item.conversation_id }}" {% if item.conversation_id == assistant.conversation.conversation_id %}selected{% endif %}>{{ 'Pinned · ' if item.is_pinned else '' }}{{ item.title }} · {{ item.message_count }} {{ 'message' if item.message_count == 1 else 'messages' }}</option>
+        {% endfor %}
+        {% if assistant.conversation_total > assistant.conversation_choices|length %}<option value="" disabled>More chats are available in full Review</option>{% endif %}
+      </select>
+      <button type="button" data-assistant-new-chat aria-label="Start a new chat">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>New chat</span>
+      </button>
+    </div>
+
+    <div class="assistant-source-coverage" data-assistant-coverage {% if not assistant.readiness.partial_query %}hidden{% endif %} role="note">
+      <div><strong>Searchable subset</strong><span data-assistant-coverage-copy>{{ assistant.readiness.coverage_notice }}</span></div>
+      <a data-assistant-coverage-action href="{{ assistant.readiness.action_url or assistant.readiness.sources_url }}">Review issues</a>
+    </div>
+
+    <div class="assistant-thread" data-assistant-thread data-has-messages="{{ 'true' if assistant.messages else 'false' }}" aria-live="polite">
+      {% for message in assistant.messages %}
+      {% if message.role == 'user' %}
+      <article class="assistant-message assistant-user-message">
+        <span class="assistant-message-avatar" aria-hidden="true">{{ actor_initials }}</span>
+        <div><strong>You</strong><p>{{ message.content }}</p></div>
+      </article>
+      {% else %}
+      <article class="assistant-message assistant-recordbench-message">
+        <span class="assistant-message-avatar assistant-brand-mark" aria-hidden="true">RB</span>
+        <div>
+          <strong>RecordBench</strong>
+          {% if message.payload.source_coverage and message.payload.source_coverage.mode == 'partial' %}
+          <small class="assistant-answer-coverage">Source coverage when created · {{ message.payload.source_coverage.notice }}</small>
+          {% endif %}
+          {% if message.payload.review_scope %}
+          <small class="assistant-answer-basis{% if message.payload.review_scope.collection_wide_request %} collection-wide{% endif %}" title="{{ message.payload.review_scope.notice }}">
+            <strong>{{ 'Completeness caution' if message.payload.review_scope.collection_wide_request else 'Focused answer' }}</strong>
+            <span>{{ message.payload.review_scope.cited_source_count }} cited source{% if message.payload.review_scope.cited_source_count != 1 %}s{% endif %} · {{ message.payload.review_scope.searchable_source_count }} searchable indexed</span>
+            {% if message.payload.review_scope.collection_wide_request %}<span>{{ message.payload.review_scope.notice }}</span>{% endif %}
+          </small>
+          {% endif %}
+          {% if message.payload.kind == 'generated' %}
+            <p>{{ message.payload.introduction }}</p>
+            {% if message.payload.evidence_notice %}<small class="assistant-evidence-note">Machine transcript · verify wording and speaker identity against the recording.</small>{% endif %}
+            <ol class="assistant-claims">
+              {% for claim in message.payload.claims %}
+              <li>{{ claim.text }}
+                {% if claim.citations %}<span class="assistant-citations">{% for citation in claim.citations[:2] %}<a href="{{ citation_href(citation, matter.slug, assistant.conversation.conversation_id) }}">{{ citation.source_name }} · {{ citation.location }}</a>{% endfor %}</span>{% endif %}
+              </li>
+              {% endfor %}
+            </ol>
+            {% if message.payload.limitation %}<p class="assistant-limitation"><strong>Limitation:</strong> {{ message.payload.limitation.text }}</p>{% endif %}
+          {% elif message.payload.kind == 'not-supported' %}
+            <p>{{ message.payload.missing_information or message.content }}</p>
+            {% if message.payload.source_matches %}<span class="assistant-citations">{% for citation in message.payload.source_matches[:3] %}<a href="{{ citation_href(citation, matter.slug, assistant.conversation.conversation_id) }}">Review {{ citation.source_name }} · {{ citation.location }}</a>{% endfor %}</span>{% endif %}
+          {% else %}
+            <p>{{ message.content }}</p>
+          {% endif %}
+        </div>
+      </article>
+      {% endif %}
+      {% else %}
+      <div class="assistant-empty">
+        <span class="assistant-brand-mark" aria-hidden="true">RB</span>
+        <h2>Ask while you review</h2>
+        <p>I’ll answer from this matter’s searchable sources and keep citations attached.</p>
+        {% if assistant.matter_ready %}
+        <div class="assistant-suggestions" aria-label="Suggested questions">
+          <button type="button" data-assistant-suggestion="Summarize the records in this matter.">Summarize the records</button>
+          <button type="button" data-assistant-suggestion="Which people and organizations are mentioned in these records?">Find people and organizations</button>
+          <button type="button" data-assistant-suggestion="What dates and events should I review first?">Review dates and events</button>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="assistant-status{% if assistant.active_answer and assistant.active_answer.state in ['failed', 'cancelled'] %} is-terminal{% if assistant.active_answer.state == 'failed' %} is-failed{% endif %}{% endif %}" data-assistant-status data-status-url="{{ assistant.active_answer.status_url if assistant.active_answer else '' }}" data-state="{{ assistant.active_answer.state if assistant.active_answer else '' }}" {% if not assistant.active_answer %}hidden{% endif %} role="status">
+      <span class="assistant-status-pulse" aria-hidden="true"></span>
+      <span data-assistant-status-copy>{% if assistant.active_answer and assistant.active_answer.state in ['failed', 'cancelled'] %}{{ assistant.active_answer.message }}{% else %}{{ assistant.active_answer.stage_label if assistant.active_answer else 'Request saved' }}{% if assistant.active_answer and assistant.active_answer.queue_position %} · {{ assistant.active_answer.queue_position }} in queue{% endif %}{% endif %}</span>
+      {% if assistant.active_answer and assistant.active_answer.can_cancel %}<button type="button" data-assistant-cancel data-action-url="{{ assistant.active_answer.cancel_url }}">Cancel</button>{% endif %}
+    </div>
+
+    <div class="assistant-recovery" data-assistant-recovery role="alert" hidden>
+      <span>We couldn’t start this chat. Your question is still here.</span>
+      <div>
+        <button type="button" data-assistant-retry-submit>Try again</button>
+        <button type="button" data-assistant-dismiss-error>Dismiss</button>
+      </div>
+    </div>
+
+    <form class="assistant-composer" method="post" action="/matters/{{ matter.slug }}/ask" data-assistant-question-form data-sources-ready="{{ 'true' if assistant.matter_ready else 'false' }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="conversation" value="{{ assistant.conversation.conversation_id }}">
+      <input type="hidden" name="request_key" value="{{ assistant.request_key }}" data-assistant-request-key>
+      <label class="visually-hidden" for="assistant-source-set">Sources for this answer</label>
+      <select id="assistant-source-set" name="source_set" aria-label="Sources for this answer">
+        <option value="">All searchable sources ({{ assistant.searchable_source_count }})</option>
+        {% for set in assistant.source_sets %}<option value="{{ set.source_set_id }}">{{ set.name }} ({{ set.source_count }})</option>{% endfor %}
+      </select>
+      <div>
+        <label class="visually-hidden" for="assistant-question">Ask about this matter</label>
+        <textarea id="assistant-question" name="question" rows="1" maxlength="2000" required placeholder="Ask about this matter…" {% if not assistant.matter_ready or (assistant.active_answer and assistant.active_answer.state in ['queued', 'running']) %}disabled{% endif %}></textarea>
+        <button type="submit" aria-label="Send question" {% if not assistant.matter_ready or (assistant.active_answer and assistant.active_answer.state in ['queued', 'running']) %}disabled{% endif %}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-3.2-7.3L3 10.5 21 3Zm-10.7 10.7L15 9"/></svg>
+        </button>
+      </div>
+      <small data-assistant-readiness-hint>{% if assistant.readiness.partial_query %}{{ assistant.readiness.coverage_notice }}{% elif assistant.matter_ready %}Answers stay grounded in the selected matter sources.{% elif assistant.readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ assistant.readiness.guidance }}{% endif %}</small>
+    </form>
+  </div>
+</aside>

@@ -1,0 +1,616 @@
+{
+  "case_count": 46,
+  "cases": [
+    {
+      "case_id": "alpha-shared-term",
+      "category": "retrieval",
+      "expected_outcome": "matched",
+      "expected_source_version_ids": [
+        "version-matter-alpha-text",
+        "version-matter-alpha-image",
+        "version-matter-alpha-audio"
+      ],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "matched",
+      "observed_source_version_ids": [
+        "version-matter-alpha-text",
+        "version-matter-alpha-image",
+        "version-matter-alpha-audio"
+      ],
+      "operation": "search",
+      "passed": true
+    },
+    {
+      "case_id": "bravo-shared-term",
+      "category": "retrieval",
+      "expected_outcome": "matched",
+      "expected_source_version_ids": [
+        "version-matter-bravo-text",
+        "version-matter-bravo-image",
+        "version-matter-bravo-audio"
+      ],
+      "matter_id": "matter-bravo",
+      "observed_outcome": "matched",
+      "observed_source_version_ids": [
+        "version-matter-bravo-text",
+        "version-matter-bravo-image",
+        "version-matter-bravo-audio"
+      ],
+      "operation": "search",
+      "passed": true
+    },
+    {
+      "case_id": "alpha-search-bravo",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-bravo",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "search",
+      "passed": true
+    },
+    {
+      "case_id": "bravo-search-alpha",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "search",
+      "passed": true
+    },
+    {
+      "case_id": "alpha-source-bravo",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-bravo",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "source_lookup",
+      "passed": true
+    },
+    {
+      "case_id": "bravo-source-alpha",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "source_lookup",
+      "passed": true
+    },
+    {
+      "case_id": "alpha-foreign-source",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "source_lookup",
+      "passed": true
+    },
+    {
+      "case_id": "bravo-foreign-source",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-bravo",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "source_lookup",
+      "passed": true
+    },
+    {
+      "case_id": "mixed-retrieval-results",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "mixed_results",
+      "passed": true
+    },
+    {
+      "case_id": "closing-retrieval",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "content_guard",
+      "passed": true
+    },
+    {
+      "case_id": "closed-retrieval",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "content_guard",
+      "passed": true
+    },
+    {
+      "case_id": "closing-source-resolution",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "content_guard",
+      "passed": true
+    },
+    {
+      "case_id": "closed-source-resolution",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "content_guard",
+      "passed": true
+    },
+    {
+      "case_id": "unknown-actor-search",
+      "category": "cross_matter_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "search",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-wrong-actor",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "wrong_actor",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-wrong-action",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "wrong_action",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-changed-object",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "changed_object",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-changed-revision",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "changed_revision",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-closing-ticket",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "closing_ticket",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-unknown-ticket",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "unknown_ticket",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-malformed-uri",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "malformed_uri",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-expired",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "expired",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-replay",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "replay",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-revoked-ticket",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "revoked_ticket",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-wrong-helper-lease",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "wrong_helper_lease",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-changed-revision-lease",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "changed_revision_lease",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-revoked-actor-lease",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "revoked_actor_lease",
+      "passed": true
+    },
+    {
+      "case_id": "ticket-closing-lease",
+      "category": "ticket_lease_bypass",
+      "expected_outcome": "denied",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "denied",
+      "observed_source_version_ids": [],
+      "operation": "closing_lease",
+      "passed": true
+    },
+    {
+      "case_id": "valid-page",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "valid-printed-page",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "valid-bates",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "valid-character-range",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "valid-line-range",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "valid-image-region",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "valid-image-representation",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "valid-image-segment",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "valid-audio-timestamp",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "valid-audio-segment",
+      "category": "valid_reference_resolution",
+      "expected_outcome": "resolved",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "resolved",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "invalid-impossible-page",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "invalid_reference",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "invalid-printed-page",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "invalid_reference",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "invalid-bates",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "invalid_reference",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "invalid-character-range",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "invalid_reference",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "invalid-line-range",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "invalid_reference",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "invalid-image-on-text",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "invalid_reference",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "invalid-audio-timestamp",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "invalid_reference",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "invalid_reference",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    },
+    {
+      "case_id": "invalid-foreign-matter",
+      "category": "invalid_reference_rejection",
+      "expected_outcome": "unauthorized",
+      "expected_source_version_ids": [],
+      "matter_id": "matter-alpha",
+      "observed_outcome": "unauthorized",
+      "observed_source_version_ids": [],
+      "operation": "resolve_reference",
+      "passed": true
+    }
+  ],
+  "components": [
+    {
+      "implementation": "in-memory matter authorization",
+      "model_calls": 0,
+      "network_calls": 0,
+      "stage": "authorization"
+    },
+    {
+      "implementation": "Catalog deterministic fixture search",
+      "model_calls": 0,
+      "network_calls": 0,
+      "stage": "retrieval"
+    },
+    {
+      "implementation": "not implemented; explicit contract marker",
+      "model_calls": 0,
+      "network_calls": 0,
+      "stage": "reranking"
+    },
+    {
+      "implementation": "not implemented; explicit contract marker",
+      "model_calls": 0,
+      "network_calls": 0,
+      "stage": "generation"
+    },
+    {
+      "implementation": "exact in-memory reference resolver",
+      "model_calls": 0,
+      "network_calls": 0,
+      "stage": "source_resolution"
+    },
+    {
+      "implementation": "in-memory ticket and lease policy",
+      "model_calls": 0,
+      "network_calls": 0,
+      "stage": "ticket"
+    }
+  ],
+  "created_at": "2026-08-25T16:00:00Z",
+  "environment": {
+    "confidential_data": false,
+    "dataset_classification": "synthetic",
+    "model_calls": 0,
+    "network_calls": 0,
+    "production_selection": false
+  },
+  "fixture_id": "slice0-two-matter-v1",
+  "limitations": [
+    "No production model or retrieval implementation was evaluated or selected.",
+    "Only synthetic in-memory foundation policy behavior was exercised.",
+    "Reranking and generation are explicit not-implemented markers, not quality results."
+  ],
+  "matter_count": 2,
+  "metrics": [
+    {
+      "denominator": 12,
+      "metric_id": "cross_matter_bypass",
+      "numerator": 0,
+      "passed": true,
+      "value": 0.0
+    },
+    {
+      "denominator": 14,
+      "metric_id": "ticket_lease_bypass",
+      "numerator": 0,
+      "passed": true,
+      "value": 0.0
+    },
+    {
+      "denominator": 10,
+      "metric_id": "valid_reference_resolution",
+      "numerator": 10,
+      "passed": true,
+      "value": 1.0
+    },
+    {
+      "denominator": 8,
+      "metric_id": "invalid_reference_rejection",
+      "numerator": 8,
+      "passed": true,
+      "value": 1.0
+    }
+  ],
+  "passed": true,
+  "run_id": "slice0-suite-2.0-reference",
+  "schema_version": "2.0",
+  "suite_id": "slice0-suite",
+  "suite_sha256": "41af14a306c88e0a032c5e8fa2731d8bd6098195fb4780460ccc24fb636b3be7",
+  "suite_version": "2.0"
+}

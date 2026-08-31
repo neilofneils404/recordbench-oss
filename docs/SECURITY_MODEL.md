@@ -1,0 +1,32 @@
+# Security model
+
+RecordBench assumes confidential case material and a trusted internal operator.
+It does not assume uploaded files, browser headers, model output, or model hubs
+are trustworthy.
+
+Primary controls include authenticated server-side sessions, CSRF protection,
+matter-scoped authorization at the data layer, trusted-proxy secrets, stream
+malware scanning, bounded parsers/subprocesses, non-symlink storage rules,
+private companion-service networks, offline model workers, immutable model
+revisions, transcript/answer provenance, and content-free operational health.
+
+The gateway is the only published service. Default binding is loopback. Local,
+OIDC, and Kerberos modes require secure cookies and trusted TLS. Real secrets
+are file-backed and excluded from Git. The installer never prints or retains a
+Hugging Face token.
+
+The publication gate scans both the working tree and available Git history for
+private addresses, personal paths, credential material, secret-shaped literals,
+and operator-supplied internal deny terms. It also inspects extracted PDF
+metadata/text and members of Office/ZIP containers under fail-closed expansion
+limits. A clean current tree is not sufficient if residue exists in an earlier
+commit.
+
+Models can be wrong, transcripts can mishear, diarization can miscluster, and
+retrieval can omit relevant material. The UI must preserve citations,
+limitations, coverage, excluded-source notices, and direct source review. Do
+not represent a generated answer as an exhaustive review unless the dedicated
+full-review workflow actually evaluated each frozen source.
+
+Report vulnerabilities privately under [SECURITY.md](../SECURITY.md). Do not
+attach case files, transcripts, credentials, or internal topology to a report.

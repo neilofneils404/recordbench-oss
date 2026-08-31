@@ -1,0 +1,34 @@
+{
+  "fixture_id": "slice1a-intake-v1",
+  "processor_version": "plain-text-v1",
+  "segments": [
+    {
+      "segment_id": "segment-version-16b295652ab090a74408efa1-1",
+      "matter_id": "matter-alpha",
+      "source_file_id": "file-8c8c94d0c9ccd4380ef61219",
+      "source_version_id": "version-16b295652ab090a74408efa1",
+      "representation_id": "representation-version-16b295652ab090a74408efa1",
+      "ordinal": 1,
+      "text_sha256": "44669776071fa477637879dc5b8a4051c249c2e88cf25aad8e228c070ff8ecd4",
+      "character_start": 0,
+      "character_end": 98,
+      "line_start": 1,
+      "line_end": 4,
+      "exact_keys": ["CITRINE-FALCON-731"]
+    },
+    {
+      "segment_id": "segment-version-cd288a0ae6fd94d38b8b873d-1",
+      "matter_id": "matter-bravo",
+      "source_file_id": "file-9dd384346ce54b994e08c676",
+      "source_version_id": "version-cd288a0ae6fd94d38b8b873d",
+      "representation_id": "representation-version-cd288a0ae6fd94d38b8b873d",
+      "ordinal": 1,
+      "text_sha256": "e3acdccee4141278bafaf724e216baa487578c60e5144fbd00d1bcb01a87a641",
+      "character_start": 0,
+      "character_end": 99,
+      "line_start": 1,
+      "line_end": 4,
+      "exact_keys": ["VIOLET-HARBOR-842"]
+    }
+  ]
+}

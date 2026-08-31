@@ -1,0 +1,40 @@
+ServerTokens Prod
+ServerSignature Off
+TraceEnable Off
+LogLevel warn
+Timeout 3600
+ProxyTimeout 3600
+LimitRequestFieldSize 65536
+
+<VirtualHost *:8080>
+    ServerName __SERVER_NAME__
+    ProxyRequests Off
+    ProxyPreserveHost On
+
+    RequestHeader unset X-RecordBench-Authenticated-User early
+    RequestHeader unset X-RecordBench-Proxy-Secret early
+
+    <Location "/">
+        AuthType GSSAPI
+        AuthName "Organization Windows sign-in"
+        GssapiCredStore keytab:/run/recordbench-auth/recordbench.keytab
+        GssapiAcceptorName HTTP@__SERVER_NAME__
+        GssapiAllowedMech krb5
+        GssapiBasicAuth Off
+        GssapiLocalName Off
+        GssapiConnectionBound Off
+        GssapiSSLonly Off
+        Require valid-user
+
+        RequestHeader unset Authorization
+        RequestHeader set X-RecordBench-Authenticated-User "expr=%{REMOTE_USER}"
+        Include /run/recordbench-auth/proxy-secret.conf
+    </Location>
+
+    ProxyPass        "/" "http://app:8786/" connectiontimeout=5 timeout=3600
+    ProxyPassReverse "/" "http://app:8786/"
+
+    LogFormat "%a %t \"%m %U\" %>s %B" recordbench_minimal
+    ErrorLog /proc/self/fd/2
+    CustomLog /proc/self/fd/1 recordbench_minimal
+</VirtualHost>

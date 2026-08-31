@@ -1,0 +1,49 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Work product · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}work-product-page{% endblock %}
+
+{% block content %}
+<main class="work-product-shell">
+  <header class="work-product-heading">
+    <div><p class="eyebrow">Matter work product</p><h1>Turn review into something useful</h1><p>Capture cited observations, orient the record, assemble a report, and export at every stage.</p></div>
+    <a class="button button-secondary" href="/matters/{{ matter.slug }}/export">Export matter bundle</a>
+  </header>
+  {% with active='work_product' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% include "workbench_retention_notice.html" %}
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+  <section class="work-product-intro" aria-labelledby="work-product-heading">
+    <p class="eyebrow">Three connected tools</p>
+    <h2 id="work-product-heading">Build as you review. Take it with you.</h2>
+    <p>These are working materials, not permanent storage. Each tool keeps citations close and provides its own portable exports.</p>
+  </section>
+
+  <nav class="work-product-list" aria-label="Work product tools">
+    <a href="/matters/{{ matter.slug }}/notebook">
+      <span class="work-product-index">01</span>
+      <span class="work-product-copy"><strong>Case notes</strong><small>Working observations, questions, names, places, dates, and cited passages.</small></span>
+      <span class="work-product-count"><strong>{{ notebook.total }}</strong><small>item{% if notebook.total != 1 %}s{% endif %}</small></span>
+      <span class="work-product-open">Open <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+    </a>
+    <a href="/matters/{{ matter.slug }}/analysis">
+      <span class="work-product-index">02</span>
+      <span class="work-product-copy"><strong>Review map</strong><small>Candidate people, places, chronology, comparisons, and wording conflicts.</small></span>
+      <span class="work-product-count"><strong>{{ findings|length }}</strong><small>finding{% if findings|length != 1 %}s{% endif %}</small></span>
+      <span class="work-product-open">Open <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+    </a>
+    <a href="/matters/{{ matter.slug }}/reports">
+      <span class="work-product-index">03</span>
+      <span class="work-product-copy"><strong>Reports</strong><small>Editable, citation-backed sections ready for Word or Markdown export.</small></span>
+      <span class="work-product-count"><strong>{{ reports|length }}</strong><small>report{% if reports|length != 1 %}s{% endif %}</small></span>
+      <span class="work-product-open">Open <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+    </a>
+  </nav>
+
+  <footer class="work-product-footer">
+    <div><strong>Nothing here changes the source record.</strong><span>Notes, findings, and reports remain attributed working layers until you export or close the matter.</span></div>
+    <a href="/matters/{{ matter.slug }}/home">Back to Matter Home</a>
+  </footer>
+</main>
+{% endblock %}
