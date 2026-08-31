@@ -1,62 +1,37 @@
 # Installation playbook
 
-## Supported shape
+## Hardware and capability profiles
 
-RecordBench targets a modern x86-64 Linux host with Docker Engine, Docker
-Compose v2, 64 GB RAM minimum, and ample temporary and matter storage. The
-bundled CUDA/vLLM profile requires NVIDIA compute capability 7.5 or newer. The
-installer exposes four explicit capability profiles:
+RecordBench targets a modern x86-64 Linux host with Docker Engine and Docker
+Compose v2. These are the minimum hardware recommendations for a practical
+alpha installation:
 
-| CLI value | Intended use | Minimum GPU topology |
-| --- | --- | --- |
-| `none` | CPU evaluation: intake, extraction, lexical search, manual review, and exports | none |
-| `review` | learned retrieval, reranking, and cited local generation | one NVIDIA GPU |
-| `transcription` | media transcription without the review-model services | one NVIDIA GPU |
-| `all` | review plus transcription, co-resident or separated by capacity | one supported NVIDIA GPU |
+| Intended use | CPU | RAM | NVIDIA GPU | Free SSD before matter data |
+| --- | ---: | ---: | --- | ---: |
+| CPU evaluation | 8 cores | 16 GB | none | 150 GB |
+| Local document review | 12 cores | 32 GB | 1 GPU with 16 GB VRAM | 200 GB |
+| Full review and media | 16 cores | 64 GB | 1 GPU with 24 GB VRAM | 300 GB |
 
-The current conservative floor is 16,000 MiB total VRAM for a single-device
-portable review lane and 20,000 MiB for a single-device full lane, plus the free
-VRAM headroom enforced during preflight. These are admission bounds, not proof
-of acceptable latency or quality on every card.
+These are starting recommendations, not collection-size, speed, or concurrency
+guarantees. More sources, longer recordings, and more simultaneous users need
+more capacity. Free-space recommendations cover application images, models,
+temporary processing, and the default storage reserve; matter contents require
+additional local or NAS capacity.
 
-Plain `./install` defaults to `none`; an operator must deliberately select a GPU
-profile. Automatic topology co-locates conservatively sized services on a
-one-GPU node, separates generation and transcription when a second device
-exists, and can place retrieval on a third. Four, six, or eight visible devices
-do not change the workflow or prevent installation: the planner assigns the
-highest currently usable compatible cards to the service lanes it needs and
-leaves the rest available. If the preferred quality/separated plan does not
-fit, automatic mode tries a packed plan and the portable tier before failing.
-Explicit GPU indices and a tensor-parallel generator set let an operator use a
-larger host deliberately.
+The installer exposes four capability profiles:
 
-Model preflight selects the pinned portable or quality tier from VRAM and
-sharing pressure. A second GPU is an optional throughput optimization, not an
-installation requirement. RecordBench does not yet pause one service to lend
-its memory to another; a shared device uses co-resident services with explicit
-memory and concurrency limits. Do not treat any mapping as a universal capacity
-claim: representative acceptance on the exact GPU model, VRAM, drivers,
-collection size, and concurrency remains required before staff use.
+| CLI value | What it enables |
+| --- | --- |
+| `none` | CPU evaluation with intake, extraction, OCR, word search, source review, and exports |
+| `review` | learned retrieval, reranking, and cited local generation |
+| `transcription` | media transcription without the review-model services |
+| `all` | document review plus transcription and optional diarization |
 
-Use `--gpu-layout shared|split`, `--generator-gpus`,
-`--transcription-gpu`, `--retrieval-device`, and `--retrieval-gpu` only when
-overriding automatic topology. `--review-model-profile portable|quality`
-selects a pinned tier; incompatible, undersized, or currently oversubscribed
-GPU plans fail before node state is created.
-
-The preferred automatic full-profile mapping, when capacity is available, is:
-
-| Compatible visible GPUs | Generator | Transcription | Retrieval |
-| --- | --- | --- | --- |
-| 1 | highest-capacity card, portable tier | same card | CPU |
-| 2 | highest-capacity card | next card | CPU |
-| 3 or more | highest-capacity card | next card | third card |
-
-Additional devices are intentionally not consumed just because they exist.
-Horizontal replicas and job routing require a separately tested deployment
-overlay; tensor parallelism is available only through an explicit generator
-GPU list. This makes an eight-GPU server valid without pretending that the
-alpha automatically scales linearly across eight cards.
+GPU profiles require NVIDIA compute capability 7.5 or newer and the NVIDIA
+Container Toolkit. RecordBench can start with one suitable GPU. When more are
+available, the installer can separate generation, transcription, and retrieval
+work; the product workflows stay the same. Advanced placement controls are
+documented in [Models](MODELS.md).
 
 The installer never opens a public port by default. Its initial listener is
 `127.0.0.1:8443`; a LAN bind requires an explicit address and an existing
