@@ -51,3 +51,41 @@ answer rates, classification precision/recall, transcription accuracy, latency,
 throughput, and resource use require a separate versioned evaluation artifact
 that identifies the exact source, model revisions, containers, hardware,
 runtime configuration, dataset fingerprint, and human-review protocol.
+
+## Review-quality contract pack
+
+`case_intelligence.review_quality.QUALITY_EVALUATION_CASES` is a compact,
+content-free contract pack for exact-record ranking, explicit written-and-spoken
+completion, objective-preserving synthesis, and broad-summary scope. Its fixed
+fingerprint prevents silent fixture drift. One synthesis case withholds the
+final narrative source so an implementation cannot pass by quoting a prepared
+answer instead of using the component evidence.
+
+These cases keep retrieval ranking, modality completion, generator objective,
+and scope disclosure separately reportable. They are deterministic contract
+tests, not a claim that any configured model meets a production quality bar;
+representative model evaluation still requires the exact model/runtime record
+described above.
+
+## Frozen Review acceptance pack
+
+`review-acceptance-v1.json` maps one compact synthetic contract pack to
+separately reportable pytest categories: ingestion/OCR, transcript and speaker
+review, retrieval rank, cross-modal completion, generator objective,
+abstention, exact citation resolution, browser task success, conversational
+investigation follow-up, every-source screening, broad-summary scope, optional
+overview recovery, sampled-frame OCR contracts, and lifecycle authorization.
+The pack is content-free, requires no network, carries a frozen case fingerprint,
+and includes a synthesis case where the prepared final source is withheld.
+
+Run all categories, or select one, with:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run-review-acceptance.py
+PYTHONPATH=src .venv/bin/python scripts/run-review-acceptance.py \
+  --category cross_modal_completeness
+```
+
+The runner invokes each category independently and emits a content-free JSON
+status report. It does not claim that a configured production model passed; the
+model-specific evaluation record described above remains a separate gate.

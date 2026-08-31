@@ -1,0 +1,190 @@
+{
+  "schema_version": 2,
+  "pack_id": "recordbench-review-acceptance-v1",
+  "provenance": "synthetic",
+  "confidential_data": false,
+  "requires_network": false,
+  "frozen": true,
+  "case_fingerprint": "8aee3ecbf12cc3ffbffff9086e15c3a863eadc034f09ef94beea33ff15d98405",
+  "cases": [
+    {
+      "case_id": "bounded-page-ocr",
+      "category": "ingestion_ocr",
+      "contract": "Bounded OCR recovers generated page text and keeps the exact page locator.",
+      "node_ids": [
+        "tests/test_upload_pilot.py::test_selective_cpu_ocr_recovers_blank_page_and_preserves_page_citation"
+      ]
+    },
+    {
+      "case_id": "speaker-review-context",
+      "category": "transcript_speaker_review",
+      "contract": "Explicit transcript-wide speaker correction preserves playback, scroll, and focus without inferring identity.",
+      "node_ids": [
+        "tests/test_matter_media_workflow.py::test_speaker_review_save_updates_every_passage_without_navigation",
+        "tests/test_matter_media_workflow.py::test_speaker_review_browser_contract_preserves_player_scroll_and_focus"
+      ],
+      "fixture_files": [
+        "src/case_intelligence/static/demo-audio.wav"
+      ]
+    },
+    {
+      "case_id": "authoritative-exact-time",
+      "category": "retrieval_recall_rank",
+      "contract": "A precise contemporaneous generated record outranks a later summary for an exact-time objective.",
+      "node_ids": [
+        "tests/test_review_quality.py::test_hybrid_retrieval_rescues_exact_record_after_a_weak_model_rerank"
+      ]
+    },
+    {
+      "case_id": "written-and-spoken",
+      "category": "cross_modal_completeness",
+      "contract": "An explicit written-and-spoken request retains page and timestamp support or reports the missing kind as partial.",
+      "node_ids": [
+        "tests/test_review_quality.py::test_explicit_written_and_spoken_request_prioritizes_both_without_changing_locators",
+        "tests/test_review_quality.py::test_modality_coverage_distinguishes_complete_and_clear_partial_result",
+        "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support"
+      ],
+      "fixture_files": [
+        "src/case_intelligence/demo_data/synthetic_case_report.pdf",
+        "src/case_intelligence/static/demo-audio.wav"
+      ]
+    },
+    {
+      "case_id": "objective-with-final-withheld",
+      "category": "generator_objective_satisfaction",
+      "contract": "Synthesis answers the saved exact objective from component evidence when no prepared final report is supplied.",
+      "synthesis_source_withheld": true,
+      "scenario_path": "benchmarks/review_acceptance/v1/objective-with-final-withheld.json",
+      "withheld_source_ids": [
+        "prepared-final-summary"
+      ],
+      "node_ids": [
+        "tests/test_review_acceptance_pack.py::test_withheld_source_scenario_excludes_prepared_synthesis",
+        "tests/test_review_quality.py::test_exact_time_objective_gets_one_repair_instead_of_an_adjacent_finding"
+      ]
+    },
+    {
+      "case_id": "unsupported-answer",
+      "category": "abstention",
+      "contract": "No evidence produces a clear abstention without a generator call.",
+      "node_ids": [
+        "tests/test_generation.py::test_empty_evidence_abstains_without_calling_model"
+      ]
+    },
+    {
+      "case_id": "page-and-timestamp-resolution",
+      "category": "citation_resolution",
+      "contract": "Document and transcript support resolve inside the authorized matter at exact page/line and timestamp locations.",
+      "node_ids": [
+        "tests/test_upload_pilot.py::test_source_click_revalidates_version_and_excerpt_digest",
+        "tests/test_matter_media_workflow.py::test_media_upload_transcript_review_range_citations_exports_and_clips"
+      ],
+      "fixture_files": [
+        "src/case_intelligence/static/demo-audio.wav"
+      ]
+    },
+    {
+      "case_id": "review-task-language",
+      "category": "browser_task_success",
+      "contract": "Review exposes focused and broader actions plus Check every source without peer processing-mode labels.",
+      "node_ids": [
+        "tests/test_review_conversation_continuity.py::test_review_composer_starts_broader_work_in_the_same_conversation"
+      ]
+    },
+    {
+      "case_id": "durable-investigation-follow-up",
+      "category": "research_conversational_follow_up",
+      "contract": "A cited investigation result is appended once to its conversation, survives restart, and supports a same-thread follow-up.",
+      "node_ids": [
+        "tests/test_review_conversation_continuity.py::test_research_result_is_appended_once_to_its_conversation_and_survives_restart",
+        "tests/test_review_conversation_continuity.py::test_review_composer_starts_broader_work_in_the_same_conversation"
+      ]
+    },
+    {
+      "case_id": "frozen-every-source-population",
+      "category": "every_source_screening",
+      "contract": "The specialized check freezes source versions and keeps machine decisions separate from human validation.",
+      "node_ids": [
+        "tests/test_research_and_full_review.py::test_full_review_freezes_every_source_versions_criteria_and_computes_validation"
+      ]
+    },
+    {
+      "case_id": "source-diverse-orientation",
+      "category": "broad_summary_scope",
+      "contract": "Broad orientation uses source-diverse facets, ignores disclaimer-only passages, and discloses sampled scope.",
+      "node_ids": [
+        "tests/test_review_quality.py::test_workbench_broad_answer_search_merges_facets_and_drops_disclaimer_only",
+        "tests/test_review_quality.py::test_broad_summary_scope_discloses_sampled_source_diversity"
+      ]
+    },
+    {
+      "case_id": "optional-overview-recovery",
+      "category": "optional_overview_recovery",
+      "contract": "An optional overview failure remains readable and retryable while transcript and playback stay usable.",
+      "node_ids": [
+        "tests/test_matter_media_workflow.py::test_failed_optional_overview_explains_cause_retries_and_independence"
+      ],
+      "fixture_files": [
+        "src/case_intelligence/static/demo-audio.wav"
+      ]
+    },
+    {
+      "case_id": "sampled-frame-foundation",
+      "category": "sampled_frame_ocr_contract",
+      "contract": "Sampled-frame OCR planning and execution stay bounded, fail soft, retain exact provenance, and remain non-searchable.",
+      "node_ids": [
+        "tests/test_video_frame_ocr_contract.py"
+      ]
+    },
+    {
+      "case_id": "owner-administrator-deletion",
+      "category": "lifecycle_authorization",
+      "contract": "Owner and administrator deletion preserve export, active-work refusal, confirmation, isolation, external originals, cleanup, and attributed audit.",
+      "node_ids": [
+        "tests/test_matter_management.py"
+      ]
+    }
+  ],
+  "integrity": {
+    "algorithm": "sha256",
+    "test_node_sha256": {
+      "tests/test_generation.py::test_empty_evidence_abstains_without_calling_model": "532352d1610eaa0b4c8772f04102a1f4a0c5b5654447dc60ed15db51ebeb6d3e",
+      "tests/test_matter_management.py": "dd1a6fd91e40f0d4810bf61fa74862dc8b4a35863bcb26d20d6653860e65cb3a",
+      "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support": "cdfe10689d6575788699e8de7cf97fa23af9cf41127243f6f935807467da4314",
+      "tests/test_matter_media_workflow.py::test_failed_optional_overview_explains_cause_retries_and_independence": "1a8292814c817dc696269b3c3fee9f1ee4c7753c95660f8d384d45bd3e7ffe66",
+      "tests/test_matter_media_workflow.py::test_media_upload_transcript_review_range_citations_exports_and_clips": "f3add140a334476e79e5cd0feecf7aa3e9ce36ea0cef2a4fc61228ac504bd7ba",
+      "tests/test_matter_media_workflow.py::test_speaker_review_browser_contract_preserves_player_scroll_and_focus": "7955f04e150e91e0fa9549f733efbff67a55372d4e31735d46888df1beeee5e8",
+      "tests/test_matter_media_workflow.py::test_speaker_review_save_updates_every_passage_without_navigation": "9cf8e8a142ba1d81d8777be18e67dc91d6c0ee7db74363bf629830b45dc1f2c3",
+      "tests/test_research_and_full_review.py::test_full_review_freezes_every_source_versions_criteria_and_computes_validation": "998db88197c24a79eccc535416f123119a17df9164a5c708f880fcccbed338e0",
+      "tests/test_review_acceptance_pack.py::test_withheld_source_scenario_excludes_prepared_synthesis": "1ddf71e3aab7c63d0942f52c2ebf50cccf66c62cdf7f9a438221db960e848e6e",
+      "tests/test_review_conversation_continuity.py::test_research_result_is_appended_once_to_its_conversation_and_survives_restart": "378a0753115f5c890d02eb885af367dd981d6b49939f16777cbac01c9c43b5ee",
+      "tests/test_review_conversation_continuity.py::test_review_composer_starts_broader_work_in_the_same_conversation": "9ce32e42416c7b814db7a5d4c90711c0b6a84f7a2af1845b8330a436463f6228",
+      "tests/test_review_quality.py::test_broad_summary_scope_discloses_sampled_source_diversity": "bf0edb3bbdb1a66132bff68ffcec3c7786b8dad15b533066bf36fb08ab8a21d8",
+      "tests/test_review_quality.py::test_exact_time_objective_gets_one_repair_instead_of_an_adjacent_finding": "de5cbfcc5eba7c2997c7a7714c4fb377fea4ff1bc32123251f3a28e3f5bb662c",
+      "tests/test_review_quality.py::test_explicit_written_and_spoken_request_prioritizes_both_without_changing_locators": "6bf3084526a70aa5845435ac62f73a0f6d7573955bacbe9300e1008df8048e46",
+      "tests/test_review_quality.py::test_hybrid_retrieval_rescues_exact_record_after_a_weak_model_rerank": "96d8ab88afcef7679bb8bef2d45ad396bb9c6139de71ddb8e46d10851b37ebda",
+      "tests/test_review_quality.py::test_modality_coverage_distinguishes_complete_and_clear_partial_result": "77efc9481b41dd3c49b9b9241a1046dc390a96d0d3512eddab57bad5ce3c3084",
+      "tests/test_review_quality.py::test_workbench_broad_answer_search_merges_facets_and_drops_disclaimer_only": "cb929a88898baf9ea05f645a91816f5a0f577cdcad10ec1d823eb60dba3f5018",
+      "tests/test_upload_pilot.py::test_selective_cpu_ocr_recovers_blank_page_and_preserves_page_citation": "30df09447c6b158f2141cd09da23c6dddefc44bea8770d6d8120bf580f69759d",
+      "tests/test_upload_pilot.py::test_source_click_revalidates_version_and_excerpt_digest": "3fafbb585d7cbb7d080513b07ee49742c1389ef91913f114695519d68d5cf9c6",
+      "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6"
+    },
+    "test_file_sha256": {
+      "tests/test_generation.py": "17d7434cd3e1c41b03792a82a146f0fee4fc0c25bad7158d21fe0d00bcbcd2f9",
+      "tests/test_matter_management.py": "dd1a6fd91e40f0d4810bf61fa74862dc8b4a35863bcb26d20d6653860e65cb3a",
+      "tests/test_matter_media_workflow.py": "9f8601c5f328572dec715f06a8061940bb2842f1ffc333f352c7e7769c68e612",
+      "tests/test_research_and_full_review.py": "ba88175a4754ff8eba5f4893cb164d773e3b72f85e52e45d848d8a9f20f971d7",
+      "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
+      "tests/test_review_conversation_continuity.py": "5d30edb5122c21f1ba6068926f0440e3650e83a1501f5632a06c97d6a521eaa9",
+      "tests/test_review_quality.py": "a24ae707932761b9c0eab61cd0238e4f0efae88a7a27a0b344d1969f6f4d213b",
+      "tests/test_upload_pilot.py": "5353c212152b0fc4fb3852373f0f7d20392a8593d4c13b10fe43dbdf6e996b18",
+      "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6"
+    },
+    "fixture_file_sha256": {
+      "benchmarks/review_acceptance/v1/objective-with-final-withheld.json": "fe3b839f5d4abcf6af7656b16ef6f5e753fa078f488781e54ab375fdc39f1fbd",
+      "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
+      "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
+    },
+    "content_fingerprint": "d296241cbf8705d0d640da5245c9c761d5185c06e23667741d668cd82c4dcae8"
+  }
+}

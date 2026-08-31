@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "scenario_id": "objective-with-final-withheld",
+  "provenance": "synthetic",
+  "confidential_data": false,
+  "objective": "Determine the exact accepted time for generated event EVT-4821.",
+  "sources": [
+    {
+      "source_id": "component-event-register",
+      "role": "component",
+      "source_name": "Generated event register.csv",
+      "location": "Line 7",
+      "evidence_kind": "document",
+      "text": "EVT-4821 | accepted_at=08:42:17 | reader=4"
+    },
+    {
+      "source_id": "component-dispatch-note",
+      "role": "component",
+      "source_name": "Generated dispatch note.txt",
+      "location": "Lines 2–3",
+      "evidence_kind": "document",
+      "text": "Reader 4 recorded acceptance for EVT-4821; consult the event register for the exact clock value."
+    },
+    {
+      "source_id": "prepared-final-summary",
+      "role": "prepared_synthesis",
+      "source_name": "Generated prepared summary.txt",
+      "location": "Line 1",
+      "evidence_kind": "document",
+      "text": "The assembled final brief concludes that EVT-4821 was accepted at 08:42:17 by reader 4."
+    }
+  ],
+  "input_source_ids": [
+    "component-event-register",
+    "component-dispatch-note"
+  ],
+  "withheld_source_ids": [
+    "prepared-final-summary"
+  ],
+  "expected": {
+    "identifier": "EVT-4821",
+    "clock_time": "08:42:17"
+  }
+}
