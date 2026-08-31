@@ -20,6 +20,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
           Add sources
         </a>
+        <a class="button button-secondary" href="/matters/{{ matter.slug }}/settings">Matter settings</a>
         <a class="button button-ink" href="/matters/{{ matter.slug }}?mode=search#search-results">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
           Search matter
@@ -56,7 +57,7 @@
         </article>
         {% endfor %}
       </div>
-      <p data-media-activity-note>The workbench reports saved processor stages. You may leave this conversation and return later.</p>
+      <p data-media-activity-note>The workbench reports saved preparation stages. You may leave this conversation and return later.</p>
     </section>
     {% endif %}
 
@@ -136,8 +137,8 @@
     <section class="conversation-region" id="evidence-conversation" aria-labelledby="conversation-heading">
       <div class="conversation-heading-row">
         <div>
-          <h2 id="conversation-heading">Ask the record</h2>
-          <p>Each saved conversation keeps its questions, answers, and cited passages with this matter until it is closed.</p>
+          <h2 id="conversation-heading">Review the record</h2>
+          <p>Ask a focused question or investigate more deeply here. Results and cited passages return to this conversation so you can refine them without starting over.</p>
         </div>
         <form method="post" action="/matters/{{ matter.slug }}/conversations">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -268,6 +269,22 @@
             </div>
           </header>
 
+          {% if active_research %}
+          <article class="conversation-research-progress workflow-run-card" data-workflow-monitor data-status-url="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/status" data-terminal="false" aria-live="polite">
+            <header class="workflow-run-header">
+              <div><p class="eyebrow">Broader investigation</p><h3>{{ active_research.title }}</h3><p>This saved work will return here with citations when it is ready.</p></div>
+              <span class="workflow-state-badge state-{{ active_research.state }}" data-workflow-state>{{ active_research.state|replace('_',' ')|title }}</span>
+            </header>
+            <div class="workflow-progress">
+              <div><span data-workflow-stage>{{ active_research.message }}</span><strong data-workflow-progress-label>{{ active_research.completed_steps }} / {{ active_research.total_steps or '—' }} steps</strong></div>
+              <progress max="{{ active_research.total_steps or 1 }}" value="{{ active_research.completed_steps }}" data-workflow-progress></progress>
+              <small class="workflow-eta" data-workflow-eta>{% if active_research.state == 'queued' %}Waiting for earlier saved work to finish.{% else %}Calculating remaining time…{% endif %}</small>
+            </div>
+            <div class="run-counts"><span><strong>{{ active_research.candidate_count }}</strong> Passages considered</span><span><strong>{{ active_research.evidence_count }}</strong> Supporting passages</span></div>
+            <a class="conversation-research-details" href="/matters/{{ matter.slug }}/research?job={{ active_research.job_id }}">Open progress and coverage details</a>
+          </article>
+          {% endif %}
+
           <div class="conversation-thread">
             {% for message in messages %}
             {% if message.role == 'user' %}
@@ -283,6 +300,12 @@
               <div class="turn-avatar assistant-avatar" aria-hidden="true">RB</div>
               <div class="turn-content answer-content">
                 <strong>{{ product_name }}</strong>
+                {% if message.payload.workflow == 'research' %}
+                <div class="conversation-research-result" role="status">
+                  <span><strong>Investigation ready</strong><small>Several evidence passes returned to this conversation</small></span>
+                  <a href="/matters/{{ matter.slug }}/research?job={{ message.payload.research_job_id }}">Open coverage and search details</a>
+                </div>
+                {% endif %}
                 {% if message.payload.source_coverage and message.payload.source_coverage.mode == 'partial' %}
                 <div class="answer-source-coverage" role="note">
                   <strong>Source coverage when this answer was created</strong>
@@ -290,13 +313,19 @@
                 </div>
                 {% endif %}
                 {% if message.payload.review_scope %}
-                <details class="answer-scope-summary{% if message.payload.review_scope.collection_wide_request %} collection-wide{% endif %}"{% if message.payload.review_scope.collection_wide_request %} open{% endif %}>
+                <details class="answer-scope-summary{% if message.payload.review_scope.collection_wide_request or message.payload.review_scope.broad_summary_request %} collection-wide{% endif %}"{% if message.payload.review_scope.collection_wide_request or message.payload.review_scope.broad_summary_request %} open{% endif %}>
                   <summary>
-                    <span>{{ 'Completeness caution' if message.payload.review_scope.collection_wide_request else 'Answer basis' }}</span>
+                    <span>{{ 'Completeness caution' if message.payload.review_scope.collection_wide_request else (('Broader orientation' if message.payload.review_scope.mode == 'broader_orientation' else 'Focused result') if message.payload.review_scope.broad_summary_request else 'Answer basis') }}</span>
                     <strong>{{ message.payload.review_scope.cited_source_count }} cited source{% if message.payload.review_scope.cited_source_count != 1 %}s{% endif %} · {{ message.payload.review_scope.candidate_passage_count }} top passage{% if message.payload.review_scope.candidate_passage_count != 1 %}s{% endif %} considered</strong>
                   </summary>
                   <p>{{ message.payload.review_scope.notice }}</p>
                 </details>
+                {% endif %}
+                {% if message.payload.modality_coverage %}
+                <div class="answer-source-coverage" role="note">
+                  <strong>Written and spoken evidence · {{ message.payload.modality_coverage.mode|title }}</strong>
+                  <p>{{ message.payload.modality_coverage.notice }}</p>
+                </div>
                 {% endif %}
                 {% if message.payload.kind == 'generated' %}
                   <p class="answer-introduction">{{ message.payload.introduction }}</p>
@@ -371,7 +400,7 @@
                 {% endif %}
                 {% if message.payload.kind == 'generated' %}
                 <nav class="workflow-completion-bar answer-completion-bar" aria-label="Completed answer actions">
-                  <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>Answer ready</strong><small>Citations stay attached</small></span></span>
+                  <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>{{ 'Investigation ready' if message.payload.workflow == 'research' else 'Answer ready' }}</strong><small>Citations stay attached</small></span></span>
                   <a href="#answer-support-{{ message.message_id }}">Review support</a>
                   {% if reports %}
                   <details class="answer-report-menu"><summary>Save to report</summary><div>{% for report in reports %}<form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/from-answer/{{ conversation.conversation_id }}/{{ message.message_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">{{ report.title }}</button></form>{% endfor %}</div></details>
@@ -429,7 +458,7 @@
           </p>
           <div class="answer-wait-progress" aria-hidden="true"><span></span></div>
           <ol class="answer-wait-stages" aria-label="Grounded answer workflow">
-            <li data-answer-stage="retrieving"><span>1</span>Find candidate evidence</li>
+            <li data-answer-stage="retrieving"><span>1</span>Find relevant support</li>
             <li data-answer-stage="reranking"><span>2</span>Order it for relevance</li>
             <li data-answer-stage="generating"><span>3</span>Draft from the best support</li>
             <li data-answer-stage="verifying"><span>4</span>Verify claims and citations</li>
@@ -453,7 +482,7 @@
           <p class="answer-wait-note">This request is saved. You can leave this page and return to the conversation.</p>
         </div>
       </div>
-      <form class="question-composer" method="post" action="/matters/{{ matter.slug }}/ask" data-question-form data-sources-ready="{{ 'true' if readiness.can_query else 'false' }}">
+      <form class="question-composer" method="post" action="/matters/{{ matter.slug }}/ask" data-question-form data-sources-ready="{{ 'true' if readiness.can_query else 'false' }}" data-review-work-active="{{ 'true' if active_research else 'false' }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="conversation" value="{{ conversation.conversation_id }}">
         <input type="hidden" name="request_key" value="{{ answer_request_key }}" data-answer-request-key>
@@ -482,13 +511,16 @@
             <a href="/matters/{{ matter.slug }}/notebook">Open case notes</a>
           </div>
         </details>
-        <textarea id="matter-question" name="question" maxlength="2000" rows="1" required placeholder="Ask about this matter…" aria-label="Ask about this matter" aria-describedby="answer-wait-status composer-readiness-hint" {% if not readiness.can_query %}disabled{% elif active_answer and active_answer.state in ['queued', 'running'] %}readonly{% endif %}></textarea>
-        <button class="ask-button" type="submit" {% if not readiness.can_query or (active_answer and active_answer.state in ['queued', 'running']) %}disabled{% endif %}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-3.2-7.3L3 10.5 21 3Zm-10.7 10.7L15 9"/></svg>
-          <span>Ask</span>
-        </button>
+        <textarea id="matter-question" name="question" maxlength="2000" rows="1" required placeholder="What do you need to understand?" aria-label="Ask about this matter" aria-describedby="answer-wait-status composer-readiness-hint" {% if not readiness.can_query %}disabled{% elif (active_answer and active_answer.state in ['queued', 'running']) or active_research %}readonly{% endif %}></textarea>
+        <div class="review-submit-actions">
+          <button class="ask-button" type="submit" name="review_task" value="answer" {% if not readiness.can_query or (active_answer and active_answer.state in ['queued', 'running']) or active_research %}disabled{% endif %}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-3.2-7.3L3 10.5 21 3Zm-10.7 10.7L15 9"/></svg>
+            <span>Answer</span>
+          </button>
+          <button class="investigate-button" type="submit" name="review_task" value="research" {% if not readiness.can_query or (active_answer and active_answer.state in ['queued', 'running']) or active_research %}disabled{% endif %}>Investigate more deeply</button>
+        </div>
       </form>
-      <small class="composer-readiness-hint{% if readiness.partial_query %} is-partial{% endif %}" id="composer-readiness-hint" data-composer-readiness-hint>{% if readiness.partial_query %}{{ readiness.coverage_notice }}{% elif readiness.can_query %}Questions use the complete searchable record for this matter.{% elif readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ readiness.guidance }}{% endif %}</small>
+      <small class="composer-readiness-hint{% if readiness.partial_query %} is-partial{% endif %}" id="composer-readiness-hint" data-composer-readiness-hint>{% if active_research %}This conversation is waiting for its broader investigation. You can leave and return later.{% elif readiness.partial_query %}{{ readiness.coverage_notice }}{% elif readiness.can_query %}Answer uses the strongest matching passages. Investigate makes several searches and takes longer. Neither checks every source.{% elif readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ readiness.guidance }}{% endif %}</small>
       <a class="search-instead" href="/matters/{{ matter.slug }}?mode=search#search-results">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
         Search instead

@@ -33,7 +33,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.background import BackgroundTask
+from starlette.background import BackgroundTask, BackgroundTasks
 
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
@@ -123,6 +123,15 @@ from .review_bench_v2 import (
     retain_postgres_workbench_matters,
     upsert_postgres_document,
 )
+from .review_quality import (
+    broad_summary_queries,
+    classify_question,
+    filter_broad_summary_evidence,
+    modality_coverage,
+    prioritize_evidence_kinds,
+    research_step_question,
+    research_synthesis_question,
+)
 from .source_locations import (
     SourceLocationProblem,
     SourceLocationRegistry,
@@ -136,6 +145,7 @@ from .workspace_store import (
     MatterReadinessRecord,
     MatterRecord,
     MatterRetentionRecord,
+    MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS,
     MediaClipRecord,
     MediaJobRecord,
     MediaSummaryRecord,
@@ -145,9 +155,13 @@ from .workspace_store import (
     NOTEBOOK_TYPES,
     NotebookItemRecord,
     NotebookReferenceRecord,
+    ReportCitationRecord,
+    ReportRecord,
+    ReportSectionRecord,
     ResearchJobRecord,
     ReviewDecisionRecord,
     ReviewRunRecord,
+    SourceCatalogRecord,
     SourceCollectionRecord,
     SourceSetRecord,
     SpeakerMappingRecord,
@@ -165,6 +179,7 @@ from .workflow_jobs import (
 from .work_product_exports import (
     ExportArtifact,
     ExportProblem,
+    MAX_BUNDLE_UNCOMPRESSED_BYTES,
     export_answer,
     export_conversation,
     export_full_review,
@@ -172,6 +187,7 @@ from .work_product_exports import (
     export_notebook,
     export_research,
     export_report,
+    safe_file_stem,
 )
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -208,8 +224,8 @@ _PLACE_REFERENCE = re.compile(
 )
 ANSWER_STAGE_LABELS = {
     "queued": "Waiting in the answer queue",
-    "retrieving": "Finding candidate evidence",
-    "reranking": "Ordering evidence for relevance",
+    "retrieving": "Finding relevant support",
+    "reranking": "Prioritizing support",
     "generating": "Drafting from the best support",
     "verifying": "Verifying claims and citations",
     "complete": "Answer ready",
@@ -218,8 +234,8 @@ ANSWER_STAGE_LABELS = {
     "cancelled": "Answer cancelled",
 }
 ANSWER_STAGE_MESSAGES = {
-    "retrieving": "Searching this matter's indexed sources.",
-    "reranking": "Comparing candidate passages for relevance.",
+    "retrieving": "Searching this matter's searchable sources.",
+    "reranking": "Comparing matching passages for relevance.",
     "generating": "Drafting only from the selected case support.",
     "repairing": "Rewriting the draft in source-close language for verification.",
     "verifying": "Checking every claim and citation against the retrieved record.",
@@ -267,6 +283,7 @@ def _focused_answer_scope(
     candidate_sources = len(
         {citation.document_id for citation in evidence.values()}
     )
+    broad_summary = classify_question(question).broad_summary
     collection_wide = bool(_COLLECTION_WIDE_QUESTION.search(question))
     if collection_wide:
         notice = (
@@ -274,16 +291,39 @@ def _focused_answer_scope(
             "document-by-document completeness review. Verify collection-wide "
             "lists, counts, and chronologies with source search and direct review."
         )
+        mode = "focused"
+    elif broad_summary:
+        passage_word = "passage" if len(evidence) == 1 else "passages"
+        source_word = "source" if candidate_sources == 1 else "sources"
+        searchable_word = "source" if readiness.searchable_count == 1 else "sources"
+        source_target = min(3, candidate_sources)
+        if source_target >= 2 and cited_sources >= source_target:
+            notice = (
+                f"This broader orientation sampled {len(evidence):,} top {passage_word} "
+                f"across {candidate_sources:,} {source_word} from "
+                f"{readiness.searchable_count:,} searchable {searchable_word}. It is not "
+                "an every-source review; preparation and retrieval can omit material."
+            )
+            mode = "broader_orientation"
+        else:
+            notice = (
+                f"This focused result retained support from {cited_sources:,} cited "
+                f"source{'s' if cited_sources != 1 else ''} after considering "
+                f"{candidate_sources:,}. It is not a reliable matter orientation or an "
+                "every-source review; refine the question or review additional sources."
+            )
+            mode = "focused_orientation"
     else:
         searchable_word = "source" if readiness.searchable_count == 1 else "sources"
         cited_word = "source" if cited_sources == 1 else "sources"
         notice = (
-            f"RecordBench searched the index for {readiness.searchable_count:,} "
-            f"searchable {searchable_word}, reranked the strongest passages, and "
+            f"RecordBench searched {readiness.searchable_count:,} "
+            f"searchable {searchable_word}, compared the strongest matching passages, and "
             f"grounded this answer in {cited_sources:,} cited {cited_word}."
         )
-    return {
-        "mode": "focused",
+        mode = "focused"
+    scope = {
+        "mode": mode,
         "collection_wide_request": collection_wide,
         "searchable_source_count": readiness.searchable_count,
         "candidate_passage_count": len(evidence),
@@ -292,6 +332,9 @@ def _focused_answer_scope(
         "cited_source_count": cited_sources,
         "notice": notice,
     }
+    if broad_summary:
+        scope["broad_summary_request"] = True
+    return scope
 
 
 def _backup_status_projection() -> dict[str, object]:
@@ -464,6 +507,84 @@ class MediaReviewView:
 
 
 @dataclass(frozen=True)
+class MediaSummaryFailureView:
+    category: str
+    explanation: str
+    attempt_label: str
+    retry_status: str
+    recovery: str
+
+
+def _media_summary_failure_view(
+    summary: MediaSummaryRecord | None,
+) -> MediaSummaryFailureView | None:
+    if summary is None or summary.state != "failed":
+        return None
+    message = summary.message.casefold()
+    if "answering" in message and ("unavailable" in message or "offline" in message):
+        category = "Local answering unavailable"
+        explanation = (
+            "The optional overview could not use the local answer service. "
+            "Playback and the full transcript are still ready."
+        )
+        recovery = "Check local answering status, then try the overview again."
+    elif "cited transcript support" in message or "supported points" in message:
+        category = "Supported overview not available"
+        explanation = (
+            "The overview did not retain enough transcript support to show as "
+            "reliable orientation. Playback and the full transcript are still ready."
+        )
+        recovery = "Review or correct the transcript, then try the overview again."
+    elif "changed" in message:
+        category = "Transcript changed during overview"
+        explanation = (
+            "The optional overview stopped because its transcript basis changed. "
+            "The current transcript and playback remain ready."
+        )
+        recovery = "Review the current transcript, then try the overview again."
+    elif "no passages" in message:
+        category = "No transcript passages available"
+        explanation = (
+            "There was no supported transcript text for the optional overview. "
+            "Playback remains available."
+        )
+        recovery = "Review the transcript state before trying again."
+    else:
+        category = "Overview generation error"
+        explanation = (
+            "The optional overview stopped after a local processing error. "
+            "Playback and the full transcript are still ready."
+        )
+        recovery = (
+            "Try the overview again; if it repeats, ask an administrator to check "
+            "local answering."
+        )
+
+    attempts = max(int(summary.attempts), 0)
+    limit = MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS
+    if attempts >= limit:
+        attempt_label = "Automatic recovery limit reached"
+        retry_status = (
+            f"{attempts} total attempts recorded. Automatic recovery stops after "
+            f"attempt {limit}; a deliberate manual retry remains available."
+        )
+    else:
+        remaining = limit - attempts
+        attempt_label = f"Attempt {attempts} of {limit}"
+        retry_status = (
+            f"{remaining} automatic recovery attempt"
+            f"{'s' if remaining != 1 else ''} remain."
+        )
+    return MediaSummaryFailureView(
+        category=category,
+        explanation=explanation,
+        attempt_label=attempt_label,
+        retry_status=retry_status,
+        recovery=recovery,
+    )
+
+
+@dataclass(frozen=True)
 class WorkbenchCitation:
     source_name: str
     location: str
@@ -625,8 +746,14 @@ class CaseIntelligenceWorkbench:
         self.workspace.recover_interrupted_matter_purges()
         self._stores: dict[str, PilotStore] = {}
         self._store_lock = threading.RLock()
+        self._matter_source_locks: dict[str, threading.RLock] = {}
         self._storage_reservation_lock = threading.RLock()
         self._playback_reservations: dict[tuple[str, str], int] = {}
+        self._clip_export_lock = threading.RLock()
+        self._clip_exports: dict[str, set[Path]] = {}
+        self._response_lease_lock = threading.RLock()
+        self._response_leases: dict[str, set[str]] = {}
+        self._reconcile_clip_exports()
         self.malware_scanner = malware_scanner or scanner_from_environment()
         self.malware_scan_mode = (
             malware_scan_mode
@@ -718,10 +845,14 @@ class CaseIntelligenceWorkbench:
             resolve_store=self.source_store,
             reserve_capacity=self._reserve_browser_playback,
             release_capacity=self._release_browser_playback,
+            admit_matter=lambda matter: (
+                self.workspace.matter_lifecycle(matter.matter_id).state == "active"
+            ),
         )
         self.answers = AnswerCoordinator(
             self.workspace,
             process=self._process_answer_job,
+            finish=self._finish_answer_job,
             workers=answer_workers,
         )
         try:
@@ -745,11 +876,14 @@ class CaseIntelligenceWorkbench:
         self.research = ResearchCoordinator(
             self.workspace,
             process=self._process_research_job,
+            finish=self._finish_research_job,
             workers=research_workers,
         )
         self.full_review = ReviewCoordinator(
             self.workspace,
             process=self._process_review_decision,
+            record=self._record_review_decision,
+            finish=self._finish_review_run,
             workers=review_workers,
             source_concurrency=review_source_concurrency,
         )
@@ -1012,6 +1146,9 @@ class CaseIntelligenceWorkbench:
                 media_file_limit=self.storage_policy.media_file_bytes,
                 upload_session_limit=self.storage_policy.upload_session_bytes,
                 on_change=lambda change: self._apply_source_store_change(matter, change),
+                mutation_lock=self._matter_source_locks.setdefault(
+                    matter.matter_id, threading.RLock()
+                ),
                 malware_scanner=self.malware_scanner,
                 malware_scan_mode=self.malware_scan_mode,
             )
@@ -1218,10 +1355,164 @@ class CaseIntelligenceWorkbench:
         with self._storage_reservation_lock:
             self._playback_reservations.pop((matter_id, document_id), None)
 
+    @staticmethod
+    def _validate_clip_export_matter_id(matter_id: str) -> str:
+        if not re.fullmatch(r"ci-matter-[0-9a-f]{32}", matter_id or ""):
+            raise RuntimeError("clip export matter identity is invalid")
+        return matter_id
+
+    def _reconcile_clip_exports(self) -> None:
+        """Remove abandoned matter-owned clip files before serving requests."""
+
+        legacy_root = self.runtime_dir / "clip-exports"
+        if legacy_root.exists() or legacy_root.is_symlink():
+            securely_delete_owned_tree(
+                legacy_root, allowed_parent=self.runtime_dir
+            )
+        with os.scandir(self.storage.matters) as entries:
+            matter_roots = tuple(
+                Path(entry.path)
+                for entry in entries
+                if entry.is_dir(follow_symlinks=False)
+                and re.fullmatch(r"ci-matter-[0-9a-f]{32}", entry.name)
+            )
+        for matter_root in matter_roots:
+            clip_root = matter_root / "clip-exports"
+            if clip_root.exists() or clip_root.is_symlink():
+                securely_delete_owned_tree(clip_root, allowed_parent=matter_root)
+
+    def begin_media_clip_export(self, matter: MatterRecord) -> Path:
+        """Admit one matter-owned clip render before a purge can be claimed."""
+
+        matter_id = self._validate_clip_export_matter_id(matter.matter_id)
+        lock = self._matter_source_locks.setdefault(matter_id, threading.RLock())
+        with lock:
+            if self.workspace.matter_lifecycle(matter_id).state != "active":
+                raise WorkspaceProblem(
+                    "This matter is closing and cannot start another clip download."
+                )
+            matter_root = self.storage.matters / matter_id
+            if matter_root.is_symlink() or not matter_root.is_dir():
+                raise WorkspaceProblem("Clip export storage is unavailable.")
+            clip_root = matter_root / "clip-exports"
+            clip_root.mkdir(mode=0o700, exist_ok=True)
+            if clip_root.is_symlink() or not clip_root.is_dir():
+                raise WorkspaceProblem("Clip export storage is unavailable.")
+            directory = Path(tempfile.mkdtemp(prefix="clip-", dir=clip_root))
+            with self._clip_export_lock:
+                self._clip_exports.setdefault(matter_id, set()).add(directory)
+            return directory
+
+    def finish_media_clip_export(self, matter_id: str, directory: Path) -> bool:
+        """Remove one rendered response tree and release its purge admission."""
+
+        matter_id = self._validate_clip_export_matter_id(matter_id)
+        matter_root = self.storage.matters / matter_id
+        clip_root = matter_root / "clip-exports"
+        complete = True
+        with self._clip_export_lock:
+            try:
+                securely_delete_owned_tree(Path(directory), allowed_parent=clip_root)
+                try:
+                    clip_root.rmdir()
+                    PilotStore._fsync_directory(matter_root)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    # Another admitted export still owns a sibling directory.
+                    pass
+            except Exception:
+                complete = False
+            finally:
+                active = self._clip_exports.get(matter_id)
+                if active is not None:
+                    active.discard(Path(directory))
+                    if not active:
+                        self._clip_exports.pop(matter_id, None)
+        return complete
+
+    def _active_clip_export_count(self, matter_id: str) -> int:
+        with self._clip_export_lock:
+            return len(self._clip_exports.get(matter_id, ()))
+
+    def begin_matter_response(
+        self,
+        matter: MatterRecord,
+        *,
+        allowed_states: frozenset[str] = frozenset({"active"}),
+    ) -> str:
+        """Lease a matter-bearing response before deletion can be claimed."""
+
+        matter_id = self._validate_clip_export_matter_id(matter.matter_id)
+        if not allowed_states or not allowed_states.issubset({"active", "purge_failed"}):
+            raise ValueError("matter response states are invalid")
+        lock = self._matter_source_locks.setdefault(matter_id, threading.RLock())
+        with lock:
+            if self.workspace.matter_lifecycle(matter_id).state not in allowed_states:
+                raise WorkspaceProblem(
+                    "This matter is closing and cannot start another download."
+                )
+            lease_id = f"response-{uuid.uuid4().hex}"
+            with self._response_lease_lock:
+                self._response_leases.setdefault(matter_id, set()).add(lease_id)
+            return lease_id
+
+    def finish_matter_response(self, matter_id: str, lease_id: str) -> None:
+        """Release a response lease after its body has finished sending."""
+
+        matter_id = self._validate_clip_export_matter_id(matter_id)
+        if not re.fullmatch(r"response-[0-9a-f]{32}", lease_id or ""):
+            raise RuntimeError("matter response lease identity is invalid")
+        with self._response_lease_lock:
+            active = self._response_leases.get(matter_id)
+            if active is None or lease_id not in active:
+                return
+            active.remove(lease_id)
+            if not active:
+                self._response_leases.pop(matter_id, None)
+
+    def _active_matter_response_count(self, matter_id: str) -> int:
+        with self._response_lease_lock:
+            return len(self._response_leases.get(matter_id, ()))
+
+    def _cleanup_matter_clip_exports(self, matter_id: str) -> None:
+        matter_id = self._validate_clip_export_matter_id(matter_id)
+        if self._active_clip_export_count(matter_id):
+            raise RuntimeError("a clip export is still active")
+        matter_root = self.storage.matters / matter_id
+        clip_root = matter_root / "clip-exports"
+        if clip_root.exists() or clip_root.is_symlink():
+            securely_delete_owned_tree(clip_root, allowed_parent=matter_root)
+
     def matter_for_closure(
-        self, slug: str, actor_id: str
+        self,
+        slug: str,
+        actor_id: str,
+        *,
+        administrator_override: bool = False,
     ) -> tuple[MatterRecord, MatterLifecycleRecord]:
-        return self.workspace.matter_for_closure(slug, actor_id)
+        return self.workspace.matter_for_closure(
+            slug,
+            actor_id,
+            administrator_override=administrator_override,
+        )
+
+    def matter_active_work_counts(self, matter_id: str) -> dict[str, int]:
+        """Combine durable queues with process-local playback preparation."""
+
+        active = self.workspace.active_matter_work_counts(matter_id)
+        playback_active = bool(
+            (self.playback is not None and self.playback.has_matter_work(matter_id))
+            or self._playback_reserved_bytes(matter_id)
+        )
+        return {
+            **active,
+            "playback": int(playback_active),
+            "exports": (
+                self._active_clip_export_count(matter_id)
+                + self._active_matter_response_count(matter_id)
+            ),
+        }
 
     def _matter_source_count_for_purge(
         self, matter: MatterRecord, lifecycle: MatterLifecycleRecord
@@ -1234,15 +1525,33 @@ class CaseIntelligenceWorkbench:
         return lifecycle.source_count
 
     def begin_matter_purge(
-        self, slug: str, actor_id: str, confirmed_name: str
+        self,
+        slug: str,
+        actor_id: str,
+        confirmed_name: str,
+        *,
+        administrator_override: bool = False,
     ) -> tuple[MatterRecord, MatterLifecycleRecord]:
-        matter, lifecycle = self.matter_for_closure(slug, actor_id)
-        return self.workspace.begin_matter_purge(
+        matter, lifecycle = self.matter_for_closure(
             slug,
             actor_id,
-            confirmed_name,
-            source_count=self._matter_source_count_for_purge(matter, lifecycle),
+            administrator_override=administrator_override,
         )
+        lock = self._matter_source_locks.setdefault(
+            matter.matter_id, threading.RLock()
+        )
+        with lock:
+            if any(self.matter_active_work_counts(matter.matter_id).values()):
+                raise WorkspaceProblem(
+                    "Wait for current uploads, source and media processing, transcript overviews, analysis, browser playback preparation, work-product downloads, answers, investigations, and every-source checks to finish before deleting this matter."
+                )
+            return self.workspace.begin_matter_purge(
+                slug,
+                actor_id,
+                confirmed_name,
+                source_count=self._matter_source_count_for_purge(matter, lifecycle),
+                administrator_override=administrator_override,
+            )
 
     def execute_matter_purge(
         self, matter: MatterRecord, lifecycle: MatterLifecycleRecord
@@ -1275,6 +1584,16 @@ class CaseIntelligenceWorkbench:
             )
 
         try:
+            self._cleanup_matter_clip_exports(matter.matter_id)
+        except Exception as exc:
+            self.workspace.fail_matter_purge(
+                matter.matter_id, purge_id, "clip_exports"
+            )
+            raise WorkspaceProblem(
+                "Matter deletion stopped while removing temporary work-product files. Try the deletion again."
+            ) from exc
+
+        try:
             if source_root.is_symlink() or matter_root.is_symlink():
                 raise RuntimeError("matter storage is unsafe")
             if source_root.exists() and quarantine.exists():
@@ -1305,7 +1624,7 @@ class CaseIntelligenceWorkbench:
                 matter.matter_id, purge_id, "projection"
             )
             raise WorkspaceProblem(
-                "Matter deletion stopped because the search index could not be verified. Try again when search is available."
+                "Matter deletion stopped because derived search data could not be verified. Try again when search is available."
             ) from exc
 
         try:
@@ -1389,11 +1708,18 @@ class CaseIntelligenceWorkbench:
             try:
                 matter = self.workspace.get_matter_by_id(retention.matter_id)
                 lifecycle = self.workspace.matter_lifecycle(matter.matter_id)
-                source_count = self._matter_source_count_for_purge(matter, lifecycle)
-                claimed = self.workspace.begin_due_matter_purge(
-                    matter.matter_id,
-                    source_count=source_count,
+                lock = self._matter_source_locks.setdefault(
+                    matter.matter_id, threading.RLock()
                 )
+                with lock:
+                    if any(self.matter_active_work_counts(matter.matter_id).values()):
+                        deferred += 1
+                        continue
+                    source_count = self._matter_source_count_for_purge(matter, lifecycle)
+                    claimed = self.workspace.begin_due_matter_purge(
+                        matter.matter_id,
+                        source_count=source_count,
+                    )
                 if claimed is None:
                     deferred += 1
                     continue
@@ -1575,7 +1901,30 @@ class CaseIntelligenceWorkbench:
             "retryable": document.state in {"failed", "needs_ocr"},
             "removable": document.state not in {"queued", "processing"},
             "has_video": bool(document.has_video),
+            "content_basis_digest": self._document_content_basis(document),
         }
+
+    @staticmethod
+    def _document_content_basis(document: PilotDocument) -> str:
+        encoded = json.dumps(
+            {
+                "source_version": document.version_id,
+                "units": [
+                    {
+                        "number": unit.number,
+                        "digest": unit.excerpt_digest,
+                        "line_start": unit.line_start,
+                        "line_end": unit.line_end,
+                        "start_ms": unit.start_ms,
+                        "end_ms": unit.end_ms,
+                    }
+                    for unit in document.parsed_units()
+                ],
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _source_state(document: PilotDocument) -> tuple[str, str]:
@@ -1908,6 +2257,9 @@ class CaseIntelligenceWorkbench:
             line_end=unit.line_end,
             source_version_id=document.version_id,
             excerpt_digest=unit.excerpt_digest,
+            evidence_kind=(
+                "transcript" if is_media_type(document.media_type) else "document"
+            ),
         )
 
     def _candidates(
@@ -1956,6 +2308,23 @@ class CaseIntelligenceWorkbench:
 
     @staticmethod
     def _support_token(candidate: Candidate) -> str:
+        if candidate.evidence_kind == "transcript":
+            material = "\x00".join(
+                (
+                    "case-intelligence-transcript-support-v2",
+                    candidate.matter_id,
+                    candidate.document_id,
+                    candidate.source_version_id,
+                    candidate.chunk_id,
+                    str(candidate.line_start if candidate.line_start is not None else ""),
+                    str(candidate.line_end if candidate.line_end is not None else ""),
+                )
+            )
+            return hashlib.sha256(material.encode("utf-8")).hexdigest()[:40]
+        return CaseIntelligenceWorkbench._legacy_support_token(candidate)
+
+    @staticmethod
+    def _legacy_support_token(candidate: Candidate) -> str:
         material = "\x00".join(
             (
                 "case-intelligence-support-v1",
@@ -2050,20 +2419,100 @@ class CaseIntelligenceWorkbench:
             raise RetrievalUnavailable("matter search returned invalid support")
         return tuple(self._citation(matter, item) for item in candidates)
 
+    def _answer_search(
+        self,
+        matter: MatterRecord,
+        question: str,
+        retrieval_query: str,
+        *,
+        stage_callback: Callable[[str], None] | None = None,
+        document_ids: frozenset[str] | None = None,
+        expand_broad_summary: bool = True,
+        primary_limit: int = 20,
+    ) -> tuple[WorkbenchCitation, ...]:
+        """Run bounded answer retrieval with explicit scope and modality policy."""
+
+        intent = classify_question(question)
+        queries = (
+            broad_summary_queries(retrieval_query, maximum_chars=MAX_SEARCH_CHARS)
+            if intent.broad_summary and expand_broad_summary
+            else (retrieval_query,)
+        )
+        combined: list[WorkbenchCitation] = []
+        seen: set[str] = set()
+
+        def extend(rows: Sequence[WorkbenchCitation]) -> None:
+            for row in rows:
+                if row.support_token not in seen:
+                    combined.append(row)
+                    seen.add(row.support_token)
+
+        for index, query in enumerate(queries):
+            extend(
+                self.search(
+                    matter,
+                    query,
+                    limit=min(max(int(primary_limit), 1), 30),
+                    stage_callback=stage_callback if index == 0 else None,
+                    document_ids=document_ids,
+                )
+            )
+
+        # A joint written-and-spoken request gets one bounded retrieval attempt
+        # inside each requested source kind when the ordinary top set omitted it.
+        # Every scoped search still passes the same matter and citation checks.
+        present_kinds = {item.evidence_kind for item in combined}
+        missing_kinds = tuple(
+            kind for kind in intent.required_evidence_kinds if kind not in present_kinds
+        )
+        if missing_kinds:
+            store = self.source_store(matter)
+            allowed = document_ids
+            for kind in missing_kinds:
+                scoped = frozenset(
+                    document.document_id
+                    for document in store.ready_documents()
+                    if (allowed is None or document.document_id in allowed)
+                    and (
+                        is_media_type(document.media_type)
+                        if kind == "transcript"
+                        else not is_media_type(document.media_type)
+                    )
+                )
+                if scoped:
+                    extend(
+                        self.search(
+                            matter,
+                            retrieval_query,
+                            limit=12,
+                            document_ids=scoped,
+                        )
+                    )
+        rows = tuple(combined)
+        if intent.broad_summary:
+            rows = filter_broad_summary_evidence(rows)
+        return rows
+
     def _answer_evidence_citations(
         self,
         matter: MatterRecord,
         citations: Sequence[WorkbenchCitation],
         *,
         maximum: int = 12,
+        required_kinds: Sequence[str] = (),
     ) -> tuple[WorkbenchCitation, ...]:
         """Diversify top anchors, then use remaining slots for media neighbors."""
 
         limit = min(max(int(maximum), 1), 12)
         anchor_limit = min(limit, 8)
+        ordered = prioritize_evidence_kinds(
+            citations,
+            maximum=len(citations),
+            required_kinds=required_kinds,
+        )
         anchors: list[WorkbenchCitation] = []
         document_counts: dict[str, int] = {}
-        for citation in citations:
+        for citation in ordered:
             if document_counts.get(citation.document_id, 0) >= 2:
                 continue
             anchors.append(citation)
@@ -2076,7 +2525,7 @@ class CaseIntelligenceWorkbench:
         # from one source. Backfill only when source diversity left empty slots.
         if len(anchors) < anchor_limit:
             anchor_tokens = {citation.support_token for citation in anchors}
-            for citation in citations:
+            for citation in ordered:
                 if citation.support_token in anchor_tokens:
                     continue
                 anchors.append(citation)
@@ -2145,8 +2594,41 @@ class CaseIntelligenceWorkbench:
             units = document.parsed_units()
             for ordinal, unit in enumerate(units, 1):
                 candidate = self._candidate(matter, document, unit, ordinal)
-                if self._support_token(candidate) == token:
+                if token in {
+                    self._support_token(candidate),
+                    self._legacy_support_token(candidate),
+                }:
                     return document, units, ordinal - 1
+            if not is_media_type(document.media_type):
+                continue
+            history = self.workspace.transcript_support_history(
+                matter.matter_id,
+                document.document_id,
+                document.version_id,
+            )
+            for ordinal, excerpts in history.items():
+                index = ordinal - 1
+                if not 0 <= index < len(units):
+                    continue
+                candidate = self._candidate(matter, document, units[index], ordinal)
+                for excerpt in excerpts:
+                    historical = Candidate(
+                        candidate.matter_id,
+                        candidate.document_id,
+                        candidate.chunk_id,
+                        candidate.source_name,
+                        candidate.page_number,
+                        excerpt,
+                        line_start=candidate.line_start,
+                        line_end=candidate.line_end,
+                        source_version_id=candidate.source_version_id,
+                        excerpt_digest=hashlib.sha256(
+                            excerpt.encode("utf-8")
+                        ).hexdigest(),
+                        evidence_kind="transcript",
+                    )
+                    if self._legacy_support_token(historical) == token:
+                        return document, units, index
         raise KeyError(token)
 
     def support(
@@ -2172,6 +2654,14 @@ class CaseIntelligenceWorkbench:
             candidate = self._candidate(matter, document, unit, index + 1)
             location = candidate.citation
             position = f"Transcript passage {index + 1} of {len(units)}"
+            segments = self.workspace.transcript_segments(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if index < len(segments) and (
+                segments[index].current_revision
+                or segments[index].speaker_identity_state == "confirmed"
+            ):
+                position += " · current reviewed text"
             start_ms = max(int(unit.start_ms or unit.line_start or 0), 0)
             end_ms = max(int(unit.end_ms or unit.line_end or start_ms), start_ms)
             source_review_href = (
@@ -2679,6 +3169,120 @@ class CaseIntelligenceWorkbench:
             ),
         )
 
+    def export_report_work_product(
+        self,
+        matter: MatterRecord,
+        report: ReportRecord,
+        sections: Sequence[
+            tuple[ReportSectionRecord, Sequence[ReportCitationRecord]]
+        ],
+        format_name: str,
+    ) -> ExportArtifact:
+        """Resolve every report citation under the source mutation boundary."""
+
+        store = self.source_store(matter)
+        with store.mutation_guard():
+            for _section, citations in sections:
+                for citation in citations:
+                    try:
+                        if citation.kind in {"source", "transcript"}:
+                            document, units, index = self._find_support(
+                                matter, citation.support_token
+                            )
+                            unit = units[index]
+                            candidate = self._candidate(
+                                matter, document, unit, index + 1
+                            )
+                            exact_tokens = {
+                                self._support_token(candidate),
+                                self._legacy_support_token(candidate),
+                            }
+                            expected_kind = (
+                                "transcript"
+                                if is_media_type(document.media_type)
+                                else "source"
+                            )
+                            if (
+                                citation.support_token not in exact_tokens
+                                or citation.kind != expected_kind
+                                or citation.document_id != document.document_id
+                                or citation.source_version_id != document.version_id
+                                or citation.source_name != document.display_name
+                                or citation.location != candidate.citation
+                                or citation.excerpt != unit.text
+                            ):
+                                raise KeyError(citation.citation_id)
+                        elif citation.kind == "media_clip":
+                            clip = self.workspace.media_clip(
+                                matter.matter_id, citation.media_clip_id
+                            )
+                            document = store.get(clip.document_id)
+                            location = (
+                                f"{format_timestamp(clip.start_ms)}–"
+                                f"{format_timestamp(clip.end_ms)}"
+                            )
+                            if (
+                                clip.document_id != citation.document_id
+                                or clip.source_version_id
+                                != citation.source_version_id
+                                or clip.start_ms != citation.start_ms
+                                or clip.end_ms != citation.end_ms
+                                or document.version_id != citation.source_version_id
+                                or document.display_name != citation.source_name
+                                or location != citation.location
+                            ):
+                                raise KeyError(citation.citation_id)
+                        else:
+                            raise KeyError(citation.citation_id)
+                    except KeyError as exc:
+                        raise ExportProblem(
+                            "A report citation no longer resolves to its saved source."
+                        ) from exc
+            return export_report(matter, report, sections, format_name)
+
+    def export_research_work_product(
+        self,
+        matter: MatterRecord,
+        job: ResearchJobRecord,
+        format_name: str,
+    ) -> ExportArtifact:
+        """Resolve a saved investigation ledger before rendering any result text."""
+
+        store = self.source_store(matter)
+        with store.mutation_guard():
+            raw_evidence = job.result.get("evidence")
+            if not isinstance(raw_evidence, list):
+                raise ExportProblem(
+                    "The investigation evidence ledger could not be resolved."
+                )
+            try:
+                citations = tuple(
+                    self._workflow_citation(value)
+                    for value in raw_evidence
+                    if isinstance(value, Mapping)
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ExportProblem(
+                    "The investigation evidence ledger could not be resolved."
+                ) from exc
+            if len(citations) != len(raw_evidence) or any(
+                self._current_workflow_citation(matter, citation) is None
+                for citation in citations
+            ):
+                raise ExportProblem(
+                    "The investigation evidence ledger no longer resolves to its saved sources."
+                )
+            self._assert_current_payload_support(
+                matter,
+                job.result,
+                failure=ExportProblem,
+                message=(
+                    "The investigation evidence ledger no longer resolves to its "
+                    "saved sources."
+                ),
+            )
+            return export_research(matter, job, format_name)
+
     def add_answer_to_report(
         self,
         matter: MatterRecord,
@@ -2899,6 +3503,16 @@ class CaseIntelligenceWorkbench:
         self, matter: MatterRecord, token: str, actor_id: str | None = None
     ) -> None:
         store = self.source_store(matter)
+        with store.mutation_guard():
+            return self._retry_document_locked(matter, token, actor_id, store)
+
+    def _retry_document_locked(
+        self,
+        matter: MatterRecord,
+        token: str,
+        actor_id: str | None,
+        store: PilotStore,
+    ) -> None:
         document = store.get_by_action_token(token)
         media_job = self.workspace.media_job(
             matter.matter_id, document.document_id, document.version_id
@@ -2943,6 +3557,12 @@ class CaseIntelligenceWorkbench:
 
     def remove_document(self, matter: MatterRecord, token: str) -> None:
         store = self.source_store(matter)
+        with store.mutation_guard():
+            self._remove_document_locked(matter, token, store)
+
+    def _remove_document_locked(
+        self, matter: MatterRecord, token: str, store: PilotStore
+    ) -> None:
         document = store.get_by_action_token(token)
         media_job = self.workspace.media_job(
             matter.matter_id, document.document_id, document.version_id
@@ -2960,6 +3580,13 @@ class CaseIntelligenceWorkbench:
         job = self.workspace.ingest_job(matter.matter_id, document.document_id)
         if job is not None and job.state == "running":
             raise UploadProblem("This source is being processed and cannot be removed yet.", 409)
+        if media_job is not None and (
+            self.media is None or not self.media.cancel_external(media_job)
+        ):
+            raise UploadProblem(
+                "Temporary transcription files could not be removed yet. Try removing this source again shortly.",
+                409,
+            )
         if self.playback is not None and not self.playback.cancel_document(
             matter.matter_id, document.document_id
         ):
@@ -2977,8 +3604,6 @@ class CaseIntelligenceWorkbench:
                     document_id=document.document_id,
                 )
         if media_job is not None:
-            if self.media is not None:
-                self.media.cancel_external(media_job)
             self.workspace.remove_media_document(
                 matter.matter_id, document.document_id
             )
@@ -3089,9 +3714,11 @@ class CaseIntelligenceWorkbench:
             matter.matter_id, conversation.conversation_id, "user", value
         )
         retrieval_query = self._retrieval_question(value, prior)
+        intent = classify_question(value)
         citations = self._answer_evidence_citations(
             matter,
-            self.search(matter, retrieval_query, limit=20),
+            self._answer_search(matter, value, retrieval_query),
+            required_kinds=intent.required_evidence_kinds,
         )
         evidence = {
             f"S{index}": citation
@@ -3113,19 +3740,39 @@ class CaseIntelligenceWorkbench:
         except GenerationGroundingRejected:
             answer = self._verification_abstention()
         payload = self._answer_payload(answer, evidence)
+        evidence_shape = modality_coverage(value, evidence, answer.used_evidence_ids)
+        if evidence_shape:
+            payload["modality_coverage"] = evidence_shape
         payload["review_scope"] = _focused_answer_scope(
             value,
             self.workspace.matter_readiness(matter.matter_id),
             answer,
             evidence,
         )
-        return self.workspace.append_message(
-            matter.matter_id,
-            conversation.conversation_id,
-            "assistant",
-            answer.text,
-            payload,
-        )
+        with self.source_store(matter).mutation_guard():
+            if any(
+                self._current_workflow_citation(matter, citation) is None
+                for citation in citations
+            ):
+                raise WorkspaceProblem(
+                    "A source changed while this answer was being prepared. Ask the question again to use the current source."
+                )
+            self._assert_current_payload_support(
+                matter,
+                payload,
+                failure=WorkspaceProblem,
+                message=(
+                    "A source changed while this answer was being prepared. "
+                    "Ask the question again to use the current source."
+                ),
+            )
+            return self.workspace.append_message(
+                matter.matter_id,
+                conversation.conversation_id,
+                "assistant",
+                answer.text,
+                payload,
+            )
 
     def queue_answer(
         self,
@@ -3238,15 +3885,17 @@ class CaseIntelligenceWorkbench:
             def retrieval_stage(stage_key: str) -> None:
                 report_stage(stage_key, ANSWER_STAGE_MESSAGES[stage_key])
 
+            intent = classify_question(job.question)
             citations = self._answer_evidence_citations(
                 matter,
-                self.search(
+                self._answer_search(
                     matter,
+                    job.question,
                     retrieval_query,
-                    limit=20,
                     stage_callback=retrieval_stage,
                     document_ids=scoped_document_ids,
                 ),
+                required_kinds=intent.required_evidence_kinds,
             )
             if cancelled():
                 raise AnswerJobFailure("Answer cancelled.")
@@ -3289,6 +3938,13 @@ class CaseIntelligenceWorkbench:
                     "Access to this matter was removed before the answer completed."
                 ) from exc
             payload = self._answer_payload(answer, evidence)
+            evidence_shape = modality_coverage(
+                job.question,
+                evidence,
+                answer.used_evidence_ids,
+            )
+            if evidence_shape:
+                payload["modality_coverage"] = evidence_shape
             payload["source_coverage"] = source_coverage
             payload["review_scope"] = _focused_answer_scope(
                 job.question,
@@ -3314,7 +3970,7 @@ class CaseIntelligenceWorkbench:
                         for item in notebook_items
                     ],
                 }
-            return AnswerResult(answer.text, payload)
+            return AnswerResult(answer.text, payload, tuple(citations))
         except AnswerJobFailure:
             raise
         except RetrievalUnavailable as exc:
@@ -3329,6 +3985,70 @@ class CaseIntelligenceWorkbench:
             raise AnswerJobFailure(
                 "I could not verify enough source support for a reliable answer. Try a narrower question or search the matter."
             ) from exc
+
+    def _assert_current_payload_support(
+        self,
+        matter: MatterRecord,
+        value: object,
+        *,
+        failure: type[Exception],
+        message: str,
+    ) -> None:
+        """Resolve every nested support token while source mutation is locked."""
+
+        stack = [value]
+        seen: set[str] = set()
+        try:
+            while stack:
+                item = stack.pop()
+                if isinstance(item, Mapping):
+                    token_value = item.get("support_token")
+                    if token_value is not None:
+                        token = str(token_value)
+                        if token not in seen:
+                            support = self.support(matter, token)
+                            seen.add(token)
+                            if item.get("source_name") not in {
+                                None,
+                                support.source_name,
+                            } or item.get("location") not in {
+                                None,
+                                support.location,
+                            }:
+                                raise KeyError(token)
+                    stack.extend(item.values())
+                elif isinstance(item, (list, tuple)):
+                    stack.extend(item)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise failure(message) from exc
+
+    def _finish_answer_job(
+        self, job: AnswerJobRecord, result: AnswerResult
+    ) -> MessageRecord | None:
+        matter = self._matter_by_id(job.matter_id)
+        with self.source_store(matter).mutation_guard():
+            if any(
+                not isinstance(citation, WorkbenchCitation)
+                or self._current_workflow_citation(matter, citation) is None
+                for citation in result.citations
+            ):
+                raise AnswerJobFailure(
+                    "A source changed while this answer was being prepared. Try again to use the current source."
+                )
+            self._assert_current_payload_support(
+                matter,
+                result.payload,
+                failure=AnswerJobFailure,
+                message=(
+                    "A source changed while this answer was being prepared. "
+                    "Try again to use the current source."
+                ),
+            )
+            return self.workspace.finish_answer_job(
+                job.job_id,
+                content=result.content,
+                payload=result.payload,
+            )
 
     @staticmethod
     def _workflow_citation_payload(citation: WorkbenchCitation) -> dict[str, object]:
@@ -3369,6 +4089,94 @@ class CaseIntelligenceWorkbench:
             int(value["line_end"]) if value.get("line_end") is not None else None,
             str(value["evidence_kind"]),
         )
+
+    def _current_workflow_citation(
+        self, matter: MatterRecord, citation: WorkbenchCitation
+    ) -> WorkbenchCitation | None:
+        """Re-resolve a checkpoint citation against the current source version."""
+
+        if citation.matter_id != matter.matter_id:
+            return None
+        try:
+            document = self.source_store(matter).get(citation.document_id)
+        except KeyError:
+            return None
+        if document.state != "ready" or document.version_id != citation.source_version_id:
+            return None
+        for ordinal, unit in enumerate(document.parsed_units(), 1):
+            if (
+                unit.number != citation.unit_number
+                or unit.text != citation.excerpt
+                or unit.excerpt_digest != citation.excerpt_digest
+                or unit.line_start != citation.line_start
+                or unit.line_end != citation.line_end
+            ):
+                continue
+            current = self._citation(
+                matter, self._candidate(matter, document, unit, ordinal)
+            )
+            if (
+                current.support_token == citation.support_token
+                and current.chunk_id == citation.chunk_id
+                and current.evidence_kind == citation.evidence_kind
+            ):
+                return current
+        return None
+
+    def _validated_research_citations(
+        self,
+        matter: MatterRecord,
+        citations: Sequence[WorkbenchCitation],
+    ) -> list[WorkbenchCitation]:
+        """Fail a bounded run rather than save evidence whose source changed."""
+
+        current: list[WorkbenchCitation] = []
+        for citation in citations:
+            resolved = self._current_workflow_citation(matter, citation)
+            if resolved is None:
+                raise WorkflowFailure(
+                    "A source changed while this investigation was working. Retry it to use the current source."
+                )
+            current.append(resolved)
+        return current
+
+    def _finish_research_job(
+        self, job: ResearchJobRecord, result: Mapping[str, object]
+    ) -> ResearchJobRecord:
+        matter = self._matter_by_id(job.matter_id)
+        with self.source_store(matter).mutation_guard():
+            raw_evidence = result.get("evidence")
+            if not isinstance(raw_evidence, list):
+                raise WorkflowFailure(
+                    "The investigation evidence ledger could not be verified. Retry the investigation."
+                )
+            try:
+                exact_citations = tuple(
+                    self._workflow_citation(value)
+                    for value in raw_evidence
+                    if isinstance(value, Mapping)
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise WorkflowFailure(
+                    "The investigation evidence ledger could not be verified. Retry the investigation."
+                ) from exc
+            if len(exact_citations) != len(raw_evidence) or any(
+                self._current_workflow_citation(matter, citation) is None
+                for citation in exact_citations
+            ):
+                raise WorkflowFailure(
+                    "A source changed before this investigation could be saved. Retry it to use the current source."
+                )
+            self._assert_current_payload_support(
+                matter,
+                result,
+                failure=WorkflowFailure,
+                message=(
+                    "A source changed before this investigation could be saved. "
+                    "Retry it to use the current source."
+                ),
+            )
+            return self.workspace.finish_research_job(job.job_id, result)
 
     @staticmethod
     def _research_plan(question: str, title: str) -> dict[str, object]:
@@ -3440,30 +4248,54 @@ class CaseIntelligenceWorkbench:
         ]
         citations: list[WorkbenchCitation] = []
         seen_tokens: set[str] = set()
+        checkpoint_stale = False
         for value in evidence_values:
             try:
-                citation = self._workflow_citation(value)
+                checkpoint_citation = self._workflow_citation(value)
             except (KeyError, TypeError, ValueError):
+                checkpoint_stale = True
                 continue
-            if citation.matter_id == matter.matter_id and citation.support_token not in seen_tokens:
-                citations.append(citation)
-                seen_tokens.add(citation.support_token)
+            citation = self._current_workflow_citation(matter, checkpoint_citation)
+            if citation is None:
+                checkpoint_stale = True
+                continue
+            if citation.support_token in seen_tokens:
+                checkpoint_stale = True
+                continue
+            citations.append(citation)
+            seen_tokens.add(citation.support_token)
         candidate_count = int(checkpoint.get("candidate_count", 0) or 0)
+        if checkpoint_stale:
+            # A changed source invalidates both its citation and any saved
+            # finding derived from that checkpoint. Restart the bounded search
+            # plan rather than synthesizing or displaying stale source text.
+            passes = []
+            citations = []
+            seen_tokens = set()
+            candidate_count = 0
+        intent = classify_question(job.question)
 
         for index, query in enumerate(queries[len(passes):], len(passes) + 1):
             if cancelled():
                 raise WorkflowFailure("Research cancelled.")
             try:
-                found = self.search(
+                found = self._answer_search(
                     matter,
+                    job.question,
                     query,
-                    limit=30,
                     document_ids=scoped_document_ids,
+                    expand_broad_summary=False,
+                    primary_limit=30,
                 )
             except RetrievalUnavailable:
                 found = ()
             candidate_count += len(found)
-            selected = self._answer_evidence_citations(matter, found, maximum=12)
+            selected = self._answer_evidence_citations(
+                matter,
+                found,
+                maximum=12,
+                required_kinds=intent.required_evidence_kinds,
+            )
             for citation in selected:
                 if citation.support_token not in seen_tokens and len(citations) < 72:
                     citations.append(citation)
@@ -3482,10 +4314,17 @@ class CaseIntelligenceWorkbench:
             if packet:
                 try:
                     answer = self.generator.answer(
-                        f"For this research step, what does the supplied record say about: {query}",
+                        research_step_question(job.question, query),
                         packet,
                     )
                     payload = self._answer_payload(answer, evidence)
+                    pass_shape = modality_coverage(
+                        job.question,
+                        evidence,
+                        answer.used_evidence_ids,
+                    )
+                    if pass_shape:
+                        payload["modality_coverage"] = pass_shape
                     pass_result = {
                         "query": query,
                         "status": "supported" if answer.answerable else "gap",
@@ -3529,7 +4368,13 @@ class CaseIntelligenceWorkbench:
 
         if cancelled():
             raise WorkflowFailure("Research cancelled.")
-        final_citations = self._answer_evidence_citations(matter, citations, maximum=12)
+        citations = self._validated_research_citations(matter, citations)
+        final_citations = self._answer_evidence_citations(
+            matter,
+            citations,
+            maximum=12,
+            required_kinds=intent.required_evidence_kinds,
+        )
         self.workspace.update_research_progress(
             job.job_id,
             stage="synthesizing",
@@ -3552,11 +4397,25 @@ class CaseIntelligenceWorkbench:
             for identifier, citation in final_evidence.items()
         )
         try:
-            final_answer = self.generator.answer(job.question, final_packet)
+            final_answer = self.generator.answer(
+                research_synthesis_question(job.question),
+                final_packet,
+            )
         except GenerationGroundingRejected:
             final_answer = self._verification_abstention()
         if cancelled():
             raise WorkflowFailure("Research cancelled.")
+        # Generation can take long enough for a source to be replaced. Resolve
+        # every saved locator again immediately before the result is returned
+        # to the coordinator for transactional completion.
+        citations = self._validated_research_citations(matter, citations)
+        final_citations = self._validated_research_citations(
+            matter, final_citations
+        )
+        final_evidence = {
+            f"S{ordinal}": citation
+            for ordinal, citation in enumerate(final_citations, 1)
+        }
         self.workspace.update_research_progress(
             job.job_id,
             stage="verifying",
@@ -3570,9 +4429,17 @@ class CaseIntelligenceWorkbench:
             for item in passes
             if item.get("status") != "supported"
         ]
+        final_answer_payload = self._answer_payload(final_answer, final_evidence)
+        evidence_shape = modality_coverage(
+            job.question,
+            final_evidence,
+            final_answer.used_evidence_ids,
+        )
+        if evidence_shape:
+            final_answer_payload["modality_coverage"] = evidence_shape
         return {
             "summary": final_answer.text,
-            "answer": self._answer_payload(final_answer, final_evidence),
+            "answer": final_answer_payload,
             "passes": passes,
             "evidence": [self._workflow_citation_payload(item) for item in citations],
             "gaps": gaps,
@@ -3584,8 +4451,8 @@ class CaseIntelligenceWorkbench:
                 "evidence_source_count": len({item.document_id for item in citations}),
                 "scope": "source_set" if job.source_set_id else "all_searchable_sources",
                 "notice": (
-                    "Deep Research used multiple focused retrieval passes. It is broader than Quick Answer, "
-                    "but it is not a document-by-document completeness determination. Use Full Review for that task."
+                    "This investigation used multiple focused retrieval passes. It is broader than one answer, "
+                    "but it did not check every source. Use Check every source for a document-by-document task."
                 ),
             },
         }
@@ -3599,10 +4466,30 @@ class CaseIntelligenceWorkbench:
         try:
             self.workspace.membership(run.matter_id, run.actor_id)
         except KeyError as exc:
-            raise WorkflowFailure("Access to this matter was removed during full review.") from exc
+            raise WorkflowFailure("Access to this matter was removed during the every-source check.") from exc
         if cancelled():
             raise WorkflowFailure("Review cancelled.")
         matter = self._matter_by_id(run.matter_id)
+        try:
+            frozen_document = self.source_store(matter).get(decision.document_id)
+        except KeyError:
+            frozen_document = None
+        if (
+            frozen_document is None
+            or frozen_document.state != "ready"
+            or frozen_document.version_id != decision.source_version_id
+            or (
+                decision.source_basis_digest
+                and self._document_content_basis(frozen_document)
+                != decision.source_basis_digest
+            )
+        ):
+            return ReviewDecisionResult(
+                "needs_attention",
+                "This source changed after the source list was frozen, so its replacement was not reviewed.",
+                (),
+                "Run a new source check to evaluate the current source version.",
+            )
         criterion = self.workspace.review_criterion(matter.matter_id, run.criterion_id)
         version = self.workspace.review_criterion_version(
             matter.matter_id, run.criterion_version_id
@@ -3620,6 +4507,49 @@ class CaseIntelligenceWorkbench:
             limit=12,
             document_ids=frozenset({decision.document_id}),
         )
+        try:
+            citations = tuple(
+                self._current_workflow_citation(matter, citation)
+                for citation in citations
+            )
+        except KeyError:
+            citations = ()
+        if (
+            any(citation is None for citation in citations)
+            or any(
+                citation.document_id != decision.document_id
+                or citation.source_version_id != decision.source_version_id
+                for citation in citations
+                if citation is not None
+            )
+        ):
+            return ReviewDecisionResult(
+                "needs_attention",
+                "This source changed while it was being checked, so no decision was saved from the replacement.",
+                (),
+                "Run a new source check to evaluate the current source version.",
+            )
+        citations = tuple(citation for citation in citations if citation is not None)
+        try:
+            current_document = self.source_store(matter).get(decision.document_id)
+        except KeyError:
+            current_document = None
+        if (
+            current_document is None
+            or current_document.state != "ready"
+            or current_document.version_id != decision.source_version_id
+            or (
+                decision.source_basis_digest
+                and self._document_content_basis(current_document)
+                != decision.source_basis_digest
+            )
+        ):
+            return ReviewDecisionResult(
+                "needs_attention",
+                "This source changed while it was being checked, so no decision was saved from the replacement.",
+                (),
+                "Run a new source check to evaluate the current source version.",
+            )
         if not citations:
             return ReviewDecisionResult(
                 "excluded",
@@ -3646,14 +4576,51 @@ class CaseIntelligenceWorkbench:
                 evidence=packet,
             )
         except (GenerationGroundingRejected, GenerationRejected):
+            validated = tuple(
+                self._current_workflow_citation(matter, citation)
+                for citation in citations
+            )
+            if any(citation is None for citation in validated):
+                return ReviewDecisionResult(
+                    "needs_attention",
+                    "This source changed while it was being checked, so no decision was saved from the replacement.",
+                    (),
+                    "Run a new source check to evaluate the current source version.",
+                )
             return ReviewDecisionResult(
                 "needs_attention",
                 "Potentially relevant passages were found, but an inclusion decision did not pass source verification.",
-                [self._workflow_citation_payload(item) for item in citations[:12]],
+                [
+                    self._workflow_citation_payload(item)
+                    for item in validated[:12]
+                    if item is not None
+                ],
                 "Source verification did not resolve an inclusion decision.",
             )
         if cancelled():
             raise WorkflowFailure("Review cancelled.")
+        validated = tuple(
+            self._current_workflow_citation(matter, citation)
+            for citation in citations
+        )
+        if any(citation is None for citation in validated):
+            return ReviewDecisionResult(
+                "needs_attention",
+                "This source changed while it was being checked, so no decision was saved from the replacement.",
+                (),
+                "Run a new source check to evaluate the current source version.",
+            )
+        citations = tuple(citation for citation in validated if citation is not None)
+        evidence = {
+            f"S{ordinal}": citation
+            for ordinal, citation in enumerate(citations, 1)
+        }
+        try:
+            self.workspace.membership(run.matter_id, run.actor_id)
+        except KeyError as exc:
+            raise WorkflowFailure(
+                "Access to this matter was removed during the every-source check."
+            ) from exc
         used = [
             evidence[identifier]
             for identifier in classification.used_evidence_ids
@@ -3670,6 +4637,86 @@ class CaseIntelligenceWorkbench:
             classification.rationale,
             [self._workflow_citation_payload(item) for item in citations[:4]],
         )
+
+    def _record_review_decision(
+        self,
+        run: ReviewRunRecord,
+        decision: ReviewDecisionRecord,
+        result: ReviewDecisionResult,
+    ) -> ReviewRunRecord:
+        matter = self._matter_by_id(run.matter_id)
+        with self.source_store(matter).mutation_guard():
+            try:
+                exact_citations = tuple(
+                    self._workflow_citation(citation)
+                    for citation in result.citations
+                )
+                if any(
+                    self._current_workflow_citation(matter, citation) is None
+                    for citation in exact_citations
+                ):
+                    raise WorkflowFailure(
+                        "The frozen source changed before its decision could be saved."
+                    )
+                self._assert_current_payload_support(
+                    matter,
+                    result.citations,
+                    failure=WorkflowFailure,
+                    message="The frozen source changed before its decision could be saved.",
+                )
+            except WorkflowFailure:
+                result = ReviewDecisionResult(
+                    "needs_attention",
+                    "This source changed while it was being checked, so no decision was saved from the replacement.",
+                    (),
+                    "Run a new source check to evaluate the current source version.",
+                )
+            return self.workspace.record_review_decision(
+                run.run_id,
+                decision.document_id,
+                decision=result.decision,
+                rationale=result.rationale,
+                citations=result.citations,
+                error_message=result.error_message,
+            )
+
+    def _finish_review_run(self, run: ReviewRunRecord) -> ReviewRunRecord:
+        matter = self._matter_by_id(run.matter_id)
+        with self.source_store(matter).mutation_guard():
+            for decision in self.workspace.review_decisions_for_export(
+                run.matter_id, run.actor_id, run.run_id
+            ):
+                source_current = False
+                try:
+                    document = self.source_store(matter).get(decision.document_id)
+                    source_current = bool(
+                        document.state == "ready"
+                        and document.version_id == decision.source_version_id
+                        and (
+                            not decision.source_basis_digest
+                            or self._document_content_basis(document)
+                            == decision.source_basis_digest
+                        )
+                    )
+                except KeyError:
+                    pass
+                citations_current = source_current
+                if citations_current:
+                    try:
+                        citations_current = all(
+                            self._current_workflow_citation(
+                                matter, self._workflow_citation(value)
+                            )
+                            is not None
+                            for value in decision.citations
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        citations_current = False
+                if not citations_current:
+                    self.workspace.mark_review_decision_source_changed(
+                        run.run_id, decision.document_id
+                    )
+            return self.workspace.finish_review_run(run.run_id)
 
     def record_answer_error(
         self,
@@ -4014,6 +5061,112 @@ def create_workbench_app(
         request.state.administrator_matter_override = matter.matter_id
         return matter
 
+    def _matter_response_dependency(
+        request: Request,
+        matter: MatterRecord,
+        *,
+        allowed_states: frozenset[str],
+    ) -> Iterator[None]:
+        try:
+            lease_id = bench.begin_matter_response(
+                matter, allowed_states=allowed_states
+            )
+        except WorkspaceProblem as exc:
+            raise HTTPException(409, str(exc)) from exc
+        state = {
+            "matter": matter,
+            "lease_id": lease_id,
+            "transferred": False,
+        }
+        request.state.matter_response_lease = state
+        try:
+            yield
+        finally:
+            # FastAPI 0.116 finalizes yield dependencies before a streaming
+            # response is sent. Successful routes explicitly transfer their
+            # lease to the response background task; errors release it here.
+            if not state["transferred"]:
+                bench.finish_matter_response(matter.matter_id, lease_id)
+
+    def require_matter_response_lease(
+        request: Request, slug: str
+    ) -> Iterator[None]:
+        """Admit an active source-bearing response."""
+
+        matter = authorized_matter(request, slug)
+        yield from _matter_response_dependency(
+            request, matter, allowed_states=frozenset({"active"})
+        )
+
+    def require_matter_bundle_response_lease(
+        request: Request, slug: str
+    ) -> Iterator[None]:
+        """Retain the final bundle opportunity after a failed purge attempt."""
+
+        context = auth_context(request)
+        administrator_override = False
+        try:
+            matter = bench.matter(slug, context.principal_id)
+        except KeyError:
+            try:
+                matter, lifecycle = bench.matter_for_closure(
+                    slug,
+                    context.principal_id,
+                    administrator_override=context.is_administrator,
+                )
+            except KeyError as exc:
+                audit(request, "matter.access", "denied", context=context)
+                raise HTTPException(404, "Matter not found") from exc
+            if lifecycle.state not in {"active", "purge_failed"}:
+                audit(request, "matter.access", "denied", context=context)
+                raise HTTPException(404, "Matter not found")
+            administrator_override = bool(
+                context.is_administrator
+                and matter.owner_id != context.principal_id
+            )
+            if administrator_override:
+                audit(
+                    request,
+                    "matter.admin_access",
+                    "success",
+                    context=context,
+                    matter=matter,
+                    details={"role": "administrator"},
+                )
+                request.state.administrator_matter_override = matter.matter_id
+        yield from _matter_response_dependency(
+            request,
+            matter,
+            allowed_states=frozenset({"active", "purge_failed"}),
+        )
+
+    def response_lease_matter(request: Request, slug: str) -> MatterRecord:
+        state = getattr(request.state, "matter_response_lease", None)
+        matter = state.get("matter") if isinstance(state, dict) else None
+        if not isinstance(matter, MatterRecord) or matter.slug != slug:
+            raise HTTPException(409, "The download admission could not be verified.")
+        return matter
+
+    def transfer_matter_response_lease(request: Request, response: Response) -> Response:
+        """Keep a deletion lease through the final response body byte."""
+
+        state = getattr(request.state, "matter_response_lease", None)
+        if not isinstance(state, dict) or state.get("transferred"):
+            raise RuntimeError("matter response lease is unavailable")
+        matter = state.get("matter")
+        lease_id = state.get("lease_id")
+        if not isinstance(matter, MatterRecord) or not isinstance(lease_id, str):
+            raise RuntimeError("matter response lease is invalid")
+        cleanup = BackgroundTask(
+            bench.finish_matter_response, matter.matter_id, lease_id
+        )
+        if response.background is None:
+            response.background = cleanup
+        else:
+            response.background = BackgroundTasks((response.background, cleanup))
+        state["transferred"] = True
+        return response
+
     def matter_readiness_projection(
         matter: MatterRecord,
         record: MatterReadinessRecord | None = None,
@@ -4088,7 +5241,7 @@ def create_workbench_app(
                 },
                 {
                     "key": "indexing",
-                    "label": "Building search index",
+                    "label": "Preparing source search",
                     "count": readiness.indexing_count,
                 },
             )
@@ -4150,7 +5303,7 @@ def create_workbench_app(
             ),
             stage(
                 "index",
-                "Search index",
+                "Source search",
                 "Building word and meaning search.",
                 readiness.searchable_count,
                 working=readiness.indexing_count,
@@ -4421,7 +5574,7 @@ def create_workbench_app(
                     continue
                 append_item(
                     matter=matter,
-                    kind="Deep research",
+                    kind="Investigation",
                     title=job.title,
                     detail=job.message,
                     state=job.state,
@@ -4441,9 +5594,9 @@ def create_workbench_app(
                     continue
                 append_item(
                     matter=matter,
-                    kind="Full review",
+                    kind="Every-source check",
                     title=(
-                        f"Full review · {run.snapshot_count:,} source"
+                        f"Every-source check · {run.snapshot_count:,} source"
                         f"{'s' if run.snapshot_count != 1 else ''}"
                     ),
                     detail=run.message,
@@ -4582,7 +5735,7 @@ def create_workbench_app(
             "is_administrator": context.is_administrator,
             "administrator_view": administrator_view,
             "can_manage_members": is_matter_owner or context.is_administrator,
-            "can_close_matter": is_matter_owner,
+            "can_close_matter": is_matter_owner or context.is_administrator,
             "can_delete_conversations": is_matter_owner,
             "session_action_label": (
                 "Close RecordBench" if identity.auth_mode == "kerberos" else "Sign out"
@@ -4594,33 +5747,37 @@ def create_workbench_app(
             "capabilities": bench.capabilities(),
         }
 
-    def download_response(artifact: ExportArtifact) -> Response:
-        return Response(
+    def download_response(request: Request, artifact: ExportArtifact) -> Response:
+        response = Response(
             content=artifact.body,
             media_type=artifact.media_type,
             headers={
                 "Content-Disposition": f'attachment; filename="{artifact.filename}"',
-                "X-Case-Intelligence-Export": "work-product",
+                "X-RecordBench-Export": "work-product",
             },
         )
+        return transfer_matter_response_lease(request, response)
 
-    def export_source_inventory(matter: MatterRecord) -> tuple[dict[str, object], ...]:
+    def export_source_inventory(
+        catalog: Sequence[SourceCatalogRecord],
+    ) -> tuple[dict[str, object], ...]:
         return tuple(
             {
-                "name": source.name,
+                "name": source.display_name,
                 "kind": source.kind,
-                "state": source.state,
+                "state": source.state_label,
                 "count_label": source.count_label,
             }
-            for source in bench.sources(matter)
+            for source in catalog
         )
 
     def export_media_work_product(
         matter: MatterRecord,
+        catalog: Sequence[SourceCatalogRecord],
     ) -> tuple[dict[str, object], ...]:
-        store = bench.source_store(matter)
         exports: list[dict[str, object]] = []
-        for document in store.documents.values():
+        prepared_bytes = 0
+        for document in catalog:
             if not is_media_type(document.media_type):
                 continue
             transcript = bench.workspace.media_transcript(
@@ -4642,40 +5799,57 @@ def create_workbench_app(
             if summary is not None and summary.state == "ready":
                 try:
                     summary_markdown = export_media_summary(
-                        document.display_name, summary, "markdown"
+                        document.display_name, summary, segments, "markdown"
                     ).body
                     coverage = summary.payload.get("coverage")
                     if isinstance(coverage, Mapping):
                         summary_coverage = dict(coverage)
                 except ValueError:
                     summary_markdown = None
+                    summary_coverage = None
+            markdown = export_transcript(
+                document.display_name, segments, "markdown"
+            ).body
+            srt = export_transcript(document.display_name, segments, "srt").body
+            json_body = export_transcript(
+                document.display_name, segments, "json"
+            ).body
+            projected_bytes = prepared_bytes + sum(
+                len(body)
+                for body in (markdown, srt, json_body, summary_markdown or b"")
+            )
+            if projected_bytes > MAX_BUNDLE_UNCOMPRESSED_BYTES:
+                raise ExportProblem(
+                    "This bundle is too large to prepare at once. Export transcripts individually."
+                )
             exports.append(
                 {
+                    "matter_id": matter.matter_id,
                     "source_name": document.display_name,
+                    "source_kind": "Video" if document.has_video else "Audio",
                     "review_state": transcript.review_state,
                     "segment_count": len(segments),
-                    "markdown": export_transcript(
-                        document.display_name, segments, "markdown"
-                    ).body,
-                    "srt": export_transcript(
-                        document.display_name, segments, "srt"
-                    ).body,
-                    "json": export_transcript(
-                        document.display_name, segments, "json"
-                    ).body,
+                    "markdown": markdown,
+                    "srt": srt,
+                    "json": json_body,
                     "summary_markdown": summary_markdown,
                     "summary_coverage": summary_coverage,
                     "clips": [
                         {
                             "title": clip.title,
-                            "start": format_timestamp(clip.start_ms),
-                            "end": format_timestamp(clip.end_ms),
+                            "start": format_timestamp(
+                                clip.start_ms, include_millis=True
+                            ).replace(",", "."),
+                            "end": format_timestamp(
+                                clip.end_ms, include_millis=True
+                            ).replace(",", "."),
                             "created_at": clip.created_at,
                         }
                         for clip in clips
                     ],
                 }
             )
+            prepared_bytes = projected_bytes
         return tuple(exports)
 
     def notebook_export_entries(
@@ -4684,21 +5858,33 @@ def create_workbench_app(
         *,
         item_id: str | None = None,
         include_dismissed: bool = True,
+        administrator_override: bool = False,
     ) -> tuple[tuple[NotebookItemRecord, tuple[NotebookReferenceRecord, ...]], ...]:
         items = (
-            (bench.workspace.notebook_item(matter.matter_id, actor_id, item_id),)
+            (
+                bench.workspace.notebook_item(
+                    matter.matter_id,
+                    actor_id,
+                    item_id,
+                    administrator_override=administrator_override,
+                ),
+            )
             if item_id is not None
             else bench.workspace.all_notebook_items(
                 matter.matter_id,
                 actor_id,
                 include_dismissed=include_dismissed,
+                administrator_override=administrator_override,
             )
         )
         return tuple(
             (
                 item,
                 bench.workspace.notebook_references(
-                    matter.matter_id, actor_id, item.item_id
+                    matter.matter_id,
+                    actor_id,
+                    item.item_id,
+                    administrator_override=administrator_override,
                 ),
             )
             for item in items
@@ -5662,6 +6848,16 @@ def create_workbench_app(
                     "stale_reasons": tuple(stale_reasons),
                 }
             )
+        closure_recoveries = tuple(
+            {
+                "matter": matter,
+                "owner": bench.workspace.get_principal(matter.owner_id),
+            }
+            for matter in bench.workspace.closure_recovery_matters(
+                context.principal_id,
+                administrator_override=True,
+            )
+        )
         principals = identity.membership_candidates()
         storage_capacity = bench.storage_capacity_projection(include_managed_usage=True)
         abandoned_uploads = bench.workspace.abandoned_upload_sessions(
@@ -5715,6 +6911,7 @@ def create_workbench_app(
             context={
                 **base_context(request),
                 "admin_matters": tuple(matter_rows),
+                "closure_recoveries": closure_recoveries,
                 "stale_matters": stale_matters,
                 "admin_principals": principals,
                 "abandoned_uploads": abandoned_uploads,
@@ -5853,6 +7050,72 @@ def create_workbench_app(
             context={**base_context(request), "error": error, "notice": notice},
         )
 
+    @app.get("/matters/manage", response_class=HTMLResponse)
+    def manage_matters(request: Request):
+        context = auth_context(request)
+        matters = bench.matters(
+            context.principal_id,
+            administrator=context.is_administrator,
+        )
+        rows: list[dict[str, object]] = []
+        for matter in matters:
+            try:
+                membership = bench.workspace.membership(
+                    matter.matter_id, context.principal_id
+                )
+            except KeyError:
+                membership = None
+            owner = bench.workspace.get_principal(matter.owner_id)
+            is_owner = membership is not None and membership.role == "owner"
+            if is_owner:
+                authority_label = "You own this matter"
+            elif context.is_administrator:
+                authority_label = "Administrator oversight"
+            else:
+                authority_label = "Case team access"
+            rows.append(
+                {
+                    "matter": matter,
+                    "owner_name": owner.display_name,
+                    "authority_label": authority_label,
+                    "retention": bench.retention_projection(matter),
+                    "can_close": is_owner or context.is_administrator,
+                }
+            )
+        closure_recoveries: list[dict[str, object]] = []
+        for matter in bench.workspace.closure_recovery_matters(
+            context.principal_id,
+            administrator_override=context.is_administrator,
+        ):
+            owner = bench.workspace.get_principal(matter.owner_id)
+            closure_recoveries.append(
+                {
+                    "matter": matter,
+                    "owner_name": owner.display_name,
+                    "administrator_override": bool(
+                        context.is_administrator
+                        and matter.owner_id != context.principal_id
+                    ),
+                }
+            )
+        audit(
+            request,
+            "matter.manage",
+            "success",
+            context=context,
+            details={"count": len(rows) + len(closure_recoveries)},
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_manage_matters.html",
+            context={
+                **base_context(request),
+                "managed_matters": tuple(rows),
+                "closure_recoveries": tuple(closure_recoveries),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.post("/matters", dependencies=[Depends(require_csrf)])
     def create_matter(
         request: Request,
@@ -5973,6 +7236,40 @@ def create_workbench_app(
             raise HTTPException(404, "Matter not found") from exc
         return JSONResponse(
             matter_readiness_projection(matter),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/matters/{slug}/settings", response_class=HTMLResponse)
+    def matter_settings(request: Request, slug: str):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        owner = bench.workspace.get_principal(matter.owner_id)
+        administrator_override = bool(
+            context.is_administrator and matter.owner_id != context.principal_id
+        )
+        audit(
+            request,
+            "matter.settings",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="matter",
+            object_id=matter.matter_id,
+            details={
+                "role": "administrator" if administrator_override else "owner"
+                if matter.owner_id == context.principal_id
+                else "member"
+            },
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="workbench_matter_settings.html",
+            context={
+                **base_context(request, matter),
+                "matter": matter,
+                "owner_name": owner.display_name,
+                "administrator_override": administrator_override,
+            },
             headers={"Cache-Control": "no-store"},
         )
 
@@ -6321,17 +7618,21 @@ def create_workbench_app(
         context = auth_context(request)
         try:
             matter, lifecycle = bench.matter_for_closure(
-                slug, context.principal_id
+                slug,
+                context.principal_id,
+                administrator_override=context.is_administrator,
             )
+            administrator_override = bool(
+                context.is_administrator and matter.owner_id != context.principal_id
+            )
+            owner = bench.workspace.get_principal(matter.owner_id)
             counts = bench.workspace.matter_content_counts(matter.matter_id)
             source_count = (
                 bench._matter_source_count_for_purge(matter, lifecycle)
                 if lifecycle.state == "active"
                 else lifecycle.source_count
             )
-            active_work = bench.workspace.active_matter_work_counts(
-                matter.matter_id
-            )
+            active_work = bench.matter_active_work_counts(matter.matter_id)
         except KeyError as exc:
             raise HTTPException(404, "Matter not found") from exc
         except RuntimeError as exc:
@@ -6353,6 +7654,8 @@ def create_workbench_app(
                 "message_count": max(counts["messages"], lifecycle.message_count),
                 "notebook_count": counts["notebook_items"],
                 "active_work": active_work,
+                "administrator_override": administrator_override,
+                "owner_name": owner.display_name,
                 "error": error,
             },
         )
@@ -6370,10 +7673,16 @@ def create_workbench_app(
         context = auth_context(request)
         try:
             matter, lifecycle = bench.matter_for_closure(
-                slug, context.principal_id
+                slug,
+                context.principal_id,
+                administrator_override=context.is_administrator,
+            )
+            administrator_override = bool(
+                context.is_administrator and matter.owner_id != context.principal_id
             )
         except KeyError as exc:
             raise HTTPException(404, "Matter not found") from exc
+        audit_role = {"role": "administrator"} if administrator_override else {}
         if acknowledge != "yes":
             audit(
                 request,
@@ -6381,7 +7690,7 @@ def create_workbench_app(
                 "failure",
                 context=context,
                 matter=matter,
-                details={"state": lifecycle.state},
+                details={"state": lifecycle.state, **audit_role},
             )
             return RedirectResponse(
                 _query_url(
@@ -6392,7 +7701,10 @@ def create_workbench_app(
             )
         try:
             matter, lifecycle = bench.begin_matter_purge(
-                slug, context.principal_id, confirmed_name
+                slug,
+                context.principal_id,
+                confirmed_name,
+                administrator_override=administrator_override,
             )
         except RuntimeError:
             audit(
@@ -6401,7 +7713,7 @@ def create_workbench_app(
                 "failure",
                 context=context,
                 matter=matter,
-                details={"state": lifecycle.state},
+                details={"state": lifecycle.state, **audit_role},
             )
             return RedirectResponse(
                 _query_url(
@@ -6419,7 +7731,7 @@ def create_workbench_app(
                 "failure",
                 context=context,
                 matter=matter,
-                details={"state": lifecycle.state},
+                details={"state": lifecycle.state, **audit_role},
             )
             return RedirectResponse(
                 _query_url(f"/matters/{slug}/close", error=str(exc)),
@@ -6433,7 +7745,7 @@ def create_workbench_app(
             matter=matter,
             object_type="matter_purge",
             object_id=lifecycle.purge_id,
-            details={"state": "purging"},
+            details={"state": "purging", **audit_role},
         )
         try:
             completed = bench.execute_matter_purge(matter, lifecycle)
@@ -6447,7 +7759,7 @@ def create_workbench_app(
                 matter=matter,
                 object_type="matter_purge",
                 object_id=lifecycle.purge_id,
-                details={"state": failed.state},
+                details={"state": failed.state, **audit_role},
             )
             return RedirectResponse(
                 _query_url(f"/matters/{slug}/close", error=str(exc)),
@@ -6461,12 +7773,16 @@ def create_workbench_app(
             matter=matter,
             object_type="matter_purge",
             object_id=completed.purge_id,
-            details={"state": "deleted", "count": completed.message_count},
+            details={
+                "state": "deleted",
+                "count": completed.message_count,
+                **audit_role,
+            },
         )
         return RedirectResponse(
             _query_url(
                 "/matters/new",
-                notice="Matter deleted. Its processing files, conversations, and search index were removed.",
+                notice="Matter deleted. Its processing files, conversations, and derived search data were removed.",
             ),
             status_code=303,
         )
@@ -6717,7 +8033,7 @@ def create_workbench_app(
         if state == "queued":
             return {
                 "eta_seconds": None,
-                "eta_label": "Waiting for an available workflow worker.",
+                "eta_label": "Waiting for earlier saved work to finish.",
                 "throughput_per_minute": None,
             }
         if state != "running":
@@ -6774,6 +8090,13 @@ def create_workbench_app(
             total=job.total_steps,
             unit="step",
         )
+        result_url = _query_url(
+            f"/matters/{matter.slug}/research", job=job.job_id
+        )
+        if job.conversation_id:
+            result_url = (
+                f"/matters/{matter.slug}?conversation={job.conversation_id}#latest"
+            )
         return {
             "job_id": job.job_id,
             "state": job.state,
@@ -6786,9 +8109,7 @@ def create_workbench_app(
             "evidence_count": job.evidence_count,
             **eta,
             "terminal": job.state in {"succeeded", "failed", "cancelled"},
-            "result_url": _query_url(
-                f"/matters/{matter.slug}/research", job=job.job_id
-            ),
+            "result_url": result_url,
         }
 
     @app.get("/matters/{slug}/research", response_class=HTMLResponse)
@@ -6813,7 +8134,6 @@ def create_workbench_app(
                 bench.workspace.research_job(matter.matter_id, read_actor, job)
                 if job else (jobs[0] if jobs else None)
             )
-            source_sets = bench.workspace.source_sets(matter.matter_id)
         except KeyError as exc:
             raise HTTPException(404, "Matter or research run not found") from exc
         if not administrator_override:
@@ -6837,8 +8157,6 @@ def create_workbench_app(
                 "review_mode": "research",
                 "research_jobs": jobs,
                 "active_research": active,
-                "source_sets": source_sets,
-                "research_request_key": f"research-request-{uuid.uuid4().hex}",
                 "notice": notice,
                 "error": error,
             },
@@ -6856,6 +8174,7 @@ def create_workbench_app(
         question: str = Form(..., max_length=2_000),
         request_key: str = Form(..., max_length=80),
         source_set: str = Form("", max_length=80),
+        conversation: str = Form("", max_length=80),
     ):
         context = auth_context(request)
         try:
@@ -6863,12 +8182,15 @@ def create_workbench_app(
             readiness = bench.workspace.matter_readiness(matter.matter_id)
             if not readiness.can_query:
                 raise WorkspaceProblem(
-                    "Deep Research needs at least one searchable source and no active preparation."
+                    "A broader investigation needs at least one searchable source and no active preparation."
                 )
             if not bench.generator.available:
                 raise WorkspaceProblem(
-                    "The local answer model is unavailable. Search and source review still work."
+                    "Automatic answering is unavailable. Search and source review still work."
                 )
+            active_conversation = bench.workspace.get_conversation(
+                matter.matter_id, conversation or None
+            )
             research, created = bench.workspace.queue_research_job(
                 matter.matter_id,
                 context.principal_id,
@@ -6876,8 +8198,9 @@ def create_workbench_app(
                 title,
                 request_key,
                 source_set or None,
+                conversation_id=active_conversation.conversation_id,
             )
-        except WorkspaceProblem as exc:
+        except (WorkspaceProblem, KeyError) as exc:
             return RedirectResponse(
                 _query_url(f"/matters/{slug}/research", error=str(exc)), status_code=303
             )
@@ -6889,7 +8212,12 @@ def create_workbench_app(
             details={"created": created, "state": research.state},
         )
         return RedirectResponse(
-            _query_url(f"/matters/{slug}/research", job=research.job_id), status_code=303
+            _query_url(
+                f"/matters/{slug}",
+                conversation=active_conversation.conversation_id,
+                notice="Broader investigation saved in this conversation",
+            ),
+            status_code=303,
         )
 
     @app.get("/matters/{slug}/research/{job_id}/status")
@@ -6901,8 +8229,13 @@ def create_workbench_app(
                 getattr(request.state, "administrator_matter_override", None)
                 == matter.matter_id
             )
-            actor = matter.owner_id if administrator_override else context.principal_id
-            job = bench.workspace.research_job(matter.matter_id, actor, job_id)
+            actor = context.principal_id
+            job = bench.workspace.research_job(
+                matter.matter_id,
+                actor,
+                job_id,
+                administrator_override=administrator_override,
+            )
         except KeyError as exc:
             raise HTTPException(404, "Research run not found") from exc
         return JSONResponse(
@@ -6968,7 +8301,10 @@ def create_workbench_app(
             _query_url(f"/matters/{slug}/research", job=job.job_id), status_code=303
         )
 
-    @app.get("/matters/{slug}/research/{job_id}/export")
+    @app.get(
+        "/matters/{slug}/research/{job_id}/export",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
     def export_research_run(
         request: Request,
         slug: str,
@@ -6977,16 +8313,23 @@ def create_workbench_app(
     ):
         context = auth_context(request)
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
             administrator_override = (
                 getattr(request.state, "administrator_matter_override", None)
                 == matter.matter_id
             )
-            actor = matter.owner_id if administrator_override else context.principal_id
-            job = bench.workspace.research_job(matter.matter_id, actor, job_id)
+            actor = context.principal_id
+            job = bench.workspace.research_job(
+                matter.matter_id,
+                actor,
+                job_id,
+                administrator_override=administrator_override,
+            )
             if job.state != "succeeded":
                 raise WorkspaceProblem("This research run is not ready to export.")
-            artifact = export_research(matter, job, format_name)
+            artifact = bench.export_research_work_product(
+                matter, job, format_name
+            )
         except KeyError as exc:
             raise HTTPException(404, "Research run not found") from exc
         except (WorkspaceProblem, ExportProblem) as exc:
@@ -6996,7 +8339,7 @@ def create_workbench_app(
             object_type="research_job", object_id=job.job_id,
             details={"format": format_name},
         )
-        return download_response(artifact)
+        return download_response(request, artifact)
 
     @app.post(
         "/matters/{slug}/research/{job_id}/report",
@@ -7014,7 +8357,7 @@ def create_workbench_app(
             report = bench.workspace.create_report(
                 matter.matter_id,
                 context.principal_id,
-                f"Deep Research — {job.title}",
+                f"Investigation — {job.title}",
                 f"Research question: {job.question}",
             )
             citations = []
@@ -7297,10 +8640,10 @@ def create_workbench_app(
             readiness = bench.workspace.matter_readiness(matter.matter_id)
             if not readiness.can_query:
                 raise WorkspaceProblem(
-                    "Full Review needs at least one searchable source and no active preparation."
+                    "Checking every source needs at least one searchable source and no active preparation."
                 )
             if not bench.generator.available:
-                raise WorkspaceProblem("The local answer model is unavailable.")
+                raise WorkspaceProblem("Automatic source checking is unavailable.")
             run = bench.workspace.queue_review_run(
                 matter.matter_id,
                 context.principal_id,
@@ -7338,8 +8681,13 @@ def create_workbench_app(
                 getattr(request.state, "administrator_matter_override", None)
                 == matter.matter_id
             )
-            actor = matter.owner_id if administrator_override else context.principal_id
-            run = bench.workspace.review_run(matter.matter_id, actor, run_id)
+            actor = context.principal_id
+            run = bench.workspace.review_run(
+                matter.matter_id,
+                actor,
+                run_id,
+                administrator_override=administrator_override,
+            )
         except KeyError as exc:
             raise HTTPException(404, "Review run not found") from exc
         return JSONResponse(
@@ -7458,7 +8806,10 @@ def create_workbench_app(
             ), status_code=303
         )
 
-    @app.get("/matters/{slug}/full-review/{run_id}/export")
+    @app.get(
+        "/matters/{slug}/full-review/{run_id}/export",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
     def export_full_review_run(
         request: Request,
         slug: str,
@@ -7469,22 +8820,33 @@ def create_workbench_app(
     ):
         context = auth_context(request)
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
             administrator_override = (
                 getattr(request.state, "administrator_matter_override", None)
                 == matter.matter_id
             )
-            actor = matter.owner_id if administrator_override else context.principal_id
-            run = bench.workspace.review_run(matter.matter_id, actor, run_id)
+            actor = context.principal_id
+            run = bench.workspace.review_run(
+                matter.matter_id,
+                actor,
+                run_id,
+                administrator_override=administrator_override,
+            )
             criterion = bench.workspace.review_criterion(matter.matter_id, run.criterion_id)
             version = bench.workspace.review_criterion_version(
                 matter.matter_id, run.criterion_version_id
             )
             decisions = bench.workspace.review_decisions_for_export(
-                matter.matter_id, actor, run.run_id
+                matter.matter_id,
+                actor,
+                run.run_id,
+                administrator_override=administrator_override,
             )
             metrics = bench.workspace.review_validation_metrics(
-                matter.matter_id, actor, run.run_id
+                matter.matter_id,
+                actor,
+                run.run_id,
+                administrator_override=administrator_override,
             )
             artifact = export_full_review(
                 matter, criterion, version, run, decisions, metrics, format_name
@@ -7498,7 +8860,7 @@ def create_workbench_app(
             object_type="review_run", object_id=run.run_id,
             details={"format": format_name, "count": len(decisions)},
         )
-        return download_response(artifact)
+        return download_response(request, artifact)
 
     @app.post(
         "/matters/{slug}/full-review/{run_id}/report",
@@ -7524,7 +8886,7 @@ def create_workbench_app(
             report = bench.workspace.create_report(
                 matter.matter_id,
                 context.principal_id,
-                f"Full Review — {criterion.title}",
+                f"Every-source check — {criterion.title}",
                 f"Criterion version {version.version_number}; frozen population {run.snapshot_count:,} sources.",
             )
             citations: list[dict[str, object]] = []
@@ -7579,7 +8941,7 @@ def create_workbench_app(
         return RedirectResponse(
             _query_url(
                 f"/matters/{slug}/reports", report=report.report_id,
-                notice="Full Review summary saved to a new report",
+                notice="Every-source check summary saved to a new report",
             ), status_code=303
         )
 
@@ -7628,6 +8990,21 @@ def create_workbench_app(
             reports = bench.workspace.reports(
                 matter.matter_id,
                 matter.owner_id if administrator_override else context.principal_id,
+            )
+            conversation_research = next(
+                (
+                    item
+                    for item in bench.workspace.research_jobs(
+                        matter.matter_id,
+                        matter.owner_id
+                        if administrator_override
+                        else context.principal_id,
+                    )
+                    if item.conversation_id
+                    == active_conversation.conversation_id
+                    and item.state in {"queued", "running"}
+                ),
+                None,
             )
             selected_source_set_id = ""
             if source_set:
@@ -7754,6 +9131,7 @@ def create_workbench_app(
                     if active_answer is not None
                     else None
                 ),
+                "active_research": conversation_research,
                 "answer_request_key": f"answer-request-{uuid.uuid4().hex}",
                 "query": q,
                 "mode": mode,
@@ -8533,6 +9911,7 @@ def create_workbench_app(
         segment: str = Query("", max_length=100),
         q: str = Query("", max_length=240),
         speaker: str = Query("", max_length=100),
+        speaker_review: str = Query("", max_length=100),
         flag: str = Query("", pattern="^(|low|overlap|edited)$"),
         page: int = Query(1, ge=1, le=100_000),
         notice: str = Query("", max_length=240),
@@ -8556,6 +9935,14 @@ def create_workbench_app(
                     start_ms=start_ms,
                     focus_segment_id=segment,
                 )
+                speaker_labels = {
+                    mapping.speaker_cluster: (
+                        mapping.display_name
+                        if mapping.identity_state == "confirmed"
+                        else f"Speaker {ordinal}"
+                    )
+                    for ordinal, mapping in enumerate(media.speakers, 1)
+                }
                 query_key = " ".join(q.split()).casefold()
                 selected = tuple(
                     item
@@ -8563,7 +9950,10 @@ def create_workbench_app(
                     if (
                         not query_key
                         or query_key in item.current_text.casefold()
-                        or query_key in item.speaker_display_name.casefold()
+                        or query_key
+                        in speaker_labels.get(
+                            item.speaker_cluster, item.speaker_display_name
+                        ).casefold()
                     )
                     and (not speaker or item.speaker_cluster == speaker)
                     and (
@@ -8589,6 +9979,14 @@ def create_workbench_app(
                 page = min(page, total_pages)
                 offset = (page - 1) * page_size
                 page_segments = selected[offset : offset + page_size]
+                focused_speaker = (
+                    speaker_review
+                    if any(
+                        item.speaker_cluster == speaker_review
+                        for item in media.speakers
+                    )
+                    else ""
+                )
                 if not administrator_override:
                     bench.workspace.record_matter_activity(
                         matter.matter_id,
@@ -8620,7 +10018,10 @@ def create_workbench_app(
                         "segment_pages": total_pages,
                         "transcript_query": q,
                         "transcript_speaker": speaker,
+                        "speaker_review": focused_speaker,
+                        "speaker_labels": speaker_labels,
                         "transcript_flag": flag,
+                        "summary_failure": _media_summary_failure_view(media.summary),
                         "source_sequence": source_sequence,
                         "format_timestamp": format_timestamp,
                         "notice": notice,
@@ -8823,19 +10224,21 @@ def create_workbench_app(
         context = auth_context(request)
         try:
             matter = authorized_matter(request, slug)
-            document = bench.source_store(matter).get_by_action_token(token)
-            if not is_media_type(document.media_type):
-                raise KeyError(token)
-            segment = bench.workspace.revise_transcript_segment(
-                matter.matter_id,
-                document.document_id,
-                document.version_id,
-                segment_id,
-                expected_revision=expected_revision,
-                text=text,
-                actor_id=context.principal_id,
-            )
-            bench.refresh_media_projection(matter, document)
+            store = bench.source_store(matter)
+            with store.mutation_guard():
+                document = store.get_by_action_token(token)
+                if not is_media_type(document.media_type):
+                    raise KeyError(token)
+                segment = bench.workspace.revise_transcript_segment(
+                    matter.matter_id,
+                    document.document_id,
+                    document.version_id,
+                    segment_id,
+                    expected_revision=expected_revision,
+                    text=text,
+                    actor_id=context.principal_id,
+                )
+                bench.refresh_media_projection(matter, document)
             if bench.media is not None:
                 bench.media.notify()
         except KeyError as exc:
@@ -8863,7 +10266,7 @@ def create_workbench_app(
                 f"/matters/{slug}/sources/{token}",
                 start_ms=str(segment.start_ms),
                 segment=segment.segment_id,
-                notice="Transcript correction saved and reindexed",
+                notice="Transcript correction saved and search refreshed",
             )
             + f"#segment-{segment.ordinal}",
             status_code=303,
@@ -8880,32 +10283,57 @@ def create_workbench_app(
         speaker_cluster: str = Form(..., max_length=100),
         expected_revision: int = Form(..., ge=0),
         display_name: str = Form(..., max_length=120),
-        identity_state: str = Form("confirmed", pattern="^(cluster|confirmed)$"),
+        identity_state: str = Form(..., pattern="^(cluster|confirmed)$"),
+        return_start_ms: int = Form(0, ge=0, le=43_200_000),
+        return_page: int = Form(1, ge=1, le=100_000),
+        return_q: str = Form("", max_length=240),
+        return_speaker: str = Form("", max_length=100),
+        return_flag: str = Form("", pattern="^(|low|overlap|edited)$"),
+        return_segment: str = Form("", max_length=100),
     ):
         context = auth_context(request)
+        wants_json = "application/json" in request.headers.get("accept", "")
         try:
             matter = authorized_matter(request, slug)
-            document = bench.source_store(matter).get_by_action_token(token)
-            if not is_media_type(document.media_type):
-                raise KeyError(token)
-            mapping = bench.workspace.revise_speaker_mapping(
-                matter.matter_id,
-                document.document_id,
-                document.version_id,
-                speaker_cluster,
-                expected_revision=expected_revision,
-                display_name=display_name,
-                identity_state=identity_state,
-                actor_id=context.principal_id,
-            )
-            bench.refresh_media_projection(matter, document)
+            store = bench.source_store(matter)
+            with store.mutation_guard():
+                document = store.get_by_action_token(token)
+                if not is_media_type(document.media_type):
+                    raise KeyError(token)
+                mapping = bench.workspace.revise_speaker_mapping(
+                    matter.matter_id,
+                    document.document_id,
+                    document.version_id,
+                    speaker_cluster,
+                    expected_revision=expected_revision,
+                    display_name=display_name,
+                    identity_state=identity_state,
+                    actor_id=context.principal_id,
+                )
+                bench.refresh_media_projection(matter, document)
+                speaker_summary = bench.workspace.media_summary(
+                    matter.matter_id, document.document_id, document.version_id
+                )
             if bench.media is not None:
                 bench.media.notify()
         except KeyError as exc:
-            raise HTTPException(404, "Speaker cluster not found") from exc
+            raise HTTPException(404, "Speaker label not found") from exc
         except WorkspaceProblem as exc:
+            if wants_json:
+                return JSONResponse({"message": str(exc)}, status_code=409)
             return RedirectResponse(
-                _query_url(f"/matters/{slug}/sources/{token}", error=str(exc)),
+                _query_url(
+                    f"/matters/{slug}/sources/{token}",
+                    start_ms=str(return_start_ms),
+                    page=str(return_page),
+                    q=return_q,
+                    speaker=return_speaker,
+                    speaker_review=speaker_cluster,
+                    flag=return_flag,
+                    segment=return_segment,
+                    error=str(exc),
+                )
+                + "#speaker-review",
                 status_code=303,
             )
         audit(
@@ -8918,16 +10346,41 @@ def create_workbench_app(
             object_id=mapping.speaker_cluster,
             details={"state": "confirmed" if identity_state == "confirmed" else "review"},
         )
+        if wants_json:
+            return JSONResponse(
+                {
+                    "speaker_cluster": mapping.speaker_cluster,
+                    "display_name": mapping.display_name,
+                    "identity_state": mapping.identity_state,
+                    "revision": mapping.revision,
+                    "segment_count": mapping.segment_count,
+                    "message": "Speaker label saved across this transcript.",
+                    "overview_refreshing": bool(
+                        speaker_summary is not None
+                        and speaker_summary.state in {"queued", "running", "stale"}
+                    ),
+                }
+            )
         return RedirectResponse(
             _query_url(
                 f"/matters/{slug}/sources/{token}",
-                speaker=mapping.speaker_cluster,
-                notice="Speaker label saved and reindexed",
-            ),
+                start_ms=str(return_start_ms),
+                page=str(return_page),
+                q=return_q,
+                speaker=return_speaker,
+                speaker_review=mapping.speaker_cluster,
+                flag=return_flag,
+                segment=return_segment,
+                notice="Speaker label saved and search refreshed",
+            )
+            + "#speaker-review",
             status_code=303,
         )
 
-    @app.get("/matters/{slug}/sources/{token}/summary-export")
+    @app.get(
+        "/matters/{slug}/sources/{token}/summary-export",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
     def download_media_summary(
         request: Request,
         slug: str,
@@ -8936,7 +10389,7 @@ def create_workbench_app(
     ):
         context = auth_context(request)
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
             document = bench.source_store(matter).get_by_action_token(token)
             if not is_media_type(document.media_type):
                 raise KeyError(token)
@@ -8945,14 +10398,25 @@ def create_workbench_app(
             )
             if summary is None:
                 raise KeyError(token)
-            artifact = export_media_summary(document.display_name, summary, format_name)
+            segments = bench.workspace.transcript_segments(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            artifact = export_media_summary(
+                document.display_name, summary, segments, format_name
+            )
         except KeyError as exc:
             raise HTTPException(404, "Transcript overview not found") from exc
         except ValueError as exc:
             raise HTTPException(
                 409, "Transcript overview is not ready for export"
             ) from exc
-        filename = f"transcript-overview-{document.document_id[:12]}{artifact.suffix}"
+        filename = (
+            safe_file_stem(
+                f"{document.display_name}-transcript-overview",
+                "transcript-overview",
+            )
+            + artifact.suffix
+        )
         audit(
             request,
             "work_product.export",
@@ -8963,17 +10427,23 @@ def create_workbench_app(
             object_id=summary.transcript_id,
             details={"kind": "transcript_summary", "format": format_name},
         )
-        return Response(
-            content=artifact.body,
-            media_type=artifact.media_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "X-Case-Intelligence-Export": "work-product",
-                "Cache-Control": "no-store",
-            },
+        return transfer_matter_response_lease(
+            request,
+            Response(
+                content=artifact.body,
+                media_type=artifact.media_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "X-RecordBench-Export": "work-product",
+                    "Cache-Control": "no-store",
+                },
+            ),
         )
 
-    @app.get("/matters/{slug}/sources/{token}/transcript-export")
+    @app.get(
+        "/matters/{slug}/sources/{token}/transcript-export",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
     def download_media_transcript(
         request: Request,
         slug: str,
@@ -8982,7 +10452,7 @@ def create_workbench_app(
     ):
         context = auth_context(request)
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
             document = bench.source_store(matter).get_by_action_token(token)
             if not is_media_type(document.media_type):
                 raise KeyError(token)
@@ -8994,7 +10464,12 @@ def create_workbench_app(
             raise HTTPException(404, "Transcript not found") from exc
         except ValueError as exc:
             raise HTTPException(409, "Transcript is not ready for export") from exc
-        filename = f"transcript-{document.document_id[:12]}{artifact.suffix}"
+        filename = (
+            safe_file_stem(
+                f"{document.display_name}-transcript", "transcript"
+            )
+            + artifact.suffix
+        )
         audit(
             request,
             "transcript.export",
@@ -9005,14 +10480,17 @@ def create_workbench_app(
             object_id=document.document_id,
             details={"format": format_name},
         )
-        return Response(
-            content=artifact.body,
-            media_type=artifact.media_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "X-Case-Intelligence-Export": "work-product",
-                "Cache-Control": "no-store",
-            },
+        return transfer_matter_response_lease(
+            request,
+            Response(
+                content=artifact.body,
+                media_type=artifact.media_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "X-RecordBench-Export": "work-product",
+                    "Cache-Control": "no-store",
+                },
+            ),
         )
 
     @app.post(
@@ -9111,42 +10589,37 @@ def create_workbench_app(
         request: Request, slug: str, token: str, clip_id: str
     ):
         context = auth_context(request)
+        directory: Path | None = None
         try:
             matter = authorized_matter(request, slug)
+            directory = bench.begin_media_clip_export(matter)
             store = bench.source_store(matter)
-            document = store.get_by_action_token(token)
-            clip = bench.workspace.media_clip(matter.matter_id, clip_id)
-            if (
-                not is_media_type(document.media_type)
-                or clip.document_id != document.document_id
-                or clip.source_version_id != document.version_id
-            ):
-                raise KeyError(clip_id)
-            source = store.source_path(document.document_id)
+            with store.mutation_guard():
+                document = store.get_by_action_token(token)
+                clip = bench.workspace.media_clip(matter.matter_id, clip_id)
+                if (
+                    not is_media_type(document.media_type)
+                    or clip.document_id != document.document_id
+                    or clip.source_version_id != document.version_id
+                ):
+                    raise KeyError(clip_id)
+                source = store.source_path(document.document_id)
+                suffix = ".mp4" if document.has_video else ".wav"
+                output = directory / f"clip-{clip.clip_id[-12:]}{suffix}"
+                render_clip(
+                    source, clip, has_video=document.has_video, output=output
+                )
         except KeyError as exc:
+            if directory is not None:
+                bench.finish_media_clip_export(matter.matter_id, directory)
             raise HTTPException(404, "Media clip not found") from exc
-        export_root = bench.runtime_dir / "clip-exports"
-        export_root.mkdir(exist_ok=True)
-        if export_root.is_symlink() or not export_root.is_dir():
-            raise HTTPException(503, "Clip export storage is unavailable")
-        directory = Path(tempfile.mkdtemp(prefix="clip-", dir=export_root))
-        suffix = ".mp4" if document.has_video else ".wav"
-        output = directory / f"clip-{clip.clip_id[-12:]}{suffix}"
-        try:
-            render_clip(source, clip, has_video=document.has_video, output=output)
-        except (RuntimeError, ValueError) as exc:
-            try:
-                directory.rmdir()
-            except OSError:
-                pass
+        except (RuntimeError, ValueError, WorkspaceProblem) as exc:
+            if directory is not None:
+                bench.finish_media_clip_export(matter.matter_id, directory)
             raise HTTPException(503, "The clip could not be rendered. Try again.") from exc
 
         def cleanup_clip() -> None:
-            try:
-                output.unlink(missing_ok=True)
-                directory.rmdir()
-            except OSError:
-                pass
+            bench.finish_media_clip_export(matter.matter_id, directory)
 
         audit(
             request,
@@ -9163,7 +10636,7 @@ def create_workbench_app(
             media_type="video/mp4" if document.has_video else "audio/wav",
             filename=f"media-clip-{clip.clip_id[-12:]}{suffix}",
             headers={
-                "X-Case-Intelligence-Export": "work-product",
+                "X-RecordBench-Export": "work-product",
                 "Cache-Control": "no-store",
             },
             background=BackgroundTask(cleanup_clip),
@@ -9317,8 +10790,14 @@ def create_workbench_app(
             status_code=303,
         )
 
-    @app.get("/matters/{slug}/sources/{token}/content")
-    @app.head("/matters/{slug}/sources/{token}/content")
+    @app.get(
+        "/matters/{slug}/sources/{token}/content",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
+    @app.head(
+        "/matters/{slug}/sources/{token}/content",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
     def source_content(
         request: Request,
         slug: str,
@@ -9326,7 +10805,7 @@ def create_workbench_app(
         range_header: str = Header("", alias="Range"),
     ):
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
             store = bench.source_store(matter)
             document = store.get_by_action_token(token)
         except KeyError as exc:
@@ -9349,6 +10828,23 @@ def create_workbench_app(
             allowed_parent = store.files
         if path.parent != allowed_parent:
             raise HTTPException(404, "Source not found")
+        parsed_range: tuple[int | None, int | None] | None = None
+        if range_header:
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+            if (
+                match is None
+                or (not match.group(1) and not match.group(2))
+                or len(match.group(1)) > 20
+                or len(match.group(2)) > 20
+            ):
+                return Response(
+                    status_code=416,
+                    headers={"Content-Range": f"bytes */{expected_size}"},
+                )
+            parsed_range = (
+                int(match.group(1)) if match.group(1) else None,
+                int(match.group(2)) if match.group(2) else None,
+            )
         try:
             descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
             metadata = os.fstat(descriptor)
@@ -9363,16 +10859,13 @@ def create_workbench_app(
         size = int(metadata.st_size)
         start, end = 0, max(size - 1, 0)
         status_code = 200
-        if range_header:
-            match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
-            if match is None or (not match.group(1) and not match.group(2)):
-                os.close(descriptor)
-                return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
-            if match.group(1):
-                start = int(match.group(1))
-                end = int(match.group(2)) if match.group(2) else end
+        if parsed_range is not None:
+            first, last = parsed_range
+            if first is not None:
+                start = first
+                end = last if last is not None else end
             else:
-                suffix_length = int(match.group(2))
+                suffix_length = last or 0
                 start = max(size - suffix_length, 0)
             end = min(end, size - 1)
             if start < 0 or start > end or start >= size:
@@ -9409,16 +10902,22 @@ def create_workbench_app(
             headers["Content-Range"] = f"bytes {start}-{end}/{size}"
         if request.method == "HEAD":
             os.close(descriptor)
-            return Response(
+            return transfer_matter_response_lease(
+                request,
+                Response(
+                    status_code=status_code,
+                    media_type=response_media_type,
+                    headers=headers,
+                ),
+            )
+        return transfer_matter_response_lease(
+            request,
+            StreamingResponse(
+                stream(),
                 status_code=status_code,
                 media_type=response_media_type,
                 headers=headers,
-            )
-        return StreamingResponse(
-            stream(),
-            status_code=status_code,
-            media_type=response_media_type,
-            headers=headers,
+            ),
         )
 
     @app.post(
@@ -10614,7 +12113,10 @@ def create_workbench_app(
             status_code=303,
         )
 
-    @app.get("/matters/{slug}/reports/{report_id}/export")
+    @app.get(
+        "/matters/{slug}/reports/{report_id}/export",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
     def export_matter_report(
         request: Request,
         slug: str,
@@ -10623,7 +12125,7 @@ def create_workbench_app(
     ):
         context = auth_context(request)
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
             report = bench.workspace.report(matter.matter_id, report_id)
             sections = bench.workspace.report_sections(matter.matter_id, report_id)
             entries = tuple(
@@ -10635,7 +12137,9 @@ def create_workbench_app(
                 )
                 for section in sections
             )
-            artifact = export_report(matter, report, entries, format_name)
+            artifact = bench.export_report_work_product(
+                matter, report, entries, format_name
+            )
         except KeyError as exc:
             raise HTTPException(404, "Report not found") from exc
         except ExportProblem as exc:
@@ -10650,7 +12154,7 @@ def create_workbench_app(
             object_id=report.report_id,
             details={"format": format_name, "count": len(entries)},
         )
-        return download_response(artifact)
+        return download_response(request, artifact)
 
     @app.post(
         "/matters/{slug}/notebook/items",
@@ -11006,7 +12510,10 @@ def create_workbench_app(
             status_code=303,
         )
 
-    @app.get("/matters/{slug}/notebook/export")
+    @app.get(
+        "/matters/{slug}/notebook/export",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
     def download_notebook(
         request: Request,
         slug: str,
@@ -11014,8 +12521,16 @@ def create_workbench_app(
     ):
         context = auth_context(request)
         try:
-            matter = authorized_matter(request, slug)
-            entries = notebook_export_entries(matter, context.principal_id)
+            matter = response_lease_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            entries = notebook_export_entries(
+                matter,
+                context.principal_id,
+                administrator_override=administrator_override,
+            )
             artifact = export_notebook(matter, entries, format_name)
         except KeyError as exc:
             raise HTTPException(404, "Matter not found") from exc
@@ -11031,9 +12546,12 @@ def create_workbench_app(
             object_id=matter.matter_id,
             details={"kind": "notebook", "format": format_name},
         )
-        return download_response(artifact)
+        return download_response(request, artifact)
 
-    @app.get("/matters/{slug}/notebook/items/{item_id}/export")
+    @app.get(
+        "/matters/{slug}/notebook/items/{item_id}/export",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
     def download_notebook_item(
         request: Request,
         slug: str,
@@ -11042,9 +12560,16 @@ def create_workbench_app(
     ):
         context = auth_context(request)
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
             entries = notebook_export_entries(
-                matter, context.principal_id, item_id=item_id
+                matter,
+                context.principal_id,
+                item_id=item_id,
+                administrator_override=administrator_override,
             )
             artifact = export_notebook(
                 matter,
@@ -11067,9 +12592,12 @@ def create_workbench_app(
             object_id=item_id,
             details={"kind": "notebook_item", "format": format_name},
         )
-        return download_response(artifact)
+        return download_response(request, artifact)
 
-    @app.get("/matters/{slug}/conversations/{conversation_id}/export")
+    @app.get(
+        "/matters/{slug}/conversations/{conversation_id}/export",
+        dependencies=[Depends(require_matter_response_lease)],
+    )
     def download_conversation(
         request: Request,
         slug: str,
@@ -11077,7 +12605,7 @@ def create_workbench_app(
         format_name: str = Query("docx", alias="format", pattern="^(docx|markdown)$"),
     ):
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
             conversation = bench.workspace.get_conversation_any(
                 matter.matter_id, conversation_id
             )
@@ -11098,10 +12626,11 @@ def create_workbench_app(
             object_id=conversation.conversation_id,
             details={"kind": "conversation", "format": format_name},
         )
-        return download_response(artifact)
+        return download_response(request, artifact)
 
     @app.get(
-        "/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/export"
+        "/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/export",
+        dependencies=[Depends(require_matter_response_lease)],
     )
     def download_answer(
         request: Request,
@@ -11111,7 +12640,7 @@ def create_workbench_app(
         format_name: str = Query("docx", alias="format", pattern="^(docx|markdown)$"),
     ):
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
             conversation = bench.workspace.get_conversation_any(
                 matter.matter_id, conversation_id
             )
@@ -11146,13 +12675,26 @@ def create_workbench_app(
             object_id=answer.message_id,
             details={"kind": "answer", "format": format_name},
         )
-        return download_response(artifact)
+        return download_response(request, artifact)
 
-    @app.get("/matters/{slug}/export")
+    @app.get(
+        "/matters/{slug}/export",
+        dependencies=[Depends(require_matter_bundle_response_lease)],
+    )
     def download_matter_work_product(request: Request, slug: str):
         context = auth_context(request)
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None)
+                == matter.matter_id
+            )
+            read_actor_id = context.principal_id
+            source_catalog = bench.workspace.source_catalog_for_export(
+                matter.matter_id,
+                read_actor_id,
+                administrator_override=administrator_override,
+            )
             conversations = tuple(
                 (
                     conversation,
@@ -11163,28 +12705,51 @@ def create_workbench_app(
                 for conversation in bench.workspace.conversations(matter.matter_id)
             )
             additional_work_product: list[dict[str, object]] = []
+            additional_work_product_bytes = 0
+
+            def add_work_product(
+                *, kind: str, path: str, artifact: ExportArtifact
+            ) -> None:
+                nonlocal additional_work_product_bytes
+                projected = additional_work_product_bytes + len(artifact.body)
+                if projected > MAX_BUNDLE_UNCOMPRESSED_BYTES:
+                    raise ExportProblem(
+                        "This bundle is too large to prepare at once. Export completed work individually."
+                    )
+                additional_work_product.append(
+                    {"kind": kind, "path": path, "body": artifact.body}
+                )
+                additional_work_product_bytes = projected
+
             for index, research_job in enumerate(
                 (
                     item for item in bench.workspace.research_jobs(
-                        matter.matter_id, context.principal_id, limit=500
+                        matter.matter_id,
+                        read_actor_id,
+                        limit=500,
+                        administrator_override=administrator_override,
                     ) if item.state == "succeeded"
                 ),
                 1,
             ):
                 for format_name in ("markdown", "json"):
-                    research_artifact = export_research(
+                    research_artifact = bench.export_research_work_product(
                         matter, research_job, format_name
                     )
-                    additional_work_product.append(
-                        {
-                            "kind": "deep_research",
-                            "path": f"research/{index:03d}-{research_artifact.filename}",
-                            "body": research_artifact.body,
-                        }
+                    add_work_product(
+                        kind="investigation",
+                        path=(
+                            f"investigations/{index:03d}-"
+                            f"{research_artifact.filename}"
+                        ),
+                        artifact=research_artifact,
                     )
             for index, review_run in enumerate(
                 bench.workspace.review_runs(
-                    matter.matter_id, context.principal_id, limit=500
+                    matter.matter_id,
+                    read_actor_id,
+                    limit=500,
+                    administrator_override=administrator_override,
                 ),
                 1,
             ):
@@ -11195,10 +12760,16 @@ def create_workbench_app(
                     matter.matter_id, review_run.criterion_version_id
                 )
                 decisions = bench.workspace.review_decisions_for_export(
-                    matter.matter_id, context.principal_id, review_run.run_id
+                    matter.matter_id,
+                    read_actor_id,
+                    review_run.run_id,
+                    administrator_override=administrator_override,
                 )
                 metrics = bench.workspace.review_validation_metrics(
-                    matter.matter_id, context.principal_id, review_run.run_id
+                    matter.matter_id,
+                    read_actor_id,
+                    review_run.run_id,
+                    administrator_override=administrator_override,
                 )
                 for format_name in ("csv", "json"):
                     review_artifact = export_full_review(
@@ -11210,19 +12781,24 @@ def create_workbench_app(
                         metrics,
                         format_name,
                     )
-                    additional_work_product.append(
-                        {
-                            "kind": "full_review",
-                            "path": f"full-review/{index:03d}-{review_artifact.filename}",
-                            "body": review_artifact.body,
-                        }
+                    add_work_product(
+                        kind="source_check",
+                        path=(
+                            f"source-checks/{index:03d}-"
+                            f"{review_artifact.filename}"
+                        ),
+                        artifact=review_artifact,
                     )
             artifact = export_matter_bundle(
                 matter,
                 conversations,
-                export_source_inventory(matter),
-                notebook_export_entries(matter, context.principal_id),
-                export_media_work_product(matter),
+                export_source_inventory(source_catalog),
+                notebook_export_entries(
+                    matter,
+                    read_actor_id,
+                    administrator_override=administrator_override,
+                ),
+                export_media_work_product(matter, source_catalog),
                 additional_work_product,
             )
         except KeyError as exc:
@@ -11233,12 +12809,17 @@ def create_workbench_app(
             request,
             "work_product.export",
             "success",
+            context=context,
             matter=matter,
             object_type="matter",
             object_id=matter.matter_id,
-            details={"kind": "matter", "format": "zip"},
+            details={
+                "kind": "matter",
+                "format": "zip",
+                **({"role": "administrator"} if administrator_override else {}),
+            },
         )
-        return download_response(artifact)
+        return download_response(request, artifact)
 
     @app.post(
         "/matters/{slug}/ask",
@@ -11253,6 +12834,7 @@ def create_workbench_app(
         source_set: str = Form("", max_length=80),
         notebook_mode: str = Form("", max_length=24),
         notebook_item: list[str] = Form(default=[]),
+        review_task: str = Form("answer", pattern="^(answer|research)$"),
     ):
         wants_json = "application/json" in request.headers.get("accept", "")
         context = auth_context(request)
@@ -11272,7 +12854,7 @@ def create_workbench_app(
                 elif readiness.state == "preparing":
                     message = (
                         "Matter preparation is still active. Wait for uploading, OCR, "
-                        "transcription, and indexing to finish, then send this question."
+                        "transcription and source preparation to finish, then send this question."
                     )
                 else:
                     message = (
@@ -11286,6 +12868,69 @@ def create_workbench_app(
                 else None
             )
             key = request_key or f"answer-request-{uuid.uuid4().hex}"
+            if review_task == "research":
+                if not bench.generator.available:
+                    raise WorkspaceProblem(
+                        "Broader investigation is unavailable while local answering is offline."
+                    )
+                research_conversation = active or bench.workspace.get_conversation(
+                    matter.matter_id
+                )
+                match = re.fullmatch(r"answer-request-([0-9a-f]{32})", key)
+                research_key = (
+                    f"research-request-{match.group(1)}"
+                    if match
+                    else f"research-request-{uuid.uuid4().hex}"
+                )
+                research_title = WorkspaceStore._automatic_conversation_title(
+                    question, maximum=120
+                )
+                research, created = bench.workspace.queue_research_job(
+                    matter.matter_id,
+                    context.principal_id,
+                    question,
+                    research_title,
+                    research_key,
+                    source_set or None,
+                    conversation_id=research_conversation.conversation_id,
+                )
+                if bench.research is not None:
+                    bench.research.notify()
+                audit(
+                    request,
+                    "research.create",
+                    "success",
+                    context=context,
+                    matter=matter,
+                    object_type="research_job",
+                    object_id=research.job_id,
+                    details={"created": created, "state": research.state},
+                )
+                workspace_url = _query_url(
+                    f"/matters/{slug}",
+                    conversation=research_conversation.conversation_id,
+                    notice="Broader investigation saved in this conversation",
+                )
+                if wants_json:
+                    return JSONResponse(
+                        {
+                            **research_status_projection(matter, research),
+                            "workspace_url": workspace_url,
+                        },
+                        status_code=202 if created else 200,
+                    )
+                return RedirectResponse(workspace_url, status_code=303)
+            if active is not None and any(
+                item.conversation_id == active.conversation_id
+                and item.state in {"queued", "running"}
+                for item in bench.workspace.research_jobs(
+                    matter.matter_id, context.principal_id
+                )
+            ):
+                raise WorkspaceProblem(
+                    "A broader investigation is still working in this conversation. "
+                    "Wait for it to return before asking a follow-up."
+                )
             selected_notebook_items = tuple(
                 item_id for item_id in notebook_item if item_id.strip()
             )
@@ -11429,7 +13074,7 @@ def create_workbench_app(
                 if readiness.state == "preparing":
                     raise WorkspaceProblem(
                         "Matter preparation is active. Wait for uploading, OCR, "
-                        "transcription, and indexing to finish, then retry this answer."
+                        "transcription and source preparation to finish, then retry this answer."
                     )
                 raise WorkspaceProblem(
                     "No source is searchable yet. Retry or remove an affected "

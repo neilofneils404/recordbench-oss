@@ -29,11 +29,13 @@ class BrowserPlaybackCoordinator:
         resolve_store: Callable[[MatterRecord], PilotStore],
         reserve_capacity: Callable[[str, str, int], None],
         release_capacity: Callable[[str, str], None],
+        admit_matter: Callable[[MatterRecord], bool],
     ) -> None:
         self.resolve_matter = resolve_matter
         self.resolve_store = resolve_store
         self.reserve_capacity = reserve_capacity
         self.release_capacity = release_capacity
+        self.admit_matter = admit_matter
         self._condition = threading.Condition()
         self._queue: deque[PlaybackTask] = deque()
         self._pending: set[PlaybackTask] = set()
@@ -56,29 +58,35 @@ class BrowserPlaybackCoordinator:
         retry: bool = False,
     ) -> PilotDocument:
         store = self.resolve_store(matter)
-        force_full = retry and document.playback_state in {"original", "ready"}
-        queued = store.queue_browser_playback(document.document_id, retry=retry)
-        if queued.playback_state != "queued":
+        with store.mutation_guard():
+            if not self.admit_matter(matter):
+                raise UploadProblem(
+                    "This matter is closing and cannot start playback preparation.",
+                    409,
+                )
+            force_full = retry and document.playback_state in {"original", "ready"}
+            queued = store.queue_browser_playback(document.document_id, retry=retry)
+            if queued.playback_state != "queued":
+                return queued
+            task = PlaybackTask(
+                matter.matter_id,
+                queued.document_id,
+                queued.version_id,
+                force_full,
+            )
+            with self._condition:
+                if (
+                    not self._stop
+                    and matter.matter_id not in self._cancelled_matters
+                    and (matter.matter_id, queued.document_id)
+                    not in self._cancelled_documents
+                    and task not in self._pending
+                    and task != self._active
+                ):
+                    self._queue.append(task)
+                    self._pending.add(task)
+                    self._condition.notify_all()
             return queued
-        task = PlaybackTask(
-            matter.matter_id,
-            queued.document_id,
-            queued.version_id,
-            force_full,
-        )
-        with self._condition:
-            if (
-                not self._stop
-                and matter.matter_id not in self._cancelled_matters
-                and (matter.matter_id, queued.document_id)
-                not in self._cancelled_documents
-                and task not in self._pending
-                and task != self._active
-            ):
-                self._queue.append(task)
-                self._pending.add(task)
-                self._condition.notify_all()
-        return queued
 
     def _cancelled(self, matter_id: str, document_id: str) -> bool:
         with self._condition:
@@ -86,6 +94,16 @@ class BrowserPlaybackCoordinator:
                 self._stop
                 or matter_id in self._cancelled_matters
                 or (matter_id, document_id) in self._cancelled_documents
+            )
+
+    def has_matter_work(self, matter_id: str) -> bool:
+        """Report queued or active rendition work without changing it."""
+
+        with self._condition:
+            return bool(
+                (self._active is not None and self._active.matter_id == matter_id)
+                or any(task.matter_id == matter_id for task in self._pending)
+                or any(task.matter_id == matter_id for task in self._queue)
             )
 
     def _run(self) -> None:

@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from case_intelligence.generation import UnavailableGenerator
+from case_intelligence.ingestion import IngestionCoordinator
 from case_intelligence.pilot_uploads import PilotStore
 from case_intelligence.review_bench_v2 import PdfPage
 from case_intelligence.source_locations import (
@@ -23,7 +24,7 @@ from case_intelligence.source_locations import (
     SourceScanLimits,
 )
 from case_intelligence.workbench import CaseIntelligenceWorkbench, create_workbench_app
-from case_intelligence.workspace_store import WorkspaceStore
+from case_intelligence.workspace_store import WorkspaceProblem, WorkspaceStore
 
 WEB_ACTOR = "development-taylor-morgan"
 
@@ -257,6 +258,80 @@ def test_background_registered_folder_becomes_searchable_without_modifying_sourc
         )
         assert removed.status_code == 303
         assert source.read_bytes() == original
+
+
+def test_registered_staging_cleanup_remains_active_and_blocks_purge(
+    tmp_path, monkeypatch
+):
+    source_root = tmp_path / "registered"
+    collection = source_root / "Generated purge boundary"
+    collection.mkdir(parents=True)
+    (collection / "generated-record.txt").write_text(
+        "Generated registered source for the cleanup boundary.\n",
+        encoding="utf-8",
+    )
+    registry = SourceLocationRegistry(
+        (RegisteredSourceLocation("review-share", "Review share", source_root),)
+    )
+    cleanup_started = threading.Event()
+    release_cleanup = threading.Event()
+    real_cleanup = IngestionCoordinator._remove_staged_source
+
+    def paused_cleanup(coordinator, staged_path):
+        cleanup_started.set()
+        assert release_cleanup.wait(timeout=5)
+        return real_cleanup(coordinator, staged_path)
+
+    monkeypatch.setattr(
+        IngestionCoordinator, "_remove_staged_source", paused_cleanup
+    )
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        source_registry=registry,
+        background_ingestion=True,
+        ingestion_workers=1,
+        auth_mode="test",
+    )
+    with TestClient(app) as client:
+        slug = _matter(client)
+        preflight = client.post(
+            f"/matters/{slug}/registered-sources/preflight",
+            data={
+                "source_location_id": "review-share",
+                "relative_folder": "Generated purge boundary",
+            },
+            follow_redirects=False,
+        )
+        plan_id = parse_qs(urlparse(preflight.headers["location"]).query)["plan"][0]
+        assert client.post(
+            f"/matters/{slug}/registered-sources/{plan_id}/confirm",
+            follow_redirects=False,
+        ).status_code == 303
+        assert cleanup_started.wait(timeout=5)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, WEB_ACTOR)
+        assert bench.workspace.active_matter_work_counts(matter.matter_id)[
+            "ingestion"
+        ] == 1
+        with pytest.raises(WorkspaceProblem, match="source and media processing"):
+            bench.begin_matter_purge(
+                matter.slug, matter.owner_id, matter.display_name
+            )
+        assert bench.workspace.matter_lifecycle(matter.matter_id).state == "active"
+
+        release_cleanup.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if not bench.workspace.active_matter_work_counts(matter.matter_id)[
+                "ingestion"
+            ]:
+                break
+            time.sleep(0.01)
+        assert not bench.workspace.active_matter_work_counts(matter.matter_id)[
+            "ingestion"
+        ]
+        assert list(bench.storage.ingestion_staging.iterdir()) == []
 
 
 def test_expanded_ocr_processes_more_than_legacy_25_page_cap(tmp_path, monkeypatch):

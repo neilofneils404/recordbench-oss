@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import re
@@ -38,7 +39,25 @@ CSV_MEDIA_TYPE = "text/csv; charset=utf-8"
 JSON_MEDIA_TYPE = "application/json; charset=utf-8"
 MAX_EXPORT_TEXT_CHARS = 10_000_000
 MAX_WORKFLOW_EXPORT_BYTES = 100 * 1024 * 1024
+MAX_BUNDLE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 MAX_READABLE_REVIEW_DECISIONS = 500
+
+_PORTABLE_REVIEW_METRICS = (
+    "sample_total",
+    "reviewed_total",
+    "adjudicated_total",
+    "uncertain_total",
+    "unscored_total",
+    "true_positive",
+    "false_positive",
+    "false_negative",
+    "true_negative",
+    "precision",
+    "recall",
+    "elusion",
+    "richness",
+    "error_rate",
+)
 
 
 class ExportProblem(ValueError):
@@ -83,6 +102,382 @@ def _plain(value: object) -> str:
     if not isinstance(value, str):
         return ""
     return "\n".join(line.rstrip() for line in value.replace("\r", "").split("\n")).strip()
+
+
+def _staff_label(value: object) -> str:
+    """Render a stored workflow value without exposing its machine spelling."""
+
+    return _plain(value).replace("_", " ").title()
+
+
+def _staff_actor_label(display_name: object) -> str:
+    """Retain readable attribution without falling back to a principal key."""
+
+    return _plain(display_name) or "Staff member"
+
+
+def _portable_review_citation(value: object) -> dict[str, str] | None:
+    """Whitelist the fields needed to resolve exported every-source support."""
+
+    if not isinstance(value, Mapping):
+        return None
+    citation = {
+        "source_name": _plain(value.get("source_name")),
+        "location": _plain(value.get("location")),
+        "excerpt": _plain(value.get("excerpt")),
+    }
+    if not citation["source_name"] or not citation["location"]:
+        return None
+    return citation
+
+
+def _portable_review_citations(values: object) -> tuple[dict[str, str], ...]:
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        return ()
+    return tuple(
+        citation
+        for value in values
+        if (citation := _portable_review_citation(value)) is not None
+    )
+
+
+def _review_citation_text(citation: Mapping[str, str]) -> str:
+    return " — ".join(
+        part
+        for part in (
+            citation.get("source_name", ""),
+            citation.get("location", ""),
+            citation.get("excerpt", ""),
+        )
+        if part
+    )
+
+
+def _validate_review_export_scope(
+    matter: MatterRecord,
+    criterion: ReviewCriterionRecord,
+    version: ReviewCriterionVersionRecord,
+    run: ReviewRunRecord,
+    decisions: Sequence[ReviewDecisionRecord],
+) -> None:
+    if (
+        criterion.matter_id != matter.matter_id
+        or version.matter_id != matter.matter_id
+        or run.matter_id != matter.matter_id
+        or version.criterion_id != criterion.criterion_id
+        or run.criterion_id != criterion.criterion_id
+        or run.criterion_version_id != version.criterion_version_id
+    ):
+        raise ExportProblem("The source check crossed a matter boundary.")
+    for item in decisions:
+        if item.matter_id != matter.matter_id or item.run_id != run.run_id:
+            raise ExportProblem("The source check crossed a matter boundary.")
+        if item.machine_decision == "included" and not item.citations:
+            raise ExportProblem(
+                "An included source-check decision has no exact source support."
+            )
+        for citation in item.citations:
+            if not isinstance(citation, Mapping):
+                raise ExportProblem("A source-check citation is invalid.")
+            source_name = _plain(citation.get("source_name"))
+            location = _plain(citation.get("location"))
+            excerpt = _plain(citation.get("excerpt"))
+            support_token = _plain(citation.get("support_token"))
+            excerpt_digest = _plain(citation.get("excerpt_digest"))
+            chunk_id = _plain(citation.get("chunk_id"))
+            unit_number = citation.get("unit_number")
+            evidence_kind = _plain(citation.get("evidence_kind"))
+            if (
+                not source_name
+                or not location
+                or not excerpt
+                or not re.fullmatch(r"[0-9a-f]{40}", support_token)
+                or not re.fullmatch(r"[0-9a-f]{64}", excerpt_digest)
+                or not chunk_id
+                or isinstance(unit_number, bool)
+                or not isinstance(unit_number, int)
+                or unit_number < 1
+                or evidence_kind not in {"document", "transcript"}
+            ):
+                raise ExportProblem(
+                    "A source-check citation does not have an exact location."
+                )
+            if (
+                _plain(citation.get("matter_id")) != matter.matter_id
+                or _plain(citation.get("document_id")) != item.document_id
+                or _plain(citation.get("source_version_id"))
+                != item.source_version_id
+                or source_name != item.source_name
+            ):
+                raise ExportProblem("A source-check citation did not match its source.")
+
+
+def _validate_research_export_scope(
+    matter: MatterRecord,
+    job: ResearchJobRecord,
+    result: Mapping[str, object],
+) -> None:
+    """Bind every derived investigation citation to its matter evidence ledger."""
+
+    if job.matter_id != matter.matter_id:
+        raise ExportProblem("Investigation export crossed a matter boundary.")
+    evidence = result.get("evidence")
+    if not isinstance(evidence, list):
+        raise ExportProblem("The investigation evidence ledger is invalid.")
+    ledger: dict[str, Mapping[str, object]] = {}
+    for item in evidence:
+        if not isinstance(item, Mapping):
+            raise ExportProblem("The investigation evidence ledger is invalid.")
+        matter_id = _plain(item.get("matter_id"))
+        token = _plain(item.get("support_token"))
+        excerpt_value = item.get("excerpt")
+        excerpt = excerpt_value if isinstance(excerpt_value, str) else ""
+        excerpt_digest = _plain(item.get("excerpt_digest"))
+        chunk_id = _plain(item.get("chunk_id"))
+        unit_number = item.get("unit_number")
+        line_start = item.get("line_start")
+        line_end = item.get("line_end")
+        required = (
+            _plain(item.get("document_id")),
+            _plain(item.get("source_version_id")),
+            _plain(item.get("source_name")),
+            _plain(item.get("location")),
+            _plain(excerpt),
+            _plain(item.get("evidence_kind")),
+        )
+        if matter_id != matter.matter_id:
+            raise ExportProblem("Investigation export crossed a matter boundary.")
+        optional_lines_are_valid = all(
+            value is None
+            or (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= 0
+            )
+            for value in (line_start, line_end)
+        )
+        line_range_is_valid = (
+            (line_start is None and line_end is None)
+            or (
+                line_start is not None
+                and line_end is not None
+                and line_end >= line_start
+            )
+        )
+        if (
+            not re.fullmatch(r"[0-9a-f]{40}", token)
+            or not all(required)
+            or token in ledger
+            or not re.fullmatch(r"[0-9a-f]{64}", excerpt_digest)
+            or excerpt_digest != hashlib.sha256(excerpt.encode("utf-8")).hexdigest()
+            or not chunk_id
+            or isinstance(unit_number, bool)
+            or not isinstance(unit_number, int)
+            or unit_number < 1
+            or not optional_lines_are_valid
+            or not line_range_is_valid
+        ):
+            raise ExportProblem("The investigation evidence ledger is invalid.")
+        if required[-1] not in {"document", "transcript"}:
+            raise ExportProblem("The investigation evidence ledger is invalid.")
+        ledger[token] = item
+
+    def validate_citation(value: object) -> None:
+        if not isinstance(value, Mapping):
+            raise ExportProblem("An investigation citation is invalid.")
+        token = _plain(value.get("support_token"))
+        source_name = _plain(value.get("source_name"))
+        location = _plain(value.get("location"))
+        evidence_kind = _plain(value.get("evidence_kind"))
+        source = ledger.get(token)
+        if (
+            source is None
+            or not source_name
+            or not location
+            or not evidence_kind
+            or source_name != _plain(source.get("source_name"))
+            or location != _plain(source.get("location"))
+            or evidence_kind != _plain(source.get("evidence_kind"))
+        ):
+            raise ExportProblem(
+                "An investigation citation did not match its evidence ledger."
+            )
+        for key in ("matter_id", "document_id", "source_version_id", "excerpt"):
+            supplied = value.get(key)
+            if supplied not in (None, "") and _plain(supplied) != _plain(source.get(key)):
+                raise ExportProblem(
+                    "An investigation citation did not match its evidence ledger."
+                )
+
+    def validate_citation_list(value: object) -> int:
+        if not isinstance(value, list):
+            raise ExportProblem("Investigation citations are invalid.")
+        for citation in value:
+            validate_citation(citation)
+        return len(value)
+
+    def validate_answer(value: object) -> tuple[int, str]:
+        if not isinstance(value, Mapping):
+            raise ExportProblem("The investigation answer is invalid.")
+        if not isinstance(value.get("answerable"), bool):
+            raise ExportProblem("The investigation answer is invalid.")
+        introduction = value.get("introduction", "")
+        missing_information = value.get("missing_information", "")
+        if not isinstance(introduction, str) or not isinstance(
+            missing_information, str
+        ):
+            raise ExportProblem("The investigation answer is invalid.")
+        citation_count = 0
+        claims = value.get("claims", [])
+        if not isinstance(claims, list):
+            raise ExportProblem("The investigation answer is invalid.")
+        claim_texts: list[str] = []
+        for claim in claims:
+            if not isinstance(claim, Mapping) or not isinstance(
+                claim.get("text", ""), str
+            ):
+                raise ExportProblem("The investigation answer is invalid.")
+            claim_texts.append(str(claim.get("text", "")))
+            citation_count += validate_citation_list(claim.get("citations", []))
+        limitation = value.get("limitation")
+        limitation_text = ""
+        if limitation is not None:
+            if not isinstance(limitation, Mapping) or not isinstance(
+                limitation.get("text", ""), str
+            ):
+                raise ExportProblem("The investigation answer is invalid.")
+            limitation_text = str(limitation.get("text", ""))
+            citation_count += validate_citation_list(
+                limitation.get("citations", [])
+            )
+        if "source_matches" in value:
+            citation_count += validate_citation_list(value.get("source_matches"))
+        if value.get("answerable") and citation_count == 0:
+            raise ExportProblem("The investigation answer has no exact source support.")
+        if value.get("answerable"):
+            parts = [introduction, *claim_texts]
+            if limitation is not None:
+                parts.append(f"Limitation: {limitation_text}")
+            answer_text = "\n".join(part for part in parts if part)
+        else:
+            answer_text = missing_information or introduction
+        return citation_count, answer_text
+
+    answer = result.get("answer")
+    if answer is None:
+        raise ExportProblem("The investigation answer is invalid.")
+    _answer_citations, answer_text = validate_answer(answer)
+    if result.get("summary") != answer_text:
+        raise ExportProblem(
+            "The investigation synthesis does not match its verified answer."
+        )
+    passes = result.get("passes", [])
+    if not isinstance(passes, list):
+        raise ExportProblem("The investigation findings are invalid.")
+    for item in passes:
+        if not isinstance(item, Mapping):
+            raise ExportProblem("The investigation findings are invalid.")
+        citation_count = 0
+        if "answer" in item:
+            answer_citations, pass_text = validate_answer(item.get("answer"))
+            citation_count += answer_citations
+            if item.get("text") != pass_text:
+                raise ExportProblem(
+                    "An investigation finding does not match its verified answer."
+                )
+        else:
+            expected_text = {
+                "gap": "No searchable passage matched this part of the research plan.",
+                "needs_review": (
+                    "Potential passages were found, but this research step did not "
+                    "produce a source-verified finding."
+                ),
+            }.get(item.get("status"))
+            if expected_text is None or item.get("text") != expected_text:
+                raise ExportProblem(
+                    "An investigation finding does not match its verified result."
+                )
+        if "citations" in item:
+            citation_count += validate_citation_list(item.get("citations"))
+        if item.get("status") == "supported" and citation_count == 0:
+            raise ExportProblem(
+                "An investigation finding has no exact source support."
+            )
+
+
+def _validate_report_export_scope(
+    matter: MatterRecord,
+    report: ReportRecord,
+    sections: Sequence[
+        tuple[ReportSectionRecord, Sequence[ReportCitationRecord]]
+    ],
+) -> None:
+    if report.matter_id != matter.matter_id:
+        raise ExportProblem("The report crossed a matter boundary.")
+    source_names: dict[tuple[str, str], str] = {}
+    for section, citations in sections:
+        if (
+            section.matter_id != matter.matter_id
+            or section.report_id != report.report_id
+        ):
+            raise ExportProblem("The report crossed a matter boundary.")
+        for citation in citations:
+            if (
+                citation.matter_id != matter.matter_id
+                or citation.report_id != report.report_id
+                or citation.section_id != section.section_id
+            ):
+                raise ExportProblem("A report citation crossed a matter boundary.")
+            if (
+                not re.fullmatch(r"[0-9a-f]{32}", citation.document_id or "")
+                or not re.fullmatch(r"[0-9a-f]{32}", citation.source_version_id or "")
+                or not _plain(citation.source_name)
+                or not _plain(citation.location)
+            ):
+                raise ExportProblem("A report citation has no exact source location.")
+            source_key = (citation.document_id, citation.source_version_id)
+            prior_name = source_names.setdefault(source_key, citation.source_name)
+            if prior_name != citation.source_name:
+                raise ExportProblem("A report citation did not match its source.")
+            if citation.kind in {"source", "transcript"}:
+                if (
+                    not re.fullmatch(r"[0-9a-f]{40}", citation.support_token or "")
+                    or citation.media_clip_id
+                ):
+                    raise ExportProblem("A report citation did not match its source.")
+            elif citation.kind == "media_clip":
+                if (
+                    not re.fullmatch(
+                        r"media-clip-[0-9a-f]{32}", citation.media_clip_id or ""
+                    )
+                    or citation.support_token
+                    or citation.start_ms < 0
+                    or citation.end_ms <= citation.start_ms
+                ):
+                    raise ExportProblem("A report citation did not match its source.")
+            else:
+                raise ExportProblem("A report citation has an invalid type.")
+
+
+def _portable_media_review_status(value: object) -> str:
+    return "Staff edits saved" if _plain(value) == "human_reviewed" else "Unconfirmed"
+
+
+def _portable_overview_coverage(value: object) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        covered = int(value.get("covered_segment_count") or 0)
+        total = int(value.get("total_segment_count") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ExportProblem("Transcript overview coverage is invalid.") from exc
+    return {
+        "scope": "Full transcript"
+        if value.get("mode") == "full"
+        else "Representative passages",
+        "covered_passages": covered,
+        "total_passages": total,
+    }
 
 
 def _citations(value: object) -> tuple[str, ...]:
@@ -167,7 +562,15 @@ def answer_blocks(
     *,
     exported_at: str | None = None,
 ) -> tuple[ExportBlock, ...]:
-    if answer.role != "assistant" or answer.conversation_id != conversation.conversation_id:
+    if (
+        conversation.matter_id != matter.matter_id
+        or answer.role != "assistant"
+        or answer.conversation_id != conversation.conversation_id
+        or (
+            question is not None
+            and question.conversation_id != conversation.conversation_id
+        )
+    ):
         raise ExportProblem("That saved item is not an assistant answer in this conversation.")
     blocks = [
         ExportBlock(matter.display_name, "title"),
@@ -199,7 +602,13 @@ def conversation_blocks(
     *,
     exported_at: str | None = None,
 ) -> tuple[ExportBlock, ...]:
-    if any(message.conversation_id != conversation.conversation_id for message in messages):
+    if (
+        conversation.matter_id != matter.matter_id
+        or any(
+            message.conversation_id != conversation.conversation_id
+            for message in messages
+        )
+    ):
         raise ExportProblem("Conversation export crossed a matter boundary.")
     blocks = [
         ExportBlock(matter.display_name, "title"),
@@ -230,6 +639,21 @@ def conversation_blocks(
     return tuple(blocks)
 
 
+def _validate_notebook_scope(
+    matter: MatterRecord,
+    entries: Sequence[tuple[NotebookItemRecord, Sequence[NotebookReferenceRecord]]],
+) -> None:
+    for item, references in entries:
+        if item.matter_id != matter.matter_id:
+            raise ExportProblem("Notebook export crossed a matter boundary.")
+        if any(
+            reference.matter_id != matter.matter_id
+            or reference.item_id != item.item_id
+            for reference in references
+        ):
+            raise ExportProblem("Notebook export crossed a matter boundary.")
+
+
 def notebook_blocks(
     matter: MatterRecord,
     entries: Sequence[tuple[NotebookItemRecord, Sequence[NotebookReferenceRecord]]],
@@ -237,6 +661,7 @@ def notebook_blocks(
     exported_at: str | None = None,
     heading: str = "Matter notebook",
 ) -> tuple[ExportBlock, ...]:
+    _validate_notebook_scope(matter, entries)
     blocks = [
         ExportBlock(matter.display_name, "title"),
         ExportBlock(heading, "subtitle"),
@@ -264,8 +689,8 @@ def notebook_blocks(
             blocks.append(ExportBlock(item.body))
         blocks.append(
             ExportBlock(
-                f"Created by {item.created_by_name or item.created_by} at {item.created_at}; "
-                f"last updated by {item.updated_by_name or item.updated_by} at {item.updated_at}.",
+                f"Created by {_staff_actor_label(item.created_by_name)} at {item.created_at}; "
+                f"last updated by {_staff_actor_label(item.updated_by_name)} at {item.updated_at}.",
                 "metadata",
             )
         )
@@ -309,16 +734,16 @@ def notebook_csv(
     for item, references in entries:
         writer.writerow(
             (
-                _csv_safe(item.item_type),
-                _csv_safe(item.status),
+                _csv_safe(_staff_label(item.item_type)),
+                _csv_safe(_staff_label(item.status)),
                 _csv_safe(item.title),
                 _csv_safe(item.date_label),
                 _csv_safe(item.body),
                 "yes" if item.is_pinned else "no",
-                _csv_safe(item.origin),
-                _csv_safe(item.created_by_name or item.created_by),
+                _csv_safe(_staff_label(item.origin)),
+                _csv_safe(_staff_actor_label(item.created_by_name)),
                 item.created_at,
-                _csv_safe(item.updated_by_name or item.updated_by),
+                _csv_safe(_staff_actor_label(item.updated_by_name)),
                 item.updated_at,
                 _csv_safe(
                     "; ".join(
@@ -564,6 +989,7 @@ def export_notebook(
     stem: str | None = None,
 ) -> ExportArtifact:
     created = exported_at or _now()
+    _validate_notebook_scope(matter, entries)
     filename_stem = safe_file_stem(stem or f"{matter.display_name}-notebook")
     if format_name == "csv":
         return ExportArtifact(notebook_csv(entries), CSV_MEDIA_TYPE, filename_stem + ".csv")
@@ -582,6 +1008,7 @@ def export_report(
     exported_at: str | None = None,
 ) -> ExportArtifact:
     created = exported_at or _now()
+    _validate_report_export_scope(matter, report, sections)
     blocks: list[ExportBlock] = [
         ExportBlock(report.title, "title"),
         ExportBlock(matter.display_name, "subtitle"),
@@ -636,23 +1063,123 @@ def export_research(
     """Export one durable research run with its evidence and coverage ledger."""
 
     created = exported_at or _now()
-    stem = safe_file_stem(f"{matter.display_name}-{job.title}-deep-research")
+    stem = safe_file_stem(f"{matter.display_name}-{job.title}-investigation")
     result = dict(job.result)
+    _validate_research_export_scope(matter, job, result)
     if format_name == "json":
+        def mapping_items(value: object) -> tuple[Mapping[str, object], ...]:
+            if not isinstance(value, list):
+                return ()
+            return tuple(item for item in value if isinstance(item, Mapping))
+
+        def safe_citation(value: object) -> dict[str, object] | None:
+            if not isinstance(value, Mapping):
+                return None
+            source_name = _plain(value.get("source_name"))
+            location = _plain(value.get("location"))
+            if not source_name or not location:
+                return None
+            kind = _plain(value.get("evidence_kind")).casefold()
+            citation: dict[str, object] = {
+                "source": source_name,
+                "location": location,
+                "source_type": "Spoken" if kind == "transcript" else "Written",
+            }
+            excerpt = _plain(value.get("excerpt"))
+            if excerpt:
+                citation["excerpt"] = excerpt
+            return citation
+
+        safe_answer: dict[str, object] = {}
+        answer = result.get("answer")
+        if isinstance(answer, Mapping):
+            claims: list[dict[str, object]] = []
+            for claim in mapping_items(answer.get("claims")):
+                sources = tuple(
+                    safe
+                    for citation in mapping_items(claim.get("citations"))
+                    if (safe := safe_citation(citation)) is not None
+                )
+                claims.append(
+                    {
+                        "text": _plain(claim.get("text")),
+                        "sources": sources,
+                    }
+                )
+            safe_answer = {
+                "outcome": "Supported" if answer.get("answerable") else "Not supported",
+                "introduction": _plain(answer.get("introduction")),
+                "claims": claims,
+                "missing_information": _plain(answer.get("missing_information")),
+            }
+            limitation = answer.get("limitation")
+            if isinstance(limitation, Mapping):
+                safe_answer["limitation"] = {
+                    "text": _plain(limitation.get("text")),
+                    "sources": tuple(
+                        safe
+                        for citation in mapping_items(limitation.get("citations"))
+                        if (safe := safe_citation(citation)) is not None
+                    ),
+                }
+            modality = answer.get("modality_coverage")
+            if isinstance(modality, Mapping):
+                safe_answer["requested_source_coverage"] = {
+                    "result": "Complete"
+                    if modality.get("mode") == "complete"
+                    else "Partial",
+                    "notice": _plain(modality.get("notice")),
+                }
+
+        coverage = result.get("coverage")
+        safe_coverage: dict[str, object] = {}
+        if isinstance(coverage, Mapping):
+            safe_coverage = {
+                "focused_searches": int(coverage.get("search_pass_count") or 0),
+                "passages_considered": int(
+                    coverage.get("candidate_passage_count") or 0
+                ),
+                "supporting_passages": int(
+                    coverage.get("evidence_passage_count") or 0
+                ),
+                "supporting_sources": int(
+                    coverage.get("evidence_source_count") or 0
+                ),
+                "scope": "Selected source set"
+                if coverage.get("scope") == "source_set"
+                else "All searchable sources",
+                "notice": _plain(coverage.get("notice")),
+            }
+        findings = []
+        for item in mapping_items(result.get("passes")):
+            findings.append(
+                {
+                    "search": _plain(item.get("query")),
+                    "status": _plain(item.get("status")).replace("_", " ").title(),
+                    "finding": _plain(item.get("text")),
+                }
+            )
+        supporting_sources = tuple(
+            safe
+            for citation in mapping_items(result.get("evidence"))
+            if (safe := safe_citation(citation)) is not None
+        )
         body = json.dumps(
             {
                 "product": PRODUCT_NAME,
                 "exported_at": created,
-                "matter": {"id": matter.matter_id, "name": matter.display_name},
-                "research": {
-                    "id": job.job_id,
+                "matter": {"name": matter.display_name},
+                "investigation": {
                     "title": job.title,
                     "question": job.question,
-                    "state": job.state,
+                    "status": job.state.replace("_", " ").title(),
                     "created_at": job.created_at,
                     "finished_at": job.finished_at,
-                    "plan": dict(job.plan),
-                    "result": result,
+                    "synthesis": _plain(result.get("summary")),
+                    "answer": safe_answer,
+                    "coverage": safe_coverage,
+                    "findings": findings,
+                    "supporting_sources": supporting_sources,
                 },
             },
             ensure_ascii=False,
@@ -664,7 +1191,7 @@ def export_research(
     blocks: list[ExportBlock] = [
         ExportBlock(job.title, "title"),
         ExportBlock(matter.display_name, "subtitle"),
-        ExportBlock(f"Deep Research exported from {PRODUCT_NAME} at {created}.", "metadata"),
+        ExportBlock(f"Investigation exported from {PRODUCT_NAME} at {created}.", "metadata"),
         ExportBlock("Research question", "heading1"),
         ExportBlock(job.question),
     ]
@@ -673,11 +1200,11 @@ def export_research(
         blocks.extend((ExportBlock("Verified synthesis", "heading1"), ExportBlock(summary)))
     coverage = result.get("coverage")
     if isinstance(coverage, Mapping):
-        blocks.append(ExportBlock("Coverage ledger", "heading1"))
+        blocks.append(ExportBlock("Coverage", "heading1"))
         for label, key in (
             ("Search passes", "search_pass_count"),
-            ("Candidate passages", "candidate_passage_count"),
-            ("Evidence passages", "evidence_passage_count"),
+            ("Passages considered", "candidate_passage_count"),
+            ("Supporting passages", "evidence_passage_count"),
             ("Distinct evidence sources", "evidence_source_count"),
         ):
             blocks.append(ExportBlock(f"{label}: {coverage.get(key, 0)}", "bullet"))
@@ -694,7 +1221,7 @@ def export_research(
             blocks.append(ExportBlock(_plain(item.get("text")) or "No supported finding.", "normal"))
     evidence = result.get("evidence")
     if isinstance(evidence, list):
-        blocks.append(ExportBlock("Evidence ledger", "heading1"))
+        blocks.append(ExportBlock("Supporting sources", "heading1"))
         for index, item in enumerate(evidence, 1):
             if not isinstance(item, Mapping):
                 continue
@@ -706,7 +1233,7 @@ def export_research(
                 blocks.append(ExportBlock(excerpt, "citation"))
     blocks.append(
         ExportBlock(
-            "Deep Research is multi-pass retrieval work product, not a document-by-document completeness determination. Verify cited passages before relying on it.",
+            "This investigation used multiple focused searches; it did not check every source. Verify cited passages before relying on it.",
             "footer",
         )
     )
@@ -724,43 +1251,38 @@ def export_full_review(
     *,
     exported_at: str | None = None,
 ) -> ExportArtifact:
-    """Export the frozen population, machine decisions, and human validation separately."""
+    """Export a frozen every-source check without portable internal identifiers."""
 
     created = exported_at or _now()
-    stem = safe_file_stem(f"{matter.display_name}-{criterion.title}-full-review")
+    _validate_review_export_scope(matter, criterion, version, run, decisions)
+    stem = safe_file_stem(f"{matter.display_name}-{criterion.title}-source-check")
     if format_name == "csv":
         output = io.StringIO(newline="")
         writer = csv.writer(output, lineterminator="\r\n")
         writer.writerow(
             (
-                "Ordinal", "Source", "Type", "Machine decision", "Rationale",
-                "Source locations", "Needs attention", "Validation sample",
-                "Human decision", "Human note", "Reviewed by", "Reviewed at",
-                "Source version", "Document id",
+                "Ordinal", "Source", "Type", "RecordBench label", "Rationale",
+                "Cited support", "Needs attention", "Validation sample",
+                "Staff decision", "Staff note", "Reviewed at",
             )
         )
         for item in decisions:
+            citations = _portable_review_citations(item.citations)
             writer.writerow(
                 (
                     item.ordinal,
                     _csv_safe(item.source_name),
                     _csv_safe(item.source_kind),
-                    item.machine_decision,
+                    _staff_label(item.machine_decision),
                     _csv_safe(item.rationale),
                     _csv_safe(
-                        "; ".join(
-                            f"{citation.get('source_name', '')} — {citation.get('location', '')}"
-                            for citation in item.citations
-                        )
+                        "; ".join(_review_citation_text(citation) for citation in citations)
                     ),
                     _csv_safe(item.error_message),
                     "yes" if item.validation_sample else "no",
-                    item.human_decision,
+                    _staff_label(item.human_decision),
                     _csv_safe(item.human_note),
-                    _csv_safe(item.reviewed_by or ""),
                     item.reviewed_at or "",
-                    item.source_version_id,
-                    item.document_id,
                 )
             )
         body = ("\ufeff" + output.getvalue()).encode("utf-8")
@@ -770,22 +1292,22 @@ def export_full_review(
     if format_name == "json":
         body = json.dumps(
             {
+                "schema": "recordbench-source-check-v1",
                 "product": PRODUCT_NAME,
                 "exported_at": created,
-                "matter": {"id": matter.matter_id, "name": matter.display_name},
+                "matter": {"name": matter.display_name},
                 "criterion": {
-                    "id": criterion.criterion_id,
                     "title": criterion.title,
-                    "version_id": version.criterion_version_id,
                     "version": version.version_number,
                     "instructions": version.instructions,
                     "include_guidance": version.include_guidance,
                     "exclude_guidance": version.exclude_guidance,
                 },
-                "run": {
-                    "id": run.run_id,
-                    "kind": run.run_kind,
-                    "state": run.state,
+                "check": {
+                    "scope": "Every source"
+                    if run.run_kind == "full"
+                    else "Representative sample",
+                    "status": _staff_label(run.state),
                     "snapshot_count": run.snapshot_count,
                     "reviewed_count": run.reviewed_count,
                     "included_count": run.included_count,
@@ -794,22 +1316,21 @@ def export_full_review(
                     "created_at": run.created_at,
                     "finished_at": run.finished_at,
                 },
-                "validation_metrics": dict(metrics),
+                "validation_metrics": {
+                    key: metrics.get(key) for key in _PORTABLE_REVIEW_METRICS
+                },
                 "decisions": [
                     {
                         "ordinal": item.ordinal,
-                        "document_id": item.document_id,
-                        "source_version_id": item.source_version_id,
                         "source_name": item.source_name,
                         "source_kind": item.source_kind,
-                        "machine_decision": item.machine_decision,
+                        "recordbench_label": _staff_label(item.machine_decision),
                         "rationale": item.rationale,
-                        "citations": list(item.citations),
-                        "error_message": item.error_message,
+                        "citations": _portable_review_citations(item.citations),
+                        "attention_note": item.error_message,
                         "validation_sample": bool(item.validation_sample),
-                        "human_decision": item.human_decision,
-                        "human_note": item.human_note,
-                        "reviewed_by": item.reviewed_by,
+                        "staff_decision": _staff_label(item.human_decision),
+                        "staff_note": item.human_note,
                         "reviewed_at": item.reviewed_at,
                     }
                     for item in decisions
@@ -825,12 +1346,12 @@ def export_full_review(
         ExportBlock(criterion.title, "title"),
         ExportBlock(matter.display_name, "subtitle"),
         ExportBlock(
-            f"Full Review v{version.version_number} exported from {PRODUCT_NAME} at {created}.",
+            f"Every-source check v{version.version_number} exported from {PRODUCT_NAME} at {created}.",
             "metadata",
         ),
         ExportBlock("Saved criterion", "heading1"),
         ExportBlock(version.instructions),
-        ExportBlock("Run totals", "heading1"),
+        ExportBlock("Check totals", "heading1"),
         ExportBlock(f"Frozen searchable population: {run.snapshot_count:,}", "bullet"),
         ExportBlock(f"Included: {run.included_count:,}", "bullet"),
         ExportBlock(f"Not identified: {run.excluded_count:,}", "bullet"),
@@ -878,15 +1399,18 @@ def export_full_review(
                 )
             )
         for citation in item.citations:
+            portable_citation = _portable_review_citation(citation)
+            if portable_citation is None:
+                continue
             blocks.append(
                 ExportBlock(
-                    f"Source: {_plain(citation.get('source_name'))} — {_plain(citation.get('location'))}",
+                    f"Source: {_review_citation_text(portable_citation)}",
                     "citation",
                 )
             )
     blocks.append(
         ExportBlock(
-            "Machine decisions do not replace attorney or reviewer judgment. Preserve the criterion version, validate a representative sample, and verify source support.",
+            "RecordBench labels do not replace attorney or reviewer judgment. Preserve the criterion version, validate a representative sample, and verify source support.",
             "footer",
         )
     )
@@ -916,8 +1440,15 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
         review_scope = payload.get("review_scope")
         portable_scope: dict[str, object] = {}
         if isinstance(review_scope, Mapping):
+            scope_mode = _plain(review_scope.get("mode"))
+            if scope_mode not in {
+                "focused",
+                "focused_orientation",
+                "broader_orientation",
+            }:
+                scope_mode = "focused"
             portable_scope = {
-                "mode": "focused",
+                "mode": scope_mode,
                 "collection_wide_request": bool(
                     review_scope.get("collection_wide_request")
                 ),
@@ -937,6 +1468,44 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
                     review_scope.get("cited_source_count") or 0
                 ),
                 "notice": _plain(review_scope.get("notice")),
+            }
+            if review_scope.get("broad_summary_request"):
+                portable_scope["broad_summary_request"] = True
+        modality_coverage = payload.get("modality_coverage")
+        portable_modality: dict[str, object] = {}
+        if isinstance(modality_coverage, Mapping):
+            portable_modality = {
+                "result": "complete"
+                if modality_coverage.get("mode") == "complete"
+                else "partial",
+                "requested": [
+                    _plain(item)
+                    for item in modality_coverage.get(
+                        "requested_evidence_kinds", []
+                    )
+                    if _plain(item)
+                ]
+                if isinstance(
+                    modality_coverage.get("requested_evidence_kinds"), list
+                )
+                else [],
+                "used": [
+                    _plain(item)
+                    for item in modality_coverage.get("used_evidence_kinds", [])
+                    if _plain(item)
+                ]
+                if isinstance(modality_coverage.get("used_evidence_kinds"), list)
+                else [],
+                "missing": [
+                    _plain(item)
+                    for item in modality_coverage.get("missing_evidence_kinds", [])
+                    if _plain(item)
+                ]
+                if isinstance(
+                    modality_coverage.get("missing_evidence_kinds"), list
+                )
+                else [],
+                "notice": _plain(modality_coverage.get("notice")),
             }
         result["answer"] = {
             "kind": payload.get("kind") if payload.get("kind") in {"generated", "not-supported", "error"} else "saved",
@@ -959,6 +1528,7 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
             "source_matches": list(_citations(payload.get("source_matches"))),
             "source_coverage": portable_coverage,
             "review_scope": portable_scope,
+            "requested_source_coverage": portable_modality,
         }
     return result
 
@@ -989,10 +1559,21 @@ def export_matter_bundle(
     conversation_files: list[dict[str, object]] = []
     portable_conversations: list[dict[str, object]] = []
     output = io.BytesIO()
+    uncompressed_bytes = 0
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("matter-report.md", report_markdown)
-        archive.writestr("matter-report.docx", report_docx)
-        archive.writestr(
+        def write_member(path: str, body: bytes) -> None:
+            nonlocal uncompressed_bytes
+            projected = uncompressed_bytes + len(body)
+            if projected > MAX_BUNDLE_UNCOMPRESSED_BYTES:
+                raise ExportProblem(
+                    "This bundle is too large to prepare at once. Export the conversations individually."
+                )
+            archive.writestr(path, body)
+            uncompressed_bytes = projected
+
+        write_member("matter-report.md", report_markdown)
+        write_member("matter-report.docx", report_docx)
+        write_member(
             "README.txt",
             (
                 f"{PRODUCT_NAME} work-product bundle\n\n"
@@ -1002,7 +1583,8 @@ def export_matter_bundle(
                 "Transcript exports, available transcript overviews, and a clip inventory are "
                 "included when media was reviewed; recording and clip bytes are not included.\n"
                 "Transcript overviews are fallible orientation and are not findings about what occurred.\n"
-                "Completed Deep Research and Full Review ledgers are included under research/ and full-review/.\n"
+                "Completed investigation and every-source ledgers are included under "
+                "investigations/ and source-checks/.\n"
                 "Verify generated statements against the cited records before relying on them.\n"
             ).encode("utf-8"),
         )
@@ -1020,8 +1602,8 @@ def export_matter_bundle(
             )
             markdown_path = f"conversations/{candidate}.md"
             docx_path = f"conversations/{candidate}.docx"
-            archive.writestr(markdown_path, blocks_to_markdown(blocks))
-            archive.writestr(
+            write_member(markdown_path, blocks_to_markdown(blocks))
+            write_member(
                 docx_path,
                 blocks_to_docx(blocks, title=conversation.title, created_at=created),
             )
@@ -1045,41 +1627,40 @@ def export_matter_bundle(
         notebook_report = notebook_blocks(
             matter, notebook, exported_at=created
         )
-        archive.writestr("notebook/matter-notebook.md", blocks_to_markdown(notebook_report))
-        archive.writestr(
+        write_member("notebook/matter-notebook.md", blocks_to_markdown(notebook_report))
+        write_member(
             "notebook/matter-notebook.docx",
             blocks_to_docx(notebook_report, title="Matter notebook", created_at=created),
         )
-        archive.writestr("notebook/matter-notebook.csv", notebook_csv(notebook))
+        write_member("notebook/matter-notebook.csv", notebook_csv(notebook))
         portable_notebook = [
             {
-                "type": item.item_type,
-                "status": item.status,
+                "type": _staff_label(item.item_type),
+                "status": _staff_label(item.status),
                 "title": item.title,
                 "details": item.body,
                 "date": item.date_label,
                 "pinned": bool(item.is_pinned),
-                "origin": item.origin,
-                "created_by": item.created_by_name or item.created_by,
+                "origin": _staff_label(item.origin),
+                "created_by": _staff_actor_label(item.created_by_name),
                 "created_at": item.created_at,
-                "updated_by": item.updated_by_name or item.updated_by,
+                "updated_by": _staff_actor_label(item.updated_by_name),
                 "updated_at": item.updated_at,
                 "sources": [
                     {
                         "name": reference.source_name,
                         "location": reference.location,
                         "excerpt": reference.excerpt,
-                        "excerpt_digest": reference.excerpt_digest,
                     }
                     for reference in references
                 ],
             }
             for item, references in notebook
         ]
-        archive.writestr(
+        write_member(
             "notebook/notebook.json",
             json.dumps(
-                {"schema": "case-intelligence-notebook-v1", "items": portable_notebook},
+                {"schema": "recordbench-notebook-v1", "items": portable_notebook},
                 ensure_ascii=False,
                 indent=2,
             ).encode("utf-8"),
@@ -1089,7 +1670,10 @@ def export_matter_bundle(
         summary_count = 0
         used_media_names: set[str] = set()
         for index, item in enumerate(media_work_product, 1):
+            if item.get("matter_id") != matter.matter_id:
+                raise ExportProblem("Transcript export crossed a matter boundary.")
             source_name = _plain(item.get("source_name")) or f"Recording {index}"
+            source_kind = _plain(item.get("source_kind")) or "Transcript"
             base = f"{index:03d}-{safe_file_stem(source_name, 'recording')}"
             candidate = base
             suffix = 2
@@ -1103,7 +1687,7 @@ def export_matter_bundle(
                 if not isinstance(body, bytes):
                     raise ExportProblem("A transcript export could not be prepared safely.")
                 path = f"transcripts/{candidate}{extension}"
-                archive.writestr(path, body)
+                write_member(path, body)
                 paths[format_name] = path
             summary_path = ""
             summary_body = item.get("summary_markdown")
@@ -1111,7 +1695,7 @@ def export_matter_bundle(
                 if not isinstance(summary_body, bytes):
                     raise ExportProblem("A transcript overview could not be prepared safely.")
                 summary_path = f"transcript-overviews/{candidate}.md"
-                archive.writestr(summary_path, summary_body)
+                write_member(summary_path, summary_body)
                 summary_count += 1
             summary_coverage = item.get("summary_coverage")
             if summary_coverage is not None and not isinstance(summary_coverage, Mapping):
@@ -1134,11 +1718,16 @@ def export_matter_bundle(
             media_manifest.append(
                 {
                     "source_name": source_name,
-                    "review_state": _plain(item.get("review_state")),
+                    "source_kind": source_kind,
+                    "review_status": _portable_media_review_status(
+                        item.get("review_state")
+                    ),
                     "segment_count": int(item.get("segment_count") or 0),
                     "exports": paths,
                     "overview": summary_path or None,
-                    "overview_coverage": dict(summary_coverage) if summary_coverage else None,
+                    "overview_coverage": _portable_overview_coverage(
+                        summary_coverage
+                    ),
                     "clip_count": len(clips),
                 }
             )
@@ -1151,15 +1740,15 @@ def export_matter_bundle(
         clip_writer.writeheader()
         for clip in clip_inventory:
             clip_writer.writerow({key: _csv_safe(value) for key, value in clip.items()})
-        archive.writestr(
+        write_member(
             "media/clip-inventory.csv",
             ("\ufeff" + clip_output.getvalue()).encode("utf-8"),
         )
-        archive.writestr(
+        write_member(
             "media/media-work-product.json",
             json.dumps(
                 {
-                    "schema": "case-intelligence-media-work-product-v2",
+                    "schema": "recordbench-media-work-product-v2",
                     "original_media_included": False,
                     "overview_count": summary_count,
                     "transcripts": media_manifest,
@@ -1176,19 +1765,24 @@ def export_matter_bundle(
             body = item.get("body")
             kind = _plain(item.get("kind"))
             if (
-                not re.fullmatch(r"(?:research|full-review)/[A-Za-z0-9][A-Za-z0-9._/-]{0,240}", path)
+                not re.fullmatch(
+                    r"(?:investigations|source-checks)/"
+                    r"[A-Za-z0-9][A-Za-z0-9._/-]{0,240}",
+                    path,
+                )
+                or kind not in {"investigation", "source_check"}
                 or ".." in path.split("/")
                 or path.casefold() in seen_additional_paths
                 or not isinstance(body, bytes)
             ):
                 raise ExportProblem("Additional work product could not be packaged safely.")
             seen_additional_paths.add(path.casefold())
-            archive.writestr(path, body)
+            write_member(path, body)
             additional_manifest.append(
                 {"kind": kind, "path": path, "bytes": len(body)}
             )
         manifest = {
-            "schema": "case-intelligence-work-product-bundle-v1",
+            "schema": "recordbench-work-product-bundle-v1",
             "exported_at": created,
             "matter": {
                 "name": matter.display_name,
@@ -1205,19 +1799,19 @@ def export_matter_bundle(
             "additional_work_product": additional_manifest,
             "conversations": conversation_files,
         }
-        archive.writestr(
+        write_member(
             "manifest.json",
             json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
         )
-        archive.writestr(
+        write_member(
             "conversations.json",
             json.dumps(
-                {"schema": "case-intelligence-conversations-v1", "conversations": portable_conversations},
+                {"schema": "recordbench-conversations-v1", "conversations": portable_conversations},
                 ensure_ascii=False,
                 indent=2,
             ).encode("utf-8"),
         )
-    if output.tell() > 100 * 1024 * 1024:
+    if output.tell() > MAX_BUNDLE_UNCOMPRESSED_BYTES:
         raise ExportProblem(
             "This bundle is too large to prepare at once. Export the conversations individually."
         )

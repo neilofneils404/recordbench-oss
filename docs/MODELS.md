@@ -26,6 +26,21 @@ of documents in one prompt. Collection-wide counts, exhaustive chronologies,
 and document-by-document classification use dedicated research/full-review
 workflows that preserve progress and per-source decisions.
 
+Retrieval applies a bounded deterministic exact-record check after reranking.
+For questions seeking an exact identifier or time, this check can rescue a
+precise contemporaneous machine record from the already matter-scoped candidate
+set when a later narrative summary ranked above it. It does not add candidates,
+change scores, cross a matter boundary, or bypass citation validation.
+
+An explicit request for both written and spoken support reserves evidence space
+for each kind when matching passages are retrieved. The independent verifier
+requires transcript-only claims to use transcript-accurate language and rejects
+machine-transcript attribution on document or mixed-source claims. If both
+kinds do not survive retrieval and verification, the result is visibly partial.
+Broad matter summaries use several bounded retrieval facets, diversify sources,
+omit disclaimer-only passages, and disclose that the result is sampled
+orientation rather than an every-source review.
+
 The transcription profile is modular: faster-whisper/WhisperX `large-v3` ASR,
 English alignment, Spanish alignment, translation through the staged ASR
 artifact, and Community-1 diarization are separately described and selected.

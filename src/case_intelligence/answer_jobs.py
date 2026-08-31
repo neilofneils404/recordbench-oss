@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 from .workspace_store import AnswerJobRecord, WorkspaceStore
 
@@ -12,6 +12,7 @@ from .workspace_store import AnswerJobRecord, WorkspaceStore
 class AnswerResult:
     content: str
     payload: Mapping[str, object]
+    citations: Sequence[object] = ()
 
 
 class AnswerJobFailure(RuntimeError):
@@ -27,6 +28,7 @@ CancellationProbe = Callable[[], bool]
 AnswerProcessor = Callable[
     [AnswerJobRecord, StageReporter, CancellationProbe], AnswerResult
 ]
+AnswerFinisher = Callable[[AnswerJobRecord, AnswerResult], object]
 
 
 class AnswerCoordinator:
@@ -37,10 +39,18 @@ class AnswerCoordinator:
         workspace: WorkspaceStore,
         *,
         process: AnswerProcessor,
+        finish: AnswerFinisher | None = None,
         workers: int = 2,
     ) -> None:
         self.workspace = workspace
         self.process = process
+        self.finish = finish or (
+            lambda job, result: self.workspace.finish_answer_job(
+                job.job_id,
+                content=result.content,
+                payload=result.payload,
+            )
+        )
         self.worker_count = min(max(int(workers), 1), 4)
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -90,11 +100,7 @@ class AnswerCoordinator:
             result = self.process(job, stage, cancelled)
             if cancelled():
                 raise _AnswerCancelled()
-            self.workspace.finish_answer_job(
-                job.job_id,
-                content=result.content,
-                payload=result.payload,
-            )
+            self.finish(job, result)
         except _AnswerCancelled:
             self._finish_failure(job, "Answer cancelled.")
         except AnswerJobFailure as exc:

@@ -132,7 +132,7 @@ def test_exact_bootstrap_admin_survives_directory_group_lookup_failure(tmp_path)
         assert "Administrator" in page.text
 
 
-def test_administrator_can_audit_view_and_manage_membership_but_not_delete(
+def test_administrator_can_audit_view_manage_membership_and_reach_safe_close(
     tmp_path, monkeypatch
 ):
     backup_status = tmp_path / "recordbench-backup-status.json"
@@ -205,13 +205,17 @@ def test_administrator_can_audit_view_and_manage_membership_but_not_delete(
         assert "Temporary workspace lifecycle" in console.text
         assert "Disaster recovery" in console.text
         assert "Local AI portfolio" in console.text
-        assert "Quick answer" in console.text
-        assert "Deep research" in console.text
-        assert "Full review" in console.text
+        assert "Focused answer" in console.text
+        assert "Broader investigation" in console.text
+        assert "Every-source check" in console.text
         assert "Switch model" not in console.text
         assert "Protected and current" in console.text
         assert "Encrypted NAS backup current" in console.text
-        assert "aaaaaaaaaaaa" in console.text
+        assert "Snapshot receipt" in console.text
+        assert "aaaaaaaaaaaa" not in console.text
+        assert "Qwen" not in console.text
+        assert "vLLM" not in console.text
+        assert "suite fingerprint" not in console.text
         assert "/generated/not-rendered" not in console.text
 
         expiry = (datetime.now(timezone.utc) + timedelta(days=45)).date().isoformat()
@@ -270,11 +274,14 @@ def test_administrator_can_audit_view_and_manage_membership_but_not_delete(
             admin_principal[0],
         ).role == "member"
 
-        close_denied = client.get(
+        close_page = client.get(
             f"/matters/{slug}/close",
             headers=_headers(ADMIN),
         )
-        assert close_denied.status_code == 404
+        assert close_page.status_code == 200
+        assert "Administrator deletion" in close_page.text
+        assert "using administrator authority" in close_page.text
+        assert "Download final bundle" in close_page.text
 
         audit = app.state.workbench.workspace.connection.execute(
             "SELECT action,outcome,details_json FROM workbench_audit_event "

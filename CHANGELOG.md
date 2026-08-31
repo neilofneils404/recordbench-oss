@@ -8,6 +8,25 @@
 - Added a contribution and pull-request contract covering user outcomes,
   validation evidence, security/lifecycle impact, immutable releases, and the
   strict separation of private deployment overlays.
+- Added discoverable matter management and per-matter settings, with guarded
+  owner-or-administrator closure, explicit cross-owner administrator warnings,
+  final export access, active-work refusal, and attributed deletion audit.
+- Moved transcript speaker correction into a directly reachable, context-preserving
+  review panel with explicit human confirmation, and added actionable bounded
+  recovery details when an optional transcript overview fails.
+- Improved grounded review quality for exact-record questions, explicit
+  written-and-spoken requests, and broad matter orientation: precise machine
+  records can be rescued after reranking, evidence-kind wording is independently
+  checked, partial modality results are disclosed, and broad summaries use
+  source-diverse facets while suppressing disclaimer-only passages.
+- Unified focused answers and broader investigations in one durable Review
+  conversation, with cited investigation results available for follow-up, and
+  presented collection-wide screening as the plain-language **Check every
+  source** task with truthful time and coverage differences.
+- Added a bounded, fail-soft sampled-frame OCR contract with exact decoder
+  timestamp/frame provenance and hard resource limits. The capability remains
+  explicitly non-searchable until matter-scoped persistence, citation, export,
+  purge, and browser acceptance are implemented.
 
 ## 0.1.0-alpha.2 — private review candidate
 

@@ -88,33 +88,30 @@ def model_portfolio_projection(
     lanes = (
         {
             "name": "Find & order",
-            "engine": "Granite embeddings + GTE reranker",
-            "detail": "Hybrid lexical and semantic candidates, reranked before evidence reaches a generator.",
-            "capacity": "Up to 40 reranked candidates",
+            "engine": "Evidence search",
+            "detail": "Finds matching passages and orders the strongest support before an answer is drafted.",
+            "capacity": "Bounded source packet",
             "tone": "ready" if retrieval_ready else "attention",
         },
         {
-            "name": "Quick answer",
-            "engine": "Pinned Qwen3.5 profile · local vLLM",
-            "detail": "A bounded source packet is drafted as structured JSON and checked independently before display.",
-            "capacity": f"{answer_workers} workers · {generation_concurrency} shared model calls",
+            "name": "Focused answer",
+            "engine": "Focused cited response",
+            "detail": "Drafts from the selected passages and checks every displayed claim against its citations.",
+            "capacity": "Durable answer queue",
             "tone": "ready" if approved_generator else "attention",
         },
         {
-            "name": "Deep research",
-            "engine": "Pinned Qwen3.5 profile · multi-pass workflow",
-            "detail": "Several focused retrieval passes are checkpointed, then synthesized only from retained support.",
-            "capacity": f"{research_workers} durable worker{'s' if research_workers != 1 else ''}",
+            "name": "Broader investigation",
+            "engine": "Broader saved investigation",
+            "detail": "Runs several focused searches, saves progress, and synthesizes only retained support.",
+            "capacity": "Durable investigation queue",
             "tone": "ready" if approved_generator and retrieval_ready else "attention",
         },
         {
-            "name": "Full review",
-            "engine": "Pinned Qwen3.5 profile · source-by-source",
-            "detail": "Every ready source is classified independently; one source failure does not stop the run.",
-            "capacity": (
-                f"{review_workers} run worker{'s' if review_workers != 1 else ''} · "
-                f"{review_source_concurrency} source calls"
-            ),
+            "name": "Every-source check",
+            "engine": "Source-by-source check",
+            "detail": "Checks every eligible source independently; one source problem does not stop the saved run.",
+            "capacity": "Saved progress and per-source decisions",
             "tone": "ready" if approved_generator else "attention",
         },
     )
@@ -175,7 +172,7 @@ def model_portfolio_projection(
             ),
         },
         "candidate_note": (
-            "Model selection and hardware capacity are deployment-specific. "
+            "Local review components and capacity are deployment-specific. "
             "Publish quality or performance claims only from a versioned "
             "evaluation artifact produced on the supported configuration."
         ),

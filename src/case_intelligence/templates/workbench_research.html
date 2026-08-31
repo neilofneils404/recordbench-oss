@@ -1,6 +1,6 @@
 {% extends "workbench_base.html" %}
 
-{% block title %}Deep research · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block title %}Investigation details · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}workflow-page research-page{% endblock %}
 
 {% block content %}
@@ -27,15 +27,15 @@
   </section>
 
   <div class="workflow-grid research-grid">
-    <aside class="workflow-library" aria-label="Saved research runs">
-      <div class="workflow-library-heading"><div><p class="eyebrow">Saved work</p><h2>Research runs</h2></div><span>{{ research_jobs|length }}</span></div>
+    <aside class="workflow-library" aria-label="Saved investigations">
+      <div class="workflow-library-heading"><div><p class="eyebrow">Saved work</p><h2>Investigations</h2></div><span>{{ research_jobs|length }}</span></div>
       <nav>
         {% for item in research_jobs %}
         <a class="workflow-run-link {% if active_research and item.job_id == active_research.job_id %}selected{% endif %}" href="/matters/{{ matter.slug }}/research?job={{ item.job_id }}">
           <span class="workflow-state-dot state-{{ item.state }}" aria-hidden="true"></span>
           <span><strong>{{ item.title }}</strong><small>{{ item.state|replace('_',' ')|title }} · {{ item.created_at[5:10] }}</small></span>
         </a>
-        {% else %}<p class="workflow-empty-small">No deep research runs yet.</p>{% endfor %}
+        {% else %}<p class="workflow-empty-small">No investigations yet.</p>{% endfor %}
       </nav>
     </aside>
 
@@ -43,65 +43,54 @@
       {% if active_research %}
       <article class="workflow-run-card" data-workflow-monitor data-status-url="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/status" data-terminal="{{ 'true' if active_research.state in ('succeeded','failed','cancelled') else 'false' }}" aria-live="polite">
         <header class="workflow-run-header">
-          <div><p class="eyebrow">Deep research</p><h2>{{ active_research.title }}</h2><p>{{ active_research.question }}</p></div>
+          <div><p class="eyebrow">Broader investigation</p><h2>{{ active_research.title }}</h2><p>{{ active_research.question }}</p></div>
           <span class="workflow-state-badge state-{{ active_research.state }}" data-workflow-state>{{ active_research.state|replace('_',' ')|title }}</span>
         </header>
         <div class="workflow-progress" {% if active_research.total_steps == 0 %}data-indeterminate="true"{% endif %}>
           <div><span data-workflow-stage>{{ active_research.message }}</span><strong data-workflow-progress-label>{{ active_research.completed_steps }} / {{ active_research.total_steps or '—' }} steps</strong></div>
           <progress max="{{ active_research.total_steps or 1 }}" value="{{ active_research.completed_steps }}" data-workflow-progress></progress>
-          <small class="workflow-eta" data-workflow-eta>{% if active_research.state == 'queued' %}Waiting for an available workflow worker.{% elif active_research.state == 'running' %}Calculating remaining time…{% endif %}</small>
+          <small class="workflow-eta" data-workflow-eta>{% if active_research.state == 'queued' %}Waiting for earlier saved work to finish.{% elif active_research.state == 'running' %}Calculating remaining time…{% endif %}</small>
         </div>
-        <div class="run-counts"><span><strong data-workflow-candidates>{{ active_research.candidate_count }}</strong> Candidate passages</span><span><strong data-workflow-evidence>{{ active_research.evidence_count }}</strong> Evidence passages</span></div>
+        <div class="run-counts"><span><strong data-workflow-candidates>{{ active_research.candidate_count }}</strong> Passages considered</span><span><strong data-workflow-evidence>{{ active_research.evidence_count }}</strong> Supporting passages</span></div>
         {% if active_research.state in ('queued','running') %}
         <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Cancel safely</button></form>
         {% elif active_research.state in ('failed','cancelled') %}
-        <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">Resume research</button></form>
+        <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">Resume investigation</button></form>
         {% endif %}
       </article>
 
       {% if active_research.state == 'succeeded' %}
       <section class="research-result">
-        <header class="workflow-section-heading"><div><p class="eyebrow">Verified synthesis</p><h2>Research brief</h2></div></header>
-        <nav class="workflow-completion-bar" aria-label="Completed research actions">
-          <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>Research ready</strong><small>{{ active_research.result.evidence|length }} supporting passage{% if active_research.result.evidence|length != 1 %}s{% endif %}</small></span></span>
+        <header class="workflow-section-heading"><div><p class="eyebrow">Verified synthesis</p><h2>Investigation brief</h2></div></header>
+        <nav class="workflow-completion-bar" aria-label="Completed investigation actions">
+          <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>Investigation ready</strong><small>{{ active_research.result.evidence|length }} supporting passage{% if active_research.result.evidence|length != 1 %}s{% endif %}</small></span></span>
           <a href="#research-support">Review support</a>
           <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/report"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Save to report</button></form>
           <details><summary>Export</summary><div><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=docx" data-download>Word</a><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=markdown" data-download>Markdown</a><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=json" data-download>JSON</a></div></details>
-          <a href="#new-research">Continue reviewing</a>
+          <a href="/matters/{{ matter.slug }}{% if active_research.conversation_id %}?conversation={{ active_research.conversation_id }}{% endif %}#evidence-conversation">Return to conversation</a>
         </nav>
         <div class="research-summary prose">{{ active_research.result.summary }}</div>
+        {% set modality = active_research.result.get('answer', {}).get('modality_coverage') %}
+        {% if modality %}<div class="answer-source-coverage" role="note"><strong>Written and spoken evidence · {{ modality.mode|title }}</strong><p>{{ modality.notice }}</p></div>{% endif %}
         {% set coverage = active_research.result.coverage %}
         <div class="workflow-section-heading workflow-section-heading-compact"><div><p class="eyebrow">Coverage ledger</p><h3>What this run searched and used</h3></div></div>
         <div class="coverage-metrics">
-          <div><span>Search passes</span><strong>{{ coverage.search_pass_count }}</strong></div><div><span>Candidate passages</span><strong>{{ coverage.candidate_passage_count }}</strong></div><div><span>Evidence sources</span><strong>{{ coverage.evidence_source_count }}</strong></div><div><span>Evidence passages</span><strong>{{ coverage.evidence_passage_count }}</strong></div>
+          <div><span>Focused searches</span><strong>{{ coverage.search_pass_count }}</strong></div><div><span>Passages considered</span><strong>{{ coverage.candidate_passage_count }}</strong></div><div><span>Supporting sources</span><strong>{{ coverage.evidence_source_count }}</strong></div><div><span>Supporting passages</span><strong>{{ coverage.evidence_passage_count }}</strong></div>
         </div>
         <p class="workflow-caution">{{ coverage.notice }}</p>
         <div class="research-two-column">
-          <section><div class="workflow-section-heading"><div><p class="eyebrow">Pass ledger</p><h3>Findings and gaps</h3></div></div>{% for pass in active_research.result.passes %}<article class="research-finding state-{{ pass.status }}"><header><span>{{ loop.index|string }} </span><div><strong>{{ pass.query }}</strong><small>{{ pass.candidate_sources }} source candidates · {{ pass.status|replace('_',' ') }}</small></div></header><p>{{ pass.text }}</p></article>{% endfor %}</section>
-          <aside id="research-support"><div class="workflow-section-heading"><div><p class="eyebrow">Source bound</p><h3>Evidence ledger</h3></div><span>{{ active_research.result.evidence|length }}</span></div><div class="evidence-ledger">{% for evidence in active_research.result.evidence %}<a href="{{ citation_href(evidence, matter.slug) }}"><span>{{ loop.index }}</span><span><strong>{{ evidence.source_name }}</strong><small>{{ evidence.location }}</small></span></a>{% endfor %}</div></aside>
+          <section><div class="workflow-section-heading"><div><p class="eyebrow">Search record</p><h3>Findings and gaps</h3></div></div>{% for pass in active_research.result.passes %}<article class="research-finding state-{{ pass.status }}"><header><span>{{ loop.index|string }} </span><div><strong>{{ pass.query }}</strong><small>{{ pass.candidate_sources }} source{% if pass.candidate_sources != 1 %}s{% endif %} considered · {{ pass.status|replace('_',' ') }}</small></div></header><p>{{ pass.text }}</p></article>{% endfor %}</section>
+          <aside id="research-support"><div class="workflow-section-heading"><div><p class="eyebrow">Cited support</p><h3>Evidence record</h3></div><span>{{ active_research.result.evidence|length }}</span></div><div class="evidence-ledger">{% for evidence in active_research.result.evidence %}<a href="{{ citation_href(evidence, matter.slug) }}"><span>{{ loop.index }}</span><span><strong>{{ evidence.source_name }}</strong><small>{{ evidence.location }}</small></span></a>{% endfor %}</div></aside>
         </div>
       </section>
       {% endif %}
       {% endif %}
 
-      <details class="research-new-panel" id="new-research" {% if not active_research %}open{% endif %}>
-        <summary>
-          <span><strong>{% if active_research %}Start another research run{% else %}Start deep research{% endif %}</strong><small>Choose a question and the searchable sources to investigate.</small></span>
-          <span aria-hidden="true">+</span>
-        </summary>
-        <form class="research-composer" method="post" action="/matters/{{ matter.slug }}/research" data-working-form data-working-label="Saving research…">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <input type="hidden" name="request_key" value="{{ research_request_key }}">
-          <div class="research-composer-title"><span class="workflow-orbit" aria-hidden="true">⌁</span><div><p class="eyebrow">New deep research</p><h2>What should we investigate?</h2></div></div>
-          <label><span>Research title</span><input name="title" maxlength="160" placeholder="Example: Timeline and conflicting accounts" required></label>
-          <label><span>Research question</span><textarea name="question" maxlength="2000" rows="4" placeholder="Ask a question that benefits from several searches, comparisons, or a chronology…" required></textarea></label>
-          <div class="research-composer-footer">
-            <label><span>Scope</span><select name="source_set"><option value="">All searchable sources</option>{% for source_set in source_sets %}<option value="{{ source_set.source_set_id }}">{{ source_set.name }} · {{ source_set.source_count }}</option>{% endfor %}</select></label>
-            <button class="button button-primary" type="submit" {% if not readiness.can_query or capabilities.answering != 'ready' %}disabled{% endif %}>Begin research</button>
-          </div>
-          {% if not readiness.can_query %}<p class="form-guidance">Research becomes available after at least one source is searchable and active preparation is complete.</p>{% elif capabilities.answering != 'ready' %}<p class="form-guidance">The local answer model is unavailable. Search and source review still work.</p>{% endif %}
-        </form>
-      </details>
+      <section class="research-new-panel" id="new-research">
+        <div class="research-composer-title"><span class="workflow-orbit" aria-hidden="true">⌁</span><div><p class="eyebrow">Continue in Review</p><h2>Ask, investigate, and refine in one conversation.</h2></div></div>
+        <p>Start broader work from the Review composer. Its cited result returns to that conversation, ready for follow-up questions.</p>
+        <a class="button button-primary" href="/matters/{{ matter.slug }}#matter-question">Open Review</a>
+      </section>
     </section>
   </div>
 </main>

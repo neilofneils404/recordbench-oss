@@ -1,14 +1,10 @@
-<nav class="review-mode-switcher" aria-label="Review method">
-  <a class="{% if review_mode == 'quick' %}selected{% endif %}" href="/matters/{{ matter.slug }}"{% if review_mode == 'quick' %} aria-current="page"{% endif %}>
+<nav class="review-mode-switcher" aria-label="Review tasks">
+  <a class="{% if review_mode in ('quick', 'research') %}selected{% endif %}" href="/matters/{{ matter.slug }}#matter-question"{% if review_mode in ('quick', 'research') %} aria-current="page"{% endif %}>
     <span class="review-mode-icon" aria-hidden="true">↗</span>
-    <span><strong>Quick answer</strong><small>Focused question · usually under a minute</small></span>
-  </a>
-  <a class="{% if review_mode == 'research' %}selected{% endif %}" href="/matters/{{ matter.slug }}/research"{% if review_mode == 'research' %} aria-current="page"{% endif %}>
-    <span class="review-mode-icon" aria-hidden="true">⌁</span>
-    <span><strong>Deep research</strong><small>Multiple evidence passes · saved as it works</small></span>
+    <span><strong>Review</strong><small>Ask, investigate, and refine in one conversation</small></span>
   </a>
   <a class="{% if review_mode == 'full' %}selected{% endif %}" href="/matters/{{ matter.slug }}/full-review"{% if review_mode == 'full' %} aria-current="page"{% endif %}>
     <span class="review-mode-icon" aria-hidden="true">✓</span>
-    <span><strong>Full review</strong><small>One saved decision for every eligible source</small></span>
+    <span><strong>Check every source</strong><small>Specialized screening · time scales with the collection</small></span>
   </a>
 </nav>

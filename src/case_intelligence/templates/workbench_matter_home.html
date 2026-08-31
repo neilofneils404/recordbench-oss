@@ -51,22 +51,22 @@
   <section class="cockpit-task-launcher" data-task-launcher aria-labelledby="task-launcher-heading">
     <header>
       <h2 id="task-launcher-heading">What do you want to accomplish?</h2>
-      <p>Choose the kind of review that matches the job. You can move between them without losing work.</p>
+      <p>Use Review for questions and investigations, or choose a specialized source task.</p>
     </header>
-    <nav aria-label="Choose a review job">
+    <nav aria-label="Choose a review task">
       <a href="/matters/{{ matter.slug }}#matter-question">
         <span class="task-launcher-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v10H9l-4 4V5Z"/></svg></span>
         <span><strong>Ask a focused question</strong><small>A direct cited answer from the best supporting passages.</small><em>Usually under a minute · not a collection-wide screen</em></span>
         <svg class="task-launcher-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
       </a>
-      <a href="/matters/{{ matter.slug }}/research#new-research">
+      <a href="/matters/{{ matter.slug }}#matter-question">
         <span class="task-launcher-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4M8 11h6M11 8v6"/></svg></span>
         <span><strong>Investigate a topic</strong><small>Several searches and comparisons with a saved evidence ledger.</small><em>Takes longer · broader than one answer, but not every source</em></span>
         <svg class="task-launcher-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
       </a>
       <a href="/matters/{{ matter.slug }}/full-review#review-controls">
         <span class="task-launcher-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 7 2 2 4-4M13 7h6M5 13l2 2 4-4M13 13h6M5 19l2 2 4-4M13 19h6"/></svg></span>
-        <span><strong>Screen every source</strong><small>Apply one saved criterion to each searchable source.</small><em>Test on 50 first · time scales with the collection</em></span>
+        <span><strong>Check every source</strong><small>Apply one saved criterion to each searchable source.</small><em>Test on 50 first · time scales with the collection</em></span>
         <svg class="task-launcher-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
       </a>
       <a href="/matters/{{ matter.slug }}/setup?view=list&amp;sort=oldest#source-library">

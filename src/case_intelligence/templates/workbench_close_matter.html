@@ -11,6 +11,12 @@
     <p class="close-matter-name">{{ matter.display_name }}</p>
 
     {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+    {% if administrator_override %}
+    <div class="notice notice-error administrator-deletion-notice" role="alert">
+      <strong>Administrator deletion</strong>
+      <span>{{ owner_name }} owns this matter. You are closing it using administrator authority. The permanent action will be attributed to your account.</span>
+    </div>
+    {% endif %}
     {% if lifecycle.state == 'purge_failed' %}
     <div class="notice notice-error" role="alert">
       The previous deletion did not finish. This matter is closed to ordinary review. Retry below to finish removing its remaining workbench data.
@@ -30,26 +36,30 @@
       <h2 id="delete-heading">What deletion removes</h2>
       <ul>
         <li>uploaded processing copies and extracted/OCR text;</li>
-        <li>search and embedding index rows;</li>
-        <li>saved conversations, answers, deep research, full-review decisions, matter notebook items, jobs, source inventory, and case-team access.</li>
+        <li>searchable copies and derived search data;</li>
+        <li>saved conversations, answers, investigations, every-source decisions, matter notebook items, processing records, source inventory, and case-team access.</li>
       </ul>
       <p>Original files outside this workbench are never deleted. A content-free closure receipt and the append-only security audit remain.</p>
     </section>
 
-    {% if lifecycle.state == 'active' %}
+    {% if lifecycle.state in ('active', 'purge_failed') %}
     <section class="final-export-callout" aria-labelledby="final-export-heading">
       <div>
         <h2 id="final-export-heading">Take your work product with you</h2>
+        {% if lifecycle.state == 'purge_failed' %}
+        <p>Download the work product that remains after the interrupted cleanup before trying deletion again. Original source files are not included.</p>
+        {% else %}
         <p>Download the matter report, every saved conversation, the matter notebook, and portable JSON before closing. Original source files are not included.</p>
+        {% endif %}
       </div>
       <a class="button button-secondary" href="/matters/{{ matter.slug }}/export" data-download>Download final bundle</a>
     </section>
     <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
     {% endif %}
 
-    {% if active_work.uploads or active_work.ingestion or active_work.answers or active_work.research or active_work.reviews %}
+    {% if active_work.uploads or active_work.ingestion or active_work.media or active_work.overviews or active_work.analysis or active_work.playback or active_work.exports or active_work.answers or active_work.research or active_work.reviews %}
     <div class="notice notice-neutral" role="status">
-      Wait for active work to finish before deleting: {{ active_work.uploads }} upload{% if active_work.uploads != 1 %}s{% endif %}, {{ active_work.ingestion }} source task{% if active_work.ingestion != 1 %}s{% endif %}, {{ active_work.answers }} answer{% if active_work.answers != 1 %}s{% endif %}, {{ active_work.research }} research run{% if active_work.research != 1 %}s{% endif %}, and {{ active_work.reviews }} full review{% if active_work.reviews != 1 %}s{% endif %}.
+      Wait for active work to finish before deleting: {{ active_work.uploads }} upload{% if active_work.uploads != 1 %}s{% endif %}, {{ active_work.ingestion }} source task{% if active_work.ingestion != 1 %}s{% endif %}, {{ active_work.media }} media task{% if active_work.media != 1 %}s{% endif %}, {{ active_work.overviews }} transcript overview{% if active_work.overviews != 1 %}s{% endif %}, {{ active_work.analysis }} analysis run{% if active_work.analysis != 1 %}s{% endif %}, {{ active_work.playback }} playback preparation{% if active_work.playback != 1 %}s{% endif %}, {{ active_work.exports }} work-product download{% if active_work.exports != 1 %}s{% endif %}, {{ active_work.answers }} answer{% if active_work.answers != 1 %}s{% endif %}, {{ active_work.research }} investigation{% if active_work.research != 1 %}s{% endif %}, and {{ active_work.reviews }} every-source check{% if active_work.reviews != 1 %}s{% endif %}.
     </div>
     {% endif %}
 
@@ -63,10 +73,10 @@
         <span>I understand this permanently deletes the workbench matter and cannot be undone.</span>
       </label>
       <div class="close-matter-actions">
-        <button class="button button-danger" type="submit" {% if active_work.uploads or active_work.ingestion or active_work.answers or active_work.research or active_work.reviews %}disabled{% endif %}>
+        <button class="button button-danger" type="submit" {% if active_work.uploads or active_work.ingestion or active_work.media or active_work.overviews or active_work.analysis or active_work.playback or active_work.exports or active_work.answers or active_work.research or active_work.reviews %}disabled{% endif %}>
           {{ 'Try deletion again' if lifecycle.state == 'purge_failed' else 'Delete matter' }}
         </button>
-        {% if lifecycle.state == 'active' %}<a class="button button-secondary" href="/matters/{{ matter.slug }}">Keep matter open</a>{% else %}<a class="button button-secondary" href="/matters/new">Return to matters</a>{% endif %}
+        {% if lifecycle.state == 'active' %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/settings">Keep matter open</a>{% else %}<a class="button button-secondary" href="/matters/manage">Return to matters</a>{% endif %}
       </div>
     </form>
     {% endif %}

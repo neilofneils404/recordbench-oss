@@ -16,16 +16,22 @@ from fastapi.testclient import TestClient
 
 from case_intelligence.generation import UnavailableGenerator
 from case_intelligence.media_evidence import (
+    MediaProcessorError,
+    MediaProcessorNotFound,
     export_transcript,
     transcript_summary_basis,
     transcript_summary_windows,
 )
 from case_intelligence.workbench import create_workbench_app
-from case_intelligence.workspace_store import WorkspaceProblem
+from case_intelligence.workspace_store import (
+    MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS,
+    WorkspaceProblem,
+)
 
 
 ROOT = Path(__file__).parents[1]
 WAV = ROOT / "src/case_intelligence/static/demo-audio.wav"
+PDF = ROOT / "src/case_intelligence/demo_data/synthetic_case_report.pdf"
 ACTOR = "development-taylor-morgan"
 
 
@@ -53,6 +59,35 @@ class EvidenceEchoGenerator:
                     ),
                     "evidence_ids": [evidence[0].evidence_id],
                 }
+            ],
+            "limitation": None,
+            "missing_information": "",
+        }
+
+
+class DualModalAnswerGenerator(EvidenceEchoGenerator):
+    """Return independently cited written and spoken claims when both are supplied."""
+
+    def generate(self, **kwargs):
+        evidence = kwargs["evidence"]
+        if "orientation overview" in kwargs["question"].casefold():
+            return super().generate(**kwargs)
+        written = next(
+            (item for item in evidence if item.evidence_kind == "document"), None
+        )
+        spoken = next(
+            (item for item in evidence if item.evidence_kind == "transcript"), None
+        )
+        if written is None or spoken is None:
+            return super().generate(**kwargs)
+        return {
+            "answerable": True,
+            "claims": [
+                {"text": written.excerpt, "evidence_ids": [written.evidence_id]},
+                {
+                    "text": "The machine transcript appears to say that " + spoken.excerpt,
+                    "evidence_ids": [spoken.evidence_id],
+                },
             ],
             "limitation": None,
             "missing_information": "",
@@ -274,6 +309,23 @@ class ImmediateMediaProcessor:
 
     def cancel(self, owner: str, external_job_id: str) -> None:
         return None
+
+
+class ConfigurableCleanupMediaProcessor(ImmediateMediaProcessor):
+    """Expose only the three verified external-cleanup outcomes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cleanup_outcome = "success"
+        self.cleanup_attempts: list[tuple[str, str, str]] = []
+
+    def delete(self, owner: str, external_job_id: str) -> None:
+        self.cleanup_attempts.append((owner, external_job_id, self.cleanup_outcome))
+        if self.cleanup_outcome == "unavailable":
+            raise MediaProcessorError("Synthetic processor cleanup is unavailable.")
+        if self.cleanup_outcome == "not_found":
+            raise MediaProcessorNotFound("Synthetic processor job is already absent.")
+        super().delete(owner, external_job_id)
 
 
 class RestartMediaProcessor(ImmediateMediaProcessor):
@@ -801,6 +853,15 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
         assert "Authenticated playback" in review.text
         assert "Synchronized transcript" in review.text
         assert "Speaker labels" in review.text
+        assert "Review speakers" in review.text
+        assert "Draft transcript" in review.text
+        assert "Machine Draft" not in review.text
+        assert "The immutable machine draft remains in the workbench" in review.text
+        assert "is not included in exported files" in review.text
+        assert "Machine text remains available in CSV and JSON" not in review.text
+        assert 'data-open-speaker-review' in review.text
+        assert 'data-speaker-review-target="SPEAKER_00"' in review.text
+        assert "never identifies or confirms a person automatically" in review.text
         assert "temporary-link-that-must-not-be-used" not in review.text
         assert 'data-media-player' in review.text
         assert 'data-transcript-follow' in review.text
@@ -885,7 +946,11 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
         assert updated.current_revision == 1
         assert updated.model_text.startswith("The red bicycle")
         assert updated.current_text.startswith("The crimson bicycle")
-        assert document.parsed_units()[0].text.startswith("SPEAKER_00: The crimson")
+        assert document.parsed_units()[0].text.startswith("Speaker 1: The crimson")
+        corrected_support = client.get(citation["href"])
+        assert corrected_support.status_code == 200
+        assert "The crimson bicycle" in corrected_support.text
+        assert "current reviewed text" in corrected_support.text
         changing_summary = bench.workspace.media_summary(
             matter.matter_id, document.document_id, document.version_id
         )
@@ -916,6 +981,13 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
         )
         assert labeled.status_code == 303
         assert document.parsed_units()[0].text.startswith("Witness Jordan:")
+        reviewed_page = client.get(f"/matters/{slug}/sources/{token}")
+        assert reviewed_page.status_code == 200
+        assert "Reviewed transcript" in reviewed_page.text
+        relabeled_support = client.get(citation["href"])
+        assert relabeled_support.status_code == 200
+        assert "Witness Jordan" in relabeled_support.text
+        assert "The crimson bicycle" in relabeled_support.text
 
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -948,9 +1020,12 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
             assert overview_export.status_code == 200
             assert marker in overview_export.content
             assert (
-                overview_export.headers["x-case-intelligence-export"]
+                overview_export.headers["x-recordbench-export"]
                 == "work-product"
             )
+            assert document.document_id[:12] not in overview_export.headers[
+                "content-disposition"
+            ]
 
         for format_name, marker in (
             ("docx", b"PK"),
@@ -958,8 +1033,8 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
             ("txt", b"Witness Jordan"),
             ("srt", b"00:00:00,000 --> 00:00:02,000"),
             ("vtt", b"WEBVTT"),
-            ("csv", b"machine_text"),
-            ("json", b'"machine_text"'),
+            ("csv", b"Speaker status"),
+            ("json", b'"review_status"'),
         ):
             exported = client.get(
                 f"/matters/{slug}/sources/{token}/transcript-export",
@@ -967,7 +1042,10 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
             )
             assert exported.status_code == 200
             assert marker in exported.content
-            assert exported.headers["x-case-intelligence-export"] == "work-product"
+            assert exported.headers["x-recordbench-export"] == "work-product"
+            assert document.document_id[:12] not in exported.headers[
+                "content-disposition"
+            ]
 
         created = client.post(
             f"/matters/{slug}/sources/{token}/clips",
@@ -1001,6 +1079,16 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
             assert manifest["transcript_overview_count"] == 1
             assert manifest["clip_count"] == 1
             assert manifest["original_source_files_included"] is False
+            media_work_product = json.loads(
+                archive.read("media/media-work-product.json")
+            )
+            assert media_work_product["clips"][0]["start"] == "00:00:00.000"
+            assert media_work_product["clips"][0]["end"] == "00:00:02.000"
+            clip_inventory = archive.read("media/clip-inventory.csv").decode(
+                "utf-8-sig"
+            )
+            assert "00:00:00.000" in clip_inventory
+            assert "00:00:02.000" in clip_inventory
 
         events = bench.workspace.audit_events(matter.matter_id)
         assert {
@@ -1033,6 +1121,116 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
                 f"SELECT COUNT(*) FROM {table} WHERE matter_id=?",
                 (matter.matter_id,),
             ).fetchone()[0] == 0
+
+
+def test_dual_modal_answer_resolves_page_and_timestamp_support(tmp_path):
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=DualModalAnswerGenerator(),
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated written and spoken evidence matter")
+        media_document, _media_token = _upload_and_wait(client, slug)
+        uploaded = client.post(
+            f"/matters/{slug}/uploads",
+            files=[
+                (
+                    "files",
+                    (
+                        "Generated incident report.pdf",
+                        PDF.read_bytes(),
+                        "application/pdf",
+                    ),
+                )
+            ],
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        pdf_document = next(
+            item
+            for item in bench.source_store(matter).ready_documents()
+            if item.media_type == "application/pdf"
+        )
+        assert media_document.media_type == "audio/wav"
+        assert pdf_document.page_count == 3
+
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        queued = client.post(
+            f"/matters/{slug}/ask",
+            data={
+                "conversation": conversation.conversation_id,
+                "question": (
+                    "Using both the written report and spoken recording, where was "
+                    "the red bicycle logged?"
+                ),
+                "request_key": "answer-request-" + "d" * 32,
+            },
+            headers={"Accept": "application/json"},
+        )
+        assert queued.status_code == 202
+        answer_job = queued.json()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and answer_job["state"] not in {
+            "succeeded",
+            "failed",
+        }:
+            time.sleep(0.01)
+            answer_job = client.get(answer_job["status_url"]).json()
+        assert answer_job["state"] == "succeeded", answer_job
+
+        answer = bench.workspace.messages(
+            matter.matter_id, conversation.conversation_id
+        )[-1]
+        assert answer.payload["modality_coverage"]["mode"] == "complete"
+        citations = [
+            citation
+            for claim in answer.payload["claims"]
+            for citation in claim["citations"]
+        ]
+        assert len(citations) == 2
+        by_kind = {citation["evidence_kind"]: citation for citation in citations}
+        assert set(by_kind) == {"document", "transcript"}
+        assert by_kind["document"]["location"] == "Page 2"
+        assert by_kind["transcript"]["location"] == "00:00–00:02"
+
+        document_support = bench.support(
+            matter, by_kind["document"]["support_token"]
+        )
+        assert document_support.evidence_kind == "document"
+        assert document_support.location == "Page 2"
+        assert document_support.position_label == "Page 2 of 3"
+        assert "red bicycle was logged at the north entrance" in " ".join(
+            document_support.lines
+        ).casefold()
+        assert f"/matters/{slug}/sources/" in document_support.source_review_href
+        document_page = client.get(by_kind["document"]["href"])
+        assert document_page.status_code == 200
+        assert 'id="support-pane"' in document_page.text
+        assert "Page 2 of 3" in document_page.text
+        assert "Open full PDF" in document_page.text
+
+        transcript_support = bench.support(
+            matter, by_kind["transcript"]["support_token"]
+        )
+        assert transcript_support.evidence_kind == "transcript"
+        assert transcript_support.location == "00:00–00:02"
+        assert transcript_support.start_ms == 0
+        assert transcript_support.end_ms == 2_000
+        assert "red bicycle was logged at the north entrance" in " ".join(
+            transcript_support.lines
+        ).casefold()
+        assert f"/matters/{slug}/sources/" in transcript_support.source_review_href
+        transcript_page = client.get(by_kind["transcript"]["href"])
+        assert transcript_page.status_code == 200
+        assert 'id="support-pane"' in transcript_page.text
+        assert 'data-support-media data-start-ms="0"' in transcript_page.text
+        assert "Play cited moment" in transcript_page.text
 
 
 def test_resumable_media_upload_reports_durable_processing_across_matter_views(tmp_path):
@@ -1318,6 +1516,189 @@ def test_existing_transcript_overview_is_backfilled_automatically_on_restart(tmp
         assert client.get("/health").json()["media_summaries"]["ready"] == 1
 
 
+def test_speaker_review_save_updates_every_passage_without_navigation(tmp_path):
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated speaker review matter")
+        document, token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        speaker = next(
+            item
+            for item in bench.workspace.transcript_speakers(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if item.speaker_cluster == "SPEAKER_00"
+        )
+        assert speaker.identity_state == "cluster"
+        assert speaker.revision == 0
+        opened = client.get(f"/matters/{slug}/sources/{token}")
+        assert opened.status_code == 200
+        assert "Review speakers" in opened.text
+        assert "Speaker 1" in opened.text
+        assert "Unconfirmed" in opened.text
+        assert ">SPEAKER_00<" not in opened.text
+        assert ">Cluster<" not in opened.text
+        assert "Clusters are" not in opened.text
+        unchanged = next(
+            item
+            for item in bench.workspace.transcript_speakers(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if item.speaker_cluster == "SPEAKER_00"
+        )
+        assert unchanged.identity_state == "cluster"
+        assert unchanged.revision == 0
+
+        implicit_confirmation = client.post(
+            f"/matters/{slug}/sources/{token}/speakers",
+            data={
+                "speaker_cluster": speaker.speaker_cluster,
+                "expected_revision": str(speaker.revision),
+                "display_name": "Unconfirmed supplied label",
+            },
+            headers={"Accept": "application/json"},
+        )
+        assert implicit_confirmation.status_code == 422
+        still_anonymous = next(
+            item
+            for item in bench.workspace.transcript_speakers(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if item.speaker_cluster == "SPEAKER_00"
+        )
+        assert still_anonymous.identity_state == "cluster"
+        assert still_anonymous.revision == 0
+
+        saved = client.post(
+            f"/matters/{slug}/sources/{token}/speakers",
+            data={
+                "speaker_cluster": speaker.speaker_cluster,
+                "expected_revision": str(speaker.revision),
+                "display_name": "Reviewer supplied label",
+                "identity_state": "confirmed",
+            },
+            headers={"Accept": "application/json"},
+        )
+        assert saved.status_code == 200
+        assert saved.json() == {
+            "speaker_cluster": "SPEAKER_00",
+            "display_name": "Reviewer supplied label",
+            "identity_state": "confirmed",
+            "revision": 1,
+            "segment_count": 2,
+            "message": "Speaker label saved across this transcript.",
+            "overview_refreshing": True,
+        }
+        matching = [
+            item
+            for item in bench.workspace.transcript_segments(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            if item.speaker_cluster == "SPEAKER_00"
+        ]
+        assert len(matching) == 2
+        assert {item.speaker_display_name for item in matching} == {
+            "Reviewer supplied label"
+        }
+        assert {item.speaker_identity_state for item in matching} == {"confirmed"}
+        reviewed = client.get(f"/matters/{slug}/sources/{token}")
+        assert "Reviewer supplied label" in reviewed.text
+        assert "Confirmed" in reviewed.text
+
+        fallback = client.post(
+            f"/matters/{slug}/sources/{token}/speakers",
+            data={
+                "speaker_cluster": "SPEAKER_00",
+                "expected_revision": "1",
+                "display_name": "Corrected reviewer label",
+                "identity_state": "confirmed",
+                "return_start_ms": "2400",
+                "return_page": "1",
+                "return_q": "bicycle",
+                "return_flag": "edited",
+                "return_segment": matching[0].segment_id,
+            },
+            follow_redirects=False,
+        )
+        assert fallback.status_code == 303
+        location = fallback.headers["location"]
+        assert "start_ms=2400" in location
+        assert "page=1" in location
+        assert "q=bicycle" in location
+        assert "flag=edited" in location
+        assert "speaker_review=SPEAKER_00" in location
+        assert f"segment={matching[0].segment_id}" in location
+        assert location.endswith("#speaker-review")
+
+
+def test_failed_optional_overview_explains_cause_retries_and_independence(tmp_path):
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated overview failure matter")
+        document, token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        failed = _wait_for_summary(bench, matter, document, "failed")
+        assert failed.attempts == 1
+
+        review = client.get(f"/matters/{slug}/sources/{token}")
+        assert review.status_code == 200
+        assert "Local answering unavailable" in review.text
+        assert "Attempt 1 of 3" in review.text
+        assert "2 automatic recovery attempts remain" in review.text
+        assert "Try overview again" in review.text
+        assert "Authenticated playback" in review.text
+        assert "Synchronized transcript" in review.text
+        assert "The red bicycle was logged" in review.text
+
+        with bench.workspace.connection:
+            bench.workspace.connection.execute(
+                "UPDATE workbench_media_summary SET attempts=3 WHERE transcript_id=?",
+                (failed.transcript_id,),
+            )
+        bounded = client.get(f"/matters/{slug}/sources/{token}")
+        assert bounded.status_code == 200
+        assert "Automatic recovery limit reached" in bounded.text
+        assert "3 total attempts recorded" in bounded.text
+        assert "Try overview again" in bounded.text
+
+
+def test_speaker_review_browser_contract_preserves_player_scroll_and_focus():
+    script = (
+        ROOT / "src/case_intelligence/static/case-intelligence.js"
+    ).read_text(encoding="utf-8")
+    start = script.index('const speakerReviewPanel = document.querySelector("[data-speaker-review]")')
+    end = script.index('document.querySelectorAll("[data-seek-ms]")', start)
+    speaker_review = script[start:end]
+
+    assert 'form.addEventListener("submit", async (event)' in speaker_review
+    assert "event.preventDefault()" in speaker_review
+    assert "mediaPlayer.currentTime" in speaker_review
+    assert "activeTranscriptSegment?.dataset.segmentId" in speaker_review
+    assert "new FormData(form)" in speaker_review
+    assert 'headers: { Accept: "application/json" }' in speaker_review
+    assert "focus({ preventScroll: true })" in speaker_review
+    assert "speakerReviewReturnPosition = { x: window.scrollX, y: window.scrollY }" in speaker_review
+    assert "window.scrollTo(position.x, position.y)" in speaker_review
+    assert 'querySelector("[data-close-speaker-review]")' in speaker_review
+    assert "window.location.assign" not in speaker_review
+    assert "window.location.replace" not in speaker_review
+    assert "if (speakerReviewPanel?.open) return;" in script
+
+
 def test_failed_automatic_overview_gets_a_bounded_restart_retry(tmp_path):
     runtime = tmp_path / "runtime"
     unavailable = create_workbench_app(
@@ -1353,6 +1734,38 @@ def test_failed_automatic_overview_gets_a_bounded_restart_retry(tmp_path):
         assert summary.matter_id == matter_id
         assert summary.source_version_id == source_version_id
         assert summary.attempts == 2
+
+
+def test_interrupted_overview_at_automatic_limit_requires_manual_retry(tmp_path):
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated overview limit matter")
+        document, _token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        failed = _wait_for_summary(bench, matter, document, "failed")
+        with bench.workspace.connection:
+            bench.workspace.connection.execute(
+                "UPDATE workbench_media_summary SET state='running',attempts=? "
+                "WHERE transcript_id=?",
+                (MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS, failed.transcript_id),
+            )
+
+        assert bench.workspace.recover_running_media_summaries() == 1
+        summary = bench.workspace.media_summary(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        assert summary is not None
+        assert summary.state == "failed"
+        assert summary.attempts == MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS
+        assert bench.workspace.ensure_media_summary_queue() == 0
+        assert bench.workspace.claim_media_summary() is None
 
 
 def test_transcript_and_clip_routes_fail_closed_across_matters(tmp_path):
@@ -1409,6 +1822,57 @@ def test_transcript_and_clip_routes_fail_closed_across_matters(tmp_path):
         assert bravo_document.document_id != alpha_document.document_id
 
 
+def test_report_media_clip_export_re_resolves_exact_timestamped_source(tmp_path):
+    processor = ImmediateMediaProcessor()
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=processor,
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated timestamp report")
+        document, _token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        clip = bench.workspace.create_media_clip(
+            matter.matter_id,
+            document.document_id,
+            document.version_id,
+            title="Generated selected moment",
+            start_ms=0,
+            end_ms=2_000,
+            actor_id=ACTOR,
+        )
+        report = bench.workspace.create_report(
+            matter.matter_id, ACTOR, "Timestamped review"
+        )
+        bench.add_media_clip_to_report(
+            matter, ACTOR, report.report_id, clip.clip_id
+        )
+
+        exported = client.get(
+            f"/matters/{slug}/reports/{report.report_id}/export?format=markdown"
+        )
+        assert exported.status_code == 200
+        assert "Interview.wav — 00:00–00:02" in exported.text
+
+        foreign_marker = "Generated foreign recording label"
+        with bench.workspace.connection:
+            bench.workspace.connection.execute(
+                "UPDATE workbench_report_citation SET source_name=? "
+                "WHERE matter_id=? AND report_id=? AND kind='media_clip'",
+                (foreign_marker, matter.matter_id, report.report_id),
+            )
+        rejected = client.get(
+            f"/matters/{slug}/reports/{report.report_id}/export?format=markdown"
+        )
+        assert rejected.status_code == 400
+        assert "no longer resolves" in rejected.text
+        assert foreign_marker not in rejected.text
+
+
 def test_machine_segments_are_immutable_and_revision_conflicts_are_explicit(tmp_path):
     processor = ImmediateMediaProcessor()
     app = create_workbench_app(
@@ -1454,7 +1918,7 @@ def test_machine_segments_are_immutable_and_revision_conflicts_are_explicit(tmp_
             ),
             "csv",
         )
-        assert original.model_text.encode() in csv_export.body
+        assert original.model_text.encode() not in csv_export.body
         assert b"corrected property receipt" in csv_export.body
 
 
@@ -1557,3 +2021,125 @@ def test_running_media_job_reconciles_after_workbench_restart(tmp_path):
         assert len(document.parsed_units()) == 3
         assert processor.submissions == 1
         assert len(processor.deleted) == 1
+
+
+@pytest.mark.parametrize("verified_outcome", ("success", "not_found"))
+def test_direct_media_source_removal_waits_for_verified_external_cleanup(
+    tmp_path, verified_outcome
+):
+    processor = ConfigurableCleanupMediaProcessor()
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        media_processor=processor,
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated external cleanup boundary")
+        document, token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        _wait_for_summary(bench, matter, document, "failed")
+        source_path = bench.source_store(matter).source_path(document.document_id)
+        original_job = bench.workspace.media_job(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        assert original_job is not None and original_job.external_job_id
+
+        processor.cleanup_outcome = "unavailable"
+        refused = client.post(
+            f"/matters/{slug}/sources/{token}/remove",
+            follow_redirects=False,
+        )
+        assert refused.status_code == 409
+        assert "could not be removed yet" in refused.text
+        assert source_path.is_file()
+        assert (
+            bench.source_store(matter).get_by_action_token(token).document_id
+            == document.document_id
+        )
+        retained_job = bench.workspace.media_job(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        assert retained_job is not None
+        assert retained_job.media_job_id == original_job.media_job_id
+        assert retained_job.external_job_id == original_job.external_job_id
+        assert bench.playback is not None
+        assert (matter.matter_id, document.document_id) not in (
+            bench.playback._cancelled_documents
+        )
+        retained_support = bench.search(matter, "red bicycle")
+        assert any(
+            item.document_id == document.document_id for item in retained_support
+        )
+
+        processor.cleanup_outcome = verified_outcome
+        removed = client.post(
+            f"/matters/{slug}/sources/{token}/remove",
+            follow_redirects=False,
+        )
+        assert removed.status_code == 303
+        assert not source_path.exists()
+        with pytest.raises(KeyError):
+            bench.source_store(matter).get_by_action_token(token)
+        assert (
+            bench.workspace.media_job(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            is None
+        )
+        assert [item[2] for item in processor.cleanup_attempts[-2:]] == [
+            "unavailable",
+            verified_outcome,
+        ]
+
+
+@pytest.mark.parametrize("corruption", ("citation", "basis"))
+def test_transcript_overview_export_requires_current_exact_timestamps(
+    tmp_path, corruption
+):
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+        media_processor=ImmediateMediaProcessor(),
+        media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated overview export boundary")
+        document, token = _upload_and_wait(client, slug)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        summary = _wait_for_summary(bench, matter, document, "ready")
+
+        if corruption == "citation":
+            payload = json.loads(json.dumps(summary.payload))
+            payload["claims"][0]["citations"][0]["start_ms"] += 1
+            with bench.workspace.connection:
+                bench.workspace.connection.execute(
+                    "UPDATE workbench_media_summary SET payload_json=? "
+                    "WHERE transcript_id=?",
+                    (json.dumps(payload), summary.transcript_id),
+                )
+        else:
+            with bench.workspace.connection:
+                bench.workspace.connection.execute(
+                    "UPDATE workbench_media_summary SET basis_digest=? "
+                    "WHERE transcript_id=?",
+                    ("f" * 64, summary.transcript_id),
+                )
+
+        direct = client.get(
+            f"/matters/{slug}/sources/{token}/summary-export",
+            params={"format": "markdown"},
+        )
+        assert direct.status_code == 409
+        assert "not ready for export" in direct.text
+
+        bundle = client.get(f"/matters/{slug}/export")
+        assert bundle.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+            names = archive.namelist()
+            assert any(name.startswith("transcripts/") for name in names)
+            assert not any(name.startswith("transcript-overviews/") for name in names)

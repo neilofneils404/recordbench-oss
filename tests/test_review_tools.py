@@ -290,8 +290,22 @@ def test_review_map_and_report_builder_preserve_citations(tmp_path):
         assert "Line 1" in text
         assert "Pending human review" in text
 
+        foreign_marker = "Generated replacement passage from another source"
+        with bench.workspace.connection:
+            bench.workspace.connection.execute(
+                "UPDATE workbench_report_citation SET excerpt=? "
+                "WHERE matter_id=? AND report_id=? AND kind='source'",
+                (foreign_marker, matter.matter_id, report_id),
+            )
+        rejected = client.get(
+            f"/matters/{slug}/reports/{report_id}/export?format=markdown"
+        )
+        assert rejected.status_code == 400
+        assert "no longer resolves" in rejected.text
+        assert foreign_marker not in rejected.text
 
-def test_report_media_clip_citation_keeps_timestamp_in_export(tmp_path):
+
+def test_report_export_refuses_an_unresolvable_saved_media_clip(tmp_path):
     app = create_workbench_app(
         tmp_path / "runtime", generator=UnavailableGenerator(), auth_mode="test"
     )
@@ -330,5 +344,6 @@ def test_report_media_clip_citation_keeps_timestamp_in_export(tmp_path):
         exported = client.get(
             f"/matters/{slug}/reports/{report.report_id}/export?format=markdown"
         )
-        assert exported.status_code == 200
-        assert "generated-recording.mp4 — 00:12–00:18" in exported.text
+        assert exported.status_code == 400
+        assert "no longer resolves" in exported.text
+        assert "generated-recording.mp4 — 00:12–00:18" not in exported.text

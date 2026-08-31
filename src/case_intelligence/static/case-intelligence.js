@@ -424,9 +424,9 @@
           : securityChecking.length
           ? `${securityChecking.length.toLocaleString()} ${securityChecking.length === 1 ? "record is" : "records are"} being scanned before entering the matter. Large files may take a moment.`
           : finalizing
-          ? "The selected records are saved. Checking them and creating their durable processing jobs."
+          ? "The selected records are saved. Checking them and preparing their processing tasks."
           : activeWork
-          ? `${activeWork.work_stage || "Processing"}${activeWork.work_progress ? ` · ${Math.round(Number(activeWork.work_progress) * 100)}%` : ""}. You may leave this page; the saved job will continue.`
+          ? `${activeWork.work_stage || "Processing"}${activeWork.work_progress ? ` · ${Math.round(Number(activeWork.work_progress) * 100)}%` : ""}. You may leave this page; the saved work will continue.`
           : ready === total && total
             ? session.contains_media
               ? "The transcript is searchable and ready to review with the recording."
@@ -573,7 +573,7 @@
       activeUpload = await uploadStatusRefresh();
     } catch (error) {
       if (error.name === "AbortError") return;
-      if (uploadStatus) uploadStatus.textContent = "Status reconnecting; the saved processing job is still running.";
+      if (uploadStatus) uploadStatus.textContent = "Status reconnecting; the saved preparation is still running.";
     }
     if (Number(activeUpload?.processing_count || 0)) {
       uploadProcessingTimer = window.setTimeout(pollUploadProcessing, 2500);
@@ -849,8 +849,11 @@
   const answerRetryButton = document.querySelector("[data-answer-retry]");
   const answerRequestKey = questionForm?.querySelector("[data-answer-request-key]");
   const askButton = questionForm?.querySelector(".ask-button");
+  const investigateButton = questionForm?.querySelector(".investigate-button");
+  const reviewSubmitButtons = Array.from(questionForm?.querySelectorAll("[name='review_task']") || []);
   const askButtonLabel = askButton?.querySelector("span");
   let sourcesReady = questionForm?.dataset.sourcesReady === "true";
+  const durableReviewWorking = questionForm?.dataset.reviewWorkActive === "true";
   let answerWaitTimer;
   let answerPollTimer;
   let answerCreatedAt = Date.parse(answerWaitStatus?.dataset.answerCreatedAt || "");
@@ -873,19 +876,25 @@
       textarea?.removeAttribute("readonly");
     }
     if (textarea) textarea.disabled = !sourcesReady;
+    reviewSubmitButtons.forEach((button) => {
+      button.disabled = working || !sourcesReady;
+    });
     if (askButton) {
-      askButton.disabled = working || !sourcesReady;
       if (working) askButton.setAttribute("aria-label", "Answer request saved and in progress");
       else askButton.removeAttribute("aria-label");
     }
-    if (askButtonLabel) askButtonLabel.textContent = working ? "In progress" : "Ask";
+    if (investigateButton) {
+      if (working) investigateButton.setAttribute("aria-label", "Review work is already in progress");
+      else investigateButton.removeAttribute("aria-label");
+    }
+    if (askButtonLabel) askButtonLabel.textContent = working ? "In progress" : "Answer";
   };
 
   window.addEventListener("recordbench:readiness", (event) => {
     const readiness = event.detail || {};
     sourcesReady = readiness.can_query === true;
     if (questionForm) questionForm.dataset.sourcesReady = sourcesReady ? "true" : "false";
-    const working = questionForm?.getAttribute("aria-busy") === "true";
+    const working = questionForm?.getAttribute("aria-busy") === "true" || durableReviewWorking;
     setComposerWorking(working);
     const hint = document.querySelector("[data-composer-readiness-hint]");
     if (hint) {
@@ -894,7 +903,7 @@
       hint.textContent = partial
         ? readiness.coverage_notice || "Questions use the searchable sources; affected sources are excluded."
         : sourcesReady
-          ? "Questions use the complete searchable record for this matter."
+          ? "Answer uses the strongest matching passages. Investigate makes several searches and takes longer. Neither checks every source."
           : readiness.state === "preparing"
             ? "Questions will be available when active preparation finishes."
             : readiness.guidance || "No source is searchable yet.";
@@ -996,6 +1005,11 @@
   };
 
   questionForm?.addEventListener("submit", async (event) => {
+    // Broader investigations are durable server-side workflows. Let the
+    // browser follow the normal redirect back to this conversation, where the
+    // shared workflow monitor can show progress without pretending it is the
+    // faster answer queue.
+    if (event.submitter?.value === "research") return;
     event.preventDefault();
     if (!textarea?.value.trim()) {
       textarea?.focus();
@@ -1109,7 +1123,7 @@
     });
     if (mediaActivityNote) {
       mediaActivityNote.textContent = active
-        ? "This is saved backend progress. You may leave this conversation and return later."
+        ? "This progress is saved. You may leave this conversation and return later."
         : attention
           ? "Open the recording to review the failure and try again."
           : "The transcript is now searchable and ready beside the recording.";
@@ -1131,7 +1145,7 @@
         mediaActivityTimer = window.setTimeout(pollMediaActivity, 2500);
       }
     } catch (_error) {
-      if (mediaActivityNote) mediaActivityNote.textContent = "Status reconnecting; the saved media job will continue.";
+      if (mediaActivityNote) mediaActivityNote.textContent = "Status reconnecting; the saved media preparation will continue.";
       mediaActivityTimer = window.setTimeout(pollMediaActivity, 3500);
     }
   };
@@ -1205,12 +1219,151 @@
     }).catch(() => {});
   };
 
+  const speakerReviewPanel = document.querySelector("[data-speaker-review]");
+  const speakerReviewStatus = speakerReviewPanel?.querySelector("[data-speaker-review-status]");
+  const speakerReviewOpeners = Array.from(document.querySelectorAll("[data-open-speaker-review]"));
+  const speakerReviewCloser = speakerReviewPanel?.querySelector("[data-close-speaker-review]");
+  const speakerMappingForms = Array.from(document.querySelectorAll("[data-speaker-mapping-form]"));
+  const mediaSummaryCard = document.querySelector("[data-media-summary-card]");
+  const summaryStateLabel = mediaSummaryCard?.querySelector("[data-summary-state-label]");
+  const summaryRefreshNotice = mediaSummaryCard?.querySelector("[data-summary-refresh-notice]");
+  let speakerReviewReturnFocus = null;
+  let speakerReviewReturnPosition = null;
+
+  const speakerForm = (cluster) => speakerMappingForms.find(
+    (form) => form.dataset.speakerCluster === cluster,
+  ) || speakerMappingForms[0] || null;
+
+  const focusSpeakerInput = (cluster = "", reveal = false) => {
+    const form = speakerForm(cluster);
+    const input = form?.querySelector("[data-speaker-label-input]");
+    window.requestAnimationFrame(() => {
+      if (reveal) form?.scrollIntoView({ block: "nearest" });
+      input?.focus({ preventScroll: true });
+    });
+  };
+
+  const restoreSpeakerReviewContext = () => {
+    const target = speakerReviewReturnFocus;
+    const position = speakerReviewReturnPosition;
+    speakerReviewReturnFocus = null;
+    speakerReviewReturnPosition = null;
+    window.requestAnimationFrame(() => {
+      if (position) window.scrollTo(position.x, position.y);
+      target?.focus({ preventScroll: true });
+    });
+  };
+
+  const openSpeakerReview = (cluster = "", returnFocus = null) => {
+    if (!speakerReviewPanel) return;
+    if (!speakerReviewPanel.open && returnFocus) {
+      speakerReviewReturnFocus = returnFocus;
+      speakerReviewReturnPosition = { x: window.scrollX, y: window.scrollY };
+    }
+    speakerReviewPanel.open = true;
+    speakerReviewPanel.dataset.focusSpeaker = cluster;
+    speakerReviewOpeners.forEach((button) => button.setAttribute("aria-expanded", "true"));
+    focusSpeakerInput(cluster, true);
+  };
+
+  speakerReviewOpeners.forEach((button) => {
+    button.addEventListener("click", () => openSpeakerReview("", button));
+  });
+  document.querySelectorAll("[data-speaker-review-target]").forEach((button) => {
+    button.addEventListener("click", () => openSpeakerReview(
+      button.dataset.speakerReviewTarget || "",
+      button,
+    ));
+  });
+  speakerReviewCloser?.addEventListener("click", () => {
+    speakerReviewPanel.open = false;
+  });
+  speakerReviewPanel?.addEventListener("toggle", () => {
+    const expanded = speakerReviewPanel.open ? "true" : "false";
+    speakerReviewOpeners.forEach((button) => button.setAttribute("aria-expanded", expanded));
+    if (!speakerReviewPanel.open) restoreSpeakerReviewContext();
+  });
+
+  const setSpeakerReviewStatus = (message, state = "") => {
+    if (!speakerReviewStatus) return;
+    speakerReviewStatus.hidden = !message;
+    speakerReviewStatus.textContent = message;
+    speakerReviewStatus.dataset.state = state;
+  };
+
+  speakerMappingForms.forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const cluster = form.dataset.speakerCluster || "";
+      const input = form.querySelector("[data-speaker-label-input]");
+      const saveButton = form.querySelector("[data-speaker-save]");
+      const returnStart = form.querySelector("[data-speaker-return-start]");
+      const returnSegment = form.querySelector("[data-speaker-return-segment]");
+      if (returnStart && mediaPlayer && Number.isFinite(mediaPlayer.currentTime)) {
+        returnStart.value = String(Math.max(0, Math.round(mediaPlayer.currentTime * 1000)));
+      }
+      if (returnSegment) {
+        returnSegment.value = activeTranscriptSegment?.dataset.segmentId || returnSegment.value;
+      }
+      saveButton?.setAttribute("aria-busy", "true");
+      if (saveButton) saveButton.disabled = true;
+      setSpeakerReviewStatus("Saving this label across the transcript…", "saving");
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          headers: { Accept: "application/json" },
+          body: new FormData(form),
+          credentials: "same-origin",
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || payload.detail || "Speaker label could not be saved.");
+        form.querySelector('[name="expected_revision"]').value = String(payload.revision);
+        if (input) input.value = payload.display_name;
+        document.querySelectorAll("[data-speaker-label]").forEach((label) => {
+          if (label.dataset.speakerLabel !== cluster) return;
+          label.textContent = payload.display_name;
+          if (label.matches("button")) {
+            label.setAttribute("aria-label", `Review speaker label ${payload.display_name}`);
+          }
+        });
+        document.querySelectorAll("[data-speaker-state-for]").forEach((state) => {
+          if (state.dataset.speakerStateFor !== cluster) return;
+          state.classList.remove("speaker-unconfirmed", "speaker-confirmed");
+          state.classList.add(payload.identity_state === "confirmed" ? "speaker-confirmed" : "speaker-unconfirmed");
+          state.textContent = payload.identity_state === "confirmed" ? "Confirmed" : "Unconfirmed";
+        });
+        if (saveButton) saveButton.textContent = "Save correction";
+        if (payload.overview_refreshing && mediaSummaryCard) {
+          mediaSummaryCard.classList.add("media-summary-stale");
+          if (summaryStateLabel) {
+            summaryStateLabel.className = "summary-state summary-stale";
+            summaryStateLabel.textContent = "Refreshing";
+          }
+          if (summaryRefreshNotice) summaryRefreshNotice.hidden = false;
+        }
+        setSpeakerReviewStatus(payload.message || "Speaker label saved across this transcript.", "saved");
+        focusSpeakerInput(cluster);
+      } catch (error) {
+        setSpeakerReviewStatus(error.message || "Speaker label could not be saved.", "error");
+        input?.focus({ preventScroll: true });
+      } finally {
+        saveButton?.removeAttribute("aria-busy");
+        if (saveButton) saveButton.disabled = false;
+      }
+    });
+  });
+
+  if (speakerReviewPanel?.open || window.location.hash === "#speaker-review") {
+    openSpeakerReview(speakerReviewPanel?.dataset.focusSpeaker || "");
+  }
+
   document.querySelectorAll("[data-seek-ms]").forEach((button) => {
     button.addEventListener("click", () => seekMedia(button.dataset.seekMs));
   });
 
   const followTranscriptRow = (row) => {
     if (!row || !transcriptFollow?.checked) return;
+    if (speakerReviewPanel?.open) return;
     if (document.activeElement?.closest?.(".transcript-editor")) return;
     const bounds = row.getBoundingClientRect();
     const topbar = Number.parseFloat(
@@ -1391,7 +1544,7 @@
         || ["queued", "running", "stale"].includes(payload.summary_state);
       if (!active) return;
     } catch (_error) {
-      if (mediaMessage) mediaMessage.textContent = "Status reconnecting; the durable job is still saved.";
+      if (mediaMessage) mediaMessage.textContent = "Status reconnecting; this work is still saved.";
       if (playbackMessage) playbackMessage.textContent = "Playback status is reconnecting; the original video remains saved.";
     }
     mediaPollTimer = window.setTimeout(pollMediaJob, 2500);

@@ -10,7 +10,7 @@ alpha installation:
 | --- | ---: | ---: | --- | ---: |
 | CPU evaluation | 8 cores | 16 GB | none | 150 GB |
 | Local document review | 12 cores | 32 GB | 1 GPU with 16 GB VRAM | 200 GB |
-| Full review and media | 16 cores | 64 GB | 1 GPU with 24 GB VRAM | 300 GB |
+| Every-source checks and media | 16 cores | 64 GB | 1 GPU with 24 GB VRAM | 300 GB |
 
 These are starting recommendations, not collection-size, speed, or concurrency
 guarantees. More sources, longer recordings, and more simultaneous users need

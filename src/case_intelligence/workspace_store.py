@@ -84,6 +84,7 @@ MATTER_ACTIVITY_KINDS = ("source", "conversation", "notebook", "analysis", "repo
 NOTEBOOK_TYPES = ("fact", "issue", "person", "place", "date", "event", "note")
 NOTEBOOK_STATUSES = ("suggested", "confirmed", "disputed", "needs_review", "dismissed")
 NOTEBOOK_ORIGINS = ("manual", "answer", "citation", "extraction")
+MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS = 3
 
 
 class WorkspaceProblem(ValueError):
@@ -479,6 +480,7 @@ class SourceCatalogRecord:
     retryable: int
     removable: int
     has_video: int
+    content_basis_digest: str
     collection_id: str
     collection_name: str
     review_state: str
@@ -609,6 +611,8 @@ class ResearchJobRecord:
     question: str
     title: str
     source_set_id: str | None
+    conversation_id: str | None
+    result_message_id: str | None
     state: str
     stage: str
     attempts: int
@@ -701,6 +705,7 @@ class ReviewDecisionRecord:
     ordinal: int
     document_id: str
     source_version_id: str
+    source_basis_digest: str
     action_token: str
     source_name: str
     source_kind: str
@@ -946,6 +951,8 @@ class WorkspaceStore:
             "migrations/sqlite/0020_processing_awareness.sql",
             "migrations/sqlite/0021_research_and_full_review.sql",
             "migrations/sqlite/0022_session_application_roles.sql",
+            "migrations/sqlite/0023_review_conversation_continuity.sql",
+            "migrations/sqlite/0024_review_source_content_basis.sql",
         ):
             migration = resources.files("case_intelligence").joinpath(name).read_text(encoding="utf-8")
             self.connection.executescript(migration)
@@ -959,6 +966,89 @@ class WorkspaceStore:
                     "ALTER TABLE workbench_session ADD COLUMN application_roles "
                     "TEXT NOT NULL DEFAULT '[]'"
                 )
+        research_columns = {
+            str(row[1])
+            for row in self.connection.execute(
+                "PRAGMA table_info(workbench_research_job)"
+            )
+        }
+        with self.connection:
+            if "conversation_id" not in research_columns:
+                self.connection.execute(
+                    "ALTER TABLE workbench_research_job ADD COLUMN conversation_id TEXT"
+                )
+            if "result_message_id" not in research_columns:
+                self.connection.execute(
+                    "ALTER TABLE workbench_research_job ADD COLUMN result_message_id TEXT"
+                )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS workbench_research_job_conversation_idx "
+                "ON workbench_research_job(matter_id,conversation_id,created_at DESC,job_id)"
+            )
+        catalog_columns = {
+            str(row[1])
+            for row in self.connection.execute(
+                "PRAGMA table_info(workbench_source_catalog)"
+            )
+        }
+        decision_columns = {
+            str(row[1])
+            for row in self.connection.execute(
+                "PRAGMA table_info(workbench_review_decision)"
+            )
+        }
+        added_review_basis = "source_basis_digest" not in decision_columns
+        with self.connection:
+            if "content_basis_digest" not in catalog_columns:
+                self.connection.execute(
+                    "ALTER TABLE workbench_source_catalog ADD COLUMN "
+                    "content_basis_digest TEXT NOT NULL DEFAULT '' "
+                    "CHECK (content_basis_digest='' OR length(content_basis_digest)=64)"
+                )
+            if "source_basis_digest" not in decision_columns:
+                self.connection.execute(
+                    "ALTER TABLE workbench_review_decision ADD COLUMN "
+                    "source_basis_digest TEXT NOT NULL DEFAULT '' "
+                    "CHECK (source_basis_digest='' OR length(source_basis_digest)=64)"
+                )
+            # A queued or running pre-0024 snapshot has no trustworthy
+            # same-version content basis.  Do not silently resume it after an
+            # upgrade: fail it durably and require a fresh frozen population.
+            # Completed historical runs remain available as historical work.
+            if added_review_basis:
+                migration_now = self._now()
+                legacy_active = self.connection.execute(
+                    "SELECT run.run_id,run.reviewed_count,run.snapshot_count "
+                    "FROM workbench_review_run run WHERE run.state IN ('queued','running') "
+                    "AND EXISTS (SELECT 1 FROM workbench_review_decision decision "
+                    "WHERE decision.run_id=run.run_id "
+                    "AND decision.source_basis_digest='')"
+                ).fetchall()
+                legacy_message = (
+                    "This saved source check predates exact source-content tracking. "
+                    "Start a new source check to freeze the current sources."
+                )
+                for legacy in legacy_active:
+                    self.connection.execute(
+                        "UPDATE workbench_review_run SET state='failed',stage='failed',"
+                        "message=?,worker_id=NULL,finished_at=?,updated_at=? "
+                        "WHERE run_id=? AND state IN ('queued','running')",
+                        (
+                            legacy_message,
+                            migration_now,
+                            migration_now,
+                            legacy["run_id"],
+                        ),
+                    )
+                    self._append_review_event_locked(
+                        str(legacy["run_id"]),
+                        state="failed",
+                        stage="failed",
+                        message=legacy_message,
+                        reviewed_count=int(legacy["reviewed_count"]),
+                        snapshot_count=int(legacy["snapshot_count"]),
+                        created_at=migration_now,
+                    )
 
     def close(self) -> None:
         with self._lock:
@@ -1703,6 +1793,82 @@ class WorkspaceStore:
             raise KeyError(matter_id)
         return self._membership(row)
 
+    def _authorize_export_read(
+        self,
+        matter_id: str,
+        actor_id: str,
+        *,
+        administrator_override: bool = False,
+    ) -> None:
+        """Validate a matter-scoped export reader without impersonating its owner."""
+
+        if not administrator_override:
+            try:
+                self.membership(matter_id, actor_id)
+                return
+            except KeyError:
+                actor = self._safe_text(
+                    actor_id, label="Actor identity", maximum=100
+                )
+                with self._lock:
+                    row = self.connection.execute(
+                        "SELECT 1 FROM workbench_matter matter "
+                        "JOIN workbench_matter_lifecycle lifecycle "
+                        "ON lifecycle.matter_id=matter.matter_id "
+                        "JOIN workbench_principal principal "
+                        "ON principal.principal_id=matter.owner_id "
+                        "WHERE matter.matter_id=? AND matter.owner_id=? "
+                        "AND principal.active=1 AND lifecycle.state='purge_failed'",
+                        (matter_id, actor),
+                    ).fetchone()
+                if row is None:
+                    raise
+                return
+        actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
+        principal = self.get_principal(actor)
+        if not principal.active:
+            raise KeyError(matter_id)
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT 1 FROM workbench_matter matter "
+                "JOIN workbench_matter_lifecycle lifecycle "
+                "ON lifecycle.matter_id=matter.matter_id "
+                "WHERE matter.matter_id=? AND lifecycle.state<>'deleted'",
+                (matter_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(matter_id)
+
+    def source_catalog_for_export(
+        self,
+        matter_id: str,
+        actor_id: str,
+        *,
+        administrator_override: bool = False,
+    ) -> tuple[SourceCatalogRecord, ...]:
+        """Read the durable inventory without reconciling a closing matter."""
+
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT c.*,COALESCE(o.collection_id,'') AS collection_id,"
+                "COALESCE(sc.name,'Unfiled') AS collection_name,"
+                "COALESCE(o.review_state,'unreviewed') AS review_state,"
+                "COALESCE(o.added_at,c.cataloged_at) AS added_at "
+                "FROM workbench_source_catalog c "
+                "LEFT JOIN workbench_source_organization o "
+                "ON o.matter_id=c.matter_id AND o.document_id=c.document_id "
+                "LEFT JOIN workbench_source_collection sc "
+                "ON sc.matter_id=o.matter_id AND sc.collection_id=o.collection_id "
+                "WHERE c.matter_id=? ORDER BY c.cataloged_at,c.document_id",
+                (matter_id,),
+            ).fetchall()
+        return tuple(self._source_catalog(row) for row in rows)
+
     def members(self, matter_id: str) -> tuple[MatterMembershipRecord, ...]:
         with self._lock:
             rows = self.connection.execute(
@@ -1994,6 +2160,32 @@ class WorkspaceStore:
             ).fetchall()
         return tuple(self._matter(row) for row in rows)
 
+    def closure_recovery_matters(
+        self,
+        actor_id: str,
+        *,
+        administrator_override: bool = False,
+    ) -> tuple[MatterRecord, ...]:
+        """List failed closures without restoring ordinary matter access."""
+
+        actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
+        principal = self.get_principal(actor)
+        if not principal.active:
+            return ()
+        owner_clause = "" if administrator_override else "AND m.owner_id=? "
+        parameters = () if administrator_override else (actor,)
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT m.matter_id,m.slug,m.display_name,m.descriptor,m.owner_id,"
+                "m.created_at,m.updated_at FROM workbench_matter m "
+                "JOIN workbench_matter_lifecycle ml ON ml.matter_id=m.matter_id "
+                "WHERE ml.state='purge_failed' "
+                + owner_clause
+                + "ORDER BY ml.updated_at DESC,m.display_name",
+                parameters,
+            ).fetchall()
+        return tuple(self._matter(row) for row in rows)
+
     def get_matter(self, slug: str, principal_id: str) -> MatterRecord:
         if not _SLUG.fullmatch(slug):
             raise KeyError(slug)
@@ -2173,72 +2365,94 @@ class WorkspaceStore:
         return str(row[0])
 
     def matter_for_closure(
-        self, slug: str, owner_id: str
+        self,
+        slug: str,
+        actor_id: str,
+        *,
+        administrator_override: bool = False,
     ) -> tuple[MatterRecord, MatterLifecycleRecord]:
         if not _SLUG.fullmatch(slug):
             raise KeyError(slug)
-        owner = self._safe_text(owner_id, label="Owner identity", maximum=100)
+        actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
+        principal = self.get_principal(actor)
+        if not principal.active:
+            if administrator_override:
+                raise WorkspaceProblem("The administrator identity is not active.")
+            raise KeyError(slug)
+        owner_clause = "" if administrator_override else "AND m.owner_id=? "
+        parameters = (slug,) if administrator_override else (slug, actor)
         with self._lock:
             row = self.connection.execute(
                 "SELECT m.matter_id,m.slug,m.display_name,m.descriptor,m.owner_id,"
                 "m.created_at,m.updated_at FROM workbench_matter m "
-                "JOIN workbench_principal p ON p.principal_id=m.owner_id "
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=m.matter_id "
-                "WHERE m.slug=? AND m.owner_id=? AND p.active=1 "
-                "AND ml.state IN ('active','purging','purge_failed')",
-                (slug, owner),
+                "WHERE m.slug=? "
+                + owner_clause
+                + "AND ml.state IN ('active','purging','purge_failed')",
+                parameters,
             ).fetchone()
         if row is None:
             raise KeyError(slug)
         matter = self._matter(row)
         return matter, self.matter_lifecycle(matter.matter_id)
 
+    def _active_matter_work_counts_locked(self, matter_id: str) -> dict[str, int]:
+        """Count every durable worker that must finish before a matter purge.
+
+        Callers hold ``self._lock``. Keeping this as one fail-closed inventory
+        prevents the confirmation page and the transactional purge claim from
+        drifting as new optional processing queues are added.
+        """
+
+        queries = {
+            "ingestion": (
+                "workbench_ingest_job",
+                "state IN ('queued','running')",
+            ),
+            "answers": (
+                "workbench_answer_job",
+                "state IN ('queued','running')",
+            ),
+            "research": (
+                "workbench_research_job",
+                "state IN ('queued','running')",
+            ),
+            "reviews": (
+                "workbench_review_run",
+                "state IN ('queued','running')",
+            ),
+            "uploads": (
+                "workbench_upload_item",
+                "state IN ('pending','uploading','uploaded')",
+            ),
+            "media": (
+                "workbench_media_job",
+                "state IN ('queued','running')",
+            ),
+            "overviews": (
+                "workbench_media_summary",
+                "state IN ('queued','running','stale')",
+            ),
+            "analysis": (
+                "workbench_analysis_run",
+                "state='running'",
+            ),
+        }
+        return {
+            name: int(
+                self.connection.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE matter_id=? AND {predicate}",
+                    (matter_id,),
+                ).fetchone()[0]
+            )
+            for name, (table, predicate) in queries.items()
+        }
+
     def active_matter_work_counts(self, matter_id: str) -> dict[str, int]:
         if not _IDENTIFIER.fullmatch(matter_id):
             raise KeyError(matter_id)
         with self._lock:
-            ingest = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_ingest_job WHERE matter_id=? "
-                    "AND state IN ('queued','running')",
-                    (matter_id,),
-                ).fetchone()[0]
-            )
-            answers = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_answer_job WHERE matter_id=? "
-                    "AND state IN ('queued','running')",
-                    (matter_id,),
-                ).fetchone()[0]
-            )
-            research = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_research_job WHERE matter_id=? "
-                    "AND state IN ('queued','running')",
-                    (matter_id,),
-                ).fetchone()[0]
-            )
-            reviews = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_review_run WHERE matter_id=? "
-                    "AND state IN ('queued','running')",
-                    (matter_id,),
-                ).fetchone()[0]
-            )
-            uploads = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_upload_item WHERE matter_id=? "
-                    "AND state IN ('pending','uploading','uploaded')",
-                    (matter_id,),
-                ).fetchone()[0]
-            )
-        return {
-            "ingestion": ingest,
-            "answers": answers,
-            "research": research,
-            "reviews": reviews,
-            "uploads": uploads,
-        }
+            return self._active_matter_work_counts_locked(matter_id)
 
     def matter_content_counts(self, matter_id: str) -> dict[str, int]:
         if not _IDENTIFIER.fullmatch(matter_id):
@@ -2289,28 +2503,37 @@ class WorkspaceStore:
     def begin_matter_purge(
         self,
         slug: str,
-        owner_id: str,
+        actor_id: str,
         confirmed_name: str,
         *,
         source_count: int,
+        administrator_override: bool = False,
     ) -> tuple[MatterRecord, MatterLifecycleRecord]:
         if not _SLUG.fullmatch(slug):
             raise KeyError(slug)
-        owner = self._safe_text(owner_id, label="Owner identity", maximum=100)
+        actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
+        principal = self.get_principal(actor)
+        if not principal.active:
+            if administrator_override:
+                raise WorkspaceProblem("The administrator identity is not active.")
+            raise KeyError(slug)
         confirmation = self._safe_text(
             confirmed_name, label="Matter name confirmation", maximum=140
         )
         if isinstance(source_count, bool) or not isinstance(source_count, int) or source_count < 0:
             raise ValueError("invalid purge source count")
+        owner_clause = "" if administrator_override else "AND m.owner_id=? "
+        parameters = (slug,) if administrator_override else (slug, actor)
         now = self._now()
         with self._lock, self.connection:
             row = self.connection.execute(
                 "SELECT m.matter_id,m.slug,m.display_name,m.descriptor,m.owner_id,"
                 "m.created_at,m.updated_at,ml.state,ml.purge_id "
                 "FROM workbench_matter m JOIN workbench_matter_lifecycle ml "
-                "ON ml.matter_id=m.matter_id WHERE m.slug=? AND m.owner_id=? "
-                "AND ml.state IN ('active','purge_failed','purging')",
-                (slug, owner),
+                "ON ml.matter_id=m.matter_id WHERE m.slug=? "
+                + owner_clause
+                + "AND ml.state IN ('active','purge_failed','purging')",
+                parameters,
             ).fetchone()
             if row is None:
                 raise KeyError(slug)
@@ -2318,44 +2541,10 @@ class WorkspaceStore:
                 raise WorkspaceProblem("Enter the matter name exactly as shown to confirm deletion.")
             if row["state"] == "purging":
                 raise WorkspaceProblem("This matter deletion is already in progress.")
-            ingest = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_ingest_job WHERE matter_id=? "
-                    "AND state IN ('queued','running')",
-                    (row["matter_id"],),
-                ).fetchone()[0]
-            )
-            answers = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_answer_job WHERE matter_id=? "
-                    "AND state IN ('queued','running')",
-                    (row["matter_id"],),
-                ).fetchone()[0]
-            )
-            research = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_research_job WHERE matter_id=? "
-                    "AND state IN ('queued','running')",
-                    (row["matter_id"],),
-                ).fetchone()[0]
-            )
-            reviews = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_review_run WHERE matter_id=? "
-                    "AND state IN ('queued','running')",
-                    (row["matter_id"],),
-                ).fetchone()[0]
-            )
-            uploads = int(
-                self.connection.execute(
-                    "SELECT COUNT(*) FROM workbench_upload_item WHERE matter_id=? "
-                    "AND state IN ('pending','uploading','uploaded')",
-                    (row["matter_id"],),
-                ).fetchone()[0]
-            )
-            if ingest or answers or research or reviews or uploads:
+            active = self._active_matter_work_counts_locked(row["matter_id"])
+            if any(active.values()):
                 raise WorkspaceProblem(
-                    "Wait for current uploads, source processing, answers, research, and full reviews to finish before deleting this matter."
+                    "Wait for current uploads, source and media processing, transcript overviews, analysis, answers, investigations, and every-source checks to finish before deleting this matter."
                 )
             conversation_count = int(
                 self.connection.execute(
@@ -2379,7 +2568,7 @@ class WorkspaceStore:
                 "updated_at=? WHERE matter_id=? AND state IN ('active','purge_failed')",
                 (
                     purge_id,
-                    owner,
+                    actor,
                     now,
                     source_count,
                     conversation_count,
@@ -2427,7 +2616,7 @@ class WorkspaceStore:
             ).fetchone()
             if row is None:
                 return None
-            active = self.active_matter_work_counts(matter_id)
+            active = self._active_matter_work_counts_locked(matter_id)
             if any(active.values()):
                 return None
             conversation_count = int(
@@ -2487,6 +2676,7 @@ class WorkspaceStore:
             "control_store",
             "media_playback",
             "media_processing",
+            "clip_exports",
             "unknown",
         }:
             raise ValueError("invalid purge failure code")
@@ -2532,6 +2722,15 @@ class WorkspaceStore:
                 "DELETE FROM workbench_media_job WHERE matter_id=?", (matter_id,)
             )
             self.connection.execute(
+                "DELETE FROM workbench_report WHERE matter_id=?", (matter_id,)
+            )
+            self.connection.execute(
+                "DELETE FROM workbench_review_finding WHERE matter_id=?", (matter_id,)
+            )
+            self.connection.execute(
+                "DELETE FROM workbench_analysis_run WHERE matter_id=?", (matter_id,)
+            )
+            self.connection.execute(
                 "DELETE FROM workbench_notebook_item WHERE matter_id=?", (matter_id,)
             )
             self.connection.execute(
@@ -2553,7 +2752,13 @@ class WorkspaceStore:
                 "DELETE FROM workbench_source_organization WHERE matter_id=?", (matter_id,)
             )
             self.connection.execute(
+                "DELETE FROM workbench_source_catalog WHERE matter_id=?", (matter_id,)
+            )
+            self.connection.execute(
                 "DELETE FROM workbench_source_collection WHERE matter_id=?", (matter_id,)
+            )
+            self.connection.execute(
+                "DELETE FROM workbench_job_matter_schedule WHERE matter_id=?", (matter_id,)
             )
             self.connection.execute(
                 "DELETE FROM workbench_matter_activity WHERE matter_id=?", (matter_id,)
@@ -2566,6 +2771,36 @@ class WorkspaceStore:
                 "updated_at=? WHERE matter_id=?",
                 (now, matter_id),
             )
+            preserved_tables = {
+                "workbench_audit_event",
+                "workbench_matter",
+                "workbench_matter_lifecycle",
+                "workbench_matter_retention",
+            }
+            tables = self.connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name LIKE 'workbench_%'"
+            ).fetchall()
+            for table_row in tables:
+                table = str(table_row[0])
+                if not re.fullmatch(r"workbench_[a-z0-9_]+", table):
+                    raise RuntimeError("workbench content table identity is invalid")
+                columns = {
+                    str(column[1])
+                    for column in self.connection.execute(
+                        f'PRAGMA table_info("{table}")'
+                    )
+                }
+                if "matter_id" not in columns or table in preserved_tables:
+                    continue
+                remaining = int(
+                    self.connection.execute(
+                        f'SELECT COUNT(*) FROM "{table}" WHERE matter_id=?',
+                        (matter_id,),
+                    ).fetchone()[0]
+                )
+                if remaining:
+                    raise RuntimeError("matter purge left workbench content behind")
             changed = self.connection.execute(
                 "UPDATE workbench_matter_lifecycle SET state='deleted',finished_at=?,"
                 "error_code=NULL,updated_at=? WHERE matter_id=? AND purge_id=? "
@@ -2843,6 +3078,16 @@ class WorkspaceStore:
             is not None
         )
 
+    def _conversation_has_active_research_locked(self, conversation_id: str) -> bool:
+        return (
+            self.connection.execute(
+                "SELECT 1 FROM workbench_research_job WHERE conversation_id=? "
+                "AND state IN ('queued','running') LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            is not None
+        )
+
     def _ensure_active_conversation_locked(
         self, matter_id: str, *, actor_id: str, now: str
     ) -> tuple[ConversationRecord, bool]:
@@ -2883,6 +3128,10 @@ class WorkspaceStore:
             if self._conversation_has_active_answer_locked(conversation_id):
                 raise WorkspaceProblem(
                     "Wait for the answer in progress to finish or cancel it before archiving this conversation."
+                )
+            if self._conversation_has_active_research_locked(conversation_id):
+                raise WorkspaceProblem(
+                    "Wait for the investigation in progress to finish or cancel it before archiving this conversation."
                 )
             if row["state"] == "active":
                 self.connection.execute(
@@ -2975,8 +3224,20 @@ class WorkspaceStore:
                 raise WorkspaceProblem(
                     "Wait for the answer in progress to finish or cancel it before deleting this conversation."
                 )
+            if self._conversation_has_active_research_locked(conversation_id):
+                raise WorkspaceProblem(
+                    "Wait for the investigation in progress to finish or cancel it before deleting this conversation."
+                )
             message_count = int(row["message_count"])
             answer_job_count = int(row["answer_job_count"])
+            # Research jobs are bound to a conversation by the compatibility
+            # migration rather than a database foreign key, so remove their
+            # durable events and result payloads explicitly with the confirmed
+            # conversation deletion.
+            self.connection.execute(
+                "DELETE FROM workbench_research_job WHERE matter_id=? AND conversation_id=?",
+                (matter_id, conversation_id),
+            )
             changed = self.connection.execute(
                 "DELETE FROM workbench_conversation WHERE conversation_id=? AND matter_id=?",
                 (conversation_id, matter_id),
@@ -3477,6 +3738,7 @@ class WorkspaceStore:
         now = self._now()
         media_job_id = f"media-job-{uuid.uuid4().hex}"
         with self._lock, self.connection:
+            self.membership(matter_id, actor_id)
             self.connection.execute(
                 "INSERT INTO workbench_media_job("
                 "media_job_id,matter_id,document_id,source_version_id,requested_by,"
@@ -3969,11 +4231,11 @@ class WorkspaceStore:
                 "basis_digest='',covered_segment_count=0,"
                 "message='Retrying the automatic overview after restart.',"
                 "started_at=NULL,finished_at=NULL,updated_at=? "
-                "WHERE state='failed' AND attempts<3 AND EXISTS ("
+                "WHERE state='failed' AND attempts<? AND EXISTS ("
                 "SELECT 1 FROM workbench_matter_lifecycle lifecycle "
                 "WHERE lifecycle.matter_id=workbench_media_summary.matter_id "
                 "AND lifecycle.state='active')",
-                (now,),
+                (now, MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS),
             ).rowcount
         return int(inserted) + int(retried)
 
@@ -4042,10 +4304,17 @@ class WorkspaceStore:
         now = self._now()
         with self._lock, self.connection:
             return self.connection.execute(
-                "UPDATE workbench_media_summary SET state='queued',"
-                "message='Resuming overview after restart.',updated_at=? "
+                "UPDATE workbench_media_summary SET "
+                "state=CASE WHEN attempts>=? THEN 'failed' ELSE 'queued' END,"
+                "message=CASE WHEN attempts>=? "
+                "THEN 'The automatic overview recovery limit was reached.' "
+                "ELSE 'Resuming overview after restart.' END,updated_at=? "
                 "WHERE state='running'",
-                (now,),
+                (
+                    MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS,
+                    MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS,
+                    now,
+                ),
             ).rowcount
 
     def start_media_summary(self, transcript_id: str) -> MediaSummaryRecord:
@@ -4138,6 +4407,7 @@ class WorkspaceStore:
         self.membership(matter_id, actor_id)
         now = self._now()
         with self._lock, self.connection:
+            self.membership(matter_id, actor_id)
             transcript = self.connection.execute(
                 "SELECT transcript_id,segment_count FROM workbench_media_transcript "
                 "WHERE matter_id=? AND document_id=? AND source_version_id=?",
@@ -4254,6 +4524,100 @@ class WorkspaceStore:
                 (matter_id, document_id, source_version_id),
             ).fetchall()
         return tuple(self._speaker_mapping(row) for row in rows)
+
+    def transcript_support_history(
+        self,
+        matter_id: str,
+        document_id: str,
+        source_version_id: str,
+    ) -> dict[int, tuple[str, ...]]:
+        """Return actual prior transcript excerpts for legacy citation lookup.
+
+        Text and speaker-label revisions are merged in their saved order, so
+        lookup remains linear in real edits rather than generating combinations
+        that never appeared in the reviewed transcript.
+        """
+
+        with self._lock:
+            segments = self.connection.execute(
+                "SELECT segment.segment_id,segment.ordinal,segment.speaker_cluster,"
+                "segment.model_text FROM workbench_transcript_segment segment "
+                "JOIN workbench_media_transcript transcript "
+                "ON transcript.transcript_id=segment.transcript_id "
+                "WHERE transcript.matter_id=? AND transcript.document_id=? "
+                "AND transcript.source_version_id=? ORDER BY segment.ordinal",
+                (matter_id, document_id, source_version_id),
+            ).fetchall()
+            text_rows = self.connection.execute(
+                "SELECT revision.segment_id,revision.revision,revision.text,revision.edited_at "
+                "FROM workbench_transcript_segment_revision revision "
+                "JOIN workbench_transcript_segment segment "
+                "ON segment.segment_id=revision.segment_id "
+                "JOIN workbench_media_transcript transcript "
+                "ON transcript.transcript_id=segment.transcript_id "
+                "WHERE transcript.matter_id=? AND transcript.document_id=? "
+                "AND transcript.source_version_id=? "
+                "ORDER BY revision.edited_at,revision.revision",
+                (matter_id, document_id, source_version_id),
+            ).fetchall()
+            speaker_rows = self.connection.execute(
+                "SELECT mapping.speaker_cluster,mapping.revision,mapping.display_name,"
+                "mapping.edited_at FROM workbench_speaker_mapping_revision mapping "
+                "JOIN workbench_media_transcript transcript "
+                "ON transcript.transcript_id=mapping.transcript_id "
+                "WHERE transcript.matter_id=? AND transcript.document_id=? "
+                "AND transcript.source_version_id=? "
+                "ORDER BY mapping.edited_at,mapping.revision",
+                (matter_id, document_id, source_version_id),
+            ).fetchall()
+        text_events: dict[str, list[tuple[str, int, str]]] = {}
+        for row in text_rows:
+            text_events.setdefault(str(row["segment_id"]), []).append(
+                (str(row["edited_at"]), int(row["revision"]), str(row["text"]))
+            )
+        speaker_initial: dict[str, str] = {}
+        speaker_events: dict[str, list[tuple[str, int, str]]] = {}
+        for row in speaker_rows:
+            cluster = str(row["speaker_cluster"])
+            revision = int(row["revision"])
+            if revision == 0:
+                speaker_initial[cluster] = str(row["display_name"])
+            else:
+                speaker_events.setdefault(cluster, []).append(
+                    (str(row["edited_at"]), revision, str(row["display_name"]))
+                )
+        staff_initial = {
+            cluster: f"Speaker {ordinal}"
+            for ordinal, cluster in enumerate(sorted(speaker_initial), 1)
+        }
+        history: dict[int, tuple[str, ...]] = {}
+        for row in segments:
+            segment_id = str(row["segment_id"])
+            cluster = str(row["speaker_cluster"])
+            text = str(row["model_text"])
+            labels = {
+                speaker_initial.get(cluster, cluster),
+                staff_initial.get(cluster, cluster),
+            }
+            excerpts = [f"{label}: {text}" for label in sorted(labels)]
+            events = [
+                (when, revision, "text", value)
+                for when, revision, value in text_events.get(segment_id, ())
+            ] + [
+                (when, revision, "speaker", value)
+                for when, revision, value in speaker_events.get(cluster, ())
+            ]
+            for _when, _revision, kind, value in sorted(events):
+                if kind == "text":
+                    text = value
+                else:
+                    labels = {value}
+                for label in sorted(labels):
+                    excerpt = f"{label}: {text}"
+                    if excerpt not in excerpts:
+                        excerpts.append(excerpt)
+            history[int(row["ordinal"])] = tuple(excerpts)
+        return history
 
     def revise_transcript_segment(
         self,
@@ -4668,6 +5032,11 @@ class WorkspaceStore:
                 if not isinstance(value, bool):
                     raise ValueError("invalid source catalog flag")
                 booleans.append(int(value))
+            content_basis_digest = str(source.get("content_basis_digest", ""))
+            if content_basis_digest and not re.fullmatch(
+                r"[0-9a-f]{64}", content_basis_digest
+            ):
+                raise ValueError("invalid source content basis")
             search_key = f"{display_name}\n{relative_path}".casefold()
             prepared.append(
                 (
@@ -4689,6 +5058,7 @@ class WorkspaceStore:
                     *integers,
                     origin,
                     *booleans,
+                    content_basis_digest,
                     now,
                     now,
                 )
@@ -4705,8 +5075,8 @@ class WorkspaceStore:
             "matter_id,document_id,version_id,action_token,display_name,display_name_key,"
             "relative_path,search_key,media_type,kind,source_state,tone,state_label,"
             "count_label,processing_stage,completed_units,total_units,page_count,"
-            "duration_ms,byte_size,origin,retryable,removable,has_video,cataloged_at,updated_at"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "duration_ms,byte_size,origin,retryable,removable,has_video,content_basis_digest,"
+            "cataloged_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(matter_id,document_id) DO UPDATE SET "
             "version_id=excluded.version_id,action_token=excluded.action_token,"
             "display_name=excluded.display_name,display_name_key=excluded.display_name_key,"
@@ -4719,7 +5089,8 @@ class WorkspaceStore:
             "page_count=excluded.page_count,duration_ms=excluded.duration_ms,"
             "byte_size=excluded.byte_size,origin=excluded.origin,"
             "retryable=excluded.retryable,removable=excluded.removable,"
-            "has_video=excluded.has_video,updated_at=excluded.updated_at",
+            "has_video=excluded.has_video,content_basis_digest=excluded.content_basis_digest,"
+            "updated_at=excluded.updated_at",
             prepared,
         )
 
@@ -6958,19 +7329,45 @@ class WorkspaceStore:
         return self._notebook_item(row)
 
     def notebook_item(
-        self, matter_id: str, actor_id: str, item_id: str
+        self,
+        matter_id: str,
+        actor_id: str,
+        item_id: str,
+        *,
+        administrator_override: bool = False,
     ) -> NotebookItemRecord:
-        self.membership(matter_id, actor_id)
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
         if not _NOTEBOOK_ITEM.fullmatch(item_id):
             raise KeyError(item_id)
         with self._lock:
             return self._notebook_item_by_id_locked(matter_id, item_id)
 
     def notebook_references(
-        self, matter_id: str, actor_id: str, item_id: str
+        self,
+        matter_id: str,
+        actor_id: str,
+        item_id: str,
+        *,
+        administrator_override: bool = False,
     ) -> tuple[NotebookReferenceRecord, ...]:
-        self.notebook_item(matter_id, actor_id, item_id)
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
+        if not _NOTEBOOK_ITEM.fullmatch(item_id):
+            raise KeyError(item_id)
         with self._lock:
+            item = self.connection.execute(
+                "SELECT 1 FROM workbench_notebook_item WHERE matter_id=? AND item_id=?",
+                (matter_id, item_id),
+            ).fetchone()
+            if item is None:
+                raise KeyError(item_id)
             rows = self.connection.execute(
                 "SELECT reference_id,item_id,matter_id,ordinal,document_id,"
                 "source_version_id,source_name,location,unit_number,chunk_id,"
@@ -7095,8 +7492,13 @@ class WorkspaceStore:
         *,
         include_dismissed: bool = True,
         limit: int = 10_000,
+        administrator_override: bool = False,
     ) -> tuple[NotebookItemRecord, ...]:
-        self.membership(matter_id, actor_id)
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
         limit_value = min(max(int(limit), 1), 10_000)
         with self._lock:
             rows = self.connection.execute(
@@ -7504,7 +7906,7 @@ class WorkspaceStore:
                     idempotency_key,
                     value,
                     question_message_id,
-                    "Waiting for an answer worker.",
+                    "Waiting for earlier saved work to finish.",
                     now,
                     now,
                 ),
@@ -7696,7 +8098,7 @@ class WorkspaceStore:
                 row["job_id"],
                 state="running",
                 stage="queued",
-                message="An answer worker accepted this request.",
+                message="Answering has started.",
                 created_at=now,
             )
             claimed = self.connection.execute(
@@ -7806,6 +8208,21 @@ class WorkspaceStore:
                     created_at=now,
                 )
                 return None
+            authorized = self.connection.execute(
+                "SELECT 1 FROM workbench_matter_membership membership "
+                "JOIN workbench_principal principal "
+                "ON principal.principal_id=membership.principal_id "
+                "JOIN workbench_matter_lifecycle lifecycle "
+                "ON lifecycle.matter_id=membership.matter_id "
+                "WHERE membership.matter_id=? AND membership.principal_id=? "
+                "AND membership.state='active' AND principal.active=1 "
+                "AND lifecycle.state='active'",
+                (job["matter_id"], job["actor_id"]),
+            ).fetchone()
+            if authorized is None:
+                raise WorkspaceProblem(
+                    "Access to this matter was removed before the answer could be saved."
+                )
             ordinal = int(
                 self.connection.execute(
                     "SELECT COALESCE(MAX(ordinal),0)+1 FROM workbench_message "
@@ -8025,6 +8442,8 @@ class WorkspaceStore:
         title: str,
         idempotency_key: str,
         source_set_id: str | None = None,
+        *,
+        conversation_id: str | None = None,
     ) -> tuple[ResearchJobRecord, bool]:
         actor = self.membership(matter_id, actor_id).principal_id
         value = self._safe_text(question, label="Research question", maximum=2_000)
@@ -8032,26 +8451,120 @@ class WorkspaceStore:
         if not _RESEARCH_REQUEST.fullmatch(idempotency_key or ""):
             raise WorkspaceProblem("The research request expired. Refresh and try again.")
         scope_id = (source_set_id or "").strip() or None
+        conversation_ref = (conversation_id or "").strip() or None
         if scope_id is not None:
             if not self.source_set_document_ids(matter_id, scope_id):
                 raise WorkspaceProblem("That source set is empty or no longer available.")
         now = self._now()
         with self._lock, self.connection:
+            self.membership(matter_id, actor)
             existing = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE actor_id=? AND matter_id=? "
                 "AND idempotency_key=?",
                 (actor, matter_id, idempotency_key),
             ).fetchone()
             if existing is not None:
-                if existing["question"] != value:
-                    raise WorkspaceProblem("That saved request belongs to a different question.")
+                if (
+                    existing["question"] != value
+                    or existing["title"] != heading
+                    or existing["source_set_id"] != scope_id
+                    or existing["conversation_id"] != conversation_ref
+                ):
+                    raise WorkspaceProblem(
+                        "That saved request belongs to different investigation details. Refresh and try again."
+                    )
                 return self._research_job(existing), False
             job_id = f"research-job-{uuid.uuid4().hex}"
+            if conversation_ref is not None:
+                bound = self.connection.execute(
+                    "SELECT c.title,(SELECT COUNT(*) FROM workbench_message existing "
+                    "WHERE existing.conversation_id=c.conversation_id) AS message_count "
+                    "FROM workbench_conversation c "
+                    "JOIN workbench_conversation_organization organization "
+                    "ON organization.conversation_id=c.conversation_id "
+                    "JOIN workbench_matter_membership mm ON mm.matter_id=c.matter_id "
+                    "JOIN workbench_principal p ON p.principal_id=mm.principal_id "
+                    "JOIN workbench_matter_lifecycle ml ON ml.matter_id=c.matter_id "
+                    "WHERE c.conversation_id=? AND c.matter_id=? AND mm.principal_id=? "
+                    "AND mm.state='active' AND p.active=1 AND ml.state='active' "
+                    "AND organization.state='active'",
+                    (conversation_ref, matter_id, actor),
+                ).fetchone()
+                if bound is None:
+                    raise WorkspaceProblem(
+                        "That conversation is not available in this matter."
+                    )
+                active_answer = self.connection.execute(
+                    "SELECT 1 FROM workbench_answer_job WHERE conversation_id=? "
+                    "AND state IN ('queued','running') LIMIT 1",
+                    (conversation_ref,),
+                ).fetchone()
+                active_research = self.connection.execute(
+                    "SELECT 1 FROM workbench_research_job WHERE conversation_id=? "
+                    "AND state IN ('queued','running') LIMIT 1",
+                    (conversation_ref,),
+                ).fetchone()
+                if active_answer is not None or active_research is not None:
+                    raise WorkspaceProblem(
+                        "This conversation already has review work in progress."
+                    )
+                if int(bound["message_count"]) == 0 and bound["title"] in {
+                    "Case review",
+                    "New conversation",
+                }:
+                    self.connection.execute(
+                        "UPDATE workbench_conversation SET title=? "
+                        "WHERE conversation_id=? AND matter_id=?",
+                        (
+                            self._automatic_conversation_title(value),
+                            conversation_ref,
+                            matter_id,
+                        ),
+                    )
+                question_message_id = f"message-{uuid.uuid4().hex}"
+                ordinal = int(
+                    self.connection.execute(
+                        "SELECT COALESCE(MAX(ordinal),0)+1 FROM workbench_message "
+                        "WHERE conversation_id=?",
+                        (conversation_ref,),
+                    ).fetchone()[0]
+                )
+                request_payload = json.dumps(
+                    {
+                        "kind": "research-request",
+                        "workflow": "research",
+                        "research_job_id": job_id,
+                    },
+                    separators=(",", ":"),
+                )
+                self.connection.execute(
+                    "INSERT INTO workbench_message(message_id,conversation_id,ordinal,role,"
+                    "content,payload_json,created_at) VALUES (?,?,?,'user',?,?,?)",
+                    (
+                        question_message_id,
+                        conversation_ref,
+                        ordinal,
+                        value,
+                        request_payload,
+                        now,
+                    ),
+                )
             self.connection.execute(
                 "INSERT INTO workbench_research_job(job_id,matter_id,actor_id,idempotency_key,"
-                "question,title,source_set_id,state,stage,message,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,'queued','queued','Research saved and queued.',?,?)",
-                (job_id, matter_id, actor, idempotency_key, value, heading, scope_id, now, now),
+                "question,title,source_set_id,conversation_id,state,stage,message,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,'queued','queued','Research saved and queued.',?,?)",
+                (
+                    job_id,
+                    matter_id,
+                    actor,
+                    idempotency_key,
+                    value,
+                    heading,
+                    scope_id,
+                    conversation_ref,
+                    now,
+                    now,
+                ),
             )
             self._append_research_event_locked(
                 job_id, state="queued", stage="queued", message="Research saved and queued.",
@@ -8060,13 +8573,30 @@ class WorkspaceStore:
             self.connection.execute(
                 "UPDATE workbench_matter SET updated_at=? WHERE matter_id=?", (now, matter_id)
             )
+            if conversation_ref is not None:
+                self.connection.execute(
+                    "UPDATE workbench_conversation SET updated_at=? "
+                    "WHERE conversation_id=? AND matter_id=?",
+                    (now, conversation_ref, matter_id),
+                )
             row = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,)
             ).fetchone()
         return self._research_job(row), True
 
-    def research_job(self, matter_id: str, actor_id: str, job_id: str) -> ResearchJobRecord:
-        self.membership(matter_id, actor_id)
+    def research_job(
+        self,
+        matter_id: str,
+        actor_id: str,
+        job_id: str,
+        *,
+        administrator_override: bool = False,
+    ) -> ResearchJobRecord:
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
         if not _RESEARCH_JOB.fullmatch(job_id or ""):
             raise KeyError(job_id)
         with self._lock:
@@ -8078,8 +8608,19 @@ class WorkspaceStore:
             raise KeyError(job_id)
         return self._research_job(row)
 
-    def research_jobs(self, matter_id: str, actor_id: str, *, limit: int = 100) -> tuple[ResearchJobRecord, ...]:
-        self.membership(matter_id, actor_id)
+    def research_jobs(
+        self,
+        matter_id: str,
+        actor_id: str,
+        *,
+        limit: int = 100,
+        administrator_override: bool = False,
+    ) -> tuple[ResearchJobRecord, ...]:
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
         bounded = min(max(int(limit), 1), 500)
         with self._lock:
             rows = self.connection.execute(
@@ -8284,11 +8825,94 @@ class WorkspaceStore:
                 raise WorkspaceProblem("This research run is no longer active.")
             if int(row["cancellation_requested"]):
                 return self.fail_research_job(job_id, "Research cancelled.")
+            authorized = self.connection.execute(
+                "SELECT 1 FROM workbench_matter_membership membership "
+                "JOIN workbench_principal principal "
+                "ON principal.principal_id=membership.principal_id "
+                "JOIN workbench_matter_lifecycle lifecycle "
+                "ON lifecycle.matter_id=membership.matter_id "
+                "WHERE membership.matter_id=? AND membership.principal_id=? "
+                "AND membership.state='active' AND principal.active=1 "
+                "AND lifecycle.state='active'",
+                (row["matter_id"], row["actor_id"]),
+            ).fetchone()
+            if authorized is None:
+                raise WorkspaceProblem(
+                    "Access to this matter was removed before the investigation result could be saved."
+                )
+            result_message_id = row["result_message_id"]
+            conversation_id = row["conversation_id"]
+            if conversation_id is not None and result_message_id is None:
+                conversation = self.connection.execute(
+                    "SELECT 1 FROM workbench_conversation c "
+                    "JOIN workbench_conversation_organization o "
+                    "ON o.conversation_id=c.conversation_id "
+                    "WHERE c.conversation_id=? AND c.matter_id=? AND o.state='active'",
+                    (conversation_id, row["matter_id"]),
+                ).fetchone()
+                if conversation is None:
+                    raise WorkspaceProblem(
+                        "The conversation for this research result is no longer available."
+                    )
+                answer = result.get("answer")
+                payload = dict(answer) if isinstance(answer, Mapping) else {}
+                summary = self._safe_text(
+                    str(result.get("summary") or "Investigation complete."),
+                    label="Research result",
+                    maximum=20_000,
+                    multiline=True,
+                )
+                if payload.get("kind") not in {"generated", "not-supported"}:
+                    payload = {
+                        "kind": "not-supported",
+                        "missing_information": summary,
+                    }
+                payload.update(
+                    {
+                        "workflow": "research",
+                        "research_job_id": job_id,
+                        "research_title": str(row["title"]),
+                        "coverage": dict(result.get("coverage") or {})
+                        if isinstance(result.get("coverage"), Mapping)
+                        else {},
+                    }
+                )
+                payload_json = json.dumps(
+                    payload, ensure_ascii=False, separators=(",", ":")
+                )
+                if len(payload_json) > 100_000:
+                    raise ValueError("research conversation payload is too large")
+                result_message_id = f"message-{uuid.uuid4().hex}"
+                ordinal = int(
+                    self.connection.execute(
+                        "SELECT COALESCE(MAX(ordinal),0)+1 FROM workbench_message "
+                        "WHERE conversation_id=?",
+                        (conversation_id,),
+                    ).fetchone()[0]
+                )
+                self.connection.execute(
+                    "INSERT INTO workbench_message(message_id,conversation_id,ordinal,role,"
+                    "content,payload_json,created_at) VALUES (?,?,?,'assistant',?,?,?)",
+                    (
+                        result_message_id,
+                        conversation_id,
+                        ordinal,
+                        summary,
+                        payload_json,
+                        now,
+                    ),
+                )
+                self.connection.execute(
+                    "UPDATE workbench_conversation SET updated_at=? "
+                    "WHERE conversation_id=? AND matter_id=?",
+                    (now, conversation_id, row["matter_id"]),
+                )
             self.connection.execute(
                 "UPDATE workbench_research_job SET state='succeeded',stage='complete',"
                 "result_json=?,completed_steps=total_steps,message='Research ready.',worker_id=NULL,"
-                "finished_at=?,updated_at=? WHERE job_id=? AND state='running'",
-                (encoded, now, now, job_id),
+                "result_message_id=?,finished_at=?,updated_at=? "
+                "WHERE job_id=? AND state='running'",
+                (encoded, result_message_id, now, now, job_id),
             )
             completed = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,)
@@ -8563,7 +9187,7 @@ class WorkspaceStore:
     ) -> ReviewRunRecord:
         actor = self.membership(matter_id, actor_id).principal_id
         if run_kind not in {"sample", "full"}:
-            raise WorkspaceProblem("Choose a sample or full review run.")
+            raise WorkspaceProblem("Choose a sample or every-source run.")
         version = self.review_criterion_version(matter_id, criterion_version_id)
         scope_id = (source_set_id or "").strip() or None
         if scope_id is not None and not self.source_set_document_ids(matter_id, scope_id):
@@ -8571,6 +9195,7 @@ class WorkspaceStore:
         run_id = f"review-run-{uuid.uuid4().hex}"
         now = self._now()
         with self._lock, self.connection:
+            self.membership(matter_id, actor)
             self.connection.execute(
                 "INSERT INTO workbench_review_run(run_id,matter_id,actor_id,criterion_id,"
                 "criterion_version_id,source_set_id,run_kind,state,stage,message,created_at,updated_at) "
@@ -8589,9 +9214,11 @@ class WorkspaceStore:
             limit_clause = " ORDER BY c.document_id LIMIT 50" if run_kind == "sample" else " ORDER BY c.document_id"
             self.connection.execute(
                 "INSERT INTO workbench_review_decision(run_id,matter_id,ordinal,document_id,"
-                "source_version_id,action_token,source_name,source_kind,validation_sample,created_at,updated_at) "
+                "source_version_id,source_basis_digest,action_token,source_name,source_kind,"
+                "validation_sample,created_at,updated_at) "
                 "SELECT ?,c.matter_id,ROW_NUMBER() OVER (ORDER BY c.document_id),c.document_id,"
-                "c.version_id,c.action_token,c.display_name,c.kind,?, ?, ? FROM workbench_source_catalog c "
+                "c.version_id,c.content_basis_digest,c.action_token,c.display_name,c.kind,?, ?, ? "
+                "FROM workbench_source_catalog c "
                 "WHERE c.matter_id=? AND c.source_state='ready'" + scope_clause + limit_clause,
                 (parameters[0], 1 if run_kind == "sample" else 0, *parameters[1:]),
             )
@@ -8633,8 +9260,19 @@ class WorkspaceStore:
             ).fetchone()
         return self._review_run(row)
 
-    def review_run(self, matter_id: str, actor_id: str, run_id: str) -> ReviewRunRecord:
-        self.membership(matter_id, actor_id)
+    def review_run(
+        self,
+        matter_id: str,
+        actor_id: str,
+        run_id: str,
+        *,
+        administrator_override: bool = False,
+    ) -> ReviewRunRecord:
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
         if not _REVIEW_RUN.fullmatch(run_id or ""):
             raise KeyError(run_id)
         with self._lock:
@@ -8646,8 +9284,19 @@ class WorkspaceStore:
             raise KeyError(run_id)
         return self._review_run(row)
 
-    def review_runs(self, matter_id: str, actor_id: str, *, limit: int = 100) -> tuple[ReviewRunRecord, ...]:
-        self.membership(matter_id, actor_id)
+    def review_runs(
+        self,
+        matter_id: str,
+        actor_id: str,
+        *,
+        limit: int = 100,
+        administrator_override: bool = False,
+    ) -> tuple[ReviewRunRecord, ...]:
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
         bounded = min(max(int(limit), 1), 500)
         with self._lock:
             rows = self.connection.execute(
@@ -8776,11 +9425,69 @@ class WorkspaceStore:
         error = self._safe_text(
             error_message, label="Decision error", maximum=500, required=False, multiline=True
         )
-        encoded = json.dumps([dict(item) for item in citations], ensure_ascii=False, separators=(",", ":"))
-        if len(encoded) > 100_000 or len(citations) > 12:
+        prepared_citations = [dict(item) for item in citations]
+        if len(prepared_citations) > 12:
             raise ValueError("review citations are too large")
         now = self._now()
         with self._lock, self.connection:
+            frozen = self.connection.execute(
+                "SELECT item.matter_id,item.source_version_id,item.source_basis_digest,"
+                "run.actor_id,run.state,catalog.version_id AS current_version,"
+                "catalog.content_basis_digest AS current_basis,catalog.source_state "
+                "FROM workbench_review_decision item "
+                "JOIN workbench_review_run run ON run.run_id=item.run_id "
+                "LEFT JOIN workbench_source_catalog catalog "
+                "ON catalog.matter_id=item.matter_id "
+                "AND catalog.document_id=item.document_id "
+                "WHERE item.run_id=? AND item.document_id=?",
+                (run_id, document_id),
+            ).fetchone()
+            if frozen is None:
+                raise KeyError(document_id)
+            if frozen["state"] == "running":
+                authorized = self.connection.execute(
+                    "SELECT 1 FROM workbench_matter_membership membership "
+                    "JOIN workbench_principal principal "
+                    "ON principal.principal_id=membership.principal_id "
+                    "JOIN workbench_matter_lifecycle lifecycle "
+                    "ON lifecycle.matter_id=membership.matter_id "
+                    "WHERE membership.matter_id=? AND membership.principal_id=? "
+                    "AND membership.state='active' AND principal.active=1 "
+                    "AND lifecycle.state='active'",
+                    (frozen["matter_id"], frozen["actor_id"]),
+                ).fetchone()
+                if authorized is None:
+                    raise WorkspaceProblem(
+                        "Access to this matter was removed during the every-source check."
+                    )
+            invalid_locator = any(
+                citation.get("matter_id") != frozen["matter_id"]
+                or citation.get("document_id") != document_id
+                or citation.get("source_version_id") != frozen["source_version_id"]
+                for citation in prepared_citations
+            )
+            source_changed = (
+                frozen["current_version"] != frozen["source_version_id"]
+                or frozen["source_state"] != "ready"
+                or (
+                    frozen["source_basis_digest"]
+                    and frozen["current_basis"] != frozen["source_basis_digest"]
+                )
+            )
+            if source_changed or invalid_locator:
+                decision = "needs_attention"
+                reason = (
+                    "This source changed after the source list was frozen, so its replacement was not reviewed."
+                )
+                error = "Run a new source check to evaluate the current source version."
+                prepared_citations = []
+            encoded = json.dumps(
+                prepared_citations,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if len(encoded) > 100_000:
+                raise ValueError("review citations are too large")
             changed = self.connection.execute(
                 "UPDATE workbench_review_decision SET machine_decision=?,rationale=?,citations_json=?,"
                 "error_message=?,updated_at=? WHERE run_id=? AND document_id=? "
@@ -8852,8 +9559,23 @@ class WorkspaceStore:
                 raise WorkspaceProblem("The frozen review population is not complete.")
             if int(row["cancellation_requested"]):
                 return self.fail_review_run(run_id, "Review cancelled.")
+            authorized = self.connection.execute(
+                "SELECT 1 FROM workbench_matter_membership membership "
+                "JOIN workbench_principal principal "
+                "ON principal.principal_id=membership.principal_id "
+                "JOIN workbench_matter_lifecycle lifecycle "
+                "ON lifecycle.matter_id=membership.matter_id "
+                "WHERE membership.matter_id=? AND membership.principal_id=? "
+                "AND membership.state='active' AND principal.active=1 "
+                "AND lifecycle.state='active'",
+                (row["matter_id"], row["actor_id"]),
+            ).fetchone()
+            if authorized is None:
+                raise WorkspaceProblem(
+                    "Access to this matter was removed before the every-source check could be completed."
+                )
             message = (
-                f"Review complete: {int(row['included_count']):,} included, "
+                f"Every-source check complete: {int(row['included_count']):,} included, "
                 f"{int(row['excluded_count']):,} excluded, "
                 f"{int(row['attention_count']):,} need attention."
             )
@@ -8874,6 +9596,62 @@ class WorkspaceStore:
                 "UPDATE workbench_matter SET updated_at=? WHERE matter_id=?",
                 (now, updated["matter_id"]),
             )
+        return self._review_run(updated)
+
+    def mark_review_decision_source_changed(
+        self, run_id: str, document_id: str
+    ) -> ReviewRunRecord:
+        """Content-minimize a completed decision whose frozen source changed."""
+
+        now = self._now()
+        with self._lock, self.connection:
+            row = self.connection.execute(
+                "SELECT item.machine_decision,run.state FROM workbench_review_decision item "
+                "JOIN workbench_review_run run ON run.run_id=item.run_id "
+                "WHERE item.run_id=? AND item.document_id=?",
+                (run_id, document_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(document_id)
+            prior = str(row["machine_decision"])
+            if row["state"] != "running" or prior == "pending":
+                raise WorkspaceProblem("This source check is not ready to be finalized.")
+            if prior != "needs_attention":
+                changed = self.connection.execute(
+                    "UPDATE workbench_review_decision SET machine_decision='needs_attention',"
+                    "rationale=?,citations_json='[]',error_message=?,updated_at=? "
+                    "WHERE run_id=? AND document_id=? AND machine_decision=?",
+                    (
+                        "This source changed after the frozen decision was prepared, so its replacement was not reviewed.",
+                        "Run a new source check to evaluate the current source version.",
+                        now,
+                        run_id,
+                        document_id,
+                        prior,
+                    ),
+                ).rowcount
+                if changed != 1:
+                    raise WorkspaceProblem("This source decision changed unexpectedly.")
+                self.connection.execute(
+                    "UPDATE workbench_review_run SET included_count=included_count-?,"
+                    "excluded_count=excluded_count-?,attention_count=attention_count+1,"
+                    "updated_at=? WHERE run_id=? AND state='running'",
+                    (
+                        1 if prior == "included" else 0,
+                        1 if prior == "excluded" else 0,
+                        now,
+                        run_id,
+                    ),
+                )
+            else:
+                self.connection.execute(
+                    "UPDATE workbench_review_decision SET citations_json='[]',updated_at=? "
+                    "WHERE run_id=? AND document_id=?",
+                    (now, run_id, document_id),
+                )
+            updated = self.connection.execute(
+                "SELECT * FROM workbench_review_run WHERE run_id=?", (run_id,)
+            ).fetchone()
         return self._review_run(updated)
 
     def fail_review_run(self, run_id: str, message: str) -> ReviewRunRecord:
@@ -9016,11 +9794,29 @@ class WorkspaceStore:
         return self._review_decision(row)
 
     def review_decisions_for_export(
-        self, matter_id: str, actor_id: str, run_id: str, *, limit: int = 100_000
+        self,
+        matter_id: str,
+        actor_id: str,
+        run_id: str,
+        *,
+        limit: int = 100_000,
+        administrator_override: bool = False,
     ) -> tuple[ReviewDecisionRecord, ...]:
-        self.review_run(matter_id, actor_id, run_id)
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
+        if not _REVIEW_RUN.fullmatch(run_id or ""):
+            raise KeyError(run_id)
         bounded = min(max(int(limit), 1), 100_000)
         with self._lock:
+            run = self.connection.execute(
+                "SELECT 1 FROM workbench_review_run WHERE matter_id=? AND run_id=?",
+                (matter_id, run_id),
+            ).fetchone()
+            if run is None:
+                raise KeyError(run_id)
             rows = self.connection.execute(
                 "SELECT * FROM workbench_review_decision WHERE run_id=? "
                 "ORDER BY ordinal LIMIT ?", (run_id, bounded)
@@ -9054,9 +9850,28 @@ class WorkspaceStore:
             ).fetchone()
         return self._review_decision(row)
 
-    def review_validation_metrics(self, matter_id: str, actor_id: str, run_id: str) -> Mapping[str, object]:
-        self.review_run(matter_id, actor_id, run_id)
+    def review_validation_metrics(
+        self,
+        matter_id: str,
+        actor_id: str,
+        run_id: str,
+        *,
+        administrator_override: bool = False,
+    ) -> Mapping[str, object]:
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
+        if not _REVIEW_RUN.fullmatch(run_id or ""):
+            raise KeyError(run_id)
         with self._lock:
+            run = self.connection.execute(
+                "SELECT 1 FROM workbench_review_run WHERE matter_id=? AND run_id=?",
+                (matter_id, run_id),
+            ).fetchone()
+            if run is None:
+                raise KeyError(run_id)
             rows = self.connection.execute(
                 "SELECT machine_decision,human_decision FROM workbench_review_decision "
                 "WHERE run_id=? AND validation_sample=1 AND human_decision<>''",

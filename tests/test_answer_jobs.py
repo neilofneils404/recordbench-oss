@@ -177,6 +177,122 @@ def test_completion_is_exactly_once_and_events_are_append_only(tmp_path):
     store.close()
 
 
+def test_revoked_member_cannot_publish_a_processed_answer(tmp_path):
+    store = WorkspaceStore(tmp_path / "workspace.sqlite")
+    owner = store.upsert_principal(
+        "test", "answer-owner", "Answer Owner", "answer-owner",
+        preferred_principal_id="answer-principal-owner",
+    )
+    member = store.upsert_principal(
+        "test", "answer-member", "Answer Member", "answer-member",
+        preferred_principal_id="answer-principal-member",
+    )
+    matter = store.create_matter("Generated answer revocation", "Synthetic", owner.principal_id)
+    store.add_member(matter.matter_id, member.principal_id, owner.principal_id)
+    conversation = store.get_conversation(matter.matter_id)
+    queued, _created = store.queue_answer_job(
+        matter.matter_id,
+        conversation.conversation_id,
+        member.principal_id,
+        "What is supported?",
+        "answer-request-" + "7" * 32,
+    )
+    claimed = store.claim_answer_job("generated-revocation-worker")
+    assert claimed is not None and claimed.job_id == queued.job_id
+    store.revoke_member(matter.matter_id, member.principal_id, owner.principal_id)
+
+    with pytest.raises(WorkspaceProblem, match="Access to this matter was removed"):
+        store.finish_answer_job(
+            claimed.job_id,
+            content="This must not be published.",
+            payload={"kind": "generated"},
+        )
+    assert [message.role for message in store.messages(
+        matter.matter_id, conversation.conversation_id
+    )] == ["user"]
+    assert store.fail_answer_job(
+        claimed.job_id, "Access to this matter was removed."
+    ).state == "failed"
+    store.close()
+
+
+def test_answer_revalidates_exact_sources_after_processing_before_save(tmp_path):
+    class EvidenceEchoGenerator:
+        available = True
+
+        def generate(self, **kwargs):
+            evidence = kwargs["evidence"]
+            return {
+                "answerable": bool(evidence),
+                "claims": [
+                    {
+                        "text": evidence[0].excerpt,
+                        "evidence_ids": [evidence[0].evidence_id],
+                    }
+                ] if evidence else [],
+                "limitation": None,
+                "missing_information": "" if evidence else "No support.",
+            }
+
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+    )
+    with TestClient(app) as client:
+        bench = client.app.state.workbench
+        assert bench.answers is not None
+        bench.answers.close()
+        bench.answers = None
+        created = client.post(
+            "/matters",
+            data={"name": "Generated answer boundary", "descriptor": "Synthetic"},
+            follow_redirects=False,
+        )
+        slug = created.headers["location"].split("/")[2]
+        assert client.post(
+            f"/matters/{slug}/uploads",
+            files=[
+                (
+                    "files",
+                    (
+                        "generated-answer-source.txt",
+                        b"Generated device A-27 recorded the event at 06:18.",
+                        "text/plain",
+                    ),
+                )
+            ],
+        ).status_code == 200
+        matter = bench.matter(slug, WEB_ACTOR)
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        queued, _created = bench.workspace.queue_answer_job(
+            matter.matter_id,
+            conversation.conversation_id,
+            matter.owner_id,
+            "When did device A-27 record the event?",
+            "answer-request-" + "8" * 32,
+        )
+        claimed = bench.workspace.claim_answer_job("generated-answer-boundary-worker")
+        assert claimed is not None and claimed.job_id == queued.job_id
+        result = bench._process_answer_job(
+            claimed, lambda _stage, _message: None, lambda: False
+        )
+        assert result.citations
+
+        source_store = bench.source_store(matter)
+        document = next(iter(source_store.documents.values()))
+        bench.remove_document(matter, source_store.action_token(document))
+        with pytest.raises(AnswerJobFailure, match="source changed"):
+            bench._finish_answer_job(claimed, result)
+        assert [message.role for message in bench.workspace.messages(
+            matter.matter_id, conversation.conversation_id
+        )] == ["user"]
+        assert bench.workspace.fail_answer_job(
+            claimed.job_id,
+            "A source changed before this answer could be saved.",
+        ).state == "failed"
+
+
 def test_recovery_cancel_and_retry_reuse_the_saved_question(tmp_path):
     path = tmp_path / "workspace.sqlite"
     store, matter, conversation = _workspace(tmp_path)
@@ -504,8 +620,8 @@ def test_http_acknowledges_immediately_reconnects_cancels_retries_and_deduplicat
             "cited_passage_count": 1,
             "cited_source_count": 1,
             "notice": (
-                "RecordBench searched the index for 1 searchable source, "
-                "reranked the strongest passages, and grounded this answer in "
+                "RecordBench searched 1 searchable source, "
+                "compared the strongest matching passages, and grounded this answer in "
                 "1 cited source."
             ),
         }
@@ -516,7 +632,7 @@ def test_http_acknowledges_immediately_reconnects_cancels_retries_and_deduplicat
         assert assistant.status_code == 200
         assert "Source coverage when created" in assistant.text
         assert "Focused answer" in assistant.text
-        assert "1 cited source · 1 searchable indexed" in assistant.text
+        assert "1 cited source · 1 searchable" in assistant.text
 
         after_completion = client.post(
             f"/matters/{slug}/ask",

@@ -1,0 +1,74 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Manage matters · {{ product_name }}{% endblock %}
+{% block body_class %}manage-matters-page{% endblock %}
+
+{% block content %}
+<main class="manage-matters-main">
+  <header class="manage-matters-heading">
+    <div>
+      <p class="eyebrow">Workspace lifecycle</p>
+      <h1>Manage matters</h1>
+      <p>Open a matter, review its temporary retention period, export work product, or reach its settings.</p>
+    </div>
+    <a class="button button-primary" href="/matters/new">Create matter</a>
+  </header>
+
+  {% if closure_recoveries %}
+  <section class="managed-matter-list" aria-labelledby="closure-recovery-heading">
+    <div class="managed-matter-copy">
+      <p class="eyebrow">Deletion recovery</p>
+      <h2 id="closure-recovery-heading">Deletion needs attention</h2>
+      <p>These matters remain closed to ordinary review. Preserve any remaining work product, then retry permanent deletion.</p>
+    </div>
+    {% for row in closure_recoveries %}
+    <article class="managed-matter-row">
+      <div class="managed-matter-copy">
+        <span class="managed-matter-authority{% if row.administrator_override %} administrator{% endif %}">{{ 'Administrator recovery' if row.administrator_override else 'You own this matter' }}</span>
+        <h3>{{ row.matter.display_name }}</h3>
+        <small>Owner: {{ row.owner_name }}</small>
+      </div>
+      <div class="managed-matter-lifecycle">
+        <strong>Previous deletion did not finish</strong>
+        <span>Ordinary review remains closed.</span>
+      </div>
+      <div class="managed-matter-actions">
+        <a class="button button-secondary" href="/matters/{{ row.matter.slug }}/export" data-download>Download final bundle</a>
+        <a class="managed-close-link" href="/matters/{{ row.matter.slug }}/close">Review and retry deletion</a>
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if managed_matters %}
+  <section class="managed-matter-list" aria-label="Active matters">
+    {% for row in managed_matters %}
+    <article class="managed-matter-row">
+      <div class="managed-matter-copy">
+        <span class="managed-matter-authority{% if row.authority_label == 'Administrator oversight' %} administrator{% endif %}">{{ row.authority_label }}</span>
+        <h2><a href="/matters/{{ row.matter.slug }}/home">{{ row.matter.display_name }}</a></h2>
+        <p>{{ row.matter.descriptor or 'Temporary review workspace' }}</p>
+        <small>Owner: {{ row.owner_name }}</small>
+      </div>
+      <div class="managed-matter-lifecycle">
+        <strong>{{ row.retention.label }}</strong>
+        <span>{{ row.retention.detail }}</span>
+      </div>
+      <div class="managed-matter-actions">
+        <a class="button button-secondary" href="/matters/{{ row.matter.slug }}/home">Open matter</a>
+        <a class="button button-secondary" href="/matters/{{ row.matter.slug }}/settings">Matter settings</a>
+        {% if row.can_close %}<a class="managed-close-link" href="/matters/{{ row.matter.slug }}/close">Close matter</a>{% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+  {% else %}
+  <section class="managed-matter-empty">
+    <h2>No active matters</h2>
+    <p>Create a temporary review workspace when you are ready to add sources.</p>
+    <a class="button button-primary" href="/matters/new">Create your first matter</a>
+  </section>
+  {% endif %}
+</main>
+{% endblock %}

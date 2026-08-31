@@ -12,6 +12,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from contextlib import contextmanager
 from errno import ENOSYS, EOPNOTSUPP, EPERM, EXDEV
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -632,10 +633,11 @@ class PilotStore:
         media_file_limit: int = MAX_MEDIA_FILE_BYTES,
         upload_session_limit: int = MAX_UPLOAD_SESSION_BYTES,
         on_change: Callable[[PilotStoreChange], None] | None = None,
+        mutation_lock: threading.RLock | None = None,
         malware_scanner: MalwareScanner | None = None,
         malware_scan_mode: str = "extended",
     ) -> None:
-        self._lock = threading.RLock()
+        self._lock = mutation_lock or threading.RLock()
         self._retired = False
         self._registry: sqlite3.Connection | None = None
         self.document_file_limit = int(document_file_limit)
@@ -685,6 +687,13 @@ class PilotStore:
         self.registry_path = self.root / "source-registry.sqlite3"
         self.documents: dict[str, PilotDocument] = {}
         self._load()
+
+    @contextmanager
+    def mutation_guard(self):
+        """Share the source mutation boundary with durable result writers."""
+
+        with self._lock:
+            yield
 
     def _ensure_active(self) -> None:
         if self._retired:

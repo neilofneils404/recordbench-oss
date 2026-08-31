@@ -29,28 +29,29 @@ and local AI requests do not need to be sent to a commercial cloud service.
 - Extract existing text and apply OCR to scanned pages and images.
 - Transcribe audio and video, optionally separate speakers, follow the
   transcript during playback, and open cited moments at the relevant time.
-- Ask focused questions and receive answers tied to source passages rather
-  than an unsupported block of generated text.
-- Research a broader issue across a collection or review every source against
-  defined criteria while preserving coverage and human-review status.
+- Review the record in one saved conversation: ask a focused question,
+  investigate more deeply, and refine the cited result without starting over.
+- Check every source against a defined criterion as a specialized task while
+  preserving the frozen population, coverage, and human-review status.
 - Keep conversations, notes, people, places, dates, reports, and other work
   product organized inside the matter.
 - Export answers, conversations, transcripts, summaries, clips, notebooks,
   reports, and complete matter work product.
-- Close and delete a temporary matter when the work is finished.
+- Manage temporary matters from one place. Matter owners and RecordBench
+  administrators can export, then deliberately close and delete a matter when
+  the work is finished.
 
-## Four ways to review
+## Review without choosing a processing mode
 
-| Workflow | Use it when you need to… |
+| Task | Use it when you need to… |
 | --- | --- |
-| **Ask** | Answer a focused question with citations to the strongest matching material. |
-| **Research** | Explore a broader topic through multiple searches while keeping an evidence and coverage record. |
-| **Full Review** | Apply the same review question to every source in a frozen collection and validate the results. |
+| **Review** | Ask a focused question, investigate through several searches, and continue with follow-ups in one cited conversation. The composer explains the time and coverage difference. |
+| **Check every source** | Apply the same criterion to every source in a frozen collection and validate the results. This is a specialized source-screening task, not another chat type. |
 | **Review Sources** | Read extracted documents, inspect processing problems, play media, and work directly with transcripts. |
 
-This separation is deliberate. A quick cited answer, an open-ended research
-task, and a source-by-source review are different jobs and should not be
-presented as the same chat box.
+Focused answers and broader investigations share conversational continuity;
+the processing strategy stays behind task language. Checking every source stays
+separate because it freezes a population and produces one decision per source.
 
 ## How it works
 
@@ -107,7 +108,7 @@ and more simultaneous users need additional storage and capacity.
 | --- | ---: | ---: | --- | ---: |
 | **CPU evaluation** — intake, OCR, word search, source review, and exports | 8 cores | 16 GB | None | 150 GB |
 | **Local document review** — evaluation features plus semantic retrieval, reranking, and local answers | 12 cores | 32 GB | 1 GPU with 16 GB VRAM | 200 GB |
-| **Full review and media** — document review plus transcription and optional diarization | 16 cores | 64 GB | 1 GPU with 24 GB VRAM | 300 GB |
+| **Every-source checks and media** — document review plus transcription and optional diarization | 16 cores | 64 GB | 1 GPU with 24 GB VRAM | 300 GB |
 
 Use a modern x86-64 Linux host with Docker Engine and Docker Compose v2. GPU
 profiles require an NVIDIA card with compute capability 7.5 or newer and the
@@ -169,6 +170,9 @@ isolated restore testing, and versioned updates:
 RecordBench is a temporary review workspace. Matter bytes live under the
 operator-selected managed storage path. Closing a matter can permanently
 remove that workspace, so users should export anything they need to retain.
+Deletion refuses active work, requires the exact matter name plus a permanent
+deletion acknowledgement, preserves originals outside RecordBench, and leaves
+only content-minimized attributed audit and closure records.
 
 No case data, organization secrets, internal accounts, private deployment
 coordinates, certificates, or credentials belong in this repository.

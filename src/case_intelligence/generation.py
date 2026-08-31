@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Protocol, Sequence
 from urllib.parse import urlparse
 
+from .review_quality import answer_advances_objective, classify_question
 from .service_endpoints import validate_service_endpoint
 
 MAX_QUESTION_CHARS = 2_000
@@ -32,6 +33,15 @@ _TRANSCRIPT_ATTRIBUTION = re.compile(
     r"^(?:according to the machine transcript,?\s*|"
     r"the machine transcript appears to (?:say|state|indicate|describe|mention|reflect)"
     r"(?: that)?\s*)",
+    re.IGNORECASE,
+)
+_TRANSCRIPT_ATTRIBUTION_REFERENCE = re.compile(
+    r"(?:according\s+to\s+(?:the\s+)?(?:machine\s+)?transcript,?\s*|"
+    r"(?:(?:the|a)\s+)?(?:(?:machine|audio)[-\s]+)?transcript"
+    r"(?:\s+evidence)?\s+"
+    r"(?:appears\s+to\s+)?(?:say|says|said|state|states|stated|indicate|"
+    r"indicates|indicated|describe|describes|described|mention|mentions|"
+    r"mentioned|reflect|reflects|reflected)(?:\s+that)?\s*)",
     re.IGNORECASE,
 )
 _NEGATION_WORDS = {"cannot", "neither", "never", "no", "none", "nor", "not", "without"}
@@ -258,6 +268,8 @@ def _prompt(
     has_transcript = any(
         item.evidence_kind == TRANSCRIPT_EVIDENCE_KIND for item in evidence
     )
+    intent = classify_question(question)
+    required_evidence_kinds = intent.required_evidence_kinds
     system = (
         "You are the source-bound answer composer inside a criminal-defense evidence review workspace. "
         "Use only the supplied matter evidence. Do not use outside facts, legal authority, or assumptions. "
@@ -285,10 +297,26 @@ def _prompt(
             "passages, but do not convert reported speech into an established event or infer a "
             "speaker's identity, role, or relationship unless the transcript expressly says it."
         )
+    if required_evidence_kinds:
+        system += (
+            " The user expressly requested written and spoken support. When both evidence "
+            "kinds are supplied, address each in a separate source-supported claim and cite "
+            "the corresponding evidence kind. Never describe a document-supported claim as "
+            "something the machine transcript said. If one requested kind has no supplied "
+            "support, answer only the supported part; do not invent a claim that the matter "
+            "contains no such evidence."
+        )
+    if intent.broad_summary:
+        system += (
+            " The user requested a broad orientation. Use distinct substantive "
+            "sources when they are supplied, organize the key supported themes, "
+            "and identify unresolved gaps. Do not present a one-source incidental "
+            "finding or a disclaimer as a matter-wide summary."
+        )
     if grounding_repair:
         system += (
-            " This is a source-close grounding repair pass because an earlier draft could not be "
-            "independently matched to its citations. Answer the question again from the supplied "
+            " This is a source-close grounding repair pass because an earlier draft did not pass "
+            "source, requested-evidence, or objective checks. Answer the question again from the supplied "
             "evidence, but make every factual claim use the same material nouns, verbs, names, "
             "dates, relationships, quantities, and negation as the cited passage. For this pass, make "
             "each claim text a concise sentence closely following one or more cited passages. Never "
@@ -665,12 +693,23 @@ def _verify_text(text: object, evidence_ids: object, evidence: Mapping[str, Evid
             return None
         identifiers.append(identifier)
     cited = tuple(evidence[identifier] for identifier in identifiers)
-    transcript_only = all(
-        item.evidence_kind == TRANSCRIPT_EVIDENCE_KIND for item in cited
-    )
+    cited_kinds = {item.evidence_kind for item in cited}
+    # A single generated sentence cannot safely attribute individual clauses to
+    # different evidence kinds: aggregate token overlap could otherwise let a
+    # document and transcript support each other's swapped attribution.  The
+    # prompt requires one independently supported claim per kind, so fail this
+    # claim closed and allow the ordinary repair pass to split it.
+    if len(cited_kinds) != 1:
+        return None
+    transcript_only = cited_kinds == {TRANSCRIPT_EVIDENCE_KIND}
+    attribution = _TRANSCRIPT_ATTRIBUTION.match(normalized)
+    if (
+        _TRANSCRIPT_ATTRIBUTION_REFERENCE.search(normalized) is not None
+        and not transcript_only
+    ):
+        return None
     coverage_text = normalized
     if transcript_only:
-        attribution = _TRANSCRIPT_ATTRIBUTION.match(normalized)
         if attribution is None:
             return None
         coverage_text = normalized[attribution.end():].lstrip(" ,:;-–—")
@@ -810,13 +849,65 @@ class GroundedGenerationService:
             elapsed_ms = round((time.monotonic() - started) * 1000)
             if stage_callback is not None:
                 stage_callback("verifying")
-            return self._verify(repaired, bounded, elapsed_ms)
-        if (
-            not first.answerable
-            or not first.omitted_claims
-            or not any(
+            repaired_answer = self._verify(repaired, bounded, elapsed_ms)
+            if repaired_answer.answerable and not answer_advances_objective(
+                question, repaired_answer.text
+            ):
+                raise GenerationGroundingRejected(
+                    "The generated answer did not address the question's exact objective."
+                )
+            return repaired_answer
+        intent = classify_question(question)
+        required_kinds = intent.required_evidence_kinds
+        available_kinds = {item.evidence_kind for item in bounded}
+
+        def source_key(item: EvidenceItem) -> str:
+            return item.source_name.casefold()
+
+        def used_required_kinds(answer: VerifiedAnswer) -> set[str]:
+            used_ids = set(answer.used_evidence_ids)
+            return {
+                item.evidence_kind
+                for item in bounded
+                if item.evidence_id in used_ids and item.evidence_kind in required_kinds
+            }
+
+        def used_sources(answer: VerifiedAnswer) -> set[str]:
+            used_ids = set(answer.used_evidence_ids)
+            return {
+                source_key(item)
+                for item in bounded
+                if item.evidence_id in used_ids
+            }
+
+        needs_modality_repair = bool(
+            first.answerable
+            and required_kinds
+            and set(required_kinds).issubset(available_kinds)
+            and not set(required_kinds).issubset(used_required_kinds(first))
+        )
+        needs_grounding_repair = bool(
+            first.answerable
+            and first.omitted_claims
+            and any(
                 item.evidence_kind == TRANSCRIPT_EVIDENCE_KIND for item in bounded
             )
+        )
+        available_sources = {source_key(item) for item in bounded}
+        broad_source_target = min(3, len(available_sources))
+        needs_broad_repair = bool(
+            first.answerable
+            and intent.broad_summary
+            and broad_source_target >= 2
+            and len(used_sources(first)) < broad_source_target
+        )
+        first_advances_objective = answer_advances_objective(question, first.text)
+        needs_objective_repair = first.answerable and not first_advances_objective
+        if not (
+            needs_modality_repair
+            or needs_grounding_repair
+            or needs_broad_repair
+            or needs_objective_repair
         ):
             return first
         if stage_callback is not None:
@@ -833,14 +924,40 @@ class GroundedGenerationService:
             if stage_callback is not None:
                 stage_callback("verifying")
             second = self._verify(repaired, bounded, elapsed_ms)
+        except GenerationGroundingRejected as exc:
+            if needs_objective_repair:
+                raise GenerationGroundingRejected(
+                    "The generated answer did not address the question's exact objective."
+                ) from exc
+            return first
         except (GenerationRejected, GenerationUnavailable):
             return first
         if not second.answerable or not second.claims:
+            if needs_objective_repair:
+                raise GenerationGroundingRejected(
+                    "The generated answer did not address the question's exact objective."
+                )
             return first
+        second_advances_objective = answer_advances_objective(question, second.text)
+        if needs_objective_repair and not second_advances_objective:
+            raise GenerationGroundingRejected(
+                "The generated answer did not address the question's exact objective."
+            )
+        first_required = len(used_required_kinds(first))
+        second_required = len(used_required_kinds(second))
+        first_sources = len(used_sources(first))
+        second_sources = len(used_sources(second))
         if (
-            second.omitted_claims < first.omitted_claims
+            (second_advances_objective and not first_advances_objective)
+            or second_required > first_required
+            or (needs_broad_repair and second_sources > first_sources)
             or (
-                second.omitted_claims == first.omitted_claims
+                second_required == first_required
+                and second.omitted_claims < first.omitted_claims
+            )
+            or (
+                second_required == first_required
+                and second.omitted_claims == first.omitted_claims
                 and len(second.claims) >= len(first.claims)
             )
         ):

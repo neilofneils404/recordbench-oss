@@ -24,7 +24,7 @@ def _matter(client: TestClient) -> tuple[str, str, str]:
     return slug, matter.matter_id, matter.owner_id
 
 
-def test_matter_home_explains_the_four_review_jobs(tmp_path):
+def test_matter_home_explains_review_and_specialized_source_tasks(tmp_path):
     app = create_workbench_app(
         tmp_path / "runtime", generator=UnavailableGenerator(), auth_mode="test"
     )
@@ -37,7 +37,7 @@ def test_matter_home_explains_the_four_review_jobs(tmp_path):
         for label in (
             "Ask a focused question",
             "Investigate a topic",
-            "Screen every source",
+            "Check every source",
             "Review records manually",
         ):
             assert label in page.text
@@ -143,3 +143,40 @@ def test_full_review_setup_uses_plain_language_examples_and_frozen_scope(tmp_pat
             / "src/case_intelligence/templates/workbench_full_review.html"
         ).read_text()
         assert "What these numbers mean" in template
+
+
+def test_media_and_workspace_copy_uses_staff_language():
+    root = Path(__file__).parents[1] / "src/case_intelligence/templates"
+    media = (root / "workbench_media_review.html").read_text()
+    workspace = (root / "workbench_workspace.html").read_text()
+
+    assert "Draft transcript" in media
+    assert "Reviewed transcript" in media
+    assert "immutable machine draft remains in the workbench" in media
+    assert "not included in exported files" in media
+    assert "Machine text remains available in CSV and JSON" not in media
+    assert "saved preparation stages" in workspace
+    assert "saved processor stages" not in workspace
+
+    public_copy = "\n".join(
+        path.read_text()
+        for path in (
+            root / "workbench_matter_home.html",
+            root / "workbench_close_matter.html",
+            root / "workbench_admin.html",
+            root / "workbench_delete_conversation.html",
+            root / "workbench_media_review.html",
+            root.parent / "static/case-intelligence.js",
+        )
+    )
+    for implementation_phrase in (
+        "review job",
+        "document jobs",
+        "media jobs",
+        "answer-job",
+        "processing jobs",
+        "saved job",
+        "media job will continue",
+        "durable job",
+    ):
+        assert implementation_phrase not in public_copy.casefold()

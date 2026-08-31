@@ -25,6 +25,9 @@ class _WorkflowCancelled(RuntimeError):
 ResearchProcessor = Callable[
     [ResearchJobRecord, Callable[[], bool]], Mapping[str, object]
 ]
+ResearchFinisher = Callable[
+    [ResearchJobRecord, Mapping[str, object]], ResearchJobRecord
+]
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,10 @@ class ReviewDecisionResult:
 ReviewProcessor = Callable[
     [ReviewRunRecord, ReviewDecisionRecord, Callable[[], bool]], ReviewDecisionResult
 ]
+ReviewRecorder = Callable[
+    [ReviewRunRecord, ReviewDecisionRecord, ReviewDecisionResult], ReviewRunRecord
+]
+ReviewFinisher = Callable[[ReviewRunRecord], ReviewRunRecord]
 
 
 class ResearchCoordinator:
@@ -48,10 +55,14 @@ class ResearchCoordinator:
         workspace: WorkspaceStore,
         *,
         process: ResearchProcessor,
+        finish: ResearchFinisher | None = None,
         workers: int = 1,
     ) -> None:
         self.workspace = workspace
         self.process = process
+        self.finish = finish or (
+            lambda job, result: self.workspace.finish_research_job(job.job_id, result)
+        )
         self.worker_count = min(max(int(workers), 1), 2)
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -90,7 +101,7 @@ class ResearchCoordinator:
                 result = self.process(job, cancelled)
                 if cancelled():
                     raise _WorkflowCancelled()
-                self.workspace.finish_research_job(job.job_id, result)
+                self.finish(job, result)
             except _WorkflowCancelled:
                 self._fail(job.job_id, "Research cancelled.")
             except WorkflowFailure as exc:
@@ -116,11 +127,26 @@ class ReviewCoordinator:
         workspace: WorkspaceStore,
         *,
         process: ReviewProcessor,
+        record: ReviewRecorder | None = None,
+        finish: ReviewFinisher | None = None,
         workers: int = 1,
         source_concurrency: int = 2,
     ) -> None:
         self.workspace = workspace
         self.process = process
+        self.record = record or (
+            lambda run, item, result: self.workspace.record_review_decision(
+                run.run_id,
+                item.document_id,
+                decision=result.decision,
+                rationale=result.rationale,
+                citations=result.citations,
+                error_message=result.error_message,
+            )
+        )
+        self.finish = finish or (
+            lambda run: self.workspace.finish_review_run(run.run_id)
+        )
         # Full review is intentionally conservative on a shared single host.
         self.worker_count = min(max(int(workers), 1), 2)
         self.source_concurrency = min(max(int(source_concurrency), 1), 2)
@@ -195,17 +221,10 @@ class ReviewCoordinator:
                                 (),
                                 "Source-level review failed; other sources continued.",
                             )
-                        self.workspace.record_review_decision(
-                            run.run_id,
-                            decision.document_id,
-                            decision=result.decision,
-                            rationale=result.rationale,
-                            citations=result.citations,
-                            error_message=result.error_message,
-                        )
+                        self.record(run, decision, result)
             if self._stop.is_set() or cancelled():
                 raise _WorkflowCancelled()
-            self.workspace.finish_review_run(run.run_id)
+            self.finish(run)
         except _WorkflowCancelled:
             self._fail(run.run_id, "Review cancelled.")
         except WorkflowFailure as exc:
@@ -213,7 +232,7 @@ class ReviewCoordinator:
         except Exception:
             self._fail(
                 run.run_id,
-                "Full review could not continue. Saved source decisions are preserved and the run can be resumed.",
+                "The every-source check could not continue. Saved source decisions are preserved and the run can be resumed.",
             )
 
     def _fail(self, run_id: str, message: str) -> None:

@@ -69,6 +69,7 @@
               <option value="dusk" {% if theme == 'dusk' %}selected{% endif %}>Dusk</option>
             </select>
           </form>
+          <a href="/matters/manage">Manage matters</a>
           {% if is_administrator %}<a href="/admin">Administrator</a>{% endif %}
           <form class="logout-form" method="post" action="/auth/logout">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -86,6 +87,10 @@
         <a class="new-matter-button" href="/matters/new">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
           <span>New matter</span>
+        </a>
+        <a class="rail-manage-link" href="/matters/manage">
+          <span aria-hidden="true">⚙</span>
+          <span>Manage matters</span>
         </a>
         {% if is_administrator %}
         <a class="rail-administrator-link" href="/admin">

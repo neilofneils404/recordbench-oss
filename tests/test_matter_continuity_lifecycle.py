@@ -326,3 +326,79 @@ def test_failed_storage_purge_is_hidden_from_review_and_owner_can_retry(tmp_path
             matter.matter_id
         ).state == "deleted"
         assert not any((runtime / ".matter-purging").iterdir())
+
+
+def test_clip_export_lease_blocks_purge_and_strict_cleanup_failure_is_retryable(
+    tmp_path, monkeypatch
+):
+    import case_intelligence.workbench as workbench_module
+
+    runtime = tmp_path / "runtime"
+    with TestClient(
+        create_workbench_app(
+            runtime,
+            generator=UnavailableGenerator(),
+            auth_mode="test",
+            answer_workers=1,
+        )
+    ) as client:
+        slug = _create_matter(client, "Synthetic clip export purge boundary")
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, WEB_ACTOR)
+        lease = bench.begin_media_clip_export(matter)
+        rendered = lease / "generated-clip.wav"
+        rendered.write_bytes(b"RIFF generated clip work product")
+        assert bench.matter_active_work_counts(matter.matter_id)["exports"] == 1
+
+        close_page = client.get(f"/matters/{slug}/close")
+        assert close_page.status_code == 200
+        assert "1 work-product download" in close_page.text
+        refused = client.post(
+            f"/matters/{slug}/close",
+            data={"confirmed_name": matter.display_name, "acknowledge": "yes"},
+            follow_redirects=False,
+        )
+        assert refused.status_code == 303
+        assert bench.workspace.matter_lifecycle(matter.matter_id).state == "active"
+        assert rendered.is_file()
+
+        clip_root = runtime / "matters" / matter.matter_id / "clip-exports"
+        original_delete = workbench_module.securely_delete_owned_tree
+        failed_targets = set()
+
+        def fail_each_clip_cleanup_once(path, *, allowed_parent):
+            if path in {lease, clip_root} and path not in failed_targets:
+                failed_targets.add(path)
+                raise RuntimeError("synthetic strict clip cleanup failure")
+            return original_delete(path, allowed_parent=allowed_parent)
+
+        monkeypatch.setattr(
+            workbench_module,
+            "securely_delete_owned_tree",
+            fail_each_clip_cleanup_once,
+        )
+        assert bench.finish_media_clip_export(matter.matter_id, lease) is False
+        assert bench.matter_active_work_counts(matter.matter_id)["exports"] == 0
+        assert lease.is_dir()
+        failed = client.post(
+            f"/matters/{slug}/close",
+            data={"confirmed_name": matter.display_name, "acknowledge": "yes"},
+            follow_redirects=False,
+        )
+        assert failed.status_code == 303
+        lifecycle = bench.workspace.matter_lifecycle(matter.matter_id)
+        assert lifecycle.state == "purge_failed"
+        assert lifecycle.error_code == "clip_exports"
+        assert lease.is_dir()
+
+        recovery = client.get(f"/matters/{slug}/close")
+        assert recovery.status_code == 200
+        assert "previous deletion did not finish" in recovery.text
+        retried = client.post(
+            f"/matters/{slug}/close",
+            data={"confirmed_name": matter.display_name, "acknowledge": "yes"},
+            follow_redirects=False,
+        )
+        assert retried.status_code == 303
+        assert bench.workspace.matter_lifecycle(matter.matter_id).state == "deleted"
+        assert not (runtime / "matters" / matter.matter_id).exists()

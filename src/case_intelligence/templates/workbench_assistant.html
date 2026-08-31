@@ -7,7 +7,7 @@
     <header class="assistant-header">
       <div><span>Ask RecordBench</span><strong>{{ assistant.display_label }}</strong></div>
       <div>
-        <a href="{{ assistant.open_url }}" aria-label="Open full Review and manage chats">Full conversation</a>
+        <a href="{{ assistant.open_url }}" aria-label="Open Review and manage conversations">Full conversation</a>
         <button type="button" data-assistant-collapse aria-label="Collapse Ask RecordBench">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 6-6 6 6 6"/></svg>
         </button>
@@ -20,7 +20,7 @@
         {% for item in assistant.conversation_choices %}
         <option value="{{ item.conversation_id }}" {% if item.conversation_id == assistant.conversation.conversation_id %}selected{% endif %}>{{ 'Pinned · ' if item.is_pinned else '' }}{{ item.title }} · {{ item.message_count }} {{ 'message' if item.message_count == 1 else 'messages' }}</option>
         {% endfor %}
-        {% if assistant.conversation_total > assistant.conversation_choices|length %}<option value="" disabled>More chats are available in full Review</option>{% endif %}
+        {% if assistant.conversation_total > assistant.conversation_choices|length %}<option value="" disabled>More conversations are available in Review</option>{% endif %}
       </select>
       <button type="button" data-assistant-new-chat aria-label="Start a new chat">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -49,12 +49,13 @@
           <small class="assistant-answer-coverage">Source coverage when created · {{ message.payload.source_coverage.notice }}</small>
           {% endif %}
           {% if message.payload.review_scope %}
-          <small class="assistant-answer-basis{% if message.payload.review_scope.collection_wide_request %} collection-wide{% endif %}" title="{{ message.payload.review_scope.notice }}">
-            <strong>{{ 'Completeness caution' if message.payload.review_scope.collection_wide_request else 'Focused answer' }}</strong>
-            <span>{{ message.payload.review_scope.cited_source_count }} cited source{% if message.payload.review_scope.cited_source_count != 1 %}s{% endif %} · {{ message.payload.review_scope.searchable_source_count }} searchable indexed</span>
-            {% if message.payload.review_scope.collection_wide_request %}<span>{{ message.payload.review_scope.notice }}</span>{% endif %}
+          <small class="assistant-answer-basis{% if message.payload.review_scope.collection_wide_request or message.payload.review_scope.broad_summary_request %} collection-wide{% endif %}" title="{{ message.payload.review_scope.notice }}">
+            <strong>{{ 'Completeness caution' if message.payload.review_scope.collection_wide_request else (('Broader orientation' if message.payload.review_scope.mode == 'broader_orientation' else 'Focused result') if message.payload.review_scope.broad_summary_request else 'Focused answer') }}</strong>
+            <span>{{ message.payload.review_scope.cited_source_count }} cited source{% if message.payload.review_scope.cited_source_count != 1 %}s{% endif %} · {{ message.payload.review_scope.searchable_source_count }} searchable</span>
+            {% if message.payload.review_scope.collection_wide_request or message.payload.review_scope.broad_summary_request %}<span>{{ message.payload.review_scope.notice }}</span>{% endif %}
           </small>
           {% endif %}
+          {% if message.payload.modality_coverage %}<small class="assistant-answer-coverage">Written and spoken evidence · {{ message.payload.modality_coverage.notice }}</small>{% endif %}
           {% if message.payload.kind == 'generated' %}
             <p>{{ message.payload.introduction }}</p>
             {% if message.payload.evidence_notice %}<small class="assistant-evidence-note">Machine transcript · verify wording and speaker identity against the recording.</small>{% endif %}

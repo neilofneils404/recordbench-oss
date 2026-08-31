@@ -16,6 +16,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Protocol, Sequence
 
+from .review_quality import rank_exact_record_candidates
+
 DEFAULT_EMBEDDING_MODEL = "ibm-granite/granite-embedding-english-r2"
 DEFAULT_RERANKER_MODEL = "Alibaba-NLP/gte-reranker-modernbert-base"
 _TOKEN = re.compile(r"[a-z0-9]+")
@@ -53,6 +55,7 @@ class Candidate:
     line_end: int | None = None
     source_version_id: str = "synthetic-v1"
     excerpt_digest: str = ""
+    evidence_kind: str = "document"
 
     @property
     def citation(self) -> str:
@@ -538,6 +541,11 @@ class HybridRetriever:
                     and item.score >= minimum_rerank_score
                 )
             )
+        reranked = rank_exact_record_candidates(
+            query,
+            reranked,
+            matter_id=matter_id,
+        )
         return tuple(reranked[: min(max(limit, 1), 20)])
 
 

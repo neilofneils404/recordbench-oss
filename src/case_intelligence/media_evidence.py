@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .branding import PRODUCT_NAME
+from .generation import GenerationRejected, GenerationUnavailable
 from .pilot_uploads import PilotDocument, PilotStore, PilotUnit, UploadProblem
 from .service_endpoints import validate_service_endpoint
 from .workspace_store import (
@@ -40,6 +41,10 @@ from .work_product_exports import (
 
 class MediaProcessorError(RuntimeError):
     """Staff-safe failure at the transient processor boundary."""
+
+
+class MediaProcessorNotFound(MediaProcessorError):
+    """The processor verified that an ephemeral job is already absent."""
 
 
 MAX_SUMMARY_WINDOWS = 12
@@ -261,7 +266,9 @@ class TranscriptionV2Client:
                 except (ValueError, json.JSONDecodeError):
                     pass
                 if response.status_code == 404:
-                    raise MediaProcessorError("The temporary transcription job expired.")
+                    raise MediaProcessorNotFound(
+                        "The temporary transcription job expired."
+                    )
                 if response.status_code in {429, 507}:
                     raise MediaProcessorError(
                         "The local transcription service is at capacity. Try again later."
@@ -460,8 +467,26 @@ def transcript_units(
     segments: Sequence[TranscriptSegmentRecord],
 ) -> tuple[PilotUnit, ...]:
     units: list[PilotUnit] = []
+    anonymous_labels = {
+        cluster: f"Speaker {ordinal}"
+        for ordinal, cluster in enumerate(
+            sorted(
+                {
+                    segment.speaker_cluster
+                    for segment in segments
+                    if segment.speaker_identity_state != "confirmed"
+                }
+            ),
+            1,
+        )
+    }
     for ordinal, segment in enumerate(segments, 1):
-        text = f"{segment.speaker_display_name}: {segment.current_text}"
+        speaker = (
+            segment.speaker_display_name
+            if segment.speaker_identity_state == "confirmed"
+            else anonymous_labels[segment.speaker_cluster]
+        )
+        text = f"{speaker}: {segment.current_text}"
         units.append(
             PilotUnit(
                 ordinal,
@@ -604,16 +629,18 @@ class MediaCoordinator:
     def _project_existing(
         self, job: MediaJobRecord, matter: MatterRecord, document: PilotDocument
     ) -> bool:
-        transcript = self.workspace.media_transcript(
-            job.matter_id, job.document_id, job.source_version_id
-        )
-        if transcript is None:
-            return False
-        segments = self.workspace.transcript_segments(
-            job.matter_id, job.document_id, job.source_version_id
-        )
-        self.project_transcript(matter, document, segments, bool(job.degraded))
-        return True
+        store = self.resolve_store(matter)
+        with store.mutation_guard():
+            transcript = self.workspace.media_transcript(
+                job.matter_id, job.document_id, job.source_version_id
+            )
+            if transcript is None:
+                return False
+            segments = self.workspace.transcript_segments(
+                job.matter_id, job.document_id, job.source_version_id
+            )
+            self.project_transcript(matter, document, segments, bool(job.degraded))
+            return True
 
     def _process_summary(self, summary: MediaSummaryRecord) -> None:
         if self._matter_cancelled(summary.matter_id):
@@ -663,28 +690,55 @@ class MediaCoordinator:
                 )
             except Exception:
                 pass
+        except GenerationUnavailable:
+            self._fail_summary(
+                summary,
+                "Local answering is unavailable for this optional overview.",
+            )
+        except GenerationRejected:
+            self._fail_summary(
+                summary,
+                "The overview did not have enough cited transcript support.",
+            )
+        except MediaProcessorError as exc:
+            message = str(exc)
+            if "version changed" in message.casefold():
+                message = "The transcript changed before the overview finished."
+            elif "does not contain passages" in message.casefold():
+                message = "The transcript has no passages available for an overview."
+            else:
+                message = "The current transcript could not be prepared for an overview."
+            self._fail_summary(summary, message)
         except Exception:
-            try:
-                failed = self.workspace.fail_media_summary(
-                    summary.transcript_id,
-                    "The transcript is ready, but its overview could not be created. Try again.",
-                )
-                try:
-                    self.workspace.append_audit_event(
-                        actor_principal_id=None,
-                        session_id=None,
-                        matter_id=failed.matter_id,
-                        request_id=f"media-summary-{failed.transcript_id[-32:]}",
-                        action="transcript.summary_automatic",
-                        outcome="failure",
-                        object_type="transcript_summary",
-                        object_id=failed.transcript_id,
-                        details={"state": failed.state},
-                    )
-                except Exception:
-                    pass
-            except KeyError:
-                pass
+            self._fail_summary(
+                summary,
+                "The optional overview encountered an unexpected local error.",
+            )
+
+    def _fail_summary(
+        self, summary: MediaSummaryRecord, message: str
+    ) -> MediaSummaryRecord | None:
+        """Persist a content-free, staff-readable optional-overview failure."""
+
+        try:
+            failed = self.workspace.fail_media_summary(summary.transcript_id, message)
+        except KeyError:
+            return None
+        try:
+            self.workspace.append_audit_event(
+                actor_principal_id=None,
+                session_id=None,
+                matter_id=failed.matter_id,
+                request_id=f"media-summary-{failed.transcript_id[-32:]}",
+                action="transcript.summary_automatic",
+                outcome="failure",
+                object_type="transcript_summary",
+                object_id=failed.transcript_id,
+                details={"state": failed.state},
+            )
+        except Exception:
+            pass
+        return failed
 
     def _process(self, claimed: MediaJobRecord) -> None:
         job = claimed
@@ -813,29 +867,30 @@ class MediaCoordinator:
                     self.workspace.update_media_job(
                         job.media_job_id, stage="Importing transcript", progress=0.98
                     )
-                    transcript = self.workspace.import_media_transcript(
-                        job.media_job_id,
-                        segments=normalized,
-                        warnings=(
-                            payload.get("warnings")
-                            if isinstance(payload.get("warnings"), list)
-                            else []
-                        ),
-                        quality=(
-                            payload.get("quality")
-                            if isinstance(payload.get("quality"), dict)
-                            else {}
-                        ),
-                        provenance=(
-                            payload.get("provenance")
-                            if isinstance(payload.get("provenance"), dict)
-                            else {}
-                        ),
-                    )
-                    segments = self.workspace.transcript_segments(
-                        job.matter_id, job.document_id, job.source_version_id
-                    )
-                    self.project_transcript(matter, document, segments, degraded)
+                    with store.mutation_guard():
+                        transcript = self.workspace.import_media_transcript(
+                            job.media_job_id,
+                            segments=normalized,
+                            warnings=(
+                                payload.get("warnings")
+                                if isinstance(payload.get("warnings"), list)
+                                else []
+                            ),
+                            quality=(
+                                payload.get("quality")
+                                if isinstance(payload.get("quality"), dict)
+                                else {}
+                            ),
+                            provenance=(
+                                payload.get("provenance")
+                                if isinstance(payload.get("provenance"), dict)
+                                else {}
+                            ),
+                        )
+                        segments = self.workspace.transcript_segments(
+                            job.matter_id, job.document_id, job.source_version_id
+                        )
+                        self.project_transcript(matter, document, segments, degraded)
                     cleanup_message = ""
                     try:
                         self.processor.delete(owner, external_id)
@@ -874,23 +929,37 @@ class MediaCoordinator:
             except MediaProcessorError:
                 pass
 
-    def cancel_external(self, media_job: MediaJobRecord) -> None:
-        if self.processor is None or not media_job.external_job_id:
-            return
+    def cancel_external(self, media_job: MediaJobRecord) -> bool:
+        """Strictly remove processor-owned bytes for a matter purge."""
+
+        if not media_job.external_job_id:
+            return True
+        if self.processor is None:
+            return False
         owner = processor_owner(media_job.media_job_id)
         try:
             self.processor.cancel(owner, media_job.external_job_id)
-            self.processor.delete(owner, media_job.external_job_id)
         except MediaProcessorError:
+            # A completed processor job may no longer accept cancellation; an
+            # independently successful delete is still sufficient.
             pass
+        try:
+            self.processor.delete(owner, media_job.external_job_id)
+        except MediaProcessorNotFound:
+            return True
+        except MediaProcessorError:
+            return False
+        return True
 
     def cancel_matter(self, matter_id: str, *, timeout: float = 5.0) -> bool:
         """Stop transient work before owned source bytes can be quarantined."""
 
         with self._state_condition:
             self._cancelled_matters.add(matter_id)
+        external_cleanup_complete = True
         for media_job in self.workspace.media_jobs_for_matter(matter_id):
-            self.cancel_external(media_job)
+            if not self.cancel_external(media_job):
+                external_cleanup_complete = False
         self._wake.set()
         self._summary_wake.set()
         deadline = time.monotonic() + max(float(timeout), 0)
@@ -906,7 +975,7 @@ class MediaCoordinator:
                 if remaining <= 0:
                     return False
                 self._state_condition.wait(timeout=remaining)
-        return True
+        return external_cleanup_complete
 
 
 def format_timestamp(milliseconds: int, *, include_millis: bool = False) -> str:
@@ -928,13 +997,105 @@ class MediaExport:
     suffix: str
 
 
+@dataclass(frozen=True)
+class _PortableTranscriptSegment:
+    ordinal: int
+    start_ms: int
+    end_ms: int
+    speaker: str
+    speaker_status: str
+    text: str
+
+    @property
+    def start(self) -> str:
+        return format_timestamp(self.start_ms, include_millis=True).replace(",", ".")
+
+    @property
+    def end(self) -> str:
+        return format_timestamp(self.end_ms, include_millis=True).replace(",", ".")
+
+
+_RAW_PROCESSOR_SPEAKER = re.compile(
+    r"(?:(?:speaker|spk)(?:[_-][a-z0-9]+|\s+\d+)|"
+    r"unknown(?:[_-][a-z0-9]+)?)",
+    re.IGNORECASE,
+)
+
+
+def _portable_transcript_segments(
+    segments: Sequence[TranscriptSegmentRecord],
+) -> tuple[_PortableTranscriptSegment, ...]:
+    """Present speakers and transcript text without processor metadata."""
+
+    first = segments[0]
+    if any(
+        item.matter_id != first.matter_id or item.transcript_id != first.transcript_id
+        for item in segments
+    ):
+        raise ValueError("transcript contains mixed sources")
+    anonymous_labels: dict[str, str] = {}
+    result: list[_PortableTranscriptSegment] = []
+    for item in segments:
+        display_name = " ".join(item.speaker_display_name.split()).strip()
+        # A staff-confirmed label is authoritative even when its wording happens
+        # to resemble a processor cluster. Only unconfirmed machine labels are
+        # anonymized for portable exports.
+        confirmed_name = item.speaker_identity_state == "confirmed" and bool(
+            display_name
+        )
+        if confirmed_name:
+            speaker = display_name
+            speaker_status = "Confirmed"
+        else:
+            anonymous_key = item.speaker_cluster or f"segment-{item.ordinal}"
+            if anonymous_key not in anonymous_labels:
+                anonymous_labels[anonymous_key] = (
+                    f"Speaker {len(anonymous_labels) + 1}"
+                )
+            speaker = anonymous_labels[anonymous_key]
+            speaker_status = "Unconfirmed"
+        result.append(
+            _PortableTranscriptSegment(
+                ordinal=item.ordinal,
+                start_ms=item.start_ms,
+                end_ms=item.end_ms,
+                speaker=speaker,
+                speaker_status=speaker_status,
+                text=item.current_text,
+            )
+        )
+    return tuple(result)
+
+
+def _portable_csv_value(value: object) -> str:
+    text = str(value)
+    if text.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + text
+    return text
+
+
 def export_media_summary(
     source_name: str,
     summary: MediaSummaryRecord,
+    segments: Sequence[TranscriptSegmentRecord],
     format_name: str,
 ) -> MediaExport:
     if summary.state != "ready":
         raise ValueError("transcript overview is not ready")
+    if (
+        not segments
+        or any(
+            segment.matter_id != summary.matter_id
+            or segment.transcript_id != summary.transcript_id
+            for segment in segments
+        )
+        or summary.basis_digest != transcript_summary_basis(segments)
+    ):
+        raise ValueError("transcript overview no longer matches this transcript")
+    exact_locations = {
+        (window.location, window.start_ms, window.end_ms, window.first_ordinal)
+        for window in transcript_summary_windows(segments)
+    }
     claims = summary.payload.get("claims")
     if not isinstance(claims, list) or not claims:
         raise ValueError("transcript overview is empty")
@@ -964,20 +1125,37 @@ def export_media_summary(
         )
     for index, claim in enumerate(claims, 1):
         if not isinstance(claim, Mapping):
-            continue
+            raise ValueError("transcript overview contains an invalid point")
         text = claim.get("text")
         if not isinstance(text, str) or not text.strip():
-            continue
+            raise ValueError("transcript overview contains an invalid point")
+        citations = claim.get("citations")
+        if not isinstance(citations, list) or not citations:
+            raise ValueError("transcript overview point has no exact timestamp")
+        prepared_locations: list[str] = []
+        for citation in citations:
+            if not isinstance(citation, Mapping):
+                raise ValueError("transcript overview citation is invalid")
+            location = citation.get("location")
+            start_ms = citation.get("start_ms")
+            end_ms = citation.get("end_ms")
+            ordinal = citation.get("ordinal")
+            if (
+                not isinstance(location, str)
+                or isinstance(start_ms, bool)
+                or not isinstance(start_ms, int)
+                or isinstance(end_ms, bool)
+                or not isinstance(end_ms, int)
+                or isinstance(ordinal, bool)
+                or not isinstance(ordinal, int)
+                or (location, start_ms, end_ms, ordinal) not in exact_locations
+            ):
+                raise ValueError("transcript overview citation is invalid")
+            prepared_locations.append(location)
         blocks.append(ExportBlock(f"{index}. Overview point", "heading1"))
         blocks.append(ExportBlock(text.strip()))
-        citations = claim.get("citations")
-        if isinstance(citations, list):
-            for citation in citations:
-                if not isinstance(citation, Mapping):
-                    continue
-                location = citation.get("location")
-                if isinstance(location, str) and location:
-                    blocks.append(ExportBlock(f"Transcript: {location}", "citation"))
+        for location in prepared_locations:
+            blocks.append(ExportBlock(f"Transcript: {location}", "citation"))
     blocks.append(
         ExportBlock(
             "This overview is orientation from a machine-generated transcript. Review the recording and cited timestamps before relying on it.",
@@ -1009,23 +1187,23 @@ def export_transcript(
 ) -> MediaExport:
     if not segments:
         raise ValueError("transcript is empty")
+    portable_segments = _portable_transcript_segments(segments)
     kind = format_name.strip().casefold()
     if kind == "txt":
         lines = [
-            f"[{format_timestamp(item.start_ms)}–{format_timestamp(item.end_ms)}] "
-            f"{item.speaker_display_name}: {item.current_text}"
-            for item in segments
+            f"[{item.start}–{item.end}] {item.speaker}: {item.text}"
+            for item in portable_segments
         ]
         return MediaExport(("\n".join(lines) + "\n").encode("utf-8"), "text/plain; charset=utf-8", ".txt")
     if kind == "markdown":
         lines = [f"# Transcript — {source_name}", ""]
-        for item in segments:
+        for item in portable_segments:
             lines.extend(
                 [
-                    f"**{format_timestamp(item.start_ms)}–{format_timestamp(item.end_ms)} · "
-                    f"{item.speaker_display_name}**",
+                    f"**{item.start}–{item.end} · {item.speaker} "
+                    f"({item.speaker_status})**",
                     "",
-                    item.current_text,
+                    item.text,
                     "",
                 ]
             )
@@ -1038,15 +1216,15 @@ def export_transcript(
                 f"Exported from {PRODUCT_NAME} at {created}.", "metadata"
             ),
         ]
-        for item in segments:
+        for item in portable_segments:
             blocks.extend(
                 (
                     ExportBlock(
-                        f"{format_timestamp(item.start_ms)}–{format_timestamp(item.end_ms)} · "
-                        f"{item.speaker_display_name}",
+                        f"{item.start}–{item.end} · {item.speaker} "
+                        f"({item.speaker_status})",
                         "heading1",
                     ),
-                    ExportBlock(item.current_text),
+                    ExportBlock(item.text),
                 )
             )
         blocks.append(
@@ -1062,15 +1240,15 @@ def export_transcript(
         )
     if kind in {"srt", "vtt"}:
         blocks: list[str] = []
-        for index, item in enumerate(segments, 1):
+        for index, item in enumerate(portable_segments, 1):
             start = format_timestamp(item.start_ms, include_millis=True)
             end = format_timestamp(item.end_ms, include_millis=True)
             if kind == "vtt":
                 start = start.replace(",", ".")
                 end = end.replace(",", ".")
-                blocks.append(f"{start} --> {end}\n{item.speaker_display_name}: {item.current_text}")
+                blocks.append(f"{start} --> {end}\n{item.speaker}: {item.text}")
             else:
-                blocks.append(f"{index}\n{start} --> {end}\n{item.speaker_display_name}: {item.current_text}")
+                blocks.append(f"{index}\n{start} --> {end}\n{item.speaker}: {item.text}")
         prefix = "WEBVTT\n\n" if kind == "vtt" else ""
         return MediaExport(
             (prefix + "\n\n".join(blocks) + "\n").encode("utf-8"),
@@ -1082,59 +1260,49 @@ def export_transcript(
         writer = csv.writer(output)
         writer.writerow(
             [
-                "ordinal",
-                "start",
-                "end",
-                "speaker",
-                "speaker_state",
-                "text",
-                "machine_text",
-                "text_revision",
-                "confidence",
-                "low_confidence",
-                "overlap",
+                "Source",
+                "Type",
+                "Ordinal",
+                "Start",
+                "End",
+                "Speaker",
+                "Speaker status",
+                "Text",
             ]
         )
-        for item in segments:
+        for item in portable_segments:
             writer.writerow(
                 [
+                    _portable_csv_value(source_name),
+                    "Transcript",
                     item.ordinal,
-                    format_timestamp(item.start_ms),
-                    format_timestamp(item.end_ms),
-                    item.speaker_display_name,
-                    item.speaker_identity_state,
-                    item.current_text,
-                    item.model_text,
-                    item.current_revision,
-                    "" if item.confidence is None else f"{item.confidence:.4f}",
-                    item.low_confidence,
-                    item.overlap,
+                    item.start,
+                    item.end,
+                    _portable_csv_value(item.speaker),
+                    item.speaker_status,
+                    _portable_csv_value(item.text),
                 ]
             )
         return MediaExport(output.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8", ".csv")
     if kind == "json":
         payload = {
             "source_name": source_name,
-            "review_state": (
-                "human_reviewed"
+            "source_kind": "Transcript",
+            "review_status": (
+                "Staff edits saved"
                 if any(item.current_revision or item.speaker_identity_state == "confirmed" for item in segments)
-                else "machine_draft"
+                else "Unconfirmed"
             ),
             "segments": [
                 {
                     "ordinal": item.ordinal,
-                    "start_ms": item.start_ms,
-                    "end_ms": item.end_ms,
-                    "speaker": item.speaker_display_name,
-                    "speaker_state": item.speaker_identity_state,
-                    "text": item.current_text,
-                    "machine_text": item.model_text,
-                    "text_revision": item.current_revision,
-                    "confidence": item.confidence,
-                    "low_confidence": bool(item.low_confidence),
-                    "overlap": bool(item.overlap),
+                    "start": item.start,
+                    "end": item.end,
+                    "speaker": item.speaker,
+                    "speaker_status": item.speaker_status,
+                    "text": item.text,
                 }
-                for item in segments
+                for item in portable_segments
             ],
         }
         return MediaExport(

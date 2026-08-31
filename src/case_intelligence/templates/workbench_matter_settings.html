@@ -1,0 +1,80 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}{{ matter.display_name }} · Settings · {{ product_name }}{% endblock %}
+{% block body_class %}matter-settings-page{% endblock %}
+
+{% block content %}
+<main class="matter-settings-main">
+  <header class="matter-settings-heading">
+    <div>
+      <p class="eyebrow">Matter settings</p>
+      <h1>{{ matter.display_name }}</h1>
+      <p>Review access, retention, export, and permanent closure from one place.</p>
+    </div>
+    <a class="button button-secondary" href="/matters/{{ matter.slug }}/home">Return to matter</a>
+  </header>
+  {% with active='settings' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+
+  {% if administrator_override %}
+  <div class="notice notice-neutral administrator-authority-notice" role="status">
+    <strong>Administrator authority</strong>
+    <span>{{ owner_name }} owns this matter. You may close it without joining the case team, and the permanent action will be attributed to your account.</span>
+  </div>
+  {% endif %}
+
+  <div class="matter-settings-grid">
+    <section class="matter-settings-card" aria-labelledby="lifecycle-settings-heading">
+      <p class="eyebrow">Temporary lifecycle</p>
+      <h2 id="lifecycle-settings-heading">Review period</h2>
+      <strong>{{ retention.label }}</strong>
+      <p>{{ retention.detail }}</p>
+      {% if membership and membership.role == 'owner' %}
+      <details class="retention-editor settings-retention-editor">
+        <summary>{{ 'Set review end date' if retention.status == 'unscheduled' else 'Change review end date' }}</summary>
+        <form method="post" action="/matters/{{ matter.slug }}/retention" data-working-form data-working-label="Saving…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="next" value="{{ current_path }}">
+          <label for="settings-retention-date">Review end date</label>
+          <input id="settings-retention-date" name="expires_on" type="date" min="{{ retention.minimum_date }}" max="{{ retention.maximum_date }}" value="{{ retention.expires_on }}" required>
+          <small>Automatic deletion begins after the seven-day export grace period.</small>
+          <button class="button button-primary" type="submit">Save review end date</button>
+        </form>
+      </details>
+      {% elif is_administrator %}
+      <a href="/admin#lifecycle-attention">Manage review dates in Administration</a>
+      {% else %}
+      <p>Ask the matter owner to change the review period.</p>
+      {% endif %}
+    </section>
+
+    <section class="matter-settings-card" aria-labelledby="access-settings-heading">
+      <p class="eyebrow">Access</p>
+      <h2 id="access-settings-heading">Case team</h2>
+      <strong>Owner: {{ owner_name }}</strong>
+      <p>Case-team membership controls ordinary review access. Administrators retain oversight under the application policy.</p>
+      <a href="/matters/{{ matter.slug }}/setup#case-team-heading">Review case team</a>
+    </section>
+
+    <section class="matter-settings-card" aria-labelledby="export-settings-heading">
+      <p class="eyebrow">Before closing</p>
+      <h2 id="export-settings-heading">Keep the work product you need</h2>
+      <p>The portable bundle includes saved review work and citations. Original source files are not included.</p>
+      <a class="button button-secondary" href="/matters/{{ matter.slug }}/export" data-download>Download final bundle</a>
+    </section>
+  </div>
+  <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
+
+  <section class="matter-danger-zone" aria-labelledby="matter-danger-heading">
+    <div>
+      <p class="eyebrow">Permanent action</p>
+      <h2 id="matter-danger-heading">Close matter</h2>
+      <p>Closing permanently removes this workbench matter after an exact-name confirmation. Active work must finish first, and originals outside RecordBench remain untouched.</p>
+    </div>
+    {% if can_close_matter %}
+    <a class="button button-danger" href="/matters/{{ matter.slug }}/close">Close matter</a>
+    {% else %}
+    <p class="matter-danger-restriction">Only the matter owner or a RecordBench administrator can close this matter.</p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

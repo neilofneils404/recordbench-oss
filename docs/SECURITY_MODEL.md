@@ -26,7 +26,16 @@ Models can be wrong, transcripts can mishear, diarization can miscluster, and
 retrieval can omit relevant material. The UI must preserve citations,
 limitations, coverage, excluded-source notices, and direct source review. Do
 not represent a generated answer as an exhaustive review unless the dedicated
-full-review workflow actually evaluated each frozen source.
+**Check every source** task actually evaluated each frozen source.
+
+Matter closure is a separate, deliberate application policy: either the matter
+owner or an authenticated RecordBench administrator may request permanent
+deletion. Cross-owner administrator action is labelled explicitly and is
+attributed to that administrator. The close workflow keeps a final export
+available, refuses active work, requires exact-name and permanent-deletion
+confirmation, preserves originals outside managed matter storage, removes the
+complete workbench projection, and retains only content-minimized audit and
+closure records.
 
 Report vulnerabilities privately under [SECURITY.md](../SECURITY.md). Do not
 attach case files, transcripts, credentials, or internal topology to a report.

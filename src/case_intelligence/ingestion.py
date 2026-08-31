@@ -81,8 +81,30 @@ class IngestionCoordinator:
                 continue
             self._process(job)
 
+    def _remove_staged_source(self, staged_path: Path) -> None:
+        """Durably remove one coordinator-owned staged copy before job completion."""
+
+        if (
+            staged_path.parent != self.staging_root
+            or not re.fullmatch(r"\.source-[0-9a-f]{32}\.part", staged_path.name)
+        ):
+            raise RuntimeError("ingestion staging path is unsafe")
+        directory_fd = os.open(
+            self.staging_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        try:
+            try:
+                os.unlink(staged_path.name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
     def _process(self, job: IngestJobRecord) -> None:
         staged_path: Path | None = None
+        terminal: tuple[bool, str] | None = None
         try:
             matter = self.resolve_matter(job.matter_id)
             store = self.resolve_store(matter)
@@ -128,40 +150,47 @@ class IngestionCoordinator:
             if document.state not in {"ready", "needs_ocr"}:
                 raise UploadProblem(document.message or "Processing did not finish.")
             if document.state == "needs_ocr":
-                self.workspace.finish_ingest_job(
+                terminal = (False, document.message)
+            else:
+                self.workspace.update_ingest_job(
                     job.job_id,
-                    succeeded=False,
-                    message=document.message,
+                    stage="Indexing for search",
+                    completed_units=document.total_units,
+                    total_units=document.total_units,
                 )
-                return
-            self.workspace.update_ingest_job(
-                job.job_id,
-                stage="Indexing for search",
-                completed_units=document.total_units,
-                total_units=document.total_units,
-            )
-            self.index_document(matter, document)
-            self.workspace.finish_ingest_job(
-                job.job_id,
-                succeeded=True,
-                message=document.message,
-            )
+                self.index_document(matter, document)
+                terminal = (True, document.message)
         except (UploadProblem, SourceLocationProblem) as exc:
-            self._fail(job, str(exc))
+            terminal = (False, self._mark_failed(job, str(exc)))
         except Exception:
-            self._fail(job, "Processing did not finish. Choose Try again.")
+            terminal = (
+                False,
+                self._mark_failed(job, "Processing did not finish. Choose Try again."),
+            )
         finally:
+            cleanup_complete = True
             if staged_path is not None:
-                staged_path.unlink(missing_ok=True)
+                try:
+                    self._remove_staged_source(staged_path)
+                except Exception:
+                    # Keep the durable job active so matter deletion cannot
+                    # overtake an owned staging copy. Restart reconciliation
+                    # removes it before running jobs are recovered.
+                    cleanup_complete = False
+            if cleanup_complete and terminal is not None:
+                succeeded, message = terminal
+                try:
+                    self.workspace.finish_ingest_job(
+                        job.job_id, succeeded=succeeded, message=message
+                    )
+                except Exception:
+                    pass
 
-    def _fail(self, job: IngestJobRecord, message: str) -> None:
+    def _mark_failed(self, job: IngestJobRecord, message: str) -> str:
         safe_message = (message or "Processing did not finish. Choose Try again.")[:240]
         try:
             matter = self.resolve_matter(job.matter_id)
             self.resolve_store(matter).mark_failed(job.document_id, safe_message)
         except Exception:
             pass
-        try:
-            self.workspace.finish_ingest_job(job.job_id, succeeded=False, message=safe_message)
-        except Exception:
-            pass
+        return safe_message

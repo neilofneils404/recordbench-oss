@@ -51,9 +51,9 @@ def test_local_portfolio_projects_configured_task_lanes_without_quality_claims()
     assert "gold" not in projection
     assert [lane["name"] for lane in projection["lanes"]] == [
         "Find & order",
-        "Quick answer",
-        "Deep research",
-        "Full review",
+        "Focused answer",
+        "Broader investigation",
+        "Every-source check",
     ]
     assert projection["generator"]["maximum_active"] == 4
     assert projection["evidence"]["maximum_items"] == 12

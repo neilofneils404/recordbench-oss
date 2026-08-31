@@ -21,12 +21,12 @@
     <article><strong>{{ admin_matters|length }}</strong><span>Active matters</span></article>
     <article><strong>{{ stale_matters|length }}</strong><span>Lifecycle attention</span></article>
     <article><strong>{{ abandoned_uploads|length }}</strong><span>Old uploads</span></article>
-    <article><strong>{{ ingest_counts.get('queued', 0) + ingest_counts.get('running', 0) }}</strong><span>Document jobs</span></article>
-    <article><strong>{{ media_counts.get('queued', 0) + media_counts.get('running', 0) }}</strong><span>Media jobs</span></article>
+    <article><strong>{{ ingest_counts.get('queued', 0) + ingest_counts.get('running', 0) }}</strong><span>Documents preparing</span></article>
+    <article><strong>{{ media_counts.get('queued', 0) + media_counts.get('running', 0) }}</strong><span>Recordings preparing</span></article>
     <article><strong>{{ media_summary_counts.get('queued', 0) + media_summary_counts.get('running', 0) + media_summary_counts.get('stale', 0) }}</strong><span>Transcript overviews</span></article>
     <article><strong>{{ answer_counts.get('queued', 0) + answer_counts.get('running', 0) }}</strong><span>Answers</span></article>
-    <article><strong>{{ research_counts.get('queued', 0) + research_counts.get('running', 0) }}</strong><span>Deep research</span></article>
-    <article><strong>{{ review_counts.get('queued', 0) + review_counts.get('running', 0) }}</strong><span>Full reviews</span></article>
+    <article><strong>{{ research_counts.get('queued', 0) + research_counts.get('running', 0) }}</strong><span>Investigations</span></article>
+    <article><strong>{{ review_counts.get('queued', 0) + review_counts.get('running', 0) }}</strong><span>Every-source checks</span></article>
   </section>
 
   <section class="administrator-panel lifecycle-attention" id="lifecycle-attention" aria-labelledby="lifecycle-heading">
@@ -77,6 +77,27 @@
     {% endif %}
   </section>
 
+  {% if closure_recoveries %}
+  <section class="administrator-panel" aria-labelledby="closure-recovery-heading">
+    <div class="administrator-panel-heading">
+      <div><p class="eyebrow">Deletion recovery</p><h2 id="closure-recovery-heading">Failed deletions</h2></div>
+      <small>{{ closure_recoveries|length }} closed {{ 'matter' if closure_recoveries|length == 1 else 'matters' }} need attention</small>
+    </div>
+    <p>Ordinary review remains closed. Download any remaining work product before retrying permanent deletion.</p>
+    <div class="lifecycle-list">
+      {% for row in closure_recoveries %}
+      <article class="lifecycle-row">
+        <div><strong>{{ row.matter.display_name }}</strong><small>Owner: {{ row.owner.display_name }}</small></div>
+        <div class="managed-matter-actions">
+          <a class="button button-secondary" href="/matters/{{ row.matter.slug }}/export" data-download>Download final bundle</a>
+          <a class="button button-danger" href="/matters/{{ row.matter.slug }}/close">Review and retry deletion</a>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   <section class="administrator-panel administrator-storage-panel" aria-labelledby="admin-storage-heading">
     <div class="administrator-panel-heading">
       <div><p class="eyebrow">Managed processing storage</p><h2 id="admin-storage-heading">{{ 'Ready for uploads' if storage_capacity.ready else 'Capacity needs attention' }}</h2></div>
@@ -124,17 +145,17 @@
       </article>
       {% endfor %}
     </div>
-    <div class="administrator-ai-receipt" aria-label="Model evaluation status">
-      <span><strong>Required</strong> deployment quality evaluation</span>
-      <span><strong>{{ model_portfolio.evaluation.suite_fingerprint[:12] }}</strong> synthetic suite fingerprint</span>
-      <span><strong>Not published</strong> retrieval and answer metrics</span>
-      <span><strong>Not published</strong> throughput and hardware metrics</span>
+    <div class="administrator-ai-receipt" aria-label="Local review evaluation status">
+      <span><strong>Required</strong> representative quality evaluation</span>
+      <span><strong>Recorded separately</strong> exact component revisions</span>
+      <span><strong>Not shown here</strong> internal quality measurements</span>
+      <span><strong>Not shown here</strong> infrastructure measurements</span>
     </div>
     <details class="administrator-ai-details">
-      <summary>Configuration and candidate decision</summary>
-      <p><strong>Resident generator:</strong> {{ model_portfolio.generator.repository }} at a pinned revision, text-only on local vLLM, {{ model_portfolio.generator.context_tokens }} tokens, direct structured generation, and {{ model_portfolio.generator.maximum_active }} shared calls.</p>
-      <p><strong>Evidence contract:</strong> at most {{ model_portfolio.evidence.maximum_items }} reranked passages and {{ model_portfolio.evidence.maximum_characters }} characters per answer; generated claims still pass the independent source verifier.</p>
-      <p><strong>Specialized lanes:</strong> document OCR and extraction stay separate from WhisperX media transcription. Media processing is {{ 'ready' if model_portfolio.media_ready else 'temporarily unavailable' }} and cannot be displaced by an oversized answer model.</p>
+      <summary>Readiness and evaluation decision</summary>
+      <p><strong>Local answering:</strong> the approved offline configuration is {{ 'ready' if model_portfolio.generator.ready else 'not ready' }}. Exact component identities remain in the operator record, not staff-facing pages.</p>
+      <p><strong>Evidence safeguards:</strong> answers receive a bounded set of cited passages, and every displayed claim still passes independent citation checks.</p>
+      <p><strong>Specialized work:</strong> document text recognition and media transcription use separate capacity. Media processing is {{ 'ready' if model_portfolio.media_ready else 'temporarily unavailable' }}.</p>
       <p><strong>Evaluation status:</strong> {{ model_portfolio.evaluation.detail }}</p>
       <p>{{ model_portfolio.candidate_note }}</p>
     </details>
@@ -149,7 +170,7 @@
       <article><strong>{{ backup_status.completed_at[:16]|replace('T', ' ') if backup_status.completed_at else 'Not completed' }}</strong><span>Last backup</span></article>
       <article><strong>{{ backup_status.duration_seconds }} sec</strong><span>Last duration</span></article>
       <article><strong>{{ backup_status.retention }}</strong><span>Encrypted retention</span></article>
-      <article><strong>{{ backup_status.snapshot_short or 'Pending' }}</strong><span>Snapshot receipt</span></article>
+      <article><strong>{{ 'Recorded' if backup_status.snapshot_short else 'Pending' }}</strong><span>Snapshot receipt</span></article>
     </div>
     <p>{{ backup_status.message }} Matter deletion is immediate in RecordBench; encrypted disaster-recovery residuals expire with the short retention window.</p>
   </section>
