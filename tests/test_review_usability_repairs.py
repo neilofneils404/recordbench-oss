@@ -52,3 +52,4 @@ def test_media_review_theme_and_independent_scroll_contract():
     assert "color-scheme: dark" in styles
     assert ".speaker-review-panel {" in styles
     assert "background: var(--surface);" in styles
+    assert ".media-summary-card, .playback-compatibility" in styles

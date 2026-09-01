@@ -6266,6 +6266,11 @@ html[data-theme="dusk"] :is(.notice-error, .media-processing-failed, .playback-f
 html[data-theme="dusk"] :is(.tool-caution, .media-summary-caution, .media-summary-warning) { background: #30291c; color: #ead6ad; }
 html[data-theme="dusk"] .matter-media-activity-list article,
 html[data-theme="dusk"] .media-summary-points > li { background: var(--surface-lifted); border-color: var(--line); }
+html[data-theme="dusk"] :is(
+  .media-summary-card, .playback-compatibility, .media-summary-pending,
+  .clip-builder, .transcript-editor form
+) { background: var(--surface-lifted); border-color: var(--line); color: var(--ink); }
+html[data-theme="dusk"] .media-summary-card.media-summary-stale { background: var(--surface-lifted); border-color: var(--warning); }
 html[data-theme="dusk"] .matter-storage-card,
 html[data-theme="dusk"] .upload-collection-name input { background: var(--surface-lifted); border-color: var(--line); color: var(--ink); }
 html[data-theme="dusk"] .image-reader { background: #081120; }
