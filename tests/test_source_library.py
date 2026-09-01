@@ -116,6 +116,10 @@ def test_one_thousand_sources_are_grouped_and_only_one_page_is_rendered(tmp_path
         assert first_page.text.count('name="selected"') == 50
         assert "Page 1 of 20" in first_page.text
         assert "1–50 of 1000" in first_page.text
+        assert 'class="upload-zone' not in first_page.text
+        assert "Upload sources" in first_page.text
+        assert '<select name="kind">' in first_page.text
+        assert 'page_size=100#source-library' in first_page.text
 
         last_page = client.get(
             f"/matters/{slug}/setup",

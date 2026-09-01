@@ -7,7 +7,7 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5Z"/></svg>
     <span>Review</span>
   </a>
-  <a class="{% if active == 'sources' %}selected{% endif %}" href="/matters/{{ matter.slug }}/setup?view=list#source-library"{% if active == 'sources' %} aria-current="page"{% endif %}>
+  <a class="{% if active == 'sources' %}selected{% endif %}" href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100#source-library"{% if active == 'sources' %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v13H4zM8 3h8v3M8 10h8M8 14h6"/></svg>
     <span>Sources</span>
   </a>

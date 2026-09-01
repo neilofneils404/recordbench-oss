@@ -19,6 +19,7 @@
     {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
     {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
 
+    {% if source_library.view != 'list' %}
     <section class="matter-storage-card" aria-label="Matter storage usage">
       <div class="matter-storage-copy">
         <span><strong>{{ matter_storage.used_label }}</strong> stored{% if matter_storage.reserved_bytes %} · {{ matter_storage.reserved_label }} reserved by uploads{% endif %}</span>
@@ -28,7 +29,7 @@
       <span class="matter-storage-quota">{{ matter_storage.quota_label }} matter allowance</span>
     </section>
 
-    <div class="source-intake-heading"><div><p class="eyebrow">Bring in records</p><h2>Add sources</h2></div><a href="#source-library">Skip to review</a></div>
+    <div class="source-intake-heading" id="source-intake"><div><p class="eyebrow">Bring in records</p><h2>Add sources</h2></div><a href="#source-library">Skip to review</a></div>
     {% if capabilities.malware_scan != 'ready' and capabilities.malware_scan != 'not required' %}<div class="notice notice-neutral"><strong>Extended source security setup is pending.</strong> Images, email, and spreadsheets will remain blocked until the private security scanner and signatures are available. PDF, Word, text, audio, and video intake continues normally.</div>{% else %}<div class="intake-security-ready" role="status"><span aria-hidden="true">&#10003;</span><span><strong>Private security checks are active.</strong> Images, email, and spreadsheets are scanned before they enter the matter.</span></div>{% endif %}
     <form class="upload-zone scalable-upload" method="post" action="/matters/{{ matter.slug }}/uploads" enctype="multipart/form-data" data-upload-form data-session-url="/matters/{{ matter.slug }}/upload-sessions" data-matter-slug="{{ matter.slug }}" data-max-upload-items="{{ upload_limits['items'] }}" data-max-upload-batch-items="{{ upload_limits.batch_items }}" data-max-document-bytes="{{ upload_limits.document_bytes }}" data-max-media-bytes="{{ upload_limits.media_bytes }}" data-max-collection-bytes="{{ upload_limits.collection_bytes }}" data-document-limit-label="{{ upload_limits.document_label }}" data-media-limit-label="{{ upload_limits.media_label }}" data-collection-limit-label="{{ upload_limits.collection_label }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -104,6 +105,7 @@
       {% endif %}
       </section>
     </details>
+    {% endif %}
 
     <section class="source-library" id="source-library" aria-labelledby="setup-source-title" {% if source_library.stats.processing %}data-ingestion-active{% endif %}>
       <div class="source-library-title-row">
@@ -111,7 +113,7 @@
           <p class="eyebrow">Organize and review</p>
           <h2 id="setup-source-title">Review sources</h2>
         </div>
-        <span>{{ source_library.stats.total }} total</span>
+        <div class="source-library-heading-actions"><span>{{ source_library.stats.total }} total</span>{% if source_library.view == 'list' %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/setup#source-intake">Upload sources</a>{% endif %}</div>
       </div>
 
       <div class="source-status-overview" aria-label="Source status summary">
@@ -121,7 +123,7 @@
         <a class="source-stat-card attention {% if source_library.status == 'attention' %}selected{% endif %}" href="{{ library_url(1, view='list', status='attention') }}"><strong>{{ source_library.stats.attention }}</strong><span>Needs attention</span></a>
       </div>
 
-      {% if source_library.stats.total %}
+      {% if source_library.stats.total and source_library.view != 'list' %}
       <section class="source-family-section" aria-labelledby="document-family-heading">
         <div class="source-subheading"><h3 id="document-family-heading">Documents</h3><small>Open PDFs or review extracted Word and text content</small></div>
         <div class="source-family-grid" aria-label="Document types">
@@ -176,18 +178,20 @@
 
       <form class="source-library-filters" method="get" action="/matters/{{ matter.slug }}/setup">
         <input type="hidden" name="view" value="list">
+        <input type="hidden" name="page_size" value="100">
         <label><span>Find a source</span><input type="search" name="q" value="{{ source_library.query }}" maxlength="240" placeholder="Filename or folder…"></label>
         <label><span>Collection</span><select name="collection"><option value="">All collections</option>{% for collection in source_collections %}<option value="{{ collection.collection_id }}" {% if source_library.collection_id == collection.collection_id %}selected{% endif %}>{{ collection.name }} ({{ collection.source_count }})</option>{% endfor %}</select></label>
+        <label><span>Type</span><select name="kind"><option value="">All types</option>{% for value, label in [('PDF', 'PDF'), ('DOCX', 'Word'), ('TXT', 'Text'), ('IMAGE', 'Image'), ('EMAIL', 'Email'), ('SPREADSHEET', 'Spreadsheet'), ('AUDIO', 'Audio'), ('VIDEO', 'Video')] %}<option value="{{ value }}" {% if source_library.kind == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         <label><span>Review</span><select name="review"><option value="">Any review state</option><option value="unreviewed" {% if source_library.review == 'unreviewed' %}selected{% endif %}>Unreviewed</option><option value="reviewed" {% if source_library.review == 'reviewed' %}selected{% endif %}>Reviewed</option><option value="flagged" {% if source_library.review == 'flagged' %}selected{% endif %}>Flagged</option></select></label>
         <label><span>Sort</span><select name="sort"><option value="newest" {% if source_library.sort == 'newest' %}selected{% endif %}>Newest added</option><option value="oldest" {% if source_library.sort == 'oldest' %}selected{% endif %}>Oldest added</option><option value="name" {% if source_library.sort == 'name' %}selected{% endif %}>Name A–Z</option><option value="name_desc" {% if source_library.sort == 'name_desc' %}selected{% endif %}>Name Z–A</option><option value="status" {% if source_library.sort == 'status' %}selected{% endif %}>Needs attention first</option></select></label>
         <button class="button button-secondary" type="submit">Apply</button>
-        {% if source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id %}<a href="/matters/{{ matter.slug }}/setup?view=list">Clear</a>{% endif %}
+        {% if source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100">Clear</a>{% endif %}
       </form>
 
       {% set filtered_view = source_library.view == 'list' or source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id %}
       <div class="source-results-heading">
         <div><h3>{{ 'Matching sources' if filtered_view else 'Recently added' }}</h3><span>{% if filtered_view %}{{ source_library.first_item }}–{{ source_library.last_item }} of {{ source_library.total }}{% else %}A short working view, not the complete receipt{% endif %}</span></div>
-        {% if not filtered_view and source_library.stats.total > source_library.items|length %}<a href="/matters/{{ matter.slug }}/setup?view=list">Browse all {{ source_library.stats.total }}</a>{% endif %}
+        {% if not filtered_view and source_library.stats.total > source_library.items|length %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100">Browse all {{ source_library.stats.total }}</a>{% endif %}
       </div>
 
       <form id="source-bulk-form" method="post" action="/matters/{{ matter.slug }}/sources/bulk" class="source-bulk-toolbar" data-source-bulk-form>
@@ -220,7 +224,7 @@
         {% for source in sources %}
         <div class="source-table-row" role="row">
           <span class="source-select-cell" role="cell"><input type="checkbox" name="selected" value="{{ source.action_token }}" form="source-bulk-form" aria-label="Select {{ source.name }}" data-source-select></span>
-          <span class="source-name-cell" role="cell"><span class="file-mark file-{{ source.kind|lower }}">{{ source.kind }}</span><span><strong>{{ source.name }}</strong>{% if '/' in source.relative_path %}<small>{{ source.relative_path.rsplit('/', 1)[0] }}</small>{% endif %}</span></span>
+          <span class="source-name-cell" role="cell"><span class="file-mark file-{{ source.kind|lower }}">{{ source.kind }}</span><a href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}"><strong>{{ source.name }}</strong>{% if '/' in source.relative_path %}<small>{{ source.relative_path.rsplit('/', 1)[0] }}</small>{% endif %}</a></span>
           <span class="source-collection-cell" role="cell"><a href="{{ library_url(1, view='list', collection=source.collection_id, source_set='') }}">{{ source.collection_name }}</a><small>{{ source.kind }}</small></span>
           <span class="source-review-cell" role="cell"><span class="review-badge review-{{ source.review_state }}">{{ source.review_state|replace('_', ' ')|title }}</span><span class="source-state state-{{ source.tone }}"><i aria-hidden="true"></i>{{ source.state }}</span></span>
           <span class="source-count" role="cell">{{ source.count_label }}</span>

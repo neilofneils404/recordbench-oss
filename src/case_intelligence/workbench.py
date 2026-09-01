@@ -13,7 +13,7 @@ import threading
 import urllib.request
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Sequence
@@ -2338,8 +2338,6 @@ class CaseIntelligenceWorkbench:
         return hashlib.sha256(material.encode("utf-8")).hexdigest()[:40]
 
     def _citation(self, matter: MatterRecord, candidate: Candidate) -> WorkbenchCitation:
-        token = self._support_token(candidate)
-        href = f"/matters/{matter.slug}?support={token}#support-pane"
         evidence_kind = "document"
         try:
             document = self.source_store(matter).get(candidate.document_id)
@@ -2347,6 +2345,15 @@ class CaseIntelligenceWorkbench:
             document = None
         if document is not None and is_media_type(document.media_type):
             evidence_kind = "transcript"
+        # The PostgreSQL retrieval projection predates media evidence and can
+        # return transcript chunks with Candidate's default "document" kind.
+        # Canonicalize from the authoritative matter source before deriving the
+        # support token so answer-finalization validates the same token later.
+        if candidate.evidence_kind != evidence_kind:
+            candidate = replace(candidate, evidence_kind=evidence_kind)
+        token = self._support_token(candidate)
+        href = f"/matters/{matter.slug}?support={token}#support-pane"
+        if evidence_kind == "transcript":
             href = f"/matters/{matter.slug}?support={token}&play=1#support-pane"
         return WorkbenchCitation(
             candidate.source_name,

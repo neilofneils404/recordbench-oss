@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Restored grounded answers when PostgreSQL retrieval includes transcript
+  evidence by canonicalizing citation modality before source-version checks;
+  made Sources open directly into a compact, 100-row browse view with inline
+  type filtering and upload as a separate action; and made media metadata,
+  speaker review, transcript controls, and scrollbars independently scrollable
+  and theme-consistent.
 - Established RecordBench OSS as the upstream source for portable product
   behavior, with synthetic clean-room reproduction rules for defects found by
   private downstream deployments.

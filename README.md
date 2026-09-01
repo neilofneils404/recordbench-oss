@@ -47,7 +47,7 @@ and local AI requests do not need to be sent to a commercial cloud service.
 | --- | --- |
 | **Review** | Ask a focused question, investigate through several searches, and continue with follow-ups in one cited conversation. The composer explains the time and coverage difference. |
 | **Check every source** | Apply the same criterion to every source in a frozen collection and validate the results. This is a specialized source-screening task, not another chat type. |
-| **Review Sources** | Read extracted documents, inspect processing problems, play media, and work directly with transcripts. |
+| **Review Sources** | Browse up to 100 sources immediately, filter by type or collection, open filenames directly, upload separately, play media, and work with a transcript while its metadata remains independently scrollable. |
 
 Focused answers and broader investigations share conversational continuity;
 the processing strategy stays behind task language. Checking every source stays
