@@ -1182,6 +1182,75 @@
   const mediaFollowResumeKey = mediaReview
     ? `case-intelligence:media-follow:${window.location.pathname}`
     : "";
+  const mediaToolTabs = Array.from(document.querySelectorAll("[data-media-tool-tab]"));
+  const mediaToolPanels = Array.from(document.querySelectorAll("[data-media-tool-panel]"));
+  const mediaToolResumeKey = mediaReview
+    ? `case-intelligence:media-tool:${window.location.pathname}`
+    : "";
+  const mediaToolFromHash = {
+    "#media-playback": "playback",
+    "#media-summary": "summary",
+    "#media-export": "export",
+    "#media-clips": "clips",
+  };
+
+  const activateMediaTool = (name, { focus = false, updateHash = false } = {}) => {
+    const panel = mediaToolPanels.find((candidate) => candidate.dataset.mediaTool === name);
+    const tab = mediaToolTabs.find((candidate) => candidate.dataset.mediaToolTab === name);
+    if (!panel || !tab) return false;
+    mediaToolPanels.forEach((candidate) => {
+      candidate.hidden = candidate !== panel;
+    });
+    mediaToolTabs.forEach((candidate) => {
+      const selected = candidate === tab;
+      candidate.setAttribute("aria-selected", selected ? "true" : "false");
+      candidate.tabIndex = selected ? 0 : -1;
+    });
+    if (mediaToolResumeKey) window.sessionStorage.setItem(mediaToolResumeKey, name);
+    if (updateHash) {
+      const url = new URL(window.location.href);
+      url.hash = `media-${name}`;
+      window.history.replaceState(window.history.state, "", url);
+    }
+    if (focus) tab.focus({ preventScroll: true });
+    return true;
+  };
+
+  mediaToolTabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => {
+      activateMediaTool(tab.dataset.mediaToolTab || "playback", { updateHash: true });
+    });
+    tab.addEventListener("keydown", (event) => {
+      let nextIndex = index;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        nextIndex = (index + 1) % mediaToolTabs.length;
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        nextIndex = (index - 1 + mediaToolTabs.length) % mediaToolTabs.length;
+      } else if (event.key === "Home") {
+        nextIndex = 0;
+      } else if (event.key === "End") {
+        nextIndex = mediaToolTabs.length - 1;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      activateMediaTool(mediaToolTabs[nextIndex].dataset.mediaToolTab || "playback", {
+        focus: true,
+        updateHash: true,
+      });
+    });
+  });
+
+  if (mediaToolTabs.length) {
+    const requestedTool = mediaToolFromHash[window.location.hash]
+      || window.sessionStorage.getItem(mediaToolResumeKey)
+      || "playback";
+    if (!activateMediaTool(requestedTool)) activateMediaTool("playback");
+    window.addEventListener("hashchange", () => {
+      const hashedTool = mediaToolFromHash[window.location.hash];
+      if (hashedTool) activateMediaTool(hashedTool);
+    });
+  }
 
   const formatMediaTime = (milliseconds) => {
     const value = Math.max(0, Math.round(Number(milliseconds) || 0));
@@ -1195,6 +1264,7 @@
 
   const seekMedia = (milliseconds, play = true) => {
     if (!mediaPlayer) return;
+    activateMediaTool("playback");
     const seconds = Math.max(0, Number(milliseconds) / 1000);
     mediaPlayer.currentTime = seconds;
     if (play) mediaPlayer.play().catch(() => {});

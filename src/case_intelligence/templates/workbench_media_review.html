@@ -55,7 +55,16 @@
 
   <div class="media-review-layout">
     <aside class="media-player-column">
-      <section class="media-player-card" aria-labelledby="media-player-heading">
+      {% if media.transcript %}
+      <nav class="media-tool-nav" role="tablist" aria-label="Recording tools" data-media-tool-tabs>
+        <button id="media-tool-tab-playback" type="button" role="tab" aria-selected="true" aria-controls="media-playback" tabindex="0" data-media-tool-tab="playback">Playback</button>
+        <button id="media-tool-tab-summary" type="button" role="tab" aria-selected="false" aria-controls="media-summary" tabindex="-1" data-media-tool-tab="summary">Summary</button>
+        <button id="media-tool-tab-export" type="button" role="tab" aria-selected="false" aria-controls="media-export" tabindex="-1" data-media-tool-tab="export">Export</button>
+        <button id="media-tool-tab-clips" type="button" role="tab" aria-selected="false" aria-controls="media-clips" tabindex="-1" data-media-tool-tab="clips">Clips{% if media.clips %}<span>{{ media.clips|length }}</span>{% endif %}</button>
+      </nav>
+      {% endif %}
+      <div class="media-tool-panels">
+      <section class="media-player-card media-tool-panel" id="media-playback" aria-labelledby="{{ 'media-tool-tab-playback' if media.transcript else 'media-player-heading' }}" {% if media.transcript %}role="tabpanel" data-media-tool-panel data-media-tool="playback"{% endif %}>
         <header><div><p class="eyebrow">Matter source</p><h2 id="media-player-heading">Authenticated playback</h2></div><span class="media-current-time" data-media-time>00:00</span></header>
         {% if media.player_kind == 'video' %}
         <video id="matter-media-player" controls preload="metadata" data-media-player>
@@ -79,7 +88,7 @@
       </section>
 
       {% if media.transcript %}
-      <section class="media-summary-card{% if media.summary and media.summary.state == 'stale' %} media-summary-stale{% endif %}" aria-labelledby="media-summary-heading" data-media-summary-card>
+      <section class="media-summary-card media-tool-panel{% if media.summary and media.summary.state == 'stale' %} media-summary-stale{% endif %}" id="media-summary" role="tabpanel" aria-labelledby="media-tool-tab-summary" data-media-tool-panel data-media-tool="summary" data-media-summary-card hidden>
         <div class="media-card-heading">
           <div><p class="eyebrow">Quick orientation</p><h2 id="media-summary-heading">AI transcript overview</h2></div>
           {% if media.summary %}<span class="summary-state summary-{{ media.summary.state }}" data-summary-state-label>{{ media.summary.state|title }}</span>{% endif %}
@@ -135,7 +144,7 @@
         {% endif %}
       </section>
 
-      <section class="media-export-card" aria-labelledby="media-export-heading">
+      <section class="media-export-card media-tool-panel" id="media-export" role="tabpanel" aria-labelledby="media-tool-tab-export" data-media-tool-panel data-media-tool="export" hidden>
         <div class="media-card-heading"><div><p class="eyebrow">Work product</p><h2 id="media-export-heading">Export transcript</h2></div></div>
         <p>Exports use the current reviewed text and confirmed case labels. The immutable machine draft remains in the workbench and is not included in exported files.</p>
         <div class="media-export-links">
@@ -145,7 +154,7 @@
         </div>
       </section>
 
-      <section class="media-clip-card" id="media-clips" aria-labelledby="media-clips-heading">
+      <section class="media-clip-card media-tool-panel" id="media-clips" role="tabpanel" aria-labelledby="media-tool-tab-clips" data-media-tool-panel data-media-tool="clips" hidden>
         <div class="media-card-heading"><div><p class="eyebrow">Time-bounded export</p><h2 id="media-clips-heading">Clips</h2></div><span>{{ media.clips|length }}</span></div>
         <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/clips" class="clip-builder" data-clip-form>
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -166,6 +175,7 @@
         </div>
       </section>
       {% endif %}
+      </div>
     </aside>
 
     <section class="transcript-workspace" aria-labelledby="transcript-heading">

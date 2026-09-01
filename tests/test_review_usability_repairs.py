@@ -53,3 +53,27 @@ def test_media_review_theme_and_independent_scroll_contract():
     assert ".speaker-review-panel {" in styles
     assert "background: var(--surface);" in styles
     assert ".media-summary-card, .playback-compatibility" in styles
+
+
+def test_media_review_tools_are_one_click_tabs_not_a_long_nested_column():
+    template = (
+        ROOT / "src/case_intelligence/templates/workbench_media_review.html"
+    ).read_text(encoding="utf-8")
+    script = (
+        ROOT / "src/case_intelligence/static/case-intelligence.js"
+    ).read_text(encoding="utf-8")
+    styles = (
+        ROOT / "src/case_intelligence/static/case-intelligence.css"
+    ).read_text(encoding="utf-8")
+
+    assert 'role="tablist" aria-label="Recording tools"' in template
+    assert template.count('data-media-tool-tab="') == 4
+    assert template.count("data-media-tool-panel ") == 4
+    assert 'data-media-tool="summary"' in template
+    assert 'data-media-tool="export"' in template
+    assert 'data-media-tool="clips"' in template
+    assert "const activateMediaTool" in script
+    assert 'event.key === "ArrowRight"' in script
+    assert 'activateMediaTool("playback")' in script
+    assert ".media-tool-nav" in styles
+    assert ".media-tool-panel[hidden]" in styles

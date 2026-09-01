@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Replaced the media review page's long, nested tool column with persistent
+  Playback, Summary, Export, and Clips tabs, keeping every recording tool one
+  click away without moving the transcript or scrolling to its end.
 - Restored grounded answers when PostgreSQL retrieval includes transcript
   evidence by canonicalizing citation modality before source-version checks;
   made Sources open directly into a compact, 100-row browse view with inline
