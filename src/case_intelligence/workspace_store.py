@@ -9645,9 +9645,16 @@ class WorkspaceStore:
                 )
             else:
                 self.connection.execute(
-                    "UPDATE workbench_review_decision SET citations_json='[]',updated_at=? "
+                    "UPDATE workbench_review_decision SET rationale=?,citations_json='[]',"
+                    "error_message=?,updated_at=? "
                     "WHERE run_id=? AND document_id=?",
-                    (now, run_id, document_id),
+                    (
+                        "This source changed after the frozen decision was prepared, so its replacement was not reviewed.",
+                        "Run a new source check to evaluate the current source version.",
+                        now,
+                        run_id,
+                        document_id,
+                    ),
                 )
             updated = self.connection.execute(
                 "SELECT * FROM workbench_review_run WHERE run_id=?", (run_id,)

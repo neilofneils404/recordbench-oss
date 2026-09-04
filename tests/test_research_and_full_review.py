@@ -718,6 +718,79 @@ def test_every_source_check_never_reviews_a_replacement_as_the_frozen_source(
             bench.support(matter, old_support.support_token)
 
 
+def test_zero_hit_source_check_stays_unresolved_and_requires_staff_review(
+    tmp_path, monkeypatch
+):
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=EvidenceEchoGenerator(),
+        auth_mode="test",
+    )
+    with TestClient(app) as client:
+        bench = client.app.state.workbench
+        assert bench.full_review is not None
+        bench.full_review.close()
+        bench.full_review = None
+        created = client.post(
+            "/matters",
+            data={"name": "Generated unresolved source", "descriptor": "Synthetic fixture"},
+            follow_redirects=False,
+        )
+        slug = created.headers["location"].split("/")[2]
+        assert client.post(
+            f"/matters/{slug}/uploads",
+            files=[
+                (
+                    "files",
+                    (
+                        "generated-unresolved.txt",
+                        b"Generated source text without the saved criterion term.",
+                        "text/plain",
+                    ),
+                )
+            ],
+        ).status_code == 200
+        matter = bench.workspace.get_active_matter(slug)
+        _criterion, version = bench.workspace.create_review_criterion(
+            matter.matter_id,
+            matter.owner_id,
+            title="Generated absent term",
+            instructions="Include sources containing the generated absent term.",
+        )
+        run = bench.workspace.queue_review_run(
+            matter.matter_id,
+            matter.owner_id,
+            version.criterion_version_id,
+            run_kind="full",
+        )
+        claimed = bench.workspace.claim_review_run("generated-unresolved-worker")
+        assert claimed is not None
+        decision = bench.workspace.next_review_decision(run.run_id)
+        assert decision is not None
+        monkeypatch.setattr(bench, "search", lambda *_args, **_kwargs: ())
+
+        result = bench._process_review_decision(claimed, decision, lambda: False)
+
+        assert result.decision == "needs_attention"
+        assert result.citations == ()
+        assert result.rationale == (
+            "No matching passage was found by this search, so the source was not "
+            "classified as included or excluded."
+        )
+        assert result.error_message == (
+            "Review this source directly or refine the saved criterion, then run a "
+            "new source check."
+        )
+        saved_run = bench._record_review_decision(claimed, decision, result)
+        assert saved_run.attention_count == 1
+        assert saved_run.excluded_count == 0
+        saved = bench.workspace.review_decision(
+            matter.matter_id, matter.owner_id, run.run_id, decision.document_id
+        )
+        assert saved.machine_decision == "needs_attention"
+        assert saved.citations == ()
+
+
 def test_zero_hit_source_check_detects_same_version_content_change_before_save(
     tmp_path, monkeypatch
 ):
@@ -771,7 +844,7 @@ def test_zero_hit_source_check_detects_same_version_content_change_before_save(
         assert decision is not None and decision.source_basis_digest
         monkeypatch.setattr(bench, "search", lambda *_args, **_kwargs: ())
         result = bench._process_review_decision(claimed, decision, lambda: False)
-        assert result.decision == "excluded" and result.citations == ()
+        assert result.decision == "needs_attention" and result.citations == ()
 
         changed_text = "Generated corrected text added after the zero-hit decision."
         unit = asdict(document.parsed_units()[0])
@@ -848,7 +921,7 @@ def test_source_check_revalidates_same_version_content_after_decision_before_fin
         assert decision is not None and decision.source_basis_digest
         monkeypatch.setattr(bench, "search", lambda *_args, **_kwargs: ())
         result = bench._process_review_decision(claimed, decision, lambda: False)
-        assert result.decision == "excluded"
+        assert result.decision == "needs_attention"
         bench._record_review_decision(claimed, decision, result)
 
         changed_text = "Generated corrected text after the saved source decision."

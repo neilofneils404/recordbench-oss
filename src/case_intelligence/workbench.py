@@ -4559,8 +4559,12 @@ class CaseIntelligenceWorkbench:
             )
         if not citations:
             return ReviewDecisionResult(
-                "excluded",
-                "No searchable passage in this source was identified as matching the saved criterion.",
+                "needs_attention",
+                "No matching passage was found by this search, so the source was not "
+                "classified as included or excluded.",
+                (),
+                "Review this source directly or refine the saved criterion, then run a "
+                "new source check.",
             )
         evidence = {
             f"S{ordinal}": citation for ordinal, citation in enumerate(citations[:12], 1)

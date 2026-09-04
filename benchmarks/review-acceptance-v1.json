@@ -173,7 +173,7 @@
       "tests/test_generation.py": "17d7434cd3e1c41b03792a82a146f0fee4fc0c25bad7158d21fe0d00bcbcd2f9",
       "tests/test_matter_management.py": "dd1a6fd91e40f0d4810bf61fa74862dc8b4a35863bcb26d20d6653860e65cb3a",
       "tests/test_matter_media_workflow.py": "9f8601c5f328572dec715f06a8061940bb2842f1ffc333f352c7e7769c68e612",
-      "tests/test_research_and_full_review.py": "ba88175a4754ff8eba5f4893cb164d773e3b72f85e52e45d848d8a9f20f971d7",
+      "tests/test_research_and_full_review.py": "4a3ec979e11577950c35821036e71102e763e411c9b68583bbbc3aa2470a9f4c",
       "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
       "tests/test_review_conversation_continuity.py": "5d30edb5122c21f1ba6068926f0440e3650e83a1501f5632a06c97d6a521eaa9",
       "tests/test_review_quality.py": "a24ae707932761b9c0eab61cd0238e4f0efae88a7a27a0b344d1969f6f4d213b",
@@ -185,6 +185,6 @@
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "d296241cbf8705d0d640da5245c9c761d5185c06e23667741d668cd82c4dcae8"
+    "content_fingerprint": "8333c61abd16699be7c4c377f92221406ab2638dd6a9abe6ab915e7b4c9a4a24"
   }
 }

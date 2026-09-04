@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Kept every-source review honest when a source-scoped search returns no
+  passage: the source now remains **Needs attention** with direct-review or
+  criterion-refinement recovery instead of being automatically labeled **Not
+  identified**, while source-change provenance still supersedes the search
+  miss.
 - Replaced the media review page's long, nested tool column with persistent
   Playback, Summary, Export, and Clips tabs, keeping every recording tool one
   click away without moving the transcript or scrolling to its end.
