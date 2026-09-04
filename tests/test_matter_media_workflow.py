@@ -68,7 +68,11 @@ class EvidenceEchoGenerator:
 class DualModalAnswerGenerator(EvidenceEchoGenerator):
     """Return independently cited written and spoken claims when both are supplied."""
 
+    def __init__(self):
+        self.calls = []
+
     def generate(self, **kwargs):
+        self.calls.append(kwargs)
         evidence = kwargs["evidence"]
         if "orientation overview" in kwargs["question"].casefold():
             return super().generate(**kwargs)
@@ -1124,9 +1128,10 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
 
 
 def test_dual_modal_answer_resolves_page_and_timestamp_support(tmp_path):
+    generator = DualModalAnswerGenerator()
     app = create_workbench_app(
         tmp_path / "runtime",
-        generator=DualModalAnswerGenerator(),
+        generator=generator,
         auth_mode="test",
         media_processor=ImmediateMediaProcessor(),
         media_poll_seconds=0.01,
@@ -1231,6 +1236,61 @@ def test_dual_modal_answer_resolves_page_and_timestamp_support(tmp_path):
         assert 'id="support-pane"' in transcript_page.text
         assert 'data-support-media data-start-ms="0"' in transcript_page.text
         assert "Play cited moment" in transcript_page.text
+
+        excluded = client.post(
+            f"/matters/{slug}/ask",
+            data={
+                "conversation": conversation.conversation_id,
+                "question": (
+                    "Answer from the written report, not the transcript: where was "
+                    "the red bicycle logged?"
+                ),
+                "request_key": "answer-request-" + "e" * 32,
+            },
+            headers={"Accept": "application/json"},
+        )
+        assert excluded.status_code == 202
+        excluded_job = excluded.json()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and excluded_job["state"] not in {
+            "succeeded",
+            "failed",
+        }:
+            time.sleep(0.01)
+            excluded_job = client.get(excluded_job["status_url"]).json()
+        assert excluded_job["state"] == "succeeded", excluded_job
+
+        document_only = bench.workspace.messages(
+            matter.matter_id, conversation.conversation_id
+        )[-1]
+        assert document_only.payload["modality_coverage"] == {
+            "mode": "complete",
+            "requested_evidence_kinds": ["written"],
+            "available_evidence_kinds": ["written"],
+            "used_evidence_kinds": ["written"],
+            "missing_evidence_kinds": [],
+            "notice": "This answer includes source-verified written support.",
+        }
+        document_only_citations = [
+            citation
+            for claim in document_only.payload["claims"]
+            for citation in claim["citations"]
+        ]
+        assert document_only_citations
+        assert {item["evidence_kind"] for item in document_only_citations} == {
+            "document"
+        }
+        assert generator.calls[-1]["question"].startswith(
+            "Answer from the written report, not the transcript"
+        )
+        assert {item.evidence_kind for item in generator.calls[-1]["evidence"]} == {
+            "document"
+        }
+        conversation_page = client.get(
+            f"/matters/{slug}?conversation={conversation.conversation_id}"
+        )
+        assert conversation_page.status_code == 200
+        assert "Requested source coverage · Complete" in conversation_page.text
 
 
 def test_resumable_media_upload_reports_durable_processing_across_matter_views(tmp_path):

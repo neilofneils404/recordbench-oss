@@ -71,7 +71,7 @@
         </nav>
         <div class="research-summary prose">{{ active_research.result.summary }}</div>
         {% set modality = active_research.result.get('answer', {}).get('modality_coverage') %}
-        {% if modality %}<div class="answer-source-coverage" role="note"><strong>Written and spoken evidence · {{ modality.mode|title }}</strong><p>{{ modality.notice }}</p></div>{% endif %}
+        {% if modality %}<div class="answer-source-coverage" role="note"><strong>Requested source coverage · {{ modality.mode|title }}</strong><p>{{ modality.notice }}</p></div>{% endif %}
         {% set coverage = active_research.result.coverage %}
         <div class="workflow-section-heading workflow-section-heading-compact"><div><p class="eyebrow">Coverage ledger</p><h3>What this run searched and used</h3></div></div>
         <div class="coverage-metrics">

@@ -270,6 +270,7 @@ def _prompt(
     )
     intent = classify_question(question)
     required_evidence_kinds = intent.required_evidence_kinds
+    excluded_evidence_kinds = intent.excluded_evidence_kinds
     system = (
         "You are the source-bound answer composer inside a criminal-defense evidence review workspace. "
         "Use only the supplied matter evidence. Do not use outside facts, legal authority, or assumptions. "
@@ -297,7 +298,7 @@ def _prompt(
             "passages, but do not convert reported speech into an established event or infer a "
             "speaker's identity, role, or relationship unless the transcript expressly says it."
         )
-    if required_evidence_kinds:
+    if len(required_evidence_kinds) == 2:
         system += (
             " The user expressly requested written and spoken support. When both evidence "
             "kinds are supplied, address each in a separate source-supported claim and cite "
@@ -305,6 +306,25 @@ def _prompt(
             "something the machine transcript said. If one requested kind has no supplied "
             "support, answer only the supported part; do not invent a claim that the matter "
             "contains no such evidence."
+        )
+    elif required_evidence_kinds:
+        requested = (
+            "written document"
+            if required_evidence_kinds == ("document",)
+            else "machine transcript"
+        )
+        system += (
+            f" The user expressly requested {requested} support. Use only that requested "
+            "evidence kind for factual claims."
+        )
+    if excluded_evidence_kinds:
+        excluded = " and ".join(
+            "written document" if kind == "document" else "machine transcript"
+            for kind in excluded_evidence_kinds
+        )
+        system += (
+            f" The user expressly excluded {excluded} evidence. Do not use, cite, or "
+            "draw factual support from that excluded evidence kind."
         )
     if intent.broad_summary:
         system += (
@@ -788,7 +808,11 @@ class GroundedGenerationService:
         question = " ".join((question or "").split()).strip()
         if not question or len(question) > MAX_QUESTION_CHARS:
             raise ValueError("Question must be between 1 and 2,000 characters.")
-        bounded = tuple(evidence[:MAX_EVIDENCE_ITEMS])
+        intent = classify_question(question)
+        excluded_kinds = frozenset(intent.excluded_evidence_kinds)
+        bounded = tuple(
+            item for item in evidence if item.evidence_kind not in excluded_kinds
+        )[:MAX_EVIDENCE_ITEMS]
         if not bounded:
             if stage_callback is not None:
                 stage_callback("verifying")
@@ -857,7 +881,6 @@ class GroundedGenerationService:
                     "The generated answer did not address the question's exact objective."
                 )
             return repaired_answer
-        intent = classify_question(question)
         required_kinds = intent.required_evidence_kinds
         available_kinds = {item.evidence_kind for item in bounded}
 

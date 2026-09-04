@@ -15,19 +15,30 @@ from typing import Mapping, Protocol, Sequence, TypeVar
 
 DOCUMENT_EVIDENCE_KIND = "document"
 TRANSCRIPT_EVIDENCE_KIND = "transcript"
+_WRITTEN_PATTERN = (
+    r"(?:written|documentary|documents?|reports?|emails?|correspondence|"
+    r"messages?|notes?|logs?)"
+)
+_SPOKEN_PATTERN = (
+    r"(?:spoken|oral|audio|recordings?|transcripts?|interviews?|"
+    r"phone\s+calls?|telephone\s+calls?|testimony|voicemails?)"
+)
 _WRITTEN_TERMS = re.compile(
-    r"\b(?:written|documentary|documents?|reports?|emails?|correspondence|"
-    r"messages?|notes?|logs?)\b",
+    rf"\b{_WRITTEN_PATTERN}\b",
     re.IGNORECASE,
 )
 _SPOKEN_TERMS = re.compile(
-    r"\b(?:spoken|oral|audio|recordings?|transcripts?|interviews?|"
-    r"phone\s+calls?|telephone\s+calls?|testimony|voicemails?)\b",
+    rf"\b{_SPOKEN_PATTERN}\b",
     re.IGNORECASE,
 )
 _JOINED_MODALITIES = re.compile(
-    r"\b(?:both|together|compare|using|from)\b|\b(?:and|alongside|as\s+well\s+as)\b",
+    r"\b(?:both|together|compare|using)\b|"
+    r"\b(?:and|alongside|as\s+well\s+as|but\s+also)\b",
     re.IGNORECASE,
+)
+_MODALITY_COMMAND = (
+    r"(?:answer|respond|use|cite|rely|search|review|consult|consider|"
+    r"summarize|compare)"
 )
 _BROAD_SUMMARY = re.compile(
     r"\b(?:broad|overall|matter-wide|case-wide|general)\s+"
@@ -124,7 +135,24 @@ _BOILERPLATE_SENTENCE = re.compile(
 @dataclass(frozen=True)
 class QuestionIntent:
     required_evidence_kinds: tuple[str, ...] = ()
+    excluded_evidence_kinds: tuple[str, ...] = ()
     broad_summary: bool = False
+
+
+def _explicitly_excludes_modality(value: str, modality_pattern: str) -> bool:
+    """Recognize bounded source-selection instructions, not narrative negation."""
+
+    patterns = (
+        rf"\b(?:do\s+not|don't)\s+"
+        rf"(?:use|cite|search|review|consult|consider|include|rely\s+on)\s+"
+        rf"(?:the\s+)?{modality_pattern}\b",
+        rf"\b(?:exclude|excluding|omit|omitting|ignore|ignoring|avoid|avoiding)\s+"
+        rf"(?:the\s+)?{modality_pattern}\b",
+        rf"\b{_MODALITY_COMMAND}\b[^.!?]{{0,80}}\b"
+        rf"(?:rather\s+than|instead\s+of)\s+(?:the\s+)?{modality_pattern}\b",
+        rf"(?:^|[,;:]|\u2014|\bbut\b)\s*not\s+(?!(?:only|just)\b)(?:the\s+)?{modality_pattern}\b",
+    )
+    return any(re.search(pattern, value, re.IGNORECASE) for pattern in patterns)
 
 
 class RankedCandidate(Protocol):
@@ -150,13 +178,32 @@ def classify_question(question: str) -> QuestionIntent:
     value = " ".join((question or "").split()).strip()
     has_written = bool(_WRITTEN_TERMS.search(value))
     has_spoken = bool(_SPOKEN_TERMS.search(value))
+    excluded: list[str] = []
+    if _explicitly_excludes_modality(value, _WRITTEN_PATTERN):
+        excluded.append(DOCUMENT_EVIDENCE_KIND)
+    if _explicitly_excludes_modality(value, _SPOKEN_PATTERN):
+        excluded.append(TRANSCRIPT_EVIDENCE_KIND)
     joined = bool(_JOINED_MODALITIES.search(value))
-    required = (
-        (DOCUMENT_EVIDENCE_KIND, TRANSCRIPT_EVIDENCE_KIND)
-        if has_written and has_spoken and joined
-        else ()
+    if excluded:
+        required = tuple(
+            kind
+            for kind, mentioned in (
+                (DOCUMENT_EVIDENCE_KIND, has_written),
+                (TRANSCRIPT_EVIDENCE_KIND, has_spoken),
+            )
+            if mentioned and kind not in excluded
+        )
+    else:
+        required = (
+            (DOCUMENT_EVIDENCE_KIND, TRANSCRIPT_EVIDENCE_KIND)
+            if has_written and has_spoken and joined
+            else ()
+        )
+    return QuestionIntent(
+        required_evidence_kinds=required,
+        excluded_evidence_kinds=tuple(excluded),
+        broad_summary=bool(_BROAD_SUMMARY.search(value)),
     )
-    return QuestionIntent(required, bool(_BROAD_SUMMARY.search(value)))
 
 
 def _query_subject_terms(query: str) -> frozenset[str]:
@@ -304,7 +351,7 @@ def modality_coverage(
     evidence: Mapping[str, CitationLike],
     used_evidence_ids: Sequence[str],
 ) -> dict[str, object]:
-    """Describe dual-modality completion without asserting a collection-wide absence."""
+    """Describe requested-modality completion without asserting a collection-wide absence."""
 
     required = classify_question(question).required_evidence_kinds
     if not required:
@@ -321,7 +368,8 @@ def modality_coverage(
     missing = tuple(kind for kind in required if kind not in used)
     unavailable = tuple(kind for kind in missing if kind not in available)
     if not missing:
-        notice = "This answer includes source-verified written and spoken support."
+        names = " and ".join(labels[kind] for kind in required)
+        notice = f"This answer includes source-verified {names} support."
         mode = "complete"
     elif unavailable:
         names = " and ".join(labels[kind] for kind in unavailable)

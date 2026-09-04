@@ -11,6 +11,7 @@ from case_intelligence.generation import (
     GenerationGroundingRejected,
     GroundedGenerationService,
     VerifiedAnswer,
+    _prompt,
 )
 from case_intelligence.review_bench_v2 import (
     Candidate,
@@ -230,6 +231,31 @@ def test_explicit_written_and_spoken_request_prioritizes_both_without_changing_l
             "document",
             "transcript",
         )
+
+
+def test_explicit_modality_exclusion_is_directional_and_does_not_capture_factual_negation() -> None:
+    for wording in (
+        "Answer from the written report, not the transcript.",
+        "Use the report rather than the recording.",
+        "Do not use the transcript; answer from the notes.",
+    ):
+        intent = classify_question(wording)
+        assert intent.required_evidence_kinds == ("document",)
+        assert intent.excluded_evidence_kinds == ("transcript",)
+
+    reverse = classify_question("Use the transcript, not the written report.")
+    assert reverse.required_evidence_kinds == ("transcript",)
+    assert reverse.excluded_evidence_kinds == ("document",)
+
+    factual = classify_question("Which witness did not receive the written report?")
+    assert factual.required_evidence_kinds == ()
+    assert factual.excluded_evidence_kinds == ()
+
+    inclusive = classify_question(
+        "Use not only the transcript but also the written report."
+    )
+    assert inclusive.required_evidence_kinds == ("document", "transcript")
+    assert inclusive.excluded_evidence_kinds == ()
 
 
 def test_modality_coverage_distinguishes_complete_and_clear_partial_result() -> None:
@@ -666,6 +692,108 @@ def test_workbench_joint_request_runs_a_bounded_missing_modality_search() -> Non
         ("document", "Page 4"),
         ("transcript", "00:31–00:34"),
     ]
+
+
+def test_workbench_excluded_modality_is_dropped_before_bounded_backfill() -> None:
+    written = _workbench_citation(
+        "f" * 40,
+        "report",
+        "document",
+        "The written identifier is ZX-41.",
+        "Page 4",
+    )
+    spoken = _workbench_citation(
+        "a" * 40,
+        "media",
+        "transcript",
+        "The spoken identifier is ZX-41.",
+        "00:31–00:34",
+    )
+
+    class SearchHarness:
+        def __init__(self) -> None:
+            self.scopes: list[frozenset[str] | None] = []
+
+        def search(self, matter, query, *, document_ids=None, **kwargs):
+            self.scopes.append(document_ids)
+            return (written,) if document_ids == frozenset({"report"}) else (spoken,)
+
+        def source_store(self, matter):
+            return SimpleNamespace(
+                ready_documents=lambda: (
+                    SimpleNamespace(document_id="report", media_type="application/pdf"),
+                    SimpleNamespace(document_id="media", media_type="audio/wav"),
+                )
+            )
+
+    harness = SearchHarness()
+    question = "Answer from the written report, not the transcript."
+    rows = CaseIntelligenceWorkbench._answer_search(
+        harness,
+        SimpleNamespace(matter_id="matter-quality"),
+        question,
+        question,
+    )
+    assert harness.scopes == [None, frozenset({"report"})]
+    assert [(row.evidence_kind, row.location) for row in rows] == [
+        ("document", "Page 4"),
+    ]
+
+
+def test_generation_excludes_forbidden_modality_before_the_model_boundary() -> None:
+    evidence = (
+        EvidenceItem(
+            "S1",
+            "Generated interview.wav",
+            "00:31–00:34",
+            "The spoken identifier is ZX-41.",
+            "transcript",
+        ),
+        EvidenceItem(
+            "S2",
+            "Generated report.pdf",
+            "Page 4",
+            "The written identifier is ZX-41.",
+        ),
+    )
+
+    class RecordingDocumentGenerator:
+        available = True
+
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "answerable": True,
+                "claims": [
+                    {
+                        "text": "The written identifier is ZX-41.",
+                        "evidence_ids": ["S2"],
+                    }
+                ],
+                "limitation": None,
+                "missing_information": "",
+            }
+
+    client = RecordingDocumentGenerator()
+    question = "Answer from the written report, not the transcript."
+
+    answer = GroundedGenerationService(client).answer(question, evidence)
+
+    assert answer.used_evidence_ids == ("S2",)
+    assert len(client.calls) == 1
+    assert client.calls[0]["question"] == question
+    assert [item.evidence_id for item in client.calls[0]["evidence"]] == ["S2"]
+    system_prompt, user_prompt = _prompt(
+        question,
+        client.calls[0]["evidence"],
+        (),
+    )
+    assert "expressly excluded machine transcript evidence" in system_prompt
+    assert "Generated interview.wav" not in user_prompt
+    assert "Generated report.pdf" in user_prompt
 
 
 def test_broad_summary_scope_discloses_sampled_source_diversity() -> None:

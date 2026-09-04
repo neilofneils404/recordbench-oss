@@ -55,7 +55,7 @@
             {% if message.payload.review_scope.collection_wide_request or message.payload.review_scope.broad_summary_request %}<span>{{ message.payload.review_scope.notice }}</span>{% endif %}
           </small>
           {% endif %}
-          {% if message.payload.modality_coverage %}<small class="assistant-answer-coverage">Written and spoken evidence · {{ message.payload.modality_coverage.notice }}</small>{% endif %}
+          {% if message.payload.modality_coverage %}<small class="assistant-answer-coverage">Requested source coverage · {{ message.payload.modality_coverage.notice }}</small>{% endif %}
           {% if message.payload.kind == 'generated' %}
             <p>{{ message.payload.introduction }}</p>
             {% if message.payload.evidence_notice %}<small class="assistant-evidence-note">Machine transcript · verify wording and speaker identity against the recording.</small>{% endif %}

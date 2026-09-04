@@ -2448,10 +2448,14 @@ class CaseIntelligenceWorkbench:
         )
         combined: list[WorkbenchCitation] = []
         seen: set[str] = set()
+        excluded_kinds = frozenset(intent.excluded_evidence_kinds)
 
         def extend(rows: Sequence[WorkbenchCitation]) -> None:
             for row in rows:
-                if row.support_token not in seen:
+                if (
+                    row.evidence_kind not in excluded_kinds
+                    and row.support_token not in seen
+                ):
                     combined.append(row)
                     seen.add(row.support_token)
 
@@ -2466,8 +2470,8 @@ class CaseIntelligenceWorkbench:
                 )
             )
 
-        # A joint written-and-spoken request gets one bounded retrieval attempt
-        # inside each requested source kind when the ordinary top set omitted it.
+        # An explicit source-kind request gets one bounded retrieval attempt
+        # inside each requested kind when the ordinary top set omitted it.
         # Every scoped search still passes the same matter and citation checks.
         present_kinds = {item.evidence_kind for item in combined}
         missing_kinds = tuple(

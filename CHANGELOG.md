@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Honored explicit source-kind exclusions in Review questions before retrieval
+  backfill, evidence budgeting, prompting, and generation, while keeping
+  narrative negation and inclusive “not only … but also” wording intact.
 - Serialized focused-answer and broader-investigation admission in each Review
   conversation, including retries, so concurrent requests cannot both enter the
   same thread or append work out of order.

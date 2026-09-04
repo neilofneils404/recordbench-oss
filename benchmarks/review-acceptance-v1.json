@@ -5,7 +5,7 @@
   "confidential_data": false,
   "requires_network": false,
   "frozen": true,
-  "case_fingerprint": "8aee3ecbf12cc3ffbffff9086e15c3a863eadc034f09ef94beea33ff15d98405",
+  "case_fingerprint": "d8563e161c1ca9857eceede44db1c6a09a690fbe51697e54edc6a6de92e498d6",
   "cases": [
     {
       "case_id": "bounded-page-ocr",
@@ -38,10 +38,13 @@
     {
       "case_id": "written-and-spoken",
       "category": "cross_modal_completeness",
-      "contract": "An explicit written-and-spoken request retains page and timestamp support or reports the missing kind as partial.",
+      "contract": "An explicit source-kind request retains required support, excludes a rejected kind before the model boundary, and reports missing requested support as partial.",
       "node_ids": [
         "tests/test_review_quality.py::test_explicit_written_and_spoken_request_prioritizes_both_without_changing_locators",
+        "tests/test_review_quality.py::test_explicit_modality_exclusion_is_directional_and_does_not_capture_factual_negation",
+        "tests/test_review_quality.py::test_generation_excludes_forbidden_modality_before_the_model_boundary",
         "tests/test_review_quality.py::test_modality_coverage_distinguishes_complete_and_clear_partial_result",
+        "tests/test_review_quality.py::test_workbench_excluded_modality_is_dropped_before_bounded_backfill",
         "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support"
       ],
       "fixture_files": [
@@ -150,7 +153,7 @@
     "test_node_sha256": {
       "tests/test_generation.py::test_empty_evidence_abstains_without_calling_model": "532352d1610eaa0b4c8772f04102a1f4a0c5b5654447dc60ed15db51ebeb6d3e",
       "tests/test_matter_management.py": "9d7a2b952a13ce35a7539508d9a0df318be1e72bbbe8f0fd7d48dcab8320717a",
-      "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support": "cdfe10689d6575788699e8de7cf97fa23af9cf41127243f6f935807467da4314",
+      "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support": "7cb028f88982ef6a75e582e641d4c4c2ee112ddad5f6045992e2f239a3b26f8a",
       "tests/test_matter_media_workflow.py::test_failed_optional_overview_explains_cause_retries_and_independence": "1a8292814c817dc696269b3c3fee9f1ee4c7753c95660f8d384d45bd3e7ffe66",
       "tests/test_matter_media_workflow.py::test_media_upload_transcript_review_range_citations_exports_and_clips": "f3add140a334476e79e5cd0feecf7aa3e9ce36ea0cef2a4fc61228ac504bd7ba",
       "tests/test_matter_media_workflow.py::test_speaker_review_browser_contract_preserves_player_scroll_and_focus": "7955f04e150e91e0fa9549f733efbff67a55372d4e31735d46888df1beeee5e8",
@@ -161,10 +164,13 @@
       "tests/test_review_conversation_continuity.py::test_review_composer_starts_broader_work_in_the_same_conversation": "9ce32e42416c7b814db7a5d4c90711c0b6a84f7a2af1845b8330a436463f6228",
       "tests/test_review_quality.py::test_broad_summary_scope_discloses_sampled_source_diversity": "bf0edb3bbdb1a66132bff68ffcec3c7786b8dad15b533066bf36fb08ab8a21d8",
       "tests/test_review_quality.py::test_exact_time_objective_gets_one_repair_instead_of_an_adjacent_finding": "de5cbfcc5eba7c2997c7a7714c4fb377fea4ff1bc32123251f3a28e3f5bb662c",
+      "tests/test_review_quality.py::test_explicit_modality_exclusion_is_directional_and_does_not_capture_factual_negation": "a583ddc896538aecd0142c1dcec2fda0a213459a46cf372ec7e4eb64513f7da8",
       "tests/test_review_quality.py::test_explicit_written_and_spoken_request_prioritizes_both_without_changing_locators": "6bf3084526a70aa5845435ac62f73a0f6d7573955bacbe9300e1008df8048e46",
+      "tests/test_review_quality.py::test_generation_excludes_forbidden_modality_before_the_model_boundary": "2e918ff495949bbd90349555489c24f46572b400b3aa62ca8560ab7bce44312e",
       "tests/test_review_quality.py::test_hybrid_retrieval_rescues_exact_record_after_a_weak_model_rerank": "96d8ab88afcef7679bb8bef2d45ad396bb9c6139de71ddb8e46d10851b37ebda",
       "tests/test_review_quality.py::test_modality_coverage_distinguishes_complete_and_clear_partial_result": "77efc9481b41dd3c49b9b9241a1046dc390a96d0d3512eddab57bad5ce3c3084",
       "tests/test_review_quality.py::test_workbench_broad_answer_search_merges_facets_and_drops_disclaimer_only": "cb929a88898baf9ea05f645a91816f5a0f577cdcad10ec1d823eb60dba3f5018",
+      "tests/test_review_quality.py::test_workbench_excluded_modality_is_dropped_before_bounded_backfill": "504132ebc34e51df1b1714276f25a15ec7b0a232d20d8c3a5cc7d04178f33dc8",
       "tests/test_upload_pilot.py::test_selective_cpu_ocr_recovers_blank_page_and_preserves_page_citation": "30df09447c6b158f2141cd09da23c6dddefc44bea8770d6d8120bf580f69759d",
       "tests/test_upload_pilot.py::test_source_click_revalidates_version_and_excerpt_digest": "3fafbb585d7cbb7d080513b07ee49742c1389ef91913f114695519d68d5cf9c6",
       "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6"
@@ -172,11 +178,11 @@
     "test_file_sha256": {
       "tests/test_generation.py": "17d7434cd3e1c41b03792a82a146f0fee4fc0c25bad7158d21fe0d00bcbcd2f9",
       "tests/test_matter_management.py": "9d7a2b952a13ce35a7539508d9a0df318be1e72bbbe8f0fd7d48dcab8320717a",
-      "tests/test_matter_media_workflow.py": "9f8601c5f328572dec715f06a8061940bb2842f1ffc333f352c7e7769c68e612",
+      "tests/test_matter_media_workflow.py": "e69abc276306ad2f68276bad65839dacacbd99506e40de8f10ff17c745a3c02e",
       "tests/test_research_and_full_review.py": "4a3ec979e11577950c35821036e71102e763e411c9b68583bbbc3aa2470a9f4c",
       "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
       "tests/test_review_conversation_continuity.py": "685cafa87b8d49997fddaef3816327b797cb77d26637a44e0d1190cbd58d01df",
-      "tests/test_review_quality.py": "a24ae707932761b9c0eab61cd0238e4f0efae88a7a27a0b344d1969f6f4d213b",
+      "tests/test_review_quality.py": "e27f563304d285ffd951e6d07b266e900baa0f39772344a228e585c6833560d9",
       "tests/test_upload_pilot.py": "5353c212152b0fc4fb3852373f0f7d20392a8593d4c13b10fe43dbdf6e996b18",
       "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6"
     },
@@ -185,6 +191,6 @@
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "138e45a18777d3ef14e9477de60177339e32bdf24c277298d7aca941914e609b"
+    "content_fingerprint": "e46483bd6ebf00d2b4b675178f047ec2caa96ced923700d3f5cd7152d738a8d0"
   }
 }
