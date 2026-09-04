@@ -9387,10 +9387,11 @@ def create_workbench_app(
     async def loose_file_upload_preflight(request: Request, slug: str):
         context = auth_context(request)
         matter = authorized_matter(request, slug)
+        request_limit = 6 * 1024 * 1024
         content_length = request.headers.get("content-length", "")
         if content_length:
             try:
-                if int(content_length) > 6 * 1024 * 1024:
+                if int(content_length) > request_limit:
                     raise ValueError
             except ValueError:
                 return JSONResponse(
@@ -9398,13 +9399,15 @@ def create_workbench_app(
                     status_code=413,
                     headers={"Cache-Control": "no-store"},
                 )
-        raw = await request.body()
-        if len(raw) > 6 * 1024 * 1024:
-            return JSONResponse(
-                {"message": "The selected-file list is too large."},
-                status_code=413,
-                headers={"Cache-Control": "no-store"},
-            )
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > request_limit:
+                return JSONResponse(
+                    {"message": "The selected-file list is too large."},
+                    status_code=413,
+                    headers={"Cache-Control": "no-store"},
+                )
+            raw.extend(chunk)
         try:
             payload = json.loads(raw)
         except (UnicodeDecodeError, ValueError):

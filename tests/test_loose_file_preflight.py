@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from case_intelligence.generation import UnavailableGenerator
@@ -9,6 +13,7 @@ from case_intelligence.workbench import create_workbench_app
 
 
 ACTOR = "development-taylor-morgan"
+PREFLIGHT_REQUEST_BYTES = 6 * 1024 * 1024
 
 
 class UnavailableCountingScanner:
@@ -63,6 +68,102 @@ def _app(tmp_path, scanner: UnavailableCountingScanner):
         malware_scanner=scanner,
         malware_scan_mode="extended",
     )
+
+
+def _raw_preflight_request(
+    app, slug: str, chunks, *, content_length: str | None = None
+):
+    messages = list(chunks)
+    consumed_chunks = 0
+    sent = []
+
+    async def receive():
+        nonlocal consumed_chunks
+        consumed_chunks += 1
+        return messages.pop(0)
+
+    async def send(message):
+        sent.append(message)
+
+    path = f"/matters/{slug}/upload-preflight"
+    headers = [
+        (b"host", b"recordbench.example.test"),
+        (b"accept", b"application/json"),
+        (b"content-type", b"application/json"),
+        (b"x-csrf-token", b"test-csrf"),
+    ]
+    if content_length is not None:
+        headers.append((b"content-length", content_length.encode("ascii")))
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": ("127.0.0.1", 43110),
+        "server": ("recordbench.example.test", 443),
+        "state": {
+            "auth": app.state.identity.resolve(None),
+            "request_id": "synthetic-preflight-stream-limit",
+        },
+        "app": app,
+    }
+    try:
+        asyncio.run(app.router(scope, receive, send))
+    except HTTPException as exc:
+        return exc.status_code, consumed_chunks
+    response_start = next(
+        message for message in sent if message["type"] == "http.response.start"
+    )
+    return response_start["status"], consumed_chunks
+
+
+@pytest.mark.parametrize("content_length", [None, "1"], ids=["missing", "lying"])
+def test_selection_preflight_stream_limit_stops_on_first_crossing_chunk(
+    tmp_path, content_length
+):
+    app = _app(tmp_path, UnavailableCountingScanner())
+    with TestClient(app) as client:
+        slug = _matter(client)
+        chunks = [
+            {
+                "type": "http.request",
+                "body": b"x" * PREFLIGHT_REQUEST_BYTES,
+                "more_body": True,
+            },
+            {"type": "http.request", "body": b"y", "more_body": True},
+            {"type": "http.request", "body": b"not-consumed", "more_body": False},
+        ]
+
+        status, consumed_chunks = _raw_preflight_request(
+            app, slug, chunks, content_length=content_length
+        )
+
+    assert status == 413
+    assert consumed_chunks == 2
+
+
+def test_selection_preflight_rejects_foreign_matter_before_consuming_body(tmp_path):
+    app = _app(tmp_path, UnavailableCountingScanner())
+    with TestClient(app) as client:
+        foreign = client.app.state.workbench.create_matter(
+            "Foreign synthetic matter",
+            "Isolation stream canary",
+            "development-jordan-lee",
+        )
+        chunks = [
+            {"type": "http.request", "body": b"synthetic body", "more_body": False}
+        ]
+
+        status, consumed_chunks = _raw_preflight_request(app, foreign.slug, chunks)
+
+    assert status == 404
+    assert consumed_chunks == 0
 
 
 def test_selection_preflight_accounts_for_every_file_without_durable_writes(tmp_path):
