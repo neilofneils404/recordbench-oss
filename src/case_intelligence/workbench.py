@@ -1776,7 +1776,11 @@ class CaseIntelligenceWorkbench:
                     matter_ids=tuple(matter.matter_id for matter in matters),
                 )
             except Exception:
-                self.postgres_connection.rollback()
+                try:
+                    self.postgres_connection.rollback()
+                except Exception:
+                    pass
+                self.postgres_ready = False
                 self.learned_retrieval = False
                 postgres_reconciliation_ready = False
         for matter in matters:
@@ -1801,7 +1805,11 @@ class CaseIntelligenceWorkbench:
                         if indexed.get(document.document_id) != document.version_id:
                             self._index_document(matter, document)
                 except Exception:
-                    self.postgres_connection.rollback()
+                    try:
+                        self.postgres_connection.rollback()
+                    except Exception:
+                        pass
+                    self.postgres_ready = False
                     self.learned_retrieval = False
                     postgres_reconciliation_ready = False
 

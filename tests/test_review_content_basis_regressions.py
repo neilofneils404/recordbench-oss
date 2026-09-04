@@ -284,32 +284,53 @@ def test_finalization_rejects_saved_decision_with_empty_basis(tmp_path) -> None:
 
 
 class _PostgresCursor:
+    def __init__(self, *, projection_failure: bool = False) -> None:
+        self.projection_failure = projection_failure
+
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, traceback):
         return False
 
+    def execute(self, *_args, **_kwargs) -> None:
+        return None
+
+    def fetchall(self):
+        if self.projection_failure:
+            raise RuntimeError("synthetic PostgreSQL projection outage")
+        return []
+
 
 class _PostgresConnection:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        projection_failure: bool = False,
+        rollback_failure: bool = False,
+    ) -> None:
         self.rollbacks = 0
+        self.projection_failure = projection_failure
+        self.rollback_failure = rollback_failure
 
     def cursor(self):
-        return _PostgresCursor()
+        return _PostgresCursor(projection_failure=self.projection_failure)
 
     def commit(self) -> None:
         return None
 
     def rollback(self) -> None:
         self.rollbacks += 1
+        if self.rollback_failure:
+            raise RuntimeError("synthetic closed PostgreSQL connection")
 
     def close(self) -> None:
         return None
 
 
+@pytest.mark.parametrize("rollback_failure", (False, True))
 def test_postgres_retention_failure_does_not_skip_legacy_basis_repair(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, rollback_failure
 ) -> None:
     runtime = tmp_path / "runtime"
     original = _workbench(runtime)
@@ -333,7 +354,7 @@ def test_postgres_retention_failure_does_not_skip_legacy_basis_repair(
     finally:
         database.close()
 
-    postgres = _PostgresConnection()
+    postgres = _PostgresConnection(rollback_failure=rollback_failure)
     monkeypatch.setattr(
         workbench_module,
         "apply_postgres_migrations",
@@ -398,5 +419,74 @@ def test_postgres_retention_failure_does_not_skip_legacy_basis_repair(
         assert result.decision == "needs_attention"
         assert result.citations == ()
         assert "source changed" in result.rationale.casefold()
+    finally:
+        reopened.close()
+
+
+def test_postgres_projection_and_rollback_failure_keeps_repairing_catalogs(
+    tmp_path, monkeypatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    original = _workbench(runtime)
+    first_matter, first_document = _matter_with_source(
+        original,
+        "Generated first projection matter",
+        b"Generated machine record EVT-4821 occurred at 08:42:17.",
+    )
+    second_matter, second_document = _matter_with_source(
+        original,
+        "Generated second projection matter",
+        b"Generated machine record EVT-9102 occurred at 09:14:03.",
+    )
+    expected = {
+        first_matter.matter_id: original.workspace.source_catalog_record(
+            first_matter.matter_id, first_document.document_id
+        ).content_basis_digest,
+        second_matter.matter_id: original.workspace.source_catalog_record(
+            second_matter.matter_id, second_document.document_id
+        ).content_basis_digest,
+    }
+    original.close()
+
+    database = sqlite3.connect(runtime / "workbench.sqlite")
+    try:
+        database.execute(
+            "ALTER TABLE workbench_source_catalog DROP COLUMN content_basis_digest"
+        )
+        database.commit()
+    finally:
+        database.close()
+
+    postgres = _PostgresConnection(
+        projection_failure=True,
+        rollback_failure=True,
+    )
+    monkeypatch.setattr(
+        workbench_module,
+        "apply_postgres_migrations",
+        lambda _cursor: None,
+    )
+    monkeypatch.setattr(
+        workbench_module,
+        "retain_postgres_workbench_matters",
+        lambda *_args, **_kwargs: None,
+    )
+
+    reopened = CaseIntelligenceWorkbench(
+        runtime,
+        generator=UnavailableGenerator(),
+        postgres_connection=postgres,
+        learned_retrieval=True,
+    )
+    try:
+        assert postgres.rollbacks == 1
+        assert reopened.postgres_ready is False
+        assert reopened.learned_retrieval is False
+        assert reopened.workspace.source_catalog_record(
+            first_matter.matter_id, first_document.document_id
+        ).content_basis_digest == expected[first_matter.matter_id]
+        assert reopened.workspace.source_catalog_record(
+            second_matter.matter_id, second_document.document_id
+        ).content_basis_digest == expected[second_matter.matter_id]
     finally:
         reopened.close()
