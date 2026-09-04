@@ -76,6 +76,7 @@ from .media_evidence import (
     render_clip,
     transcript_summary_basis,
     transcript_summary_windows,
+    transcript_speaker_labels,
     transcript_units,
 )
 from .managed_storage import ManagedMatterStorage, StoragePolicy, format_bytes
@@ -10118,14 +10119,7 @@ def create_workbench_app(
                     start_ms=start_ms,
                     focus_segment_id=segment,
                 )
-                speaker_labels = {
-                    mapping.speaker_cluster: (
-                        mapping.display_name
-                        if mapping.identity_state == "confirmed"
-                        else f"Speaker {ordinal}"
-                    )
-                    for ordinal, mapping in enumerate(media.speakers, 1)
-                }
+                speaker_labels = transcript_speaker_labels(media.segments)
                 query_key = " ".join(q.split()).casefold()
                 selected = tuple(
                     item

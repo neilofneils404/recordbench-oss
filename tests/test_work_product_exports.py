@@ -10,7 +10,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from case_intelligence.media_evidence import export_transcript
+from case_intelligence.media_evidence import export_transcript, transcript_units
 from case_intelligence.work_product_exports import (
     DOCX_MEDIA_TYPE,
     ExportProblem,
@@ -714,6 +714,121 @@ def test_transcript_csv_and_json_use_staff_speaker_labels_without_processor_fiel
             (segments[0], replace(segments[1], matter_id="ci-matter-" + "e" * 32)),
             "json",
         )
+
+
+def test_anonymous_speaker_labels_match_projection_every_export_and_bundle():
+    matter, _conversation, _question, _answer = _records()
+    original = _transcript_segments(matter)
+    segments = (
+        replace(
+            original[0],
+            speaker_cluster="SPEAKER_01",
+            speaker_display_name="SPEAKER_01",
+            speaker_identity_state="cluster",
+            speaker_revision=0,
+            current_text="The first generated anonymous passage.",
+        ),
+        replace(
+            original[1],
+            speaker_cluster="SPEAKER_00",
+            speaker_display_name="SPEAKER_00",
+            current_text="The second generated anonymous passage.",
+        ),
+    )
+
+    projected = transcript_units(segments)
+    assert [item.text for item in projected] == [
+        "Speaker 2: The first generated anonymous passage.",
+        "Speaker 1: The second generated anonymous passage.",
+    ]
+
+    exports = {
+        format_name: export_transcript(
+            "Generated anonymous interview.wav", segments, format_name
+        )
+        for format_name in ("txt", "markdown", "docx", "srt", "vtt", "csv", "json")
+    }
+    payload = json.loads(exports["json"].body)
+    assert [
+        (item["ordinal"], item["speaker"], item["text"])
+        for item in payload["segments"]
+    ] == [
+        (1, "Speaker 2", "The first generated anonymous passage."),
+        (2, "Speaker 1", "The second generated anonymous passage."),
+    ]
+    rows = list(
+        csv.DictReader(io.StringIO(exports["csv"].body.decode("utf-8-sig")))
+    )
+    assert [
+        (int(item["Ordinal"]), item["Speaker"], item["Text"])
+        for item in rows
+    ] == [
+        (1, "Speaker 2", "The first generated anonymous passage."),
+        (2, "Speaker 1", "The second generated anonymous passage."),
+    ]
+
+    for format_name in ("txt", "srt", "vtt"):
+        rendered = exports[format_name].body.decode()
+        assert "Speaker 2: The first generated anonymous passage." in rendered
+        assert "Speaker 1: The second generated anonymous passage." in rendered
+    markdown = exports["markdown"].body.decode()
+    assert (
+        "Speaker 2 (Unconfirmed)**\n\nThe first generated anonymous passage."
+        in markdown
+    )
+    assert (
+        "Speaker 1 (Unconfirmed)**\n\nThe second generated anonymous passage."
+        in markdown
+    )
+    with zipfile.ZipFile(io.BytesIO(exports["docx"].body)) as archive:
+        document_xml = archive.read("word/document.xml").decode()
+    assert document_xml.index("Speaker 2") < document_xml.index(
+        "The first generated anonymous passage."
+    )
+    assert document_xml.index("Speaker 1") < document_xml.index(
+        "The second generated anonymous passage."
+    )
+
+    bundle = export_matter_bundle(
+        matter,
+        (),
+        (),
+        media_work_product=(
+            {
+                "matter_id": matter.matter_id,
+                "source_name": "Generated anonymous interview.wav",
+                "source_kind": "Audio",
+                "review_state": "machine_draft",
+                "segment_count": 2,
+                "markdown": exports["markdown"].body,
+                "srt": exports["srt"].body,
+                "json": exports["json"].body,
+                "summary_markdown": None,
+                "summary_coverage": None,
+                "clips": (),
+            },
+        ),
+        exported_at=STAMP,
+    )
+    with zipfile.ZipFile(io.BytesIO(bundle.body)) as archive:
+        bundled = {
+            suffix: archive.read(
+                next(
+                    name
+                    for name in archive.namelist()
+                    if name.startswith("transcripts/") and name.endswith(suffix)
+                )
+            )
+            for suffix in (".md", ".srt", ".json")
+        }
+    assert bundled == {
+        ".md": exports["markdown"].body,
+        ".srt": exports["srt"].body,
+        ".json": exports["json"].body,
+    }
+    for artifact in (*exports.values(), bundle):
+        assert b"SPEAKER_00" not in artifact.body
+        assert b"SPEAKER_01" not in artifact.body
 
 
 def test_confirmed_raw_looking_speaker_name_is_preserved_in_every_transcript_export():

@@ -5,7 +5,7 @@
   "confidential_data": false,
   "requires_network": false,
   "frozen": true,
-  "case_fingerprint": "8063cce64e44bd8cd53b6260beae24202faee59a001529f90b2192980ac6fd1c",
+  "case_fingerprint": "8f7446a44b3926b55985ea0924e261ac892a24ee90b13b6b4c12c8c87f900093",
   "cases": [
     {
       "case_id": "bounded-page-ocr",
@@ -18,10 +18,11 @@
     {
       "case_id": "speaker-review-context",
       "category": "transcript_speaker_review",
-      "contract": "Explicit transcript-wide speaker correction preserves playback, scroll, and focus without inferring identity.",
+      "contract": "Explicit transcript-wide speaker correction preserves playback, scroll, and focus without inferring identity, while one anonymous cluster keeps the same staff-safe label in searchable passages and portable work product.",
       "node_ids": [
         "tests/test_matter_media_workflow.py::test_speaker_review_save_updates_every_passage_without_navigation",
-        "tests/test_matter_media_workflow.py::test_speaker_review_browser_contract_preserves_player_scroll_and_focus"
+        "tests/test_matter_media_workflow.py::test_speaker_review_browser_contract_preserves_player_scroll_and_focus",
+        "tests/test_work_product_exports.py::test_anonymous_speaker_labels_match_projection_every_export_and_bundle"
       ],
       "fixture_files": [
         "src/case_intelligence/static/demo-audio.wav"
@@ -175,7 +176,8 @@
       "tests/test_review_quality.py::test_workbench_excluded_modality_is_dropped_before_bounded_backfill": "504132ebc34e51df1b1714276f25a15ec7b0a232d20d8c3a5cc7d04178f33dc8",
       "tests/test_upload_pilot.py::test_selective_cpu_ocr_recovers_blank_page_and_preserves_page_citation": "30df09447c6b158f2141cd09da23c6dddefc44bea8770d6d8120bf580f69759d",
       "tests/test_upload_pilot.py::test_source_click_revalidates_version_and_excerpt_digest": "3fafbb585d7cbb7d080513b07ee49742c1389ef91913f114695519d68d5cf9c6",
-      "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6"
+      "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6",
+      "tests/test_work_product_exports.py::test_anonymous_speaker_labels_match_projection_every_export_and_bundle": "34585191f00805c6cade25cd76d635e161796d1b3d5eca9646641682fe6cd321"
     },
     "test_file_sha256": {
       "tests/test_generation.py": "17d7434cd3e1c41b03792a82a146f0fee4fc0c25bad7158d21fe0d00bcbcd2f9",
@@ -186,13 +188,14 @@
       "tests/test_review_conversation_continuity.py": "685cafa87b8d49997fddaef3816327b797cb77d26637a44e0d1190cbd58d01df",
       "tests/test_review_quality.py": "52642b3af89485dcb9eb79442b43439e963a12254c8a382ab8ddf34a29ddd4bb",
       "tests/test_upload_pilot.py": "5353c212152b0fc4fb3852373f0f7d20392a8593d4c13b10fe43dbdf6e996b18",
-      "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6"
+      "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6",
+      "tests/test_work_product_exports.py": "94be8938823a2a5c33be98fd2b339027d1d89bba99dbd64d841c4827d1d25ada"
     },
     "fixture_file_sha256": {
       "benchmarks/review_acceptance/v1/objective-with-final-withheld.json": "fe3b839f5d4abcf6af7656b16ef6f5e753fa078f488781e54ab375fdc39f1fbd",
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "5bec4e09c90a057531a2bc4aa3f09e8ee51dcffbdf784c8e16d69cb5e110dd86"
+    "content_fingerprint": "568b047dd752386aad910ff421f2706972dbcc1acce3006162dd2c6b922cb190"
   }
 }

@@ -463,29 +463,37 @@ def normalize_transcript_payload(
     return tuple(normalized)
 
 
+def transcript_speaker_labels(
+    segments: Sequence[TranscriptSegmentRecord],
+) -> dict[str, str]:
+    """Assign one stable staff-facing label to every transcript speaker cluster."""
+
+    confirmed_labels: dict[str, str] = {}
+    anonymous_clusters: set[str] = set()
+    for segment in segments:
+        display_name = " ".join(segment.speaker_display_name.split()).strip()
+        if segment.speaker_identity_state == "confirmed" and display_name:
+            confirmed_labels[segment.speaker_cluster] = display_name
+        else:
+            anonymous_clusters.add(segment.speaker_cluster)
+    anonymous_clusters.difference_update(confirmed_labels)
+    anonymous_labels = {
+        cluster: f"Speaker {ordinal}"
+        for ordinal, cluster in enumerate(
+            sorted(anonymous_clusters),
+            1,
+        )
+    }
+    return {**anonymous_labels, **confirmed_labels}
+
+
 def transcript_units(
     segments: Sequence[TranscriptSegmentRecord],
 ) -> tuple[PilotUnit, ...]:
     units: list[PilotUnit] = []
-    anonymous_labels = {
-        cluster: f"Speaker {ordinal}"
-        for ordinal, cluster in enumerate(
-            sorted(
-                {
-                    segment.speaker_cluster
-                    for segment in segments
-                    if segment.speaker_identity_state != "confirmed"
-                }
-            ),
-            1,
-        )
-    }
+    speaker_labels = transcript_speaker_labels(segments)
     for ordinal, segment in enumerate(segments, 1):
-        speaker = (
-            segment.speaker_display_name
-            if segment.speaker_identity_state == "confirmed"
-            else anonymous_labels[segment.speaker_cluster]
-        )
+        speaker = speaker_labels[segment.speaker_cluster]
         text = f"{speaker}: {segment.current_text}"
         units.append(
             PilotUnit(
@@ -1033,7 +1041,7 @@ def _portable_transcript_segments(
         for item in segments
     ):
         raise ValueError("transcript contains mixed sources")
-    anonymous_labels: dict[str, str] = {}
+    speaker_labels = transcript_speaker_labels(segments)
     result: list[_PortableTranscriptSegment] = []
     for item in segments:
         display_name = " ".join(item.speaker_display_name.split()).strip()
@@ -1044,15 +1052,10 @@ def _portable_transcript_segments(
             display_name
         )
         if confirmed_name:
-            speaker = display_name
+            speaker = speaker_labels[item.speaker_cluster]
             speaker_status = "Confirmed"
         else:
-            anonymous_key = item.speaker_cluster or f"segment-{item.ordinal}"
-            if anonymous_key not in anonymous_labels:
-                anonymous_labels[anonymous_key] = (
-                    f"Speaker {len(anonymous_labels) + 1}"
-                )
-            speaker = anonymous_labels[anonymous_key]
+            speaker = speaker_labels[item.speaker_cluster]
             speaker_status = "Unconfirmed"
         result.append(
             _PortableTranscriptSegment(
