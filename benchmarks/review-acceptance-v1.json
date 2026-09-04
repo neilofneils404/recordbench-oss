@@ -5,7 +5,7 @@
   "confidential_data": false,
   "requires_network": false,
   "frozen": true,
-  "case_fingerprint": "d8563e161c1ca9857eceede44db1c6a09a690fbe51697e54edc6a6de92e498d6",
+  "case_fingerprint": "6bb1d69819426a9457898a9d2dbba2103adae6240de2c9884da2188b786b859f",
   "cases": [
     {
       "case_id": "bounded-page-ocr",
@@ -42,6 +42,7 @@
       "node_ids": [
         "tests/test_review_quality.py::test_explicit_written_and_spoken_request_prioritizes_both_without_changing_locators",
         "tests/test_review_quality.py::test_explicit_modality_exclusion_is_directional_and_does_not_capture_factual_negation",
+        "tests/test_review_quality.py::test_factual_modality_mentions_do_not_trigger_source_kind_backfill",
         "tests/test_review_quality.py::test_generation_excludes_forbidden_modality_before_the_model_boundary",
         "tests/test_review_quality.py::test_modality_coverage_distinguishes_complete_and_clear_partial_result",
         "tests/test_review_quality.py::test_workbench_excluded_modality_is_dropped_before_bounded_backfill",
@@ -164,8 +165,9 @@
       "tests/test_review_conversation_continuity.py::test_review_composer_starts_broader_work_in_the_same_conversation": "9ce32e42416c7b814db7a5d4c90711c0b6a84f7a2af1845b8330a436463f6228",
       "tests/test_review_quality.py::test_broad_summary_scope_discloses_sampled_source_diversity": "bf0edb3bbdb1a66132bff68ffcec3c7786b8dad15b533066bf36fb08ab8a21d8",
       "tests/test_review_quality.py::test_exact_time_objective_gets_one_repair_instead_of_an_adjacent_finding": "de5cbfcc5eba7c2997c7a7714c4fb377fea4ff1bc32123251f3a28e3f5bb662c",
-      "tests/test_review_quality.py::test_explicit_modality_exclusion_is_directional_and_does_not_capture_factual_negation": "a583ddc896538aecd0142c1dcec2fda0a213459a46cf372ec7e4eb64513f7da8",
+      "tests/test_review_quality.py::test_explicit_modality_exclusion_is_directional_and_does_not_capture_factual_negation": "315fd468f3fba1befdd3a58da8e61cbf8a49a6ecc9cc976d5a3bb0d50c0e02fd",
       "tests/test_review_quality.py::test_explicit_written_and_spoken_request_prioritizes_both_without_changing_locators": "6bf3084526a70aa5845435ac62f73a0f6d7573955bacbe9300e1008df8048e46",
+      "tests/test_review_quality.py::test_factual_modality_mentions_do_not_trigger_source_kind_backfill": "0e614724663a104bc2d591b39e4856ec75e09dbeb41c75364ae883ad4061016e",
       "tests/test_review_quality.py::test_generation_excludes_forbidden_modality_before_the_model_boundary": "2e918ff495949bbd90349555489c24f46572b400b3aa62ca8560ab7bce44312e",
       "tests/test_review_quality.py::test_hybrid_retrieval_rescues_exact_record_after_a_weak_model_rerank": "96d8ab88afcef7679bb8bef2d45ad396bb9c6139de71ddb8e46d10851b37ebda",
       "tests/test_review_quality.py::test_modality_coverage_distinguishes_complete_and_clear_partial_result": "77efc9481b41dd3c49b9b9241a1046dc390a96d0d3512eddab57bad5ce3c3084",
@@ -182,7 +184,7 @@
       "tests/test_research_and_full_review.py": "4a3ec979e11577950c35821036e71102e763e411c9b68583bbbc3aa2470a9f4c",
       "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
       "tests/test_review_conversation_continuity.py": "685cafa87b8d49997fddaef3816327b797cb77d26637a44e0d1190cbd58d01df",
-      "tests/test_review_quality.py": "e27f563304d285ffd951e6d07b266e900baa0f39772344a228e585c6833560d9",
+      "tests/test_review_quality.py": "52642b3af89485dcb9eb79442b43439e963a12254c8a382ab8ddf34a29ddd4bb",
       "tests/test_upload_pilot.py": "5353c212152b0fc4fb3852373f0f7d20392a8593d4c13b10fe43dbdf6e996b18",
       "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6"
     },
@@ -191,6 +193,6 @@
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "e46483bd6ebf00d2b4b675178f047ec2caa96ced923700d3f5cd7152d738a8d0"
+    "content_fingerprint": "62a8a39099b8ff30fd876374036e2b0128bf9a9c1707410f4b9e952332927ac6"
   }
 }

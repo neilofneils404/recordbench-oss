@@ -247,9 +247,14 @@ def test_explicit_modality_exclusion_is_directional_and_does_not_capture_factual
     assert reverse.required_evidence_kinds == ("transcript",)
     assert reverse.excluded_evidence_kinds == ("document",)
 
-    factual = classify_question("Which witness did not receive the written report?")
-    assert factual.required_evidence_kinds == ()
-    assert factual.excluded_evidence_kinds == ()
+    for wording in (
+        "Which witness did not receive the written report?",
+        "According to the written report, who did not receive the transcript, and why?",
+        "According to the written report, who did not compare the transcript, and why?",
+    ):
+        factual = classify_question(wording)
+        assert factual.required_evidence_kinds == ()
+        assert factual.excluded_evidence_kinds == ()
 
     inclusive = classify_question(
         "Use not only the transcript but also the written report."
@@ -738,6 +743,91 @@ def test_workbench_excluded_modality_is_dropped_before_bounded_backfill() -> Non
     assert [(row.evidence_kind, row.location) for row in rows] == [
         ("document", "Page 4"),
     ]
+
+
+def test_factual_modality_mentions_do_not_trigger_source_kind_backfill() -> None:
+    written = _workbench_citation(
+        "b" * 40,
+        "report",
+        "document",
+        "The generated report states Pat did not receive the transcript.",
+        "Page 6",
+    )
+    spoken = _workbench_citation(
+        "c" * 40,
+        "media",
+        "transcript",
+        "Pat asks why the file was missing.",
+        "00:42–00:46",
+    )
+
+    class SearchHarness:
+        def __init__(self) -> None:
+            self.scopes: list[frozenset[str] | None] = []
+
+        def search(self, matter, query, *, document_ids=None, **kwargs):
+            self.scopes.append(document_ids)
+            return (spoken,) if document_ids == frozenset({"media"}) else (written,)
+
+        def source_store(self, matter):
+            return SimpleNamespace(
+                ready_documents=lambda: (
+                    SimpleNamespace(document_id="report", media_type="application/pdf"),
+                    SimpleNamespace(document_id="media", media_type="audio/wav"),
+                )
+            )
+
+    harness = SearchHarness()
+    question = (
+        "According to the written report, who did not receive the transcript, and why?"
+    )
+    rows = CaseIntelligenceWorkbench._answer_search(
+        harness,
+        SimpleNamespace(matter_id="matter-quality"),
+        question,
+        question,
+    )
+    assert harness.scopes == [None]
+    assert rows == (written,)
+
+    class RecordingGenerator:
+        available = True
+
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "answerable": True,
+                "claims": [
+                    {
+                        "text": written.excerpt,
+                        "evidence_ids": ["S1"],
+                    }
+                ],
+                "limitation": None,
+                "missing_information": "",
+            }
+
+    generator = RecordingGenerator()
+    answer = GroundedGenerationService(generator).answer(
+        question,
+        (
+            EvidenceItem(
+                "S1",
+                written.source_name,
+                written.location,
+                written.excerpt,
+                written.evidence_kind,
+            ),
+        ),
+    )
+    assert answer.used_evidence_ids == ("S1",)
+    assert len(generator.calls) == 1
+    assert {item.evidence_kind for item in generator.calls[0]["evidence"]} == {
+        "document"
+    }
 
 
 def test_generation_excludes_forbidden_modality_before_the_model_boundary() -> None:

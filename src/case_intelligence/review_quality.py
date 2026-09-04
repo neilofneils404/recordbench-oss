@@ -31,9 +31,15 @@ _SPOKEN_TERMS = re.compile(
     rf"\b{_SPOKEN_PATTERN}\b",
     re.IGNORECASE,
 )
-_JOINED_MODALITIES = re.compile(
-    r"\b(?:both|together|compare|using)\b|"
-    r"\b(?:and|alongside|as\s+well\s+as|but\s+also)\b",
+_MODALITY_JOIN_GAP = re.compile(
+    r"^\s*(?:[a-z][a-z'-]*\s+){0,2}(?:,\s*)?"
+    r"(?:and|with|alongside|as\s+well\s+as|together\s+with|but\s+also)\s+"
+    r"(?:(?:the|a|an)\s+)?(?:[a-z][a-z'-]*\s*){0,2}$",
+    re.IGNORECASE,
+)
+_MODALITY_COMPARISON_REQUEST = re.compile(
+    r"^\s*(?:(?:please|kindly)\s+)?(?:compare|"
+    r"(?:can|could|would)\s+you\s+compare)\b",
     re.IGNORECASE,
 )
 _MODALITY_COMMAND = (
@@ -155,6 +161,23 @@ def _explicitly_excludes_modality(value: str, modality_pattern: str) -> bool:
     return any(re.search(pattern, value, re.IGNORECASE) for pattern in patterns)
 
 
+def _explicitly_joins_modalities(value: str) -> bool:
+    """Require the joining words to occur between the two source-kind terms."""
+
+    written = tuple(_WRITTEN_TERMS.finditer(value))
+    spoken = tuple(_SPOKEN_TERMS.finditer(value))
+    if written and spoken and _MODALITY_COMPARISON_REQUEST.search(value):
+        return True
+    for written_match in written:
+        for spoken_match in spoken:
+            left, right = sorted(
+                (written_match, spoken_match), key=lambda item: item.start()
+            )
+            if _MODALITY_JOIN_GAP.fullmatch(value[left.end() : right.start()]):
+                return True
+    return False
+
+
 class RankedCandidate(Protocol):
     matter_id: str
     source_name: str
@@ -183,7 +206,7 @@ def classify_question(question: str) -> QuestionIntent:
         excluded.append(DOCUMENT_EVIDENCE_KIND)
     if _explicitly_excludes_modality(value, _SPOKEN_PATTERN):
         excluded.append(TRANSCRIPT_EVIDENCE_KIND)
-    joined = bool(_JOINED_MODALITIES.search(value))
+    joined = _explicitly_joins_modalities(value)
     if excluded:
         required = tuple(
             kind
