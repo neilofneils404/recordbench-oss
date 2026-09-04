@@ -81,3 +81,13 @@ def test_transcription_is_bundled_but_not_exposed_without_authentication() -> No
     assert "bundled" in combined.casefold()
     assert "not published" in combined.casefold()
     assert "token" in text.casefold()
+
+
+def test_pull_request_jobs_checkout_the_exact_proposed_commit() -> None:
+    workflow = (ROOT / ".github/workflows/quality-gates.yml").read_text(
+        encoding="utf-8"
+    )
+    exact_ref = "ref: ${{ github.event.pull_request.head.sha || github.sha }}"
+    assert workflow.count(exact_ref) == 3
+    assert "pull_request_target" not in workflow
+    assert "fetch-depth: 0" in workflow
