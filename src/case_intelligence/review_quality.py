@@ -252,8 +252,9 @@ def _exact_record_features(
 ) -> tuple[int, int, int, int]:
     haystack = f"{candidate.source_name}\n{candidate.text}"
     identifiers = tuple(dict.fromkeys(_IDENTIFIER.findall(query.upper())))
+    candidate_identifiers = frozenset(_IDENTIFIER.findall(haystack.upper()))
     identifier_matches = sum(
-        1 for identifier in identifiers if identifier.casefold() in haystack.casefold()
+        1 for identifier in identifiers if identifier in candidate_identifiers
     )
     clocks = _CLOCK.findall(haystack)
     temporal_precision = 0
