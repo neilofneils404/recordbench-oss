@@ -9982,6 +9982,7 @@ class WorkspaceStore:
         run_id: str,
         *,
         limit: int = 100_000,
+        after_ordinal: int = 0,
         administrator_override: bool = False,
     ) -> tuple[ReviewDecisionRecord, ...]:
         self._authorize_export_read(
@@ -9992,6 +9993,7 @@ class WorkspaceStore:
         if not _REVIEW_RUN.fullmatch(run_id or ""):
             raise KeyError(run_id)
         bounded = min(max(int(limit), 1), 100_000)
+        cursor = max(int(after_ordinal), 0)
         with self._lock:
             run = self.connection.execute(
                 "SELECT 1 FROM workbench_review_run WHERE matter_id=? AND run_id=?",
@@ -10000,8 +10002,8 @@ class WorkspaceStore:
             if run is None:
                 raise KeyError(run_id)
             rows = self.connection.execute(
-                "SELECT * FROM workbench_review_decision WHERE run_id=? "
-                "ORDER BY ordinal LIMIT ?", (run_id, bounded)
+                "SELECT * FROM workbench_review_decision WHERE run_id=? AND ordinal>? "
+                "ORDER BY ordinal LIMIT ?", (run_id, cursor, bounded)
             ).fetchall()
         return tuple(self._review_decision(row) for row in rows)
 

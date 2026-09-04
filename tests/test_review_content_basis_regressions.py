@@ -283,6 +283,111 @@ def test_finalization_rejects_saved_decision_with_empty_basis(tmp_path) -> None:
         bench.close()
 
 
+def test_finalization_revalidates_decisions_beyond_one_export_page(
+    tmp_path, monkeypatch
+) -> None:
+    bench = _workbench(tmp_path / "runtime")
+    try:
+        matter = bench.create_matter(
+            "Generated paged-finalization matter",
+            "Synthetic content-basis fixture",
+            ACTOR,
+        )
+        source_store = bench.source_store(matter)
+        for index in range(1, 4):
+            document, _change = source_store.store_stream(
+                f"generated-record-{index}.txt",
+                "text/plain",
+                io.BytesIO(f"Generated source content {index}.".encode()),
+            )
+            assert document.state == "ready"
+        claimed, _first = _claimed_review(bench, matter)
+        decisions = bench.workspace.review_decisions_for_export(
+            matter.matter_id, ACTOR, claimed.run_id
+        )
+        assert len(decisions) == 3
+        for decision in decisions:
+            bench.workspace.record_review_decision(
+                claimed.run_id,
+                decision.document_id,
+                decision="included",
+                rationale="Generated supported inclusion.",
+            )
+        with bench.workspace.connection:
+            for decision, ordinal in zip(decisions, (99_999, 100_000, 100_001)):
+                bench.workspace.connection.execute(
+                    "UPDATE workbench_review_decision SET ordinal=? "
+                    "WHERE run_id=? AND document_id=?",
+                    (ordinal, claimed.run_id, decision.document_id),
+                )
+
+        tail = source_store.get(decisions[-1].document_id)
+        changed_text = "Generated replacement content beyond the first decision page."
+        unit = asdict(tail.parsed_units()[0])
+        unit.update(
+            {
+                "text": changed_text,
+                "excerpt_digest": hashlib.sha256(changed_text.encode()).hexdigest(),
+            }
+        )
+        tail.units = [unit]
+        with source_store.mutation_guard():
+            source_store._save((tail.document_id,))
+
+        original_page = bench.workspace.review_decisions_for_export
+        cursors: list[int] = []
+
+        def two_at_a_time(
+            matter_id: str,
+            actor_id: str,
+            run_id: str,
+            *,
+            limit: int = 100_000,
+            after_ordinal: int = 0,
+            administrator_override: bool = False,
+        ):
+            cursors.append(after_ordinal)
+            kwargs = {
+                "limit": min(limit, 2),
+                "administrator_override": administrator_override,
+            }
+            if after_ordinal:
+                kwargs["after_ordinal"] = after_ordinal
+            return original_page(matter_id, actor_id, run_id, **kwargs)
+
+        monkeypatch.setattr(
+            bench.workspace, "review_decisions_for_export", two_at_a_time
+        )
+        finished = bench._finish_review_run(claimed)
+
+        assert cursors == [0, 100_000, 100_001]
+        assert finished.state == "succeeded"
+        assert finished.included_count == 2
+        assert finished.attention_count == 1
+        saved = bench.workspace.review_decision(
+            matter.matter_id,
+            ACTOR,
+            claimed.run_id,
+            tail.document_id,
+        )
+        assert saved.machine_decision == "needs_attention"
+        assert saved.citations == ()
+        assert "replacement was not reviewed" in saved.rationale
+
+        other = bench.create_matter(
+            "Generated pagination isolation matter", "Synthetic", ACTOR
+        )
+        with pytest.raises(KeyError):
+            original_page(
+                other.matter_id,
+                ACTOR,
+                claimed.run_id,
+                after_ordinal=100_000,
+            )
+    finally:
+        bench.close()
+
+
 class _PostgresCursor:
     def __init__(self, *, projection_failure: bool = False) -> None:
         self.projection_failure = projection_failure

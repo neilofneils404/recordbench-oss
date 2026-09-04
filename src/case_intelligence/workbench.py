@@ -4890,37 +4890,47 @@ class CaseIntelligenceWorkbench:
     def _finish_review_run(self, run: ReviewRunRecord) -> ReviewRunRecord:
         matter = self._matter_by_id(run.matter_id)
         with self.source_store(matter).mutation_guard():
-            for decision in self.workspace.review_decisions_for_export(
-                run.matter_id, run.actor_id, run.run_id
-            ):
-                source_current = False
-                try:
-                    document = self.source_store(matter).get(decision.document_id)
-                    source_current = bool(
-                        document.state == "ready"
-                        and document.version_id == decision.source_version_id
-                        and bool(decision.source_basis_digest)
-                        and self._document_content_basis(document)
-                        == decision.source_basis_digest
-                    )
-                except KeyError:
-                    pass
-                citations_current = source_current
-                if citations_current:
+            after_ordinal = 0
+            while True:
+                decisions = self.workspace.review_decisions_for_export(
+                    run.matter_id,
+                    run.actor_id,
+                    run.run_id,
+                    limit=1_000,
+                    after_ordinal=after_ordinal,
+                )
+                if not decisions:
+                    break
+                for decision in decisions:
+                    source_current = False
                     try:
-                        citations_current = all(
-                            self._current_workflow_citation(
-                                matter, self._workflow_citation(value)
-                            )
-                            is not None
-                            for value in decision.citations
+                        document = self.source_store(matter).get(decision.document_id)
+                        source_current = bool(
+                            document.state == "ready"
+                            and document.version_id == decision.source_version_id
+                            and bool(decision.source_basis_digest)
+                            and self._document_content_basis(document)
+                            == decision.source_basis_digest
                         )
-                    except (KeyError, TypeError, ValueError):
-                        citations_current = False
-                if not citations_current:
-                    self.workspace.mark_review_decision_source_changed(
-                        run.run_id, decision.document_id
-                    )
+                    except KeyError:
+                        pass
+                    citations_current = source_current
+                    if citations_current:
+                        try:
+                            citations_current = all(
+                                self._current_workflow_citation(
+                                    matter, self._workflow_citation(value)
+                                )
+                                is not None
+                                for value in decision.citations
+                            )
+                        except (KeyError, TypeError, ValueError):
+                            citations_current = False
+                    if not citations_current:
+                        self.workspace.mark_review_decision_source_changed(
+                            run.run_id, decision.document_id
+                        )
+                after_ordinal = decisions[-1].ordinal
             return self.workspace.finish_review_run(run.run_id)
 
     def record_answer_error(
