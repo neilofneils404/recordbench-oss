@@ -850,6 +850,11 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
         assert summary.covered_segment_count == summary.total_segment_count == 3
         assert summary.payload["coverage"]["mode"] == "full"
         assert "this overview reports" in summary.payload["evidence_notice"]
+        initial_overview = json.dumps(summary.payload)
+        assert "Speaker 1" in initial_overview
+        assert "Speaker 2" in initial_overview
+        assert "SPEAKER_00" not in initial_overview
+        assert "SPEAKER_01" not in initial_overview
         original_summary_basis = summary.basis_digest
 
         review = client.get(f"/matters/{slug}/sources/{token}")
@@ -873,6 +878,23 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
         assert "AI transcript overview" in review.text
         assert "Transcript-based orientation" in review.text
         assert "Export overview to Word" in review.text
+        assert "Speaker 1" in review.text
+        assert "Speaker 2" in review.text
+        summary_panel = review.text.split('id="media-summary"', 1)[1].split(
+            "</section>", 1
+        )[0]
+        assert "SPEAKER_00" not in summary_panel
+        assert "SPEAKER_01" not in summary_panel
+
+        initial_overview_export = client.get(
+            f"/matters/{slug}/sources/{token}/summary-export",
+            params={"format": "markdown"},
+        )
+        assert initial_overview_export.status_code == 200
+        assert b"Speaker 1" in initial_overview_export.content
+        assert b"Speaker 2" in initial_overview_export.content
+        assert b"SPEAKER_00" not in initial_overview_export.content
+        assert b"SPEAKER_01" not in initial_overview_export.content
 
         head = client.head(f"/matters/{slug}/sources/{token}/content")
         assert head.status_code == 200
@@ -1076,6 +1098,16 @@ def test_media_upload_transcript_review_range_citations_exports_and_clips(tmp_pa
                 name.startswith("transcript-overviews/") and name.endswith(".md")
                 for name in names
             )
+            overview_name = next(
+                name
+                for name in names
+                if name.startswith("transcript-overviews/") and name.endswith(".md")
+            )
+            bundled_overview = archive.read(overview_name)
+            assert b"Witness Jordan" in bundled_overview
+            assert b"Speaker 1" in bundled_overview
+            assert b"SPEAKER_00" not in bundled_overview
+            assert b"SPEAKER_01" not in bundled_overview
             assert "media/clip-inventory.csv" in names
             assert "media/media-work-product.json" in names
             manifest = json.loads(archive.read("manifest.json"))

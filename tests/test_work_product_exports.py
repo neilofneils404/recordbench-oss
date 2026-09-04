@@ -10,7 +10,11 @@ from xml.etree import ElementTree
 
 import pytest
 
-from case_intelligence.media_evidence import export_transcript, transcript_units
+from case_intelligence.media_evidence import (
+    export_transcript,
+    transcript_summary_windows,
+    transcript_units,
+)
 from case_intelligence.work_product_exports import (
     DOCX_MEDIA_TYPE,
     ExportProblem,
@@ -741,6 +745,11 @@ def test_anonymous_speaker_labels_match_projection_every_export_and_bundle():
         "Speaker 2: The first generated anonymous passage.",
         "Speaker 1: The second generated anonymous passage.",
     ]
+    summary_excerpt = transcript_summary_windows(segments)[0].excerpt
+    assert "Speaker 2: The first generated anonymous passage." in summary_excerpt
+    assert "Speaker 1: The second generated anonymous passage." in summary_excerpt
+    assert "SPEAKER_00" not in summary_excerpt
+    assert "SPEAKER_01" not in summary_excerpt
 
     exports = {
         format_name: export_transcript(

@@ -97,13 +97,14 @@ def transcript_summary_windows(
 ) -> tuple[TranscriptSummaryWindow, ...]:
     if not segments:
         return ()
+    speaker_labels = transcript_speaker_labels(segments)
     groups: list[list[tuple[TranscriptSegmentRecord, str]]] = []
     current: list[tuple[TranscriptSegmentRecord, str]] = []
     current_size = 0
     for segment in segments:
         line = (
             f"[{format_timestamp(segment.start_ms)}–{format_timestamp(segment.end_ms)}] "
-            f"{segment.speaker_display_name}: {segment.current_text}"
+            f"{speaker_labels[segment.speaker_cluster]}: {segment.current_text}"
         )
         if current and current_size + len(line) + 1 > MAX_SUMMARY_WINDOW_CHARS:
             groups.append(current)
