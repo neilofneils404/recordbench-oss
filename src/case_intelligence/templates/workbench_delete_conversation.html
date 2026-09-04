@@ -14,24 +14,36 @@
     {% if counts.active_answers %}
     <div class="notice notice-neutral" role="status">An answer is still in progress. Finish or cancel it before deleting this conversation.</div>
     {% endif %}
+    {% if counts.active_research %}
+    <div class="notice notice-neutral" role="status">An investigation is still in progress. Finish or cancel it before deleting this conversation.</div>
+    {% endif %}
 
     <div class="close-summary conversation-delete-summary" aria-label="Conversation content scheduled for deletion">
       <div><strong>{{ counts.messages }}</strong><span>saved message{% if counts.messages != 1 %}s{% endif %}</span></div>
       <div><strong>{{ counts.answer_jobs }}</strong><span>answer request{% if counts.answer_jobs != 1 %}s{% endif %}</span></div>
+      <div><strong>{{ counts.research_jobs }}</strong><span>linked investigation{% if counts.research_jobs != 1 %}s{% endif %}</span></div>
     </div>
 
     <section class="close-explanation" aria-labelledby="conversation-delete-explanation">
       <h2 id="conversation-delete-explanation">What deletion removes</h2>
-      <p>This removes only this conversation, its messages, and its saved answer-request history. Matter sources, other conversations, membership, and exported files are not changed.</p>
+      <p>This removes this conversation, its messages, saved answer-request history, and every linked broader investigation, including its progress history, evidence ledger, and saved result. Matter sources, other conversations, membership, and exported files are not changed.</p>
+      {% if counts.research_jobs - counts.succeeded_research - counts.active_research %}
+      <p>Failed and cancelled investigation history is preserved only if you keep or archive this conversation; it is not included in the matter bundle.</p>
+      {% endif %}
       <p>Archive is the reversible choice. Permanent deletion cannot be undone from the workbench.</p>
     </section>
 
     <section class="final-export-callout" aria-labelledby="conversation-export-heading">
       <div>
         <h2 id="conversation-export-heading">Save it before deleting</h2>
+        {% if counts.succeeded_research %}
+        <p>Download the matter bundle to preserve completed investigation results and their exact-source ledgers. Conversation-only exports do not include the full investigation records.</p>
+        {% else %}
         <p>Export a portable copy of this conversation first if any part may become work product.</p>
+        {% endif %}
       </div>
       <div class="conversation-delete-exports">
+        {% if counts.succeeded_research %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/export" data-download>Download matter bundle</a>{% endif %}
         <a class="button button-secondary" href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/export?format=docx" data-download>Save as Word</a>
         <a class="button button-secondary" href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/export?format=markdown" data-download>Markdown</a>
       </div>
@@ -47,7 +59,7 @@
         <span>I understand this permanently deletes this shared conversation and cannot be undone.</span>
       </label>
       <div class="close-matter-actions">
-        <button class="button button-danger" type="submit" {% if counts.active_answers %}disabled{% endif %}>Delete conversation</button>
+        <button class="button button-danger" type="submit" {% if counts.active_answers or counts.active_research %}disabled{% endif %}>Delete conversation</button>
         <a class="button button-secondary" href="/matters/{{ matter.slug }}?conversation={{ conversation.conversation_id }}#evidence-conversation">Keep conversation</a>
       </div>
     </form>

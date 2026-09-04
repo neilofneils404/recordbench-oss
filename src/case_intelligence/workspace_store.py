@@ -244,6 +244,7 @@ class ConversationDeletionRecord:
     conversation_id: str
     message_count: int
     answer_job_count: int
+    research_job_count: int
     next_conversation_id: str
     replacement_created: bool
 
@@ -2906,10 +2907,17 @@ class WorkspaceStore:
                 "SELECT COUNT(DISTINCT m.message_id) AS messages,"
                 "COUNT(DISTINCT j.job_id) AS answer_jobs,"
                 "COUNT(DISTINCT CASE WHEN j.state IN ('queued','running') "
-                "THEN j.job_id END) AS active_answers "
+                "THEN j.job_id END) AS active_answers,"
+                "COUNT(DISTINCT r.job_id) AS research_jobs,"
+                "COUNT(DISTINCT CASE WHEN r.state='succeeded' "
+                "THEN r.job_id END) AS succeeded_research,"
+                "COUNT(DISTINCT CASE WHEN r.state IN ('queued','running') "
+                "THEN r.job_id END) AS active_research "
                 "FROM workbench_conversation c "
                 "LEFT JOIN workbench_message m ON m.conversation_id=c.conversation_id "
                 "LEFT JOIN workbench_answer_job j ON j.conversation_id=c.conversation_id "
+                "LEFT JOIN workbench_research_job r ON r.conversation_id=c.conversation_id "
+                "AND r.matter_id=c.matter_id "
                 "WHERE c.conversation_id=? AND c.matter_id=?",
                 (conversation_id, matter_id),
             ).fetchone()
@@ -2919,6 +2927,9 @@ class WorkspaceStore:
             "messages": int(row["messages"]),
             "answer_jobs": int(row["answer_jobs"]),
             "active_answers": int(row["active_answers"]),
+            "research_jobs": int(row["research_jobs"]),
+            "succeeded_research": int(row["succeeded_research"]),
+            "active_research": int(row["active_research"]),
         }
 
     def conversation_organization(
@@ -3220,14 +3231,20 @@ class WorkspaceStore:
         )
         now = self._now()
         with self._lock, self.connection:
+            # Keep the final active-work check and deletion in the same write
+            # transaction across process-local workspace connections.
+            self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute(
                 "SELECT c.title,COUNT(DISTINCT m.message_id) AS message_count,"
-                "COUNT(DISTINCT j.job_id) AS answer_job_count "
+                "COUNT(DISTINCT j.job_id) AS answer_job_count,"
+                "COUNT(DISTINCT r.job_id) AS research_job_count "
                 "FROM workbench_conversation c "
                 "JOIN workbench_conversation_organization o "
                 "ON o.conversation_id=c.conversation_id "
                 "LEFT JOIN workbench_message m ON m.conversation_id=c.conversation_id "
                 "LEFT JOIN workbench_answer_job j ON j.conversation_id=c.conversation_id "
+                "LEFT JOIN workbench_research_job r ON r.conversation_id=c.conversation_id "
+                "AND r.matter_id=c.matter_id "
                 "WHERE c.conversation_id=? AND c.matter_id=? GROUP BY c.conversation_id,c.title",
                 (conversation_id, matter_id),
             ).fetchone()
@@ -3245,6 +3262,7 @@ class WorkspaceStore:
                 )
             message_count = int(row["message_count"])
             answer_job_count = int(row["answer_job_count"])
+            research_job_count = int(row["research_job_count"])
             # Research jobs are bound to a conversation by the compatibility
             # migration rather than a database foreign key, so remove their
             # durable events and result payloads explicitly with the confirmed
@@ -3277,6 +3295,7 @@ class WorkspaceStore:
             conversation_id,
             message_count,
             answer_job_count,
+            research_job_count,
             next_conversation.conversation_id,
             created,
         )

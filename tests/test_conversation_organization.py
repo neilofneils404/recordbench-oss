@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import re
+import threading
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,6 +28,68 @@ def _seed_people(store: WorkspaceStore) -> tuple[str, str]:
         "test", "member", "Member User", "member", preferred_principal_id="principal-member"
     )
     return owner.principal_id, member.principal_id
+
+
+def _seed_research_job(
+    store: WorkspaceStore,
+    matter_id: str,
+    conversation_id: str,
+    actor_id: str,
+    *,
+    ordinal: int,
+    state: str,
+):
+    job, created = store.queue_research_job(
+        matter_id,
+        actor_id,
+        f"What does generated investigation {ordinal} show?",
+        f"Generated investigation {ordinal}",
+        f"research-request-{ordinal:032x}",
+        conversation_id=conversation_id,
+    )
+    assert created is True
+    if state == "queued":
+        return job
+    if state == "cancelled":
+        return store.cancel_research_job(matter_id, actor_id, job.job_id)
+    claimed = store.claim_research_job(f"generated-research-worker-{ordinal}")
+    assert claimed is not None and claimed.job_id == job.job_id
+    if state == "running":
+        return claimed
+    if state == "failed":
+        return store.fail_research_job(
+            job.job_id, f"Generated failed investigation {ordinal}."
+        )
+    assert state == "succeeded"
+    return store.finish_research_job(
+        job.job_id,
+        {
+            "summary": "No supported finding was retained.",
+            "passes": [
+                {
+                    "query": f"generated investigation {ordinal}",
+                    "status": "gap",
+                    "text": "No searchable passage matched this part of the research plan.",
+                }
+            ],
+            "evidence": [],
+            "coverage": {
+                "search_pass_count": 1,
+                "candidate_passage_count": 0,
+                "evidence_passage_count": 0,
+                "evidence_source_count": 0,
+                "scope": "matter",
+                "notice": "Synthetic deletion fixture.",
+            },
+            "answer": {
+                "answerable": False,
+                "introduction": "",
+                "claims": [],
+                "limitation": None,
+                "missing_information": "No supported finding was retained.",
+            },
+        },
+    )
 
 
 def test_conversation_organization_persists_orders_and_keeps_archived_exportable(tmp_path):
@@ -145,6 +210,207 @@ def test_archive_and_delete_are_atomic_block_active_work_and_replace_last_thread
     assert store.messages(matter.matter_id, replacement.conversation_id) == ()
     with pytest.raises(KeyError):
         store.get_conversation_any(matter.matter_id, first.conversation_id)
+    store.close()
+
+
+def test_conversation_deletion_accounts_for_and_removes_linked_investigations(tmp_path):
+    store = WorkspaceStore(tmp_path / "workbench.sqlite", clock=lambda: FIXED)
+    owner, _member = _seed_people(store)
+    matter = store.create_matter("Synthetic investigation deletion", "", owner)
+    conversation = store.create_conversation(
+        matter.matter_id, "Investigation deletion record", actor_id=owner
+    )
+    succeeded = _seed_research_job(
+        store,
+        matter.matter_id,
+        conversation.conversation_id,
+        owner,
+        ordinal=1,
+        state="succeeded",
+    )
+    failed = _seed_research_job(
+        store,
+        matter.matter_id,
+        conversation.conversation_id,
+        owner,
+        ordinal=2,
+        state="failed",
+    )
+    active = _seed_research_job(
+        store,
+        matter.matter_id,
+        conversation.conversation_id,
+        owner,
+        ordinal=3,
+        state="queued",
+    )
+    other_matter = store.create_matter("Synthetic other investigation matter", "", owner)
+    other_conversation = store.create_conversation(
+        other_matter.matter_id, "Other investigation record", actor_id=owner
+    )
+    other_research = _seed_research_job(
+        store,
+        other_matter.matter_id,
+        other_conversation.conversation_id,
+        owner,
+        ordinal=8,
+        state="failed",
+    )
+
+    counts = store.conversation_content_counts(
+        matter.matter_id, conversation.conversation_id
+    )
+    assert counts["research_jobs"] == 3
+    assert counts["succeeded_research"] == 1
+    assert counts["active_research"] == 1
+    with pytest.raises(KeyError):
+        store.conversation_content_counts(
+            other_matter.matter_id, conversation.conversation_id
+        )
+    with pytest.raises(WorkspaceProblem, match="investigation in progress"):
+        store.delete_conversation(
+            matter.matter_id,
+            conversation.conversation_id,
+            owner,
+            confirmed_title=conversation.title,
+            acknowledged=True,
+        )
+
+    store.cancel_research_job(matter.matter_id, owner, active.job_id)
+    deleted = store.delete_conversation(
+        matter.matter_id,
+        conversation.conversation_id,
+        owner,
+        confirmed_title=conversation.title,
+        acknowledged=True,
+    )
+
+    assert deleted.research_job_count == 3
+    assert store.connection.execute(
+        "SELECT COUNT(*) FROM workbench_research_job WHERE job_id IN (?,?,?)",
+        (succeeded.job_id, failed.job_id, active.job_id),
+    ).fetchone()[0] == 0
+    assert store.connection.execute(
+        "SELECT COUNT(*) FROM workbench_research_event WHERE job_id IN (?,?,?)",
+        (succeeded.job_id, failed.job_id, active.job_id),
+    ).fetchone()[0] == 0
+    assert store.connection.execute(
+        "SELECT COUNT(*) FROM workbench_research_job WHERE job_id=?",
+        (other_research.job_id,),
+    ).fetchone()[0] == 1
+    store.close()
+
+
+def test_conversation_deletion_serializes_against_new_investigation_admission(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "workbench.sqlite"
+    deleting = WorkspaceStore(path, clock=lambda: FIXED)
+    owner, _member = _seed_people(deleting)
+    matter = deleting.create_matter("Synthetic deletion race", "", owner)
+    conversation = deleting.create_conversation(
+        matter.matter_id, "Deletion race record", actor_id=owner
+    )
+    contender = WorkspaceStore(path, clock=lambda: FIXED)
+    attempted = threading.Event()
+    finished = threading.Event()
+    outcome: list[object] = []
+
+    def admit_investigation() -> None:
+        attempted.set()
+        try:
+            contender.queue_research_job(
+                matter.matter_id,
+                owner,
+                "Can a generated investigation enter during deletion?",
+                "Generated deletion race",
+                "research-request-" + "a" * 32,
+                conversation_id=conversation.conversation_id,
+            )
+        except Exception as exc:  # The exact staff-safe rejection is asserted below.
+            outcome.append(exc)
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=admit_investigation, daemon=True)
+    original_active_answer_check = deleting._conversation_has_active_answer_locked
+
+    def observe_write_lock(conversation_id: str) -> bool:
+        thread.start()
+        assert attempted.wait(timeout=1)
+        assert not finished.wait(timeout=0.25), (
+            "investigation admission escaped the conversation deletion transaction"
+        )
+        return original_active_answer_check(conversation_id)
+
+    monkeypatch.setattr(
+        deleting, "_conversation_has_active_answer_locked", observe_write_lock
+    )
+    deleted = deleting.delete_conversation(
+        matter.matter_id,
+        conversation.conversation_id,
+        owner,
+        confirmed_title=conversation.title,
+        acknowledged=True,
+    )
+    thread.join(timeout=5)
+
+    assert deleted.conversation_id == conversation.conversation_id
+    assert finished.is_set()
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], WorkspaceProblem)
+    assert "not available in this matter" in str(outcome[0])
+    assert contender.connection.execute(
+        "SELECT COUNT(*) FROM workbench_research_job WHERE conversation_id=?",
+        (conversation.conversation_id,),
+    ).fetchone()[0] == 0
+    contender.close()
+    deleting.close()
+
+
+def test_conversation_deletion_rolls_back_linked_investigation_cleanup(
+    tmp_path, monkeypatch
+):
+    store = WorkspaceStore(tmp_path / "workbench.sqlite", clock=lambda: FIXED)
+    owner, _member = _seed_people(store)
+    matter = store.create_matter("Synthetic deletion rollback", "", owner)
+    conversation = store.create_conversation(
+        matter.matter_id, "Deletion rollback record", actor_id=owner
+    )
+    research = _seed_research_job(
+        store,
+        matter.matter_id,
+        conversation.conversation_id,
+        owner,
+        ordinal=4,
+        state="succeeded",
+    )
+
+    def fail_replacement(*_args, **_kwargs):
+        raise RuntimeError("synthetic replacement failure")
+
+    monkeypatch.setattr(store, "_ensure_active_conversation_locked", fail_replacement)
+    with pytest.raises(RuntimeError, match="synthetic replacement failure"):
+        store.delete_conversation(
+            matter.matter_id,
+            conversation.conversation_id,
+            owner,
+            confirmed_title=conversation.title,
+            acknowledged=True,
+        )
+
+    assert store.get_conversation_any(
+        matter.matter_id, conversation.conversation_id
+    ) == conversation
+    assert store.connection.execute(
+        "SELECT json_extract(result_json,'$.summary') "
+        "FROM workbench_research_job WHERE job_id=?",
+        (research.job_id,),
+    ).fetchone()[0] == "No supported finding was retained."
+    assert store.connection.execute(
+        "SELECT COUNT(*) FROM workbench_research_event WHERE job_id=?",
+        (research.job_id,),
+    ).fetchone()[0] == 3
     store.close()
 
 
@@ -312,6 +578,118 @@ def test_routes_group_filter_archive_restore_and_restrict_permanent_delete(tmp_p
         serialized = json.dumps([event.details for event in events])
         assert first.title not in serialized
         assert "Generated timeline" not in serialized
+
+
+def test_delete_page_discloses_investigations_and_offers_a_complete_export(tmp_path):
+    with TestClient(
+        create_workbench_app(
+            tmp_path / "runtime",
+            generator=UnavailableGenerator(),
+            auth_mode="preview",
+            answer_workers=1,
+        )
+    ) as client:
+        _owner_token, owner_csrf = _login(client, "taylor-morgan", "/matters/new")
+        created = client.post(
+            "/matters",
+            data={
+                "name": "Synthetic investigation disclosure",
+                "descriptor": "Generated deletion confirmation fixture",
+                "csrf_token": owner_csrf,
+            },
+            follow_redirects=False,
+        )
+        slug = re.fullmatch(
+            r"/matters/(m-[0-9a-f]{12})/setup", created.headers["location"]
+        ).group(1)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, "development-taylor-morgan")
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        conversation = bench.workspace.rename_conversation(
+            matter.matter_id,
+            conversation.conversation_id,
+            "Generated investigation deletion",
+        )
+        bench.source_store(matter).store_stream(
+            "generated-deletion-source.txt",
+            "text/plain",
+            io.BytesIO(b"Generated source for the deletion export fixture."),
+        )
+        bench._ensure_source_organizations(matter, bench.source_store(matter))
+        succeeded = _seed_research_job(
+            bench.workspace,
+            matter.matter_id,
+            conversation.conversation_id,
+            "development-taylor-morgan",
+            ordinal=5,
+            state="succeeded",
+        )
+        _failed = _seed_research_job(
+            bench.workspace,
+            matter.matter_id,
+            conversation.conversation_id,
+            "development-taylor-morgan",
+            ordinal=6,
+            state="failed",
+        )
+
+        bundle = client.get(f"/matters/{slug}/export")
+        assert bundle.status_code == 200, bundle.text
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+            names = archive.namelist()
+        assert any(
+            name.startswith("investigations/") and name.endswith(".md")
+            for name in names
+        )
+        active = _seed_research_job(
+            bench.workspace,
+            matter.matter_id,
+            conversation.conversation_id,
+            "development-taylor-morgan",
+            ordinal=7,
+            state="queued",
+        )
+        delete_url = (
+            f"/matters/{slug}/conversations/{conversation.conversation_id}/delete"
+        )
+        page = client.get(delete_url)
+
+        assert page.status_code == 200
+        assert "<strong>3</strong><span>linked investigations</span>" in page.text
+        assert "An investigation is still in progress" in page.text
+        assert "progress history, evidence ledger, and saved result" in page.text
+        assert (
+            "Conversation-only exports do not include the full investigation records"
+            in page.text
+        )
+        assert "Failed and cancelled investigation history is preserved only" in page.text
+        assert f'href="/matters/{slug}/export"' in page.text
+        assert "Download matter bundle" in page.text
+        assert re.search(r"<button[^>]+disabled[^>]*>Delete conversation</button>", page.text)
+
+        bench.workspace.cancel_research_job(
+            matter.matter_id, "development-taylor-morgan", active.job_id
+        )
+        ready = client.get(delete_url)
+        assert "An investigation is still in progress" not in ready.text
+        assert not re.search(
+            r"<button[^>]+disabled[^>]*>Delete conversation</button>", ready.text
+        )
+        deleted = client.post(
+            delete_url,
+            data={
+                "confirmed_title": conversation.title,
+                "acknowledge": "yes",
+                "csrf_token": owner_csrf,
+            },
+            follow_redirects=False,
+        )
+        assert deleted.status_code == 303
+        assert bench.workspace.connection.execute(
+            "SELECT COUNT(*) FROM workbench_research_job WHERE conversation_id=?",
+            (conversation.conversation_id,),
+        ).fetchone()[0] == 0
+        assert succeeded.job_id not in deleted.headers["location"]
 
 
 def test_conversation_organization_migration_matches_operator_copy():
