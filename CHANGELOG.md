@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Recovered an interrupted Review Map refresh as a visible, retryable failure
+  on application restart so abandoned analysis state cannot block safe matter
+  closure indefinitely; completed work and prior review decisions stay intact.
 - Honored explicit source-kind exclusions in Review questions before retrieval
   backfill, evidence budgeting, prompting, and generation, while keeping
   narrative negation and inclusive “not only … but also” wording intact.

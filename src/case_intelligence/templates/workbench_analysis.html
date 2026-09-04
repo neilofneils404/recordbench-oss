@@ -36,7 +36,7 @@
   </section>
 
   {% if latest_run %}
-  <p class="analysis-run-status">Last scan: {{ latest_run.finished_at[:16]|replace('T', ' ') if latest_run.finished_at else 'in progress' }} · {{ latest_run.unit_count }} extracted section{% if latest_run.unit_count != 1 %}s{% endif %}{% if latest_run.capped %} · bounded limit reached{% endif %}</p>
+  <p class="analysis-run-status">Last scan: {{ latest_run.finished_at[:16]|replace('T', ' ') if latest_run.finished_at else 'in progress' }} · {{ latest_run.unit_count }} extracted section{% if latest_run.unit_count != 1 %}s{% endif %}{% if latest_run.capped %} · bounded limit reached{% endif %}{% if latest_run.message %} · {{ latest_run.message }}{% endif %}</p>
   {% endif %}
 
   <div class="analysis-grid">

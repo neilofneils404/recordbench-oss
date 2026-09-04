@@ -5,7 +5,7 @@
   "confidential_data": false,
   "requires_network": false,
   "frozen": true,
-  "case_fingerprint": "6bb1d69819426a9457898a9d2dbba2103adae6240de2c9884da2188b786b859f",
+  "case_fingerprint": "8063cce64e44bd8cd53b6260beae24202faee59a001529f90b2192980ac6fd1c",
   "cases": [
     {
       "case_id": "bounded-page-ocr",
@@ -143,7 +143,7 @@
     {
       "case_id": "owner-administrator-deletion",
       "category": "lifecycle_authorization",
-      "contract": "Owner and administrator deletion preserve export, active-work refusal, confirmation, isolation, external originals, cleanup, and attributed audit.",
+      "contract": "Owner and administrator deletion preserve export, active-work refusal and restart recovery, confirmation, isolation, external originals, cleanup, and attributed audit.",
       "node_ids": [
         "tests/test_matter_management.py"
       ]
@@ -153,7 +153,7 @@
     "algorithm": "sha256",
     "test_node_sha256": {
       "tests/test_generation.py::test_empty_evidence_abstains_without_calling_model": "532352d1610eaa0b4c8772f04102a1f4a0c5b5654447dc60ed15db51ebeb6d3e",
-      "tests/test_matter_management.py": "9d7a2b952a13ce35a7539508d9a0df318be1e72bbbe8f0fd7d48dcab8320717a",
+      "tests/test_matter_management.py": "739a7a7a913d9446daf5e45483df19b354fe504ab1bbd1723ad6428bddccf857",
       "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support": "7cb028f88982ef6a75e582e641d4c4c2ee112ddad5f6045992e2f239a3b26f8a",
       "tests/test_matter_media_workflow.py::test_failed_optional_overview_explains_cause_retries_and_independence": "1a8292814c817dc696269b3c3fee9f1ee4c7753c95660f8d384d45bd3e7ffe66",
       "tests/test_matter_media_workflow.py::test_media_upload_transcript_review_range_citations_exports_and_clips": "f3add140a334476e79e5cd0feecf7aa3e9ce36ea0cef2a4fc61228ac504bd7ba",
@@ -179,7 +179,7 @@
     },
     "test_file_sha256": {
       "tests/test_generation.py": "17d7434cd3e1c41b03792a82a146f0fee4fc0c25bad7158d21fe0d00bcbcd2f9",
-      "tests/test_matter_management.py": "9d7a2b952a13ce35a7539508d9a0df318be1e72bbbe8f0fd7d48dcab8320717a",
+      "tests/test_matter_management.py": "739a7a7a913d9446daf5e45483df19b354fe504ab1bbd1723ad6428bddccf857",
       "tests/test_matter_media_workflow.py": "e69abc276306ad2f68276bad65839dacacbd99506e40de8f10ff17c745a3c02e",
       "tests/test_research_and_full_review.py": "4a3ec979e11577950c35821036e71102e763e411c9b68583bbbc3aa2470a9f4c",
       "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
@@ -193,6 +193,6 @@
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "62a8a39099b8ff30fd876374036e2b0128bf9a9c1707410f4b9e952332927ac6"
+    "content_fingerprint": "5bec4e09c90a057531a2bc4aa3f09e8ee51dcffbdf784c8e16d69cb5e110dd86"
   }
 }

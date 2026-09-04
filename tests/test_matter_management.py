@@ -543,6 +543,97 @@ def test_purge_refuses_every_durable_media_and_analysis_queue(tmp_path):
     store.close()
 
 
+def test_restart_recovers_abandoned_analysis_and_unblocks_matter_purge(tmp_path):
+    runtime = tmp_path / "runtime"
+    first = CaseIntelligenceWorkbench(runtime, answer_workers=1)
+    owner = first.workspace.upsert_principal(
+        "preview",
+        "taylor-morgan",
+        "Taylor Morgan",
+        "taylor.morgan@example.test",
+        preferred_principal_id="development-taylor-morgan",
+    )
+    matter = first.create_matter(
+        "Generated interrupted analysis matter",
+        "Synthetic restart recovery fixture",
+        owner.principal_id,
+    )
+    completed = first.workspace.start_analysis_run(
+        matter.matter_id, owner.principal_id
+    )
+    first.workspace.complete_analysis_run(
+        completed.analysis_id,
+        matter.matter_id,
+        owner.principal_id,
+        source_count=0,
+        unit_count=0,
+        entity_count=0,
+        capped=False,
+        findings=(),
+    )
+    failed = first.workspace.start_analysis_run(matter.matter_id, owner.principal_id)
+    first.workspace.fail_analysis_run(
+        failed.analysis_id,
+        matter.matter_id,
+        "Generated prior analysis failure.",
+    )
+    abandoned = first.workspace.start_analysis_run(
+        matter.matter_id, owner.principal_id
+    )
+    terminal_before = {
+        row["analysis_id"]: (row["state"], row["message"], row["finished_at"])
+        for row in first.workspace.connection.execute(
+            "SELECT analysis_id,state,message,finished_at "
+            "FROM workbench_analysis_run WHERE analysis_id IN (?,?)",
+            (completed.analysis_id, failed.analysis_id),
+        ).fetchall()
+    }
+    assert first.workspace.active_matter_work_counts(matter.matter_id)["analysis"] == 1
+    first.close()
+
+    app = create_workbench_app(
+        runtime,
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+    )
+    with TestClient(app) as client:
+        bench = client.app.state.workbench
+        recovered = bench.workspace.latest_analysis_run(matter.matter_id)
+        assert recovered is not None
+        assert recovered.analysis_id == abandoned.analysis_id
+        assert recovered.state == "failed"
+        assert recovered.finished_at is not None
+        assert recovered.message == (
+            "The review map refresh was interrupted by an application restart. "
+            "Select Refresh review map to retry. Existing review decisions are unchanged."
+        )
+        terminal_after = {
+            row["analysis_id"]: (row["state"], row["message"], row["finished_at"])
+            for row in bench.workspace.connection.execute(
+                "SELECT analysis_id,state,message,finished_at "
+                "FROM workbench_analysis_run WHERE analysis_id IN (?,?)",
+                (completed.analysis_id, failed.analysis_id),
+            ).fetchall()
+        }
+        assert terminal_after == terminal_before
+        assert bench.workspace.recover_running_analysis_runs() == 0
+        assert bench.workspace.active_matter_work_counts(matter.matter_id)["analysis"] == 0
+
+        page = client.get(f"/matters/{matter.slug}/analysis")
+        assert page.status_code == 200
+        assert recovered.message in page.text
+        assert "Refresh review map" in page.text
+
+        prepared, lifecycle = bench.workspace.begin_matter_purge(
+            matter.slug,
+            owner.principal_id,
+            matter.display_name,
+            source_count=0,
+        )
+        assert prepared.matter_id == matter.matter_id
+        assert lifecycle.state == "purging"
+
+
 def test_playback_admission_cannot_cross_the_transactional_purge_claim(
     tmp_path, monkeypatch
 ):

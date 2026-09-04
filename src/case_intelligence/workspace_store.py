@@ -85,6 +85,10 @@ NOTEBOOK_TYPES = ("fact", "issue", "person", "place", "date", "event", "note")
 NOTEBOOK_STATUSES = ("suggested", "confirmed", "disputed", "needs_review", "dismissed")
 NOTEBOOK_ORIGINS = ("manual", "answer", "citation", "extraction")
 MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS = 3
+_ANALYSIS_RESTART_MESSAGE = (
+    "The review map refresh was interrupted by an application restart. "
+    "Select Refresh review map to retry. Existing review decisions are unchanged."
+)
 
 
 class WorkspaceProblem(ValueError):
@@ -2498,6 +2502,17 @@ class WorkspaceStore:
                 "UPDATE workbench_matter_lifecycle SET state='purge_failed',"
                 "error_code='unknown',updated_at=? WHERE state='purging'",
                 (now,),
+            ).rowcount
+
+    def recover_running_analysis_runs(self) -> int:
+        """Make abandoned synchronous review-map work retryable on startup."""
+
+        now = self._now()
+        with self._lock, self.connection:
+            return self.connection.execute(
+                "UPDATE workbench_analysis_run SET state='failed',message=?,finished_at=? "
+                "WHERE state='running'",
+                (_ANALYSIS_RESTART_MESSAGE, now),
             ).rowcount
 
     def begin_matter_purge(

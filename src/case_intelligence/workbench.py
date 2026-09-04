@@ -745,6 +745,7 @@ class CaseIntelligenceWorkbench:
             )
         self.workspace = WorkspaceStore(self.runtime_dir / "workbench.sqlite")
         self.workspace.recover_interrupted_matter_purges()
+        self.workspace.recover_running_analysis_runs()
         self._stores: dict[str, PilotStore] = {}
         self._store_lock = threading.RLock()
         self._matter_source_locks: dict[str, threading.RLock] = {}
