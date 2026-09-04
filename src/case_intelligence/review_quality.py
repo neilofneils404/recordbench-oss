@@ -454,17 +454,22 @@ def research_synthesis_question(objective: str) -> str:
 
 def _timed_objective_identifiers(question: str) -> tuple[str, ...]:
     normalized = question.upper()
-    identifiers = tuple(dict.fromkeys(_IDENTIFIER.findall(normalized)))
+    matches = tuple(_IDENTIFIER.finditer(normalized))
+    identifiers = tuple(dict.fromkeys(match.group(0) for match in matches))
     if len(identifiers) < 2:
         return identifiers
-    source_references = {
-        match.group("identifier").upper()
+    source_reference_spans = {
+        match.span("identifier")
         for match in _SOURCE_REFERENCE_IDENTIFIER.finditer(normalized)
     }
     timed_subjects = tuple(
         identifier
         for identifier in identifiers
-        if identifier not in source_references
+        if any(
+            match.span() not in source_reference_spans
+            for match in matches
+            if match.group(0) == identifier
+        )
     )
     return timed_subjects or identifiers
 

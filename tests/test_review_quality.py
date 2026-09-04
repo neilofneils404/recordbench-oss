@@ -581,6 +581,27 @@ def test_exact_time_distinguishes_source_references_from_timed_subjects() -> Non
     assert answer_advances_objective(
         source_is_subject, "Report DOC-1234 was created at 07:15:00."
     )
+    dual_role = (
+        "Using report DOC-1234, report the exact time DOC-1234 was created "
+        "and event EVT-4821 occurred."
+    )
+    assert not answer_advances_objective(
+        dual_role,
+        "DOC-1234 has no stated creation time. EVT-4821 occurred at 08:42:17.",
+    )
+    assert answer_advances_objective(
+        dual_role,
+        "DOC-1234 was created at 07:15:00. EVT-4821 occurred at 08:42:17.",
+    )
+    repeated_event = (
+        "Using report EVT-4821, report the exact time events EVT-4821 and "
+        "EVT-4822 occurred."
+    )
+    assert not answer_advances_objective(
+        repeated_event,
+        "Report EVT-4821 was reviewed, but the event time was not stated. "
+        "Event EVT-4822 occurred at 07:15:00.",
+    )
 
 
 def test_source_reference_exact_time_accepts_a_grounded_first_draft() -> None:
