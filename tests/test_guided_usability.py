@@ -74,6 +74,10 @@ def test_activity_center_is_global_matter_bound_and_content_minimized(tmp_path):
     )
     with TestClient(app) as client:
         slug, matter_id, owner_id = _matter(client)
+        # Freeze the synthetic queue so this projection test cannot race the
+        # research worker from queued to needs-attention before the response.
+        assert client.app.state.workbench.research is not None
+        client.app.state.workbench.research.close()
         queued, created = client.app.state.workbench.workspace.queue_research_job(
             matter_id,
             owner_id,
