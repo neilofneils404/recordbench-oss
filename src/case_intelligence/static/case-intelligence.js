@@ -11,6 +11,35 @@
   const desktopRailMedia = window.matchMedia("(min-width: 901px)");
   const railPreferenceKey = "case-intelligence:matter-rail-collapsed";
 
+  const readSessionValue = (key) => {
+    if (!key) return "";
+    try {
+      return window.sessionStorage.getItem(key) || "";
+    } catch (_error) {
+      return "";
+    }
+  };
+
+  const writeSessionValue = (key, value) => {
+    if (!key) return false;
+    try {
+      window.sessionStorage.setItem(key, value);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  };
+
+  const removeSessionValue = (key) => {
+    if (!key) return false;
+    try {
+      window.sessionStorage.removeItem(key);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  };
+
   document.querySelectorAll("form[data-confirm]").forEach((form) => {
     form.addEventListener("submit", (event) => {
       if (!window.confirm(form.dataset.confirm || "Continue?")) {
@@ -1206,7 +1235,7 @@
       candidate.setAttribute("aria-selected", selected ? "true" : "false");
       candidate.tabIndex = selected ? 0 : -1;
     });
-    if (mediaToolResumeKey) window.sessionStorage.setItem(mediaToolResumeKey, name);
+    writeSessionValue(mediaToolResumeKey, name);
     if (updateHash) {
       const url = new URL(window.location.href);
       url.hash = `media-${name}`;
@@ -1243,7 +1272,7 @@
 
   if (mediaToolTabs.length) {
     const requestedTool = mediaToolFromHash[window.location.hash]
-      || window.sessionStorage.getItem(mediaToolResumeKey)
+      || readSessionValue(mediaToolResumeKey)
       || "playback";
     if (!activateMediaTool(requestedTool)) activateMediaTool("playback");
     window.addEventListener("hashchange", () => {
@@ -1452,14 +1481,10 @@
     if (mediaPageNavigation || transcriptFiltered || !mediaFollowResumeKey) return;
     if (targetPage < 1 || targetPage > transcriptPages) return;
     mediaPageNavigation = true;
-    try {
-      window.sessionStorage.setItem(mediaFollowResumeKey, JSON.stringify({
-        startMs: Math.max(0, Math.round(milliseconds)),
-        playing: !mediaPlayer.paused,
-      }));
-    } catch (_error) {
-      // The query string still preserves position when browser storage is unavailable.
-    }
+    writeSessionValue(mediaFollowResumeKey, JSON.stringify({
+      startMs: Math.max(0, Math.round(milliseconds)),
+      playing: !mediaPlayer.paused,
+    }));
     const url = new URL(window.location.href);
     url.searchParams.set("page", String(targetPage));
     url.searchParams.set("start_ms", String(Math.max(0, Math.round(milliseconds))));
@@ -1511,8 +1536,8 @@
       let resume = null;
       if (mediaFollowResumeKey) {
         try {
-          resume = JSON.parse(window.sessionStorage.getItem(mediaFollowResumeKey) || "null");
-          window.sessionStorage.removeItem(mediaFollowResumeKey);
+          resume = JSON.parse(readSessionValue(mediaFollowResumeKey) || "null");
+          removeSessionValue(mediaFollowResumeKey);
         } catch (_error) {
           resume = null;
         }

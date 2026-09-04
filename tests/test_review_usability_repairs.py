@@ -75,5 +75,16 @@ def test_media_review_tools_are_one_click_tabs_not_a_long_nested_column():
     assert "const activateMediaTool" in script
     assert 'event.key === "ArrowRight"' in script
     assert 'activateMediaTool("playback")' in script
+    assert "const readSessionValue" in script
+    assert "const writeSessionValue" in script
+    assert "const removeSessionValue" in script
+    assert "readSessionValue(mediaToolResumeKey)" in script
+    assert "writeSessionValue(mediaToolResumeKey, name)" in script
+    assert "readSessionValue(mediaFollowResumeKey)" in script
+    assert "writeSessionValue(mediaFollowResumeKey" in script
+    assert "removeSessionValue(mediaFollowResumeKey)" in script
+    assert "window.sessionStorage.getItem(mediaToolResumeKey)" not in script
+    assert "window.sessionStorage.setItem(mediaToolResumeKey, name)" not in script
+    assert script.count("window.sessionStorage.") == 3
     assert ".media-tool-nav" in styles
     assert ".media-tool-panel[hidden]" in styles
