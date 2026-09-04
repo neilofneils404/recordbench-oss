@@ -195,6 +195,7 @@ PROJECT_ROOT = PACKAGE_ROOT.parents[1]
 DEFAULT_RUNTIME = PROJECT_ROOT / ".tmp/milestone-a-workbench"
 MAX_SEARCH_CHARS = 512
 MAX_QUESTION_CHARS = 2_000
+MAX_FINAL_BUNDLE_LEDGER_ITEMS = 500
 _WORD = re.compile(r"[a-z0-9]+")
 _FOLLOWUP_WORDS = {"it", "that", "those", "they", "them", "this", "these", "he", "she", "there"}
 _COLLECTION_WIDE_QUESTION = re.compile(
@@ -3252,8 +3253,16 @@ class CaseIntelligenceWorkbench:
         matter: MatterRecord,
         job: ResearchJobRecord,
         format_name: str,
+        *,
+        frozen_source_catalog: Sequence[SourceCatalogRecord] | None = None,
     ) -> ExportArtifact:
         """Resolve a saved investigation ledger before rendering any result text."""
+
+        if frozen_source_catalog is not None:
+            self._assert_frozen_research_ledger(
+                matter, job, frozen_source_catalog
+            )
+            return export_research(matter, job, format_name)
 
         store = self.source_store(matter)
         with store.mutation_guard():
@@ -3289,6 +3298,164 @@ class CaseIntelligenceWorkbench:
                 ),
             )
             return export_research(matter, job, format_name)
+
+    def _assert_frozen_research_ledger(
+        self,
+        matter: MatterRecord,
+        job: ResearchJobRecord,
+        source_catalog: Sequence[SourceCatalogRecord],
+    ) -> None:
+        """Verify a save-time-validated ledger after source storage is frozen."""
+
+        catalog: dict[str, SourceCatalogRecord] = {}
+        for source in source_catalog:
+            if (
+                source.matter_id != matter.matter_id
+                or source.document_id in catalog
+            ):
+                raise ExportProblem(
+                    "The frozen investigation source catalog could not be resolved."
+                )
+            catalog[source.document_id] = source
+        raw_evidence = job.result.get("evidence")
+        if not isinstance(raw_evidence, list) or any(
+            not isinstance(value, Mapping) for value in raw_evidence
+        ):
+            raise ExportProblem(
+                "The investigation evidence ledger could not be resolved."
+            )
+        try:
+            citations = tuple(
+                self._workflow_citation(value) for value in raw_evidence
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ExportProblem(
+                "The investigation evidence ledger could not be resolved."
+            ) from exc
+
+        validated: dict[str, WorkbenchCitation] = {}
+        for citation in citations:
+            source = catalog.get(citation.document_id)
+            expected_kind = (
+                "transcript" if source is not None and is_media_type(source.media_type)
+                else "document"
+            )
+            if (
+                source is None
+                or source.source_state != "ready"
+                or citation.matter_id != matter.matter_id
+                or source.version_id != citation.source_version_id
+                or source.display_name != citation.source_name
+                or citation.evidence_kind != expected_kind
+                or citation.unit_number < 1
+                or re.fullmatch(r"chunk-[1-9][0-9]*", citation.chunk_id) is None
+                or citation.excerpt_digest
+                != hashlib.sha256(citation.excerpt.encode("utf-8")).hexdigest()
+            ):
+                raise ExportProblem(
+                    "The investigation evidence ledger no longer resolves to its frozen sources."
+                )
+            candidate = Candidate(
+                matter.matter_id,
+                citation.document_id,
+                citation.chunk_id,
+                citation.source_name,
+                citation.unit_number,
+                citation.excerpt,
+                line_start=citation.line_start,
+                line_end=citation.line_end,
+                source_version_id=citation.source_version_id,
+                excerpt_digest=citation.excerpt_digest,
+                evidence_kind=citation.evidence_kind,
+            )
+            expected_href = (
+                f"/matters/{matter.slug}?support={citation.support_token}"
+                f"{'&play=1' if expected_kind == 'transcript' else ''}#support-pane"
+            )
+            if (
+                citation.location != candidate.citation
+                or citation.support_token != self._support_token(candidate)
+                or citation.href != expected_href
+            ):
+                raise ExportProblem(
+                    "The investigation evidence ledger no longer resolves to its frozen sources."
+                )
+            prior = validated.get(citation.support_token)
+            if prior is not None and prior != citation:
+                raise ExportProblem(
+                    "The investigation evidence ledger contains conflicting source support."
+                )
+            validated[citation.support_token] = citation
+
+        stack = [job.result]
+        while stack:
+            value = stack.pop()
+            if isinstance(value, Mapping):
+                token_value = value.get("support_token")
+                if token_value is not None:
+                    citation = validated.get(str(token_value))
+                    if citation is None:
+                        raise ExportProblem(
+                            "The investigation evidence ledger contains unresolved source support."
+                        )
+                    expected = self._workflow_citation_payload(citation)
+                    if any(
+                        key in value and value[key] != expected[key]
+                        for key in expected
+                    ):
+                        raise ExportProblem(
+                            "The investigation evidence ledger contains mismatched source support."
+                        )
+                stack.extend(value.values())
+            elif isinstance(value, (list, tuple)):
+                stack.extend(value)
+
+    def assert_frozen_final_bundle_source_state(
+        self,
+        matter: MatterRecord,
+        lifecycle: MatterLifecycleRecord,
+        source_catalog: Sequence[SourceCatalogRecord],
+    ) -> None:
+        """Fail closed without opening or traversing a quarantined source tree."""
+
+        purge_id = lifecycle.purge_id or ""
+        if (
+            lifecycle.state != "purge_failed"
+            or _MATTER_PURGE_ID.fullmatch(purge_id) is None
+            or lifecycle.source_count != len(source_catalog)
+        ):
+            raise ExportProblem(
+                "The frozen source boundary for this final bundle could not be verified."
+            )
+        matter_root = self.storage.matters / matter.matter_id
+        source_root = matter_root / "sources"
+        quarantine = self.storage.purging / purge_id
+        if (
+            matter_root.is_symlink()
+            or source_root.is_symlink()
+            or quarantine.is_symlink()
+        ):
+            raise ExportProblem(
+                "The frozen source boundary for this final bundle is unsafe."
+            )
+        source_present = source_root.exists()
+        quarantine_present = quarantine.exists()
+        if source_present and not source_root.is_dir():
+            raise ExportProblem(
+                "The frozen source boundary for this final bundle is unsafe."
+            )
+        if quarantine_present and not quarantine.is_dir():
+            raise ExportProblem(
+                "The frozen source boundary for this final bundle is unsafe."
+            )
+        if source_present and quarantine_present:
+            raise ExportProblem(
+                "The frozen source boundary has conflicting copies; no bundle was created."
+            )
+        if lifecycle.source_count and not (source_present or quarantine_present):
+            raise ExportProblem(
+                "The frozen sources are unavailable; no final bundle was created."
+            )
 
     def add_answer_to_report(
         self,
@@ -12706,6 +12873,13 @@ def create_workbench_app(
                 read_actor_id,
                 administrator_override=administrator_override,
             )
+            lifecycle = bench.workspace.matter_lifecycle(matter.matter_id)
+            frozen_source_catalog: tuple[SourceCatalogRecord, ...] | None = None
+            if lifecycle.state == "purge_failed":
+                bench.assert_frozen_final_bundle_source_state(
+                    matter, lifecycle, source_catalog
+                )
+                frozen_source_catalog = source_catalog
             conversations = tuple(
                 (
                     conversation,
@@ -12732,20 +12906,38 @@ def create_workbench_app(
                 )
                 additional_work_product_bytes = projected
 
-            for index, research_job in enumerate(
-                (
-                    item for item in bench.workspace.research_jobs(
-                        matter.matter_id,
-                        read_actor_id,
-                        limit=500,
-                        administrator_override=administrator_override,
-                    ) if item.state == "succeeded"
-                ),
-                1,
-            ):
+            research_jobs = bench.workspace.succeeded_research_jobs_for_final_bundle(
+                matter.matter_id,
+                read_actor_id,
+                maximum=MAX_FINAL_BUNDLE_LEDGER_ITEMS,
+                administrator_override=administrator_override,
+            )
+            if len(research_jobs) > MAX_FINAL_BUNDLE_LEDGER_ITEMS:
+                raise ExportProblem(
+                    "No final bundle was created because this matter has more than "
+                    f"{MAX_FINAL_BUNDLE_LEDGER_ITEMS:,} completed investigation "
+                    "ledgers and omitting saved work is not permitted."
+                )
+            review_runs = bench.workspace.review_runs_for_final_bundle(
+                matter.matter_id,
+                read_actor_id,
+                maximum=MAX_FINAL_BUNDLE_LEDGER_ITEMS,
+                administrator_override=administrator_override,
+            )
+            if len(review_runs) > MAX_FINAL_BUNDLE_LEDGER_ITEMS:
+                raise ExportProblem(
+                    "No final bundle was created because this matter has more than "
+                    f"{MAX_FINAL_BUNDLE_LEDGER_ITEMS:,} every-source check "
+                    "ledgers and omitting saved work is not permitted."
+                )
+
+            for index, research_job in enumerate(research_jobs, 1):
                 for format_name in ("markdown", "json"):
                     research_artifact = bench.export_research_work_product(
-                        matter, research_job, format_name
+                        matter,
+                        research_job,
+                        format_name,
+                        frozen_source_catalog=frozen_source_catalog,
                     )
                     add_work_product(
                         kind="investigation",
@@ -12755,15 +12947,7 @@ def create_workbench_app(
                         ),
                         artifact=research_artifact,
                     )
-            for index, review_run in enumerate(
-                bench.workspace.review_runs(
-                    matter.matter_id,
-                    read_actor_id,
-                    limit=500,
-                    administrator_override=administrator_override,
-                ),
-                1,
-            ):
+            for index, review_run in enumerate(review_runs, 1):
                 criterion = bench.workspace.review_criterion(
                     matter.matter_id, review_run.criterion_id
                 )

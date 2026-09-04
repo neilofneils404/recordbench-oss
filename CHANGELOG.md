@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Preserved cited investigation exports after a deletion attempt freezes source
+  storage, without reopening quarantine or recreating a live source tree, and
+  made final bundles fail explicitly instead of silently omitting investigation
+  or every-source-check ledgers beyond their bounded export limit.
 - Kept every-source review honest when a source-scoped search returns no
   passage: the source now remains **Needs attention** with direct-review or
   criterion-refinement recovery instead of being automatically labeled **Not

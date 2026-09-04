@@ -191,6 +191,84 @@ def _seed_completed_owner_exports(bench, matter, owner_id):
     return notebook_item, research, review
 
 
+def _seed_cited_research(bench, matter, owner_id):
+    document, _created = bench.source_store(matter).store_stream(
+        "generated-frozen-source.txt",
+        "text/plain",
+        io.BytesIO(b"Generated frozen source says the blue vehicle arrived at noon."),
+    )
+    unit = document.parsed_units()[0]
+    citation = bench._citation(matter, bench._candidate(matter, document, unit, 1))
+    evidence = bench._workflow_citation_payload(citation)
+    research, _created = bench.workspace.queue_research_job(
+        matter.matter_id,
+        owner_id,
+        "What does the frozen source say about the blue vehicle?",
+        "Generated frozen-source investigation",
+        "research-request-" + "a" * 32,
+    )
+    claimed = bench.workspace.claim_research_job("generated-frozen-export-worker")
+    assert claimed is not None and claimed.job_id == research.job_id
+    return bench._finish_research_job(
+        claimed,
+        {
+            "summary": "The blue vehicle arrived at noon.",
+            "passes": [],
+            "evidence": [evidence],
+            "coverage": {
+                "search_pass_count": 1,
+                "candidate_passage_count": 1,
+                "evidence_passage_count": 1,
+                "evidence_source_count": 1,
+                "scope": "matter",
+                "notice": "Synthetic frozen-source fixture.",
+            },
+            "answer": {
+                "answerable": True,
+                "introduction": "",
+                "claims": [
+                    {
+                        "text": "The blue vehicle arrived at noon.",
+                        "citations": [evidence],
+                    }
+                ],
+                "limitation": None,
+                "missing_information": "",
+            },
+        },
+    )
+
+
+def _seed_empty_research(bench, matter, owner_id, suffix: str):
+    research, _created = bench.workspace.queue_research_job(
+        matter.matter_id,
+        owner_id,
+        "What does the generated record establish?",
+        f"Generated bounded investigation {suffix}",
+        "research-request-" + suffix * 32,
+    )
+    claimed = bench.workspace.claim_research_job(
+        f"generated-bounded-research-worker-{suffix}"
+    )
+    assert claimed is not None and claimed.job_id == research.job_id
+    return bench.workspace.finish_research_job(
+        research.job_id,
+        {
+            "summary": "No supported finding was retained.",
+            "passes": [],
+            "evidence": [],
+            "coverage": {},
+            "answer": {
+                "answerable": False,
+                "introduction": "",
+                "claims": [],
+                "limitation": None,
+                "missing_information": "No supported finding was retained.",
+            },
+        },
+    )
+
+
 def test_store_requires_owner_unless_validated_administrator_override(tmp_path):
     store = WorkspaceStore(tmp_path / "workbench.sqlite")
     store.upsert_principal(
@@ -1084,6 +1162,214 @@ def test_oversized_final_bundle_returns_409_and_releases_response_lease(
         )
         completed = bench.execute_matter_purge(prepared, lifecycle)
         assert completed.state == "deleted"
+
+
+def test_final_bundle_keeps_cited_research_exportable_after_projection_purge_failure(
+    tmp_path,
+):
+    runtime = tmp_path / "runtime"
+    with TestClient(_app(tmp_path), base_url="https://recordbench.example.test") as client:
+        assert client.get(
+            "/auth/login", headers=_headers(OWNER), follow_redirects=False
+        ).status_code == 303
+        landing = client.get("/matters/new", headers=_headers(OWNER))
+        csrf_token = _csrf(landing.text)
+        slug = _create_matter(
+            client,
+            principal=OWNER,
+            csrf_token=csrf_token,
+            name="Synthetic quarantined investigation matter",
+        )
+        bench = client.app.state.workbench
+        owner_id = _principal_id(client, OWNER)
+        matter = bench.matter(slug, owner_id)
+        research = _seed_cited_research(bench, matter, owner_id)
+
+        bench._postgres_projection_configured = True
+        bench.postgres_connection = None
+        bench.postgres_ready = False
+        failed = client.post(
+            f"/matters/{slug}/close",
+            data={
+                "csrf_token": csrf_token,
+                "confirmed_name": matter.display_name,
+                "acknowledge": "yes",
+            },
+            headers=_headers(OWNER),
+            follow_redirects=False,
+        )
+        assert failed.status_code == 303
+        lifecycle = bench.workspace.matter_lifecycle(matter.matter_id)
+        assert lifecycle.state == "purge_failed"
+        assert lifecycle.error_code == "projection"
+        source_root = runtime / "matters" / matter.matter_id / "sources"
+        quarantine = runtime / ".matter-purging" / str(lifecycle.purge_id)
+        assert not source_root.exists()
+        assert quarantine.is_dir()
+        assert matter.matter_id not in bench._stores
+
+        bundle = client.get(f"/matters/{slug}/export", headers=_headers(OWNER))
+        assert bundle.status_code == 200, bundle.text
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+            investigation_names = [
+                name
+                for name in archive.namelist()
+                if name.startswith("investigations/") and name.endswith(".json")
+            ]
+            assert len(investigation_names) == 1
+            exported = json.loads(archive.read(investigation_names[0]))
+        assert exported["investigation"]["title"] == research.title
+        assert exported["investigation"]["supporting_sources"][0]["source"] == (
+            "generated-frozen-source.txt"
+        )
+        assert not source_root.exists()
+        assert quarantine.is_dir()
+        assert matter.matter_id not in bench._stores
+        assert bench.matter_active_work_counts(matter.matter_id)["exports"] == 0
+
+        successful_exports = sum(
+            event.action == "work_product.export" and event.outcome == "success"
+            for event in bench.workspace.audit_events(matter.matter_id)
+        )
+        original_result = json.loads(json.dumps(research.result))
+        corrupt_result = json.loads(json.dumps(original_result))
+        corrupt_result["evidence"][0]["matter_id"] = "ci-matter-" + "f" * 32
+        with bench.workspace.connection:
+            bench.workspace.connection.execute(
+                "UPDATE workbench_research_job SET result_json=? WHERE job_id=?",
+                (json.dumps(corrupt_result), research.job_id),
+            )
+        refused_corruption = client.get(
+            f"/matters/{slug}/export", headers=_headers(OWNER)
+        )
+        assert refused_corruption.status_code == 409
+        assert "noon" not in refused_corruption.text
+        assert not source_root.exists()
+        assert matter.matter_id not in bench._stores
+        assert successful_exports == sum(
+            event.action == "work_product.export" and event.outcome == "success"
+            for event in bench.workspace.audit_events(matter.matter_id)
+        )
+        with bench.workspace.connection:
+            bench.workspace.connection.execute(
+                "UPDATE workbench_research_job SET result_json=? WHERE job_id=?",
+                (json.dumps(original_result), research.job_id),
+            )
+
+        source_root.mkdir(parents=True)
+        refused_conflict = client.get(
+            f"/matters/{slug}/export", headers=_headers(OWNER)
+        )
+        assert refused_conflict.status_code == 409
+        assert "conflicting copies" in refused_conflict.text
+        assert source_root.is_dir()
+        assert quarantine.is_dir()
+        assert matter.matter_id not in bench._stores
+        source_root.rmdir()
+
+        bench._postgres_projection_configured = False
+        retried = client.post(
+            f"/matters/{slug}/close",
+            data={
+                "csrf_token": csrf_token,
+                "confirmed_name": matter.display_name,
+                "acknowledge": "yes",
+            },
+            headers=_headers(OWNER),
+            follow_redirects=False,
+        )
+        assert retried.status_code == 303
+        assert bench.workspace.matter_lifecycle(matter.matter_id).state == "deleted"
+        assert not quarantine.exists()
+
+
+def test_final_bundle_refuses_excess_investigation_ledgers_without_omission(
+    tmp_path, monkeypatch
+):
+    with TestClient(_app(tmp_path), base_url="https://recordbench.example.test") as client:
+        assert client.get(
+            "/auth/login", headers=_headers(OWNER), follow_redirects=False
+        ).status_code == 303
+        landing = client.get("/matters/new", headers=_headers(OWNER))
+        slug = _create_matter(
+            client,
+            principal=OWNER,
+            csrf_token=_csrf(landing.text),
+            name="Synthetic investigation ledger bound",
+        )
+        bench = client.app.state.workbench
+        owner_id = _principal_id(client, OWNER)
+        matter = bench.matter(slug, owner_id)
+        _seed_empty_research(bench, matter, owner_id, "b")
+        _seed_empty_research(bench, matter, owner_id, "c")
+        monkeypatch.setattr(
+            workbench_module, "MAX_FINAL_BUNDLE_LEDGER_ITEMS", 1, raising=False
+        )
+
+        refused = client.get(f"/matters/{slug}/export", headers=_headers(OWNER))
+        assert refused.status_code == 409
+        assert "more than 1 completed investigation" in refused.text
+        assert "PK" not in refused.text
+        assert bench.matter_active_work_counts(matter.matter_id)["exports"] == 0
+        assert not any(
+            event.action == "work_product.export" and event.outcome == "success"
+            for event in bench.workspace.audit_events(matter.matter_id)
+        )
+
+
+def test_final_bundle_refuses_excess_source_check_ledgers_without_omission(
+    tmp_path, monkeypatch
+):
+    with TestClient(_app(tmp_path), base_url="https://recordbench.example.test") as client:
+        assert client.get(
+            "/auth/login", headers=_headers(OWNER), follow_redirects=False
+        ).status_code == 303
+        landing = client.get("/matters/new", headers=_headers(OWNER))
+        slug = _create_matter(
+            client,
+            principal=OWNER,
+            csrf_token=_csrf(landing.text),
+            name="Synthetic source-check ledger bound",
+        )
+        bench = client.app.state.workbench
+        owner_id = _principal_id(client, OWNER)
+        matter = bench.matter(slug, owner_id)
+        _notebook, _research, first = _seed_completed_owner_exports(
+            bench, matter, owner_id
+        )
+        second = bench.workspace.queue_review_run(
+            matter.matter_id,
+            owner_id,
+            first.criterion_version_id,
+            run_kind="full",
+        )
+        claimed = bench.workspace.claim_review_run(
+            "generated-second-bounded-review-worker"
+        )
+        assert claimed is not None and claimed.run_id == second.run_id
+        for decision in bench.workspace.review_decisions_for_export(
+            matter.matter_id, owner_id, second.run_id
+        ):
+            bench.workspace.record_review_decision(
+                second.run_id,
+                decision.document_id,
+                decision="excluded",
+                rationale="The generated matching term is absent.",
+            )
+        assert bench.workspace.finish_review_run(second.run_id).state == "succeeded"
+        monkeypatch.setattr(
+            workbench_module, "MAX_FINAL_BUNDLE_LEDGER_ITEMS", 1, raising=False
+        )
+
+        refused = client.get(f"/matters/{slug}/export", headers=_headers(OWNER))
+        assert refused.status_code == 409
+        assert "more than 1 every-source check" in refused.text
+        assert "PK" not in refused.text
+        assert bench.matter_active_work_counts(matter.matter_id)["exports"] == 0
+        assert not any(
+            event.action == "work_product.export" and event.outcome == "success"
+            for event in bench.workspace.audit_events(matter.matter_id)
+        )
 
 
 def test_source_stream_and_bundle_hold_deletion_lease_until_response_finishes(

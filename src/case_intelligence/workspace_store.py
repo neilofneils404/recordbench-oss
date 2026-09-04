@@ -8629,6 +8629,32 @@ class WorkspaceStore:
             ).fetchall()
         return tuple(self._research_job(row) for row in rows)
 
+    def succeeded_research_jobs_for_final_bundle(
+        self,
+        matter_id: str,
+        actor_id: str,
+        *,
+        maximum: int,
+        administrator_override: bool = False,
+    ) -> tuple[ResearchJobRecord, ...]:
+        """Return at most one over the explicit final-bundle ledger bound."""
+
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
+        bounded = int(maximum)
+        if bounded < 1 or bounded > 500:
+            raise ValueError("final-bundle investigation bound is invalid")
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT * FROM workbench_research_job WHERE matter_id=? "
+                "AND state='succeeded' ORDER BY created_at DESC,job_id DESC LIMIT ?",
+                (matter_id, bounded + 1),
+            ).fetchall()
+        return tuple(self._research_job(row) for row in rows)
+
     def research_jobs_for_actor(
         self, actor_id: str, *, limit: int = 150
     ) -> tuple[ResearchJobRecord, ...]:
@@ -9302,6 +9328,32 @@ class WorkspaceStore:
             rows = self.connection.execute(
                 "SELECT * FROM workbench_review_run WHERE matter_id=? "
                 "ORDER BY created_at DESC,run_id DESC LIMIT ?", (matter_id, bounded)
+            ).fetchall()
+        return tuple(self._review_run(row) for row in rows)
+
+    def review_runs_for_final_bundle(
+        self,
+        matter_id: str,
+        actor_id: str,
+        *,
+        maximum: int,
+        administrator_override: bool = False,
+    ) -> tuple[ReviewRunRecord, ...]:
+        """Return at most one over the explicit final-bundle ledger bound."""
+
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
+        bounded = int(maximum)
+        if bounded < 1 or bounded > 500:
+            raise ValueError("final-bundle every-source-check bound is invalid")
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT * FROM workbench_review_run WHERE matter_id=? "
+                "ORDER BY created_at DESC,run_id DESC LIMIT ?",
+                (matter_id, bounded + 1),
             ).fetchall()
         return tuple(self._review_run(row) for row in rows)
 
