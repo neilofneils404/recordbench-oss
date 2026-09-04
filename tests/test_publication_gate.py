@@ -124,6 +124,120 @@ def test_operator_deny_terms_are_not_echoed_in_findings() -> None:
     assert hidden.decode() not in repr(findings)
 
 
+def test_public_repository_identity_adjudication_is_exact_and_context_bound(
+    tmp_path,
+) -> None:
+    public_name = "fixture-maintainer"
+    public_email = "12345+fixture-maintainer@users.noreply.github.com"
+    clone_url = "https://github.com/fixture-maintainer/recordbench-fixture.git"
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.name", public_name], cwd=tmp_path, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", public_email], cwd=tmp_path, check=True
+    )
+    readme = tmp_path / "README.md"
+    readme.write_text(f"git clone {clone_url} recordbench\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "synthetic public baseline"],
+        cwd=tmp_path,
+        check=True,
+    )
+    deny = (public_name.encode(),)
+
+    assert publication.Finding(
+        "README.md", "operator-deny-term"
+    ) in publication.scan_tree(tmp_path, deny)
+    assert publication.Finding(
+        "git-metadata", "operator-deny-term"
+    ) in publication.scan_history(tmp_path, deny)
+    assert all(
+        item.rule != "operator-deny-term"
+        for item in publication.scan_tree(
+            tmp_path, deny, public_clone_urls=(clone_url.encode(),)
+        )
+    )
+    assert all(
+        item.rule != "operator-deny-term"
+        for item in publication.scan_history(
+            tmp_path,
+            deny,
+            public_clone_urls=(clone_url.encode(),),
+            public_git_identities=(
+                (public_name.encode(), public_email.encode()),
+            ),
+        )
+    )
+
+    private_context = tmp_path / "operator-notes.txt"
+    private_context.write_text(public_name, encoding="utf-8")
+    assert publication.Finding(
+        "operator-notes.txt", "operator-deny-term"
+    ) in publication.scan_tree(
+        tmp_path, deny, public_clone_urls=(clone_url.encode(),)
+    )
+    private_context.unlink()
+    readme.write_text(
+        f"git clone {clone_url}.lookalike recordbench\n", encoding="utf-8"
+    )
+    assert publication.Finding(
+        "README.md", "operator-deny-term"
+    ) in publication.scan_tree(
+        tmp_path, deny, public_clone_urls=(clone_url.encode(),)
+    )
+
+
+def test_public_baseline_identity_adjudication_stops_at_exact_commit(tmp_path) -> None:
+    baseline_name = "Synthetic Maintainers"
+    baseline_email = "12345+fixture-maintainer@users.noreply.github.com"
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.name", baseline_name], cwd=tmp_path, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", baseline_email], cwd=tmp_path, check=True
+    )
+    record = tmp_path / "README.md"
+    record.write_text("synthetic baseline\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "synthetic accepted baseline"],
+        cwd=tmp_path,
+        check=True,
+    )
+    boundary = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True
+    ).strip()
+    exception = ((boundary, baseline_name.encode(), baseline_email.encode()),)
+    deny = (baseline_name.encode(),)
+
+    assert all(
+        item.rule != "operator-deny-term"
+        for item in publication.scan_history(
+            tmp_path,
+            deny,
+            baseline_public_git_identities=exception,
+        )
+    )
+
+    record.write_text("synthetic successor\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "synthetic successor"],
+        cwd=tmp_path,
+        check=True,
+    )
+    assert publication.Finding(
+        "git-metadata", "operator-deny-term"
+    ) in publication.scan_history(
+        tmp_path,
+        deny,
+        baseline_public_git_identities=exception,
+    )
+
+
 def test_publication_gate_scans_pdf_metadata_and_archive_members(tmp_path) -> None:
     pdf = tmp_path / "synthetic.pdf"
     writer = PdfWriter()

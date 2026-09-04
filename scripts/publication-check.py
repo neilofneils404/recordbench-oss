@@ -61,6 +61,15 @@ IPV6 = re.compile(
 EMAIL = re.compile(
     rb"(?i)(?<![a-z0-9._%+-])[a-z0-9._%+-]{1,64}@([a-z0-9.-]{1,253}\.[a-z]{2,63})(?![a-z0-9.-])"
 )
+PUBLIC_GITHUB_CLONE_URL = re.compile(
+    r"(?:git@github\.com:|https://github\.com/)"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/"
+    r"[A-Za-z0-9._-]{1,100}\.git"
+)
+GITHUB_NOREPLY_IDENTITY = re.compile(
+    r"(?P<account>[0-9]+)\+(?P<username>[A-Za-z0-9-]+)"
+    r"@users\.noreply\.github\.com"
+)
 HOME_PATH = re.compile(rb"(?i)/(?:home|users)/([A-Za-z0-9._-]{1,64})/")
 WINDOWS_HOME_PATH = re.compile(
     rb"(?i)(?:[A-Z]:)?\\(?:Users|Documents[ ]and[ ]Settings)\\([^\\/\r\n]{1,128})\\"
@@ -159,7 +168,32 @@ def _safe_example_ip(
     return any(address in network for network in ALLOWED_DOCUMENTATION_NETWORKS)
 
 
-def _scan_bytes(data: bytes, *, location: str, deny: tuple[bytes, ...]) -> list[Finding]:
+def _mask_exact_public_literals(
+    data: bytes, literals: tuple[bytes, ...]
+) -> bytes:
+    masked = data
+    token_character = rb"A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-"
+    for literal in literals:
+        if not literal:
+            continue
+        pattern = re.compile(
+            rb"(?<![" + token_character + rb"])"
+            + re.escape(literal)
+            + rb"(?!["
+            + token_character
+            + rb"])"
+        )
+        masked = pattern.sub(lambda match: b"\0" * len(match.group(0)), masked)
+    return masked
+
+
+def _scan_bytes(
+    data: bytes,
+    *,
+    location: str,
+    deny: tuple[bytes, ...],
+    allowed_deny_literals: tuple[bytes, ...] = (),
+) -> list[Finding]:
     findings: list[Finding] = []
     lowered = data.lower()
     pem_rules: set[str] = set()
@@ -227,8 +261,9 @@ def _scan_bytes(data: bytes, *, location: str, deny: tuple[bytes, ...]) -> list[
         if not literal.startswith(SAFE_LITERAL_PREFIXES):
             findings.append(Finding(location, "bearer-token"))
             break
+    deny_source = _mask_exact_public_literals(data, allowed_deny_literals).lower()
     for term in deny:
-        if term and term.lower() in lowered:
+        if term and term.lower() in deny_source:
             findings.append(Finding(location, "operator-deny-term"))
             break
     return findings
@@ -370,8 +405,14 @@ def _scan_content(
     name: str,
     location: str,
     deny: tuple[bytes, ...],
+    allowed_deny_literals: tuple[bytes, ...] = (),
 ) -> list[Finding]:
-    findings = _scan_bytes(data, location=location, deny=deny)
+    findings = _scan_bytes(
+        data,
+        location=location,
+        deny=deny,
+        allowed_deny_literals=allowed_deny_literals,
+    )
     if Path(name).suffix.casefold() == ".pdf":
         findings.extend(_scan_pdf(data, location=location, deny=deny))
     elif zipfile.is_zipfile(io.BytesIO(data)):
@@ -383,7 +424,12 @@ def _scan_content(
     return findings
 
 
-def scan_tree(root: Path, deny: tuple[bytes, ...]) -> list[Finding]:
+def scan_tree(
+    root: Path,
+    deny: tuple[bytes, ...],
+    *,
+    public_clone_urls: tuple[bytes, ...] = (),
+) -> list[Finding]:
     findings: list[Finding] = []
     for index, path in enumerate(_candidate_files(root), start=1):
         relative = path.relative_to(root).as_posix()
@@ -413,12 +459,27 @@ def scan_tree(root: Path, deny: tuple[bytes, ...]) -> list[Finding]:
             findings.append(Finding(location, "unreadable-file"))
             continue
         findings.extend(
-            _scan_content(data, name=relative, location=location, deny=deny)
+            _scan_content(
+                data,
+                name=relative,
+                location=location,
+                deny=deny,
+                allowed_deny_literals=(
+                    public_clone_urls if relative == "README.md" else ()
+                ),
+            )
         )
     return findings
 
 
-def scan_history(root: Path, deny: tuple[bytes, ...]) -> list[Finding]:
+def scan_history(
+    root: Path,
+    deny: tuple[bytes, ...],
+    *,
+    public_clone_urls: tuple[bytes, ...] = (),
+    public_git_identities: tuple[tuple[bytes, bytes], ...] = (),
+    baseline_public_git_identities: tuple[tuple[str, bytes, bytes], ...] = (),
+) -> list[Finding]:
     if not (root / ".git").exists():
         return [Finding(".git", "git-history-unavailable")]
     check = subprocess.run(
@@ -439,6 +500,28 @@ def scan_history(root: Path, deny: tuple[bytes, ...]) -> list[Finding]:
     if revisions.returncode != 0:
         return [Finding("git-history", "history-scan-failed")]
     findings: list[Finding] = []
+    revision_ids = {
+        raw.decode("ascii", errors="strict")
+        for raw in revisions.stdout.splitlines()
+    }
+    baseline_identities: dict[str, set[tuple[bytes, bytes]]] = {}
+    for boundary, name, email in baseline_public_git_identities:
+        if boundary not in revision_ids:
+            findings.append(Finding("git-metadata", "history-scan-failed"))
+            continue
+        baseline = subprocess.run(
+            ["git", "rev-list", boundary],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if baseline.returncode != 0:
+            findings.append(Finding("git-metadata", "history-scan-failed"))
+            continue
+        for raw_commit in baseline.stdout.splitlines():
+            commit = raw_commit.decode("ascii", errors="strict")
+            baseline_identities.setdefault(commit, set()).add((name, email))
     scanned: set[tuple[str, str]] = set()
     for raw_commit in revisions.stdout.splitlines():
         commit = raw_commit.decode("ascii", errors="strict")
@@ -503,25 +586,53 @@ def scan_history(root: Path, deny: tuple[bytes, ...]) -> list[Finding]:
                 findings.append(Finding(location, "history-scan-failed"))
                 continue
             findings.extend(
-                _scan_content(blob.stdout, name=name, location=location, deny=deny)
+                _scan_content(
+                    blob.stdout,
+                    name=name,
+                    location=location,
+                    deny=deny,
+                    allowed_deny_literals=(
+                        public_clone_urls if name == "README.md" else ()
+                    ),
+                )
             )
-    metadata = subprocess.run(
-        [
-            "git",
-            "log",
-            "--format=%an%x00%ae%x00%cn%x00%ce%x00%B%x00",
-            "--all",
-        ],
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if metadata.returncode != 0:
-        findings.append(Finding("git-metadata", "history-scan-failed"))
-    else:
+    for commit in sorted(revision_ids):
+        metadata = subprocess.run(
+            [
+                "git",
+                "show",
+                "-s",
+                "--format=%an%x00%ae%x00%cn%x00%ce%x00%B",
+                commit,
+            ],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        parts = metadata.stdout.split(b"\0", 4)
+        if metadata.returncode != 0 or len(parts) != 5:
+            findings.append(Finding("git-metadata", "history-scan-failed"))
+            continue
+        author_name, author_email, committer_name, committer_email, message = parts
+        allowed_identities = set(public_git_identities)
+        allowed_identities.update(baseline_identities.get(commit, set()))
+        for name, email in (
+            (author_name, author_email),
+            (committer_name, committer_email),
+        ):
+            findings.extend(
+                _scan_bytes(
+                    name + b"\0" + email,
+                    location="git-metadata",
+                    deny=deny,
+                    allowed_deny_literals=(
+                        (name, email) if (name, email) in allowed_identities else ()
+                    ),
+                )
+            )
         findings.extend(
-            _scan_bytes(metadata.stdout, location="git-metadata", deny=deny)
+            _scan_bytes(message, location="git-metadata", deny=deny)
         )
     refs = subprocess.run(
         [
@@ -559,17 +670,102 @@ def _deny_terms(path: Path | None) -> tuple[bytes, ...]:
     return tuple(result)
 
 
+def _ascii_value(value: str, *, label: str, maximum: int) -> bytes:
+    if (
+        not value
+        or len(value) > maximum
+        or any(character in value for character in "\r\n\0")
+    ):
+        raise RuntimeError(f"{label} is invalid")
+    try:
+        return value.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise RuntimeError(f"{label} must be ASCII") from exc
+
+
+def _public_clone_urls(values: Iterable[str]) -> tuple[bytes, ...]:
+    result: list[bytes] = []
+    for value in values:
+        if PUBLIC_GITHUB_CLONE_URL.fullmatch(value) is None:
+            raise RuntimeError(
+                "public clone URL must be an exact GitHub SSH or HTTPS clone URL"
+            )
+        result.append(value.encode("ascii"))
+    return tuple(result)
+
+
+def _public_identity(name: str, email: str, *, current: bool) -> tuple[bytes, bytes]:
+    encoded_name = _ascii_value(name, label="Public Git identity name", maximum=100)
+    encoded_email = _ascii_value(email, label="Public Git identity email", maximum=254)
+    matched = GITHUB_NOREPLY_IDENTITY.fullmatch(email)
+    if matched is None:
+        raise RuntimeError(
+            "public Git identity must use a verified GitHub no-reply address"
+        )
+    if current and name != matched.group("username"):
+        raise RuntimeError(
+            "current public Git identity name must match its GitHub username"
+        )
+    return encoded_name, encoded_email
+
+
+def _public_git_identities(
+    values: Iterable[tuple[str, str]],
+) -> tuple[tuple[bytes, bytes], ...]:
+    return tuple(_public_identity(name, email, current=True) for name, email in values)
+
+
+def _baseline_public_git_identities(
+    values: Iterable[tuple[str, str, str]],
+) -> tuple[tuple[str, bytes, bytes], ...]:
+    result: list[tuple[str, bytes, bytes]] = []
+    for boundary, name, email in values:
+        if re.fullmatch(r"[0-9a-f]{40}", boundary) is None:
+            raise RuntimeError("public baseline boundary must be an exact commit SHA")
+        encoded_name, encoded_email = _public_identity(name, email, current=False)
+        result.append((boundary, encoded_name, encoded_email))
+    return tuple(result)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--deny-file", type=Path)
+    parser.add_argument("--allow-public-clone-url", action="append", default=[])
+    parser.add_argument(
+        "--allow-public-git-identity",
+        action="append",
+        nargs=2,
+        default=[],
+        metavar=("NAME", "EMAIL"),
+    )
+    parser.add_argument(
+        "--allow-public-baseline-git-identity",
+        action="append",
+        nargs=3,
+        default=[],
+        metavar=("COMMIT", "NAME", "EMAIL"),
+    )
     parser.add_argument("--skip-history", action="store_true")
     args = parser.parse_args()
     root = args.root.expanduser().resolve(strict=True)
     deny = _deny_terms(args.deny_file.expanduser()) if args.deny_file else ()
-    findings = scan_tree(root, deny)
+    clone_urls = _public_clone_urls(args.allow_public_clone_url)
+    identities = _public_git_identities(args.allow_public_git_identity)
+    baseline_identities = _baseline_public_git_identities(
+        args.allow_public_baseline_git_identity
+    )
+    findings = scan_tree(root, deny, public_clone_urls=clone_urls)
     if not args.skip_history:
-        findings.extend(scan_history(root, deny))
+        findings.extend(
+            scan_history(
+                root,
+                deny,
+                public_clone_urls=clone_urls,
+                public_git_identities=identities,
+                baseline_public_git_identities=baseline_identities,
+            )
+        )
     unique = sorted(set(findings), key=lambda item: (item.location, item.rule))
     if unique:
         print("PUBLICATION GATE: BLOCKED", file=sys.stderr)

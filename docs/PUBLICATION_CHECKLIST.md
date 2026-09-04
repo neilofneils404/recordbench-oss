@@ -23,6 +23,15 @@ Never commit that deny file or copy its matched values into a report. The
 scanner reports only rule names and redacted locations. `--skip-history` is for
 diagnosing a proposed clean tree; it is not a publication gate.
 
+If an owner deny term also appears inside the repository's exact public GitHub
+clone URL or verified GitHub no-reply identity, keep the deny term and pass an
+explicit, owner-approved adjudication. `--allow-public-clone-url` applies only
+to an exact URL token in `README.md`; `--allow-public-git-identity` requires an
+exact username/no-reply pair; and `--allow-public-baseline-git-identity`
+requires an exact commit boundary, display name, and no-reply address. These
+options do not suppress the same deny term in files, commit messages, later
+legacy-identity commits, or near-match URLs.
+
 Run the repository's supported quality commands from a fresh environment:
 
 ```bash
