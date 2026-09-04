@@ -2340,6 +2340,14 @@ class CaseIntelligenceWorkbench:
         )
         return hashlib.sha256(material.encode("utf-8")).hexdigest()[:40]
 
+    @classmethod
+    def _support_tokens(cls, candidate: Candidate) -> frozenset[str]:
+        """Return exact current tokens, including the pre-v2 transcript identity."""
+
+        return frozenset(
+            (cls._support_token(candidate), cls._legacy_support_token(candidate))
+        )
+
     def _citation(self, matter: MatterRecord, candidate: Candidate) -> WorkbenchCitation:
         evidence_kind = "document"
         try:
@@ -2608,10 +2616,7 @@ class CaseIntelligenceWorkbench:
             units = document.parsed_units()
             for ordinal, unit in enumerate(units, 1):
                 candidate = self._candidate(matter, document, unit, ordinal)
-                if token in {
-                    self._support_token(candidate),
-                    self._legacy_support_token(candidate),
-                }:
+                if token in self._support_tokens(candidate):
                     return document, units, ordinal - 1
             if not is_media_type(document.media_type):
                 continue
@@ -2756,7 +2761,7 @@ class CaseIntelligenceWorkbench:
         unit = units[index]
         candidate = self._candidate(matter, document, unit, index + 1)
         citation = self._citation(matter, candidate)
-        if citation.support_token != token:
+        if token not in self._support_tokens(candidate):
             raise KeyError(token)
         return {
             "document_id": candidate.document_id,
@@ -2801,7 +2806,7 @@ class CaseIntelligenceWorkbench:
                     document.version_id == reference.source_version_id
                     and unit.number == reference.unit_number
                     and unit.excerpt_digest == reference.excerpt_digest
-                    and self._support_token(candidate) == reference.support_token
+                    and reference.support_token in self._support_tokens(candidate)
                 ):
                     available.add(reference.support_token)
         return frozenset(available)
@@ -3207,10 +3212,7 @@ class CaseIntelligenceWorkbench:
                             candidate = self._candidate(
                                 matter, document, unit, index + 1
                             )
-                            exact_tokens = {
-                                self._support_token(candidate),
-                                self._legacy_support_token(candidate),
-                            }
+                            exact_tokens = self._support_tokens(candidate)
                             expected_kind = (
                                 "transcript"
                                 if is_media_type(document.media_type)
@@ -3380,7 +3382,7 @@ class CaseIntelligenceWorkbench:
             )
             if (
                 citation.location != candidate.citation
-                or citation.support_token != self._support_token(candidate)
+                or citation.support_token not in self._support_tokens(candidate)
                 or citation.href != expected_href
             ):
                 raise ExportProblem(
@@ -4292,15 +4294,22 @@ class CaseIntelligenceWorkbench:
                 or unit.line_end != citation.line_end
             ):
                 continue
-            current = self._citation(
-                matter, self._candidate(matter, document, unit, ordinal)
-            )
+            candidate = self._candidate(matter, document, unit, ordinal)
+            current = self._citation(matter, candidate)
             if (
-                current.support_token == citation.support_token
+                citation.support_token in self._support_tokens(candidate)
                 and current.chunk_id == citation.chunk_id
                 and current.evidence_kind == citation.evidence_kind
             ):
-                return current
+                return replace(
+                    current,
+                    support_token=citation.support_token,
+                    href=(
+                        f"/matters/{matter.slug}?support={citation.support_token}"
+                        f"{'&play=1' if current.evidence_kind == 'transcript' else ''}"
+                        "#support-pane"
+                    ),
+                )
         return None
 
     def _validated_research_citations(
