@@ -191,10 +191,15 @@ def test_bare_according_to_identifier_is_source_reference() -> None:
         question,
         "Document DOC-1234 was created at 07:15:00; EVT-4821 has no stated time.",
     )
+    dual_role_question = (
+        "According to DOC-1234, report the exact time DOC-1234 was created "
+        "and event EVT-4821 occurred."
+    )
+    assert not answer_advances_objective(
+        dual_role_question,
+        "Event EVT-4821 occurred at 08:42:17.",
+    )
     assert answer_advances_objective(
-        (
-            "According to DOC-1234, report the exact times that DOC-1234 was created "
-            "and event EVT-4821 occurred."
-        ),
+        dual_role_question,
         "DOC-1234 was created at 07:15:00; EVT-4821 occurred at 08:42:17.",
     )
