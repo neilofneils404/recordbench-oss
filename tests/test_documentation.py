@@ -83,11 +83,16 @@ def test_transcription_is_bundled_but_not_exposed_without_authentication() -> No
     assert "token" in text.casefold()
 
 
-def test_pull_request_jobs_checkout_the_exact_proposed_commit() -> None:
+def test_pull_request_jobs_test_the_merge_and_scan_the_exact_head_separately() -> None:
     workflow = (ROOT / ".github/workflows/quality-gates.yml").read_text(
         encoding="utf-8"
     )
     exact_ref = "ref: ${{ github.event.pull_request.head.sha || github.sha }}"
-    assert workflow.count(exact_ref) == 3
+    assert workflow.count(exact_ref) == 1
+    assert "path: _publication_head" in workflow
+    assert "working-directory: _publication_head" in workflow
+    assert workflow.count("EXPECTED_INTEGRATION_SHA: ${{ github.sha }}") == 3
+    assert workflow.count('test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"') == 3
+    assert "python scripts/publication-check.py" in workflow
     assert "pull_request_target" not in workflow
     assert "fetch-depth: 0" in workflow
