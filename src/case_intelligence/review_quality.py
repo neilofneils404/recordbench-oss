@@ -67,6 +67,13 @@ _IDENTIFIER = re.compile(
     r"\b(?=[A-Z0-9-]{4,}\b)(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)"
     r"[A-Z0-9]+(?:-[A-Z0-9]+)*\b"
 )
+_SOURCE_REFERENCE_IDENTIFIER = re.compile(
+    r"\b(?:using|from|per|according\s+to)\s+"
+    r"(?:(?:the|a|an)\s+)?(?:reports?|documents?|sources?|files?|exhibits?)\s+"
+    r"(?P<identifier>\b(?=[A-Z0-9-]{4,}\b)(?=[A-Z0-9-]*[A-Z])"
+    r"(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)*\b)",
+    re.IGNORECASE,
+)
 _TEMPORAL_OBJECTIVE = re.compile(
     r"\b(?:at\s+what\s+(?:exact\s+)?time|what\s+(?:exact\s+)?time|when\s+did|"
     r"exact\s+(?:time|timestamp)|precise\s+(?:time|timestamp)|timestamp)\b",
@@ -445,6 +452,23 @@ def research_synthesis_question(objective: str) -> str:
     return f"{prefix}{objective_value}{suffix}"
 
 
+def _timed_objective_identifiers(question: str) -> tuple[str, ...]:
+    normalized = question.upper()
+    identifiers = tuple(dict.fromkeys(_IDENTIFIER.findall(normalized)))
+    if len(identifiers) < 2:
+        return identifiers
+    source_references = {
+        match.group("identifier").upper()
+        for match in _SOURCE_REFERENCE_IDENTIFIER.finditer(normalized)
+    }
+    timed_subjects = tuple(
+        identifier
+        for identifier in identifiers
+        if identifier not in source_references
+    )
+    return timed_subjects or identifiers
+
+
 def answer_advances_objective(question: str, answer_text: str) -> bool:
     """Check only objective shapes that can be verified without case semantics."""
 
@@ -452,7 +476,7 @@ def answer_advances_objective(question: str, answer_text: str) -> bool:
         has_clock = bool(_CLOCK.search(answer_text) or _CLOCK_WORD.search(answer_text))
         if not has_clock:
             return False
-        identifiers = tuple(dict.fromkeys(_IDENTIFIER.findall(question.upper())))
+        identifiers = _timed_objective_identifiers(question)
         if not identifiers:
             return True
         segments = tuple(

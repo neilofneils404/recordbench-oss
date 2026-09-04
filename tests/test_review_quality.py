@@ -542,6 +542,86 @@ def test_exact_time_must_be_associated_with_each_requested_identifier() -> None:
     )
 
 
+def test_exact_time_distinguishes_source_references_from_timed_subjects() -> None:
+    question = "Using report DOC-1234, at what exact time did event EVT-4821 occur?"
+    for source_reference in (
+        "Using report DOC-1234",
+        "From exhibit EX-77",
+        "According to the document DOC-1234",
+        "Per source SRC-9",
+    ):
+        assert answer_advances_objective(
+            f"{source_reference}, at what exact time did event EVT-4821 occur?",
+            "Event EVT-4821 occurred at 08:42:17.",
+        )
+    assert not answer_advances_objective(
+        question,
+        (
+            "Report DOC-1234 was received at 07:15:00. "
+            "Event EVT-4821 occurred, but its time was not stated."
+        ),
+    )
+    two_events = (
+        "Using report DOC-1234, report the exact time for events "
+        "EVT-4821 and EVT-4822."
+    )
+    assert not answer_advances_objective(
+        two_events,
+        "EVT-4821 occurred at 08:42:17. EVT-4822 has no stated time.",
+    )
+    assert answer_advances_objective(
+        two_events,
+        "EVT-4821 occurred at 08:42:17. EVT-4822 occurred at 08:43:09.",
+    )
+    source_is_subject = "At what exact time was report DOC-1234 created?"
+    assert not answer_advances_objective(
+        source_is_subject,
+        "Report DOC-1234 has no stated creation time. EVT-4821 occurred at 08:42:17.",
+    )
+    assert answer_advances_objective(
+        source_is_subject, "Report DOC-1234 was created at 07:15:00."
+    )
+
+
+def test_source_reference_exact_time_accepts_a_grounded_first_draft() -> None:
+    evidence = (
+        EvidenceItem(
+            "S1",
+            "Generated report DOC-1234.pdf",
+            "Page 4",
+            "Event EVT-4821 occurred at 08:42:17.",
+        ),
+    )
+
+    class SourceReferencedTimeGenerator:
+        available = True
+
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "answerable": True,
+                "claims": [
+                    {
+                        "text": "Event EVT-4821 occurred at 08:42:17.",
+                        "evidence_ids": ["S1"],
+                    }
+                ],
+                "limitation": None,
+                "missing_information": "",
+            }
+
+    generator = SourceReferencedTimeGenerator()
+    answer = GroundedGenerationService(generator).answer(
+        "Using report DOC-1234, at what exact time did event EVT-4821 occur?",
+        evidence,
+    )
+    assert answer.text.endswith("Event EVT-4821 occurred at 08:42:17.")
+    assert [call["grounding_repair"] for call in generator.calls] == [False]
+
+
 def test_broad_summary_uses_multi_pass_queries_and_suppresses_boilerplate_only() -> None:
     intent = classify_question("Give me a broad summary of this matter's evidence.")
     assert intent.broad_summary is True
