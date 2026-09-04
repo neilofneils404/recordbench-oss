@@ -8277,7 +8277,7 @@ def create_workbench_app(
         result_url = _query_url(
             f"/matters/{matter.slug}/research", job=job.job_id
         )
-        if job.conversation_id:
+        if job.conversation_id and job.state == "succeeded":
             result_url = (
                 f"/matters/{matter.slug}?conversation={job.conversation_id}#latest"
             )

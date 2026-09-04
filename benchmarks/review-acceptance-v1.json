@@ -5,7 +5,7 @@
   "confidential_data": false,
   "requires_network": false,
   "frozen": true,
-  "case_fingerprint": "8f7446a44b3926b55985ea0924e261ac892a24ee90b13b6b4c12c8c87f900093",
+  "case_fingerprint": "cb79d9ee509778fd5ee9cdc68eeebe3a0ebe1c50945a93fbf0821249e4f3f40a",
   "cases": [
     {
       "case_id": "bounded-page-ocr",
@@ -99,10 +99,11 @@
     {
       "case_id": "durable-investigation-follow-up",
       "category": "research_conversational_follow_up",
-      "contract": "A cited investigation result is appended once to its conversation, survives restart, and supports a same-thread follow-up.",
+      "contract": "A cited investigation result is appended once to its conversation, survives restart, and supports a same-thread follow-up, while failed or cancelled work returns to its durable retry page.",
       "node_ids": [
         "tests/test_review_conversation_continuity.py::test_research_result_is_appended_once_to_its_conversation_and_survives_restart",
-        "tests/test_review_conversation_continuity.py::test_review_composer_starts_broader_work_in_the_same_conversation"
+        "tests/test_review_conversation_continuity.py::test_review_composer_starts_broader_work_in_the_same_conversation",
+        "tests/test_review_conversation_continuity.py::test_terminal_investigation_status_returns_failures_to_recovery_page"
       ]
     },
     {
@@ -164,6 +165,7 @@
       "tests/test_review_acceptance_pack.py::test_withheld_source_scenario_excludes_prepared_synthesis": "1ddf71e3aab7c63d0942f52c2ebf50cccf66c62cdf7f9a438221db960e848e6e",
       "tests/test_review_conversation_continuity.py::test_research_result_is_appended_once_to_its_conversation_and_survives_restart": "378a0753115f5c890d02eb885af367dd981d6b49939f16777cbac01c9c43b5ee",
       "tests/test_review_conversation_continuity.py::test_review_composer_starts_broader_work_in_the_same_conversation": "9ce32e42416c7b814db7a5d4c90711c0b6a84f7a2af1845b8330a436463f6228",
+      "tests/test_review_conversation_continuity.py::test_terminal_investigation_status_returns_failures_to_recovery_page": "622299d228c4977b08078736b0a607652a45f761ecb7429d5cb9431db455c152",
       "tests/test_review_quality.py::test_broad_summary_scope_discloses_sampled_source_diversity": "bf0edb3bbdb1a66132bff68ffcec3c7786b8dad15b533066bf36fb08ab8a21d8",
       "tests/test_review_quality.py::test_exact_time_objective_gets_one_repair_instead_of_an_adjacent_finding": "de5cbfcc5eba7c2997c7a7714c4fb377fea4ff1bc32123251f3a28e3f5bb662c",
       "tests/test_review_quality.py::test_explicit_modality_exclusion_is_directional_and_does_not_capture_factual_negation": "315fd468f3fba1befdd3a58da8e61cbf8a49a6ecc9cc976d5a3bb0d50c0e02fd",
@@ -185,7 +187,7 @@
       "tests/test_matter_media_workflow.py": "6d248f6bce5241aa6996b905bae37e7b714392d88493ed61c2fa3d7a5e8dab6d",
       "tests/test_research_and_full_review.py": "4a3ec979e11577950c35821036e71102e763e411c9b68583bbbc3aa2470a9f4c",
       "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
-      "tests/test_review_conversation_continuity.py": "685cafa87b8d49997fddaef3816327b797cb77d26637a44e0d1190cbd58d01df",
+      "tests/test_review_conversation_continuity.py": "7e09fe23984a0acd5c97d6b47ed15467d0437133bb8b76b1a5d348ebc6523eeb",
       "tests/test_review_quality.py": "52642b3af89485dcb9eb79442b43439e963a12254c8a382ab8ddf34a29ddd4bb",
       "tests/test_upload_pilot.py": "5353c212152b0fc4fb3852373f0f7d20392a8593d4c13b10fe43dbdf6e996b18",
       "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6",
@@ -196,6 +198,6 @@
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "e49061eecb369f5b068e808d1ed8f4500d72d0608d21d9c28e620e02ccbba66a"
+    "content_fingerprint": "6317b376dc3e4435ad3de07fabf66d177c2e39cdf604d6f226e559276e0862bf"
   }
 }

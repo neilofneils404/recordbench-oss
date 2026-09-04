@@ -503,3 +503,95 @@ def test_review_composer_starts_broader_work_in_the_same_conversation(tmp_path):
             item.role == "user" and item.content == "Which source supports that?"
             for item in messages
         )
+
+
+def test_terminal_investigation_status_returns_failures_to_recovery_page(tmp_path):
+    app = create_workbench_app(
+        tmp_path / "runtime", generator=EvidenceEchoGenerator(), auth_mode="test"
+    )
+    with TestClient(app) as client:
+        bench = client.app.state.workbench
+        assert bench.research is not None
+        bench.research.close()
+        created = client.post(
+            "/matters",
+            data={
+                "name": "Generated investigation recovery",
+                "descriptor": "Synthetic workflow fixture",
+            },
+            follow_redirects=False,
+        )
+        slug = re.search(
+            r"/matters/(m-[0-9a-f]{12})/setup", created.headers["location"]
+        ).group(1)
+        matter = bench.workspace.get_active_matter(slug)
+        conversations = (
+            bench.workspace.get_conversation(matter.matter_id),
+            bench.workspace.create_conversation(
+                matter.matter_id, actor_id=matter.owner_id
+            ),
+            bench.workspace.create_conversation(
+                matter.matter_id, actor_id=matter.owner_id
+            ),
+        )
+
+        cancelled, _created = bench.workspace.queue_research_job(
+            matter.matter_id,
+            matter.owner_id,
+            "Why did the generated investigation stop?",
+            "Generated cancelled investigation",
+            "research-request-" + "a" * 32,
+            conversation_id=conversations[0].conversation_id,
+        )
+        cancelled = bench.workspace.cancel_research_job(
+            matter.matter_id, matter.owner_id, cancelled.job_id
+        )
+        failed, _created = bench.workspace.queue_research_job(
+            matter.matter_id,
+            matter.owner_id,
+            "Why did the generated investigation fail?",
+            "Generated failed investigation",
+            "research-request-" + "b" * 32,
+            conversation_id=conversations[1].conversation_id,
+        )
+        claimed = bench.workspace.claim_research_job("generated-failure-worker")
+        assert claimed is not None and claimed.job_id == failed.job_id
+        failed = bench.workspace.fail_research_job(
+            failed.job_id, "Synthetic investigation failure."
+        )
+        succeeded, _created = bench.workspace.queue_research_job(
+            matter.matter_id,
+            matter.owner_id,
+            "What did the generated investigation establish?",
+            "Generated successful investigation",
+            "research-request-" + "c" * 32,
+            conversation_id=conversations[2].conversation_id,
+        )
+        claimed = bench.workspace.claim_research_job("generated-success-worker")
+        assert claimed is not None and claimed.job_id == succeeded.job_id
+        succeeded = bench.workspace.finish_research_job(
+            succeeded.job_id, _research_result()
+        )
+
+        for terminal in (cancelled, failed):
+            status = client.get(
+                f"/matters/{slug}/research/{terminal.job_id}/status"
+            )
+            assert status.status_code == 200
+            payload = status.json()
+            assert payload["terminal"] is True
+            assert payload["result_url"] == (
+                f"/matters/{slug}/research?job={terminal.job_id}"
+            )
+            recovery = client.get(payload["result_url"])
+            assert recovery.status_code == 200
+            assert terminal.message in recovery.text
+            assert "Resume investigation" in recovery.text
+
+        status = client.get(
+            f"/matters/{slug}/research/{succeeded.job_id}/status"
+        )
+        assert status.status_code == 200
+        assert status.json()["result_url"] == (
+            f"/matters/{slug}?conversation={conversations[2].conversation_id}#latest"
+        )
