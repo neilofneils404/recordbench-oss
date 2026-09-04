@@ -1,8 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="recordbench-mark-title">
   <title id="recordbench-mark-title">RecordBench</title>
   <rect x="2" y="2" width="60" height="60" rx="13" fill="#071a3c"/>
-  <path d="M18.5 48V16.5h18.25c6.7 0 11.25 4.1 11.25 10s-4.55 10-11.25 10H18.5" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M36 36.5 48 48" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round"/>
-  <path d="M23.5 26.5h18" fill="none" stroke="#ed4b2f" stroke-width="4" stroke-linecap="round"/>
-  <circle cx="45.5" cy="26.5" r="3.25" fill="#ed4b2f"/>
+  <path d="M14 20h4v28h24v4H14Z" fill="#ed4b2f"/>
+  <path d="M22 12h18l10 10v22H22Z" fill="#fff"/>
+  <path d="M28 26h16v4H28Zm0 8h12v4H28Z" fill="#071a3c"/>
 </svg>
