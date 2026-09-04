@@ -4671,11 +4671,9 @@ class CaseIntelligenceWorkbench:
             frozen_document is None
             or frozen_document.state != "ready"
             or frozen_document.version_id != decision.source_version_id
-            or (
-                decision.source_basis_digest
-                and self._document_content_basis(frozen_document)
-                != decision.source_basis_digest
-            )
+            or not decision.source_basis_digest
+            or self._document_content_basis(frozen_document)
+            != decision.source_basis_digest
         ):
             return ReviewDecisionResult(
                 "needs_attention",
@@ -4731,11 +4729,9 @@ class CaseIntelligenceWorkbench:
             current_document is None
             or current_document.state != "ready"
             or current_document.version_id != decision.source_version_id
-            or (
-                decision.source_basis_digest
-                and self._document_content_basis(current_document)
-                != decision.source_basis_digest
-            )
+            or not decision.source_basis_digest
+            or self._document_content_basis(current_document)
+            != decision.source_basis_digest
         ):
             return ReviewDecisionResult(
                 "needs_attention",
@@ -4889,11 +4885,9 @@ class CaseIntelligenceWorkbench:
                     source_current = bool(
                         document.state == "ready"
                         and document.version_id == decision.source_version_id
-                        and (
-                            not decision.source_basis_digest
-                            or self._document_content_basis(document)
-                            == decision.source_basis_digest
-                        )
+                        and bool(decision.source_basis_digest)
+                        and self._document_content_basis(document)
+                        == decision.source_basis_digest
                     )
                 except KeyError:
                     pass

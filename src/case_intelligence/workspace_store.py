@@ -1002,7 +1002,6 @@ class WorkspaceStore:
                 "PRAGMA table_info(workbench_review_decision)"
             )
         }
-        added_review_basis = "source_basis_digest" not in decision_columns
         with self.connection:
             if "content_basis_digest" not in catalog_columns:
                 self.connection.execute(
@@ -1016,44 +1015,42 @@ class WorkspaceStore:
                     "source_basis_digest TEXT NOT NULL DEFAULT '' "
                     "CHECK (source_basis_digest='' OR length(source_basis_digest)=64)"
                 )
-            # A queued or running pre-0024 snapshot has no trustworthy
-            # same-version content basis.  Do not silently resume it after an
-            # upgrade: fail it durably and require a fresh frozen population.
-            # Completed historical runs remain available as historical work.
-            if added_review_basis:
-                migration_now = self._now()
-                legacy_active = self.connection.execute(
-                    "SELECT run.run_id,run.reviewed_count,run.snapshot_count "
-                    "FROM workbench_review_run run WHERE run.state IN ('queued','running') "
-                    "AND EXISTS (SELECT 1 FROM workbench_review_decision decision "
-                    "WHERE decision.run_id=run.run_id "
-                    "AND decision.source_basis_digest='')"
-                ).fetchall()
-                legacy_message = (
-                    "This saved source check predates exact source-content tracking. "
-                    "Start a new source check to freeze the current sources."
+            # Any queued or running snapshot without a trustworthy same-version
+            # content basis must not resume. Fail it durably and require a fresh
+            # frozen population. Completed historical runs remain available.
+            migration_now = self._now()
+            legacy_active = self.connection.execute(
+                "SELECT run.run_id,run.reviewed_count,run.snapshot_count "
+                "FROM workbench_review_run run WHERE run.state IN ('queued','running') "
+                "AND EXISTS (SELECT 1 FROM workbench_review_decision decision "
+                "WHERE decision.run_id=run.run_id "
+                "AND decision.source_basis_digest='')"
+            ).fetchall()
+            legacy_message = (
+                "This saved source check predates exact source-content tracking. "
+                "Start a new source check to freeze the current sources."
+            )
+            for legacy in legacy_active:
+                self.connection.execute(
+                    "UPDATE workbench_review_run SET state='failed',stage='failed',"
+                    "message=?,worker_id=NULL,finished_at=?,updated_at=? "
+                    "WHERE run_id=? AND state IN ('queued','running')",
+                    (
+                        legacy_message,
+                        migration_now,
+                        migration_now,
+                        legacy["run_id"],
+                    ),
                 )
-                for legacy in legacy_active:
-                    self.connection.execute(
-                        "UPDATE workbench_review_run SET state='failed',stage='failed',"
-                        "message=?,worker_id=NULL,finished_at=?,updated_at=? "
-                        "WHERE run_id=? AND state IN ('queued','running')",
-                        (
-                            legacy_message,
-                            migration_now,
-                            migration_now,
-                            legacy["run_id"],
-                        ),
-                    )
-                    self._append_review_event_locked(
-                        str(legacy["run_id"]),
-                        state="failed",
-                        stage="failed",
-                        message=legacy_message,
-                        reviewed_count=int(legacy["reviewed_count"]),
-                        snapshot_count=int(legacy["snapshot_count"]),
-                        created_at=migration_now,
-                    )
+                self._append_review_event_locked(
+                    str(legacy["run_id"]),
+                    state="failed",
+                    stage="failed",
+                    message=legacy_message,
+                    reviewed_count=int(legacy["reviewed_count"]),
+                    snapshot_count=int(legacy["snapshot_count"]),
+                    created_at=migration_now,
+                )
 
     def close(self) -> None:
         with self._lock:
@@ -9631,10 +9628,8 @@ class WorkspaceStore:
             source_changed = (
                 frozen["current_version"] != frozen["source_version_id"]
                 or frozen["source_state"] != "ready"
-                or (
-                    frozen["source_basis_digest"]
-                    and frozen["current_basis"] != frozen["source_basis_digest"]
-                )
+                or not frozen["source_basis_digest"]
+                or frozen["current_basis"] != frozen["source_basis_digest"]
             )
             if source_changed or invalid_locator:
                 decision = "needs_attention"
