@@ -6470,8 +6470,18 @@ class WorkspaceStore:
             )
         return self.report(matter_id, report_id)
 
-    def reports(self, matter_id: str, actor_id: str) -> tuple[ReportRecord, ...]:
-        self.membership(matter_id, actor_id)
+    def reports(
+        self,
+        matter_id: str,
+        actor_id: str,
+        *,
+        administrator_override: bool = False,
+    ) -> tuple[ReportRecord, ...]:
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
         with self._lock:
             rows = self.connection.execute(
                 "SELECT report.*,COUNT(section.section_id) AS section_count "
@@ -7418,13 +7428,18 @@ class WorkspaceStore:
         matter_id: str,
         actor_id: str,
         *,
+        administrator_override: bool = False,
         query: str = "",
         item_type: str = "",
         status: str = "",
         page: int = 1,
         page_size: int = 24,
     ) -> NotebookPageRecord:
-        self.membership(matter_id, actor_id)
+        self._authorize_export_read(
+            matter_id,
+            actor_id,
+            administrator_override=administrator_override,
+        )
         query_value = " ".join(
             self._safe_text(
                 query, label="Notebook search", maximum=200, required=False

@@ -7493,9 +7493,6 @@ def create_workbench_app(
                 getattr(request.state, "administrator_matter_override", None)
                 == matter.matter_id
             )
-            read_actor_id = (
-                matter.owner_id if administrator_override else context.principal_id
-            )
             queue = bench.source_library(
                 matter,
                 view="list",
@@ -7517,9 +7514,17 @@ def create_workbench_app(
             media_activity = media_activity_projection(matter)
             resumes = matter_resume_projection(matter, context)
             notebook = bench.workspace.notebook_page(
-                matter.matter_id, read_actor_id, status="all", page_size=10
+                matter.matter_id,
+                context.principal_id,
+                administrator_override=administrator_override,
+                status="all",
+                page_size=10,
             )
-            reports = bench.workspace.reports(matter.matter_id, read_actor_id)
+            reports = bench.workspace.reports(
+                matter.matter_id,
+                context.principal_id,
+                administrator_override=administrator_override,
+            )
             findings = bench.workspace.review_findings(matter.matter_id)
         except KeyError as exc:
             raise HTTPException(404, "Matter not found") from exc
