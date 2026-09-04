@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Serialized focused-answer and broader-investigation admission in each Review
+  conversation, including retries, so concurrent requests cannot both enter the
+  same thread or append work out of order.
 - Preserved cited investigation exports after a deletion attempt freezes source
   storage, without reopening quarantine or recreating a live source tree, and
   made final bundles fail explicitly instead of silently omitting investigation

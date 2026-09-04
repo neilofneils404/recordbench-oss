@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -150,6 +151,205 @@ def test_research_result_is_appended_once_to_its_conversation_and_survives_resta
             conversation_id=conversation.conversation_id,
         )
     restarted.close()
+
+
+def test_answer_admission_rejects_active_investigation_without_partial_message(
+    tmp_path,
+):
+    store = WorkspaceStore(tmp_path / "workbench.sqlite")
+    principal = store.upsert_principal(
+        "test", ACTOR, "Synthetic Reviewer", ACTOR, preferred_principal_id=ACTOR
+    )
+    matter = store.create_matter(
+        "Generated admission matter", "Synthetic fixture", principal.principal_id
+    )
+    conversation = store.get_conversation(matter.matter_id)
+    research, created = store.queue_research_job(
+        matter.matter_id,
+        ACTOR,
+        "What does the generated record establish?",
+        "Generated admission investigation",
+        "research-request-" + "1" * 32,
+        conversation_id=conversation.conversation_id,
+    )
+    assert created is True and research.state == "queued"
+    messages_before = store.messages(matter.matter_id, conversation.conversation_id)
+
+    with pytest.raises(WorkspaceProblem, match="investigation is still working"):
+        store.queue_answer_job(
+            matter.matter_id,
+            conversation.conversation_id,
+            ACTOR,
+            "What should the follow-up answer say?",
+            "answer-request-" + "2" * 32,
+        )
+
+    assert store.answer_counts()["queued"] == 0
+    assert store.research_counts()["queued"] == 1
+    assert store.messages(
+        matter.matter_id, conversation.conversation_id
+    ) == messages_before
+    assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    store.close()
+
+
+def test_answer_and_research_admission_serialize_across_store_connections(tmp_path):
+    path = tmp_path / "workbench.sqlite"
+    research_store = WorkspaceStore(path)
+    principal = research_store.upsert_principal(
+        "test", ACTOR, "Synthetic Reviewer", ACTOR, preferred_principal_id=ACTOR
+    )
+    matter = research_store.create_matter(
+        "Generated concurrent admission", "Synthetic fixture", principal.principal_id
+    )
+    conversation = research_store.get_conversation(matter.matter_id)
+    answer_store = WorkspaceStore(path)
+    research_at_last_check = threading.Event()
+    release_research = threading.Event()
+    outcomes: dict[str, object] = {}
+
+    def pause_before_research_insert(statement: str) -> None:
+        normalized = " ".join(statement.split())
+        if (
+            "SELECT 1 FROM workbench_research_job WHERE conversation_id="
+            in normalized
+            and not research_at_last_check.is_set()
+        ):
+            research_at_last_check.set()
+            release_research.wait(timeout=5)
+
+    research_store.connection.set_trace_callback(pause_before_research_insert)
+
+    def queue_research() -> None:
+        try:
+            outcomes["research"] = research_store.queue_research_job(
+                matter.matter_id,
+                ACTOR,
+                "What does the generated record establish?",
+                "Generated concurrent investigation",
+                "research-request-" + "3" * 32,
+                conversation_id=conversation.conversation_id,
+            )
+        except Exception as exc:  # pragma: no cover - asserted below
+            outcomes["research_error"] = exc
+
+    def queue_answer() -> None:
+        try:
+            outcomes["answer"] = answer_store.queue_answer_job(
+                matter.matter_id,
+                conversation.conversation_id,
+                ACTOR,
+                "What should the concurrent follow-up say?",
+                "answer-request-" + "4" * 32,
+            )
+        except Exception as exc:
+            outcomes["answer_error"] = exc
+
+    research_thread = threading.Thread(target=queue_research)
+    answer_thread = threading.Thread(target=queue_answer)
+    research_thread.start()
+    assert research_at_last_check.wait(timeout=5)
+    answer_thread.start()
+    time.sleep(0.05)
+    release_research.set()
+    research_thread.join(timeout=5)
+    answer_thread.join(timeout=5)
+
+    assert not research_thread.is_alive()
+    assert not answer_thread.is_alive()
+    assert "research_error" not in outcomes
+    assert "answer" not in outcomes
+    assert isinstance(outcomes.get("answer_error"), WorkspaceProblem)
+    assert "investigation is still working" in str(outcomes["answer_error"])
+    assert research_store.research_counts()["queued"] == 1
+    assert research_store.answer_counts()["queued"] == 0
+    assert len(
+        research_store.messages(matter.matter_id, conversation.conversation_id)
+    ) == 1
+    assert research_store.connection.execute(
+        "PRAGMA integrity_check"
+    ).fetchone()[0] == "ok"
+    answer_store.close()
+    research_store.close()
+
+
+def test_answer_and_research_retries_preserve_conversation_exclusion(tmp_path):
+    store = WorkspaceStore(tmp_path / "workbench.sqlite")
+    principal = store.upsert_principal(
+        "test", ACTOR, "Synthetic Reviewer", ACTOR, preferred_principal_id=ACTOR
+    )
+    matter = store.create_matter(
+        "Generated retry admission", "Synthetic fixture", principal.principal_id
+    )
+    answer_conversation = store.get_conversation(matter.matter_id)
+    answer, _created = store.queue_answer_job(
+        matter.matter_id,
+        answer_conversation.conversation_id,
+        ACTOR,
+        "What does the generated answer establish?",
+        "answer-request-" + "5" * 32,
+    )
+    claimed_answer = store.claim_answer_job("generated-failed-answer-worker")
+    assert claimed_answer is not None and claimed_answer.job_id == answer.job_id
+    assert store.fail_answer_job(answer.job_id, "Synthetic answer failure.").state == (
+        "failed"
+    )
+    active_research, _created = store.queue_research_job(
+        matter.matter_id,
+        ACTOR,
+        "What does the generated investigation establish?",
+        "Generated retry investigation",
+        "research-request-" + "6" * 32,
+        conversation_id=answer_conversation.conversation_id,
+    )
+    with pytest.raises(WorkspaceProblem, match="investigation is still working"):
+        store.retry_answer_job(matter.matter_id, ACTOR, answer.job_id)
+    assert store.get_answer_job(matter.matter_id, ACTOR, answer.job_id).state == (
+        "failed"
+    )
+    assert store.cancel_research_job(
+        matter.matter_id, ACTOR, active_research.job_id
+    ).state == "cancelled"
+    assert store.retry_answer_job(
+        matter.matter_id, ACTOR, answer.job_id
+    ).state == "queued"
+
+    research_conversation = store.create_conversation(
+        matter.matter_id, actor_id=ACTOR
+    )
+    research, _created = store.queue_research_job(
+        matter.matter_id,
+        ACTOR,
+        "What should the generated research retry establish?",
+        "Generated failed investigation",
+        "research-request-" + "7" * 32,
+        conversation_id=research_conversation.conversation_id,
+    )
+    claimed_research = store.claim_research_job("generated-failed-research-worker")
+    assert claimed_research is not None and claimed_research.job_id == research.job_id
+    assert store.fail_research_job(
+        research.job_id, "Synthetic research failure."
+    ).state == "failed"
+    blocking_answer, _created = store.queue_answer_job(
+        matter.matter_id,
+        research_conversation.conversation_id,
+        ACTOR,
+        "What should the generated answer say while research is failed?",
+        "answer-request-" + "8" * 32,
+    )
+    with pytest.raises(WorkspaceProblem, match="review work in progress"):
+        store.retry_research_job(matter.matter_id, ACTOR, research.job_id)
+    assert store.research_job(matter.matter_id, ACTOR, research.job_id).state == (
+        "failed"
+    )
+    assert store.cancel_answer_job(
+        matter.matter_id, ACTOR, blocking_answer.job_id
+    ).state == "cancelled"
+    assert store.retry_research_job(
+        matter.matter_id, ACTOR, research.job_id
+    ).state == "queued"
+    assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    store.close()
 
 
 def test_revoked_member_cannot_publish_an_inflight_investigation_result(tmp_path):

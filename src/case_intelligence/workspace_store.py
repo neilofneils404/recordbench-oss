@@ -7832,15 +7832,6 @@ class WorkspaceStore:
                             "That answer request already belongs to different notebook context."
                         )
                 return self._answer_job(existing), False
-            active = self.connection.execute(
-                "SELECT 1 FROM workbench_answer_job WHERE conversation_id=? "
-                "AND state IN ('queued','running') LIMIT 1",
-                (selected_conversation_id,),
-            ).fetchone()
-            if active is not None:
-                raise WorkspaceProblem(
-                    "This conversation already has an answer in progress."
-                )
             bound = self.connection.execute(
                 "SELECT c.title,(SELECT COUNT(*) FROM workbench_message existing "
                 "WHERE existing.conversation_id=c.conversation_id) AS message_count "
@@ -7857,6 +7848,25 @@ class WorkspaceStore:
             ).fetchone()
             if bound is None:
                 raise KeyError(selected_conversation_id)
+            active_answer = self.connection.execute(
+                "SELECT 1 FROM workbench_answer_job WHERE conversation_id=? "
+                "AND matter_id=? AND state IN ('queued','running') LIMIT 1",
+                (selected_conversation_id, matter_id),
+            ).fetchone()
+            if active_answer is not None:
+                raise WorkspaceProblem(
+                    "This conversation already has an answer in progress."
+                )
+            active_research = self.connection.execute(
+                "SELECT 1 FROM workbench_research_job WHERE conversation_id=? "
+                "AND matter_id=? AND state IN ('queued','running') LIMIT 1",
+                (selected_conversation_id, matter_id),
+            ).fetchone()
+            if active_research is not None:
+                raise WorkspaceProblem(
+                    "A broader investigation is still working in this conversation. "
+                    "Wait for it to return before asking a follow-up."
+                )
             if scope_id is not None:
                 scope = self.connection.execute(
                     "SELECT 1 FROM workbench_source_set s "
@@ -8350,14 +8360,36 @@ class WorkspaceStore:
         self.get_answer_job(matter_id, actor_id, job_id)
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             current = self.connection.execute(
                 "SELECT * FROM workbench_answer_job WHERE job_id=? AND matter_id=? AND actor_id=?",
                 (job_id, matter_id, actor_id),
             ).fetchone()
+            if current is None:
+                raise KeyError(job_id)
             if current["state"] in {"queued", "running"}:
                 return self._answer_job(current)
             if current["state"] not in {"failed", "cancelled"}:
                 raise WorkspaceProblem("This completed answer does not need to be retried.")
+            active_answer = self.connection.execute(
+                "SELECT 1 FROM workbench_answer_job WHERE conversation_id=? "
+                "AND matter_id=? AND job_id<>? AND state IN ('queued','running') LIMIT 1",
+                (current["conversation_id"], matter_id, job_id),
+            ).fetchone()
+            if active_answer is not None:
+                raise WorkspaceProblem(
+                    "This conversation already has an answer in progress."
+                )
+            active_research = self.connection.execute(
+                "SELECT 1 FROM workbench_research_job WHERE conversation_id=? "
+                "AND matter_id=? AND state IN ('queued','running') LIMIT 1",
+                (current["conversation_id"], matter_id),
+            ).fetchone()
+            if active_research is not None:
+                raise WorkspaceProblem(
+                    "A broader investigation is still working in this conversation. "
+                    "Wait for it to return before asking a follow-up."
+                )
             self.connection.execute(
                 "UPDATE workbench_answer_job SET state='queued',stage='queued',"
                 "message='Request queued to try again.',worker_id=NULL,cancellation_requested=0,"
@@ -8457,6 +8489,9 @@ class WorkspaceStore:
                 raise WorkspaceProblem("That source set is empty or no longer available.")
         now = self._now()
         with self._lock, self.connection:
+            # Admission across the answer and research tables must share the
+            # same database write lock, including across process-local stores.
+            self.connection.execute("BEGIN IMMEDIATE")
             self.membership(matter_id, actor)
             existing = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE actor_id=? AND matter_id=? "
@@ -8496,13 +8531,13 @@ class WorkspaceStore:
                     )
                 active_answer = self.connection.execute(
                     "SELECT 1 FROM workbench_answer_job WHERE conversation_id=? "
-                    "AND state IN ('queued','running') LIMIT 1",
-                    (conversation_ref,),
+                    "AND matter_id=? AND state IN ('queued','running') LIMIT 1",
+                    (conversation_ref, matter_id),
                 ).fetchone()
                 active_research = self.connection.execute(
                     "SELECT 1 FROM workbench_research_job WHERE conversation_id=? "
-                    "AND state IN ('queued','running') LIMIT 1",
-                    (conversation_ref,),
+                    "AND matter_id=? AND state IN ('queued','running') LIMIT 1",
+                    (conversation_ref, matter_id),
                 ).fetchone()
                 if active_answer is not None or active_research is not None:
                     raise WorkspaceProblem(
@@ -9015,12 +9050,39 @@ class WorkspaceStore:
         job = self.research_job(matter_id, actor_id, job_id)
         if job.actor_id != actor_id:
             raise WorkspaceProblem("Only the reviewer who started this run can retry it.")
-        if job.state in {"queued", "running"}:
-            return job
-        if job.state not in {"failed", "cancelled"}:
-            raise WorkspaceProblem("This completed research run does not need to be retried.")
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            current = self.connection.execute(
+                "SELECT * FROM workbench_research_job WHERE job_id=? "
+                "AND matter_id=? AND actor_id=?",
+                (job_id, matter_id, actor_id),
+            ).fetchone()
+            if current is None:
+                raise KeyError(job_id)
+            if current["state"] in {"queued", "running"}:
+                return self._research_job(current)
+            if current["state"] not in {"failed", "cancelled"}:
+                raise WorkspaceProblem(
+                    "This completed research run does not need to be retried."
+                )
+            conversation_id = current["conversation_id"]
+            if conversation_id is not None:
+                active_answer = self.connection.execute(
+                    "SELECT 1 FROM workbench_answer_job WHERE conversation_id=? "
+                    "AND matter_id=? AND state IN ('queued','running') LIMIT 1",
+                    (conversation_id, matter_id),
+                ).fetchone()
+                active_research = self.connection.execute(
+                    "SELECT 1 FROM workbench_research_job WHERE conversation_id=? "
+                    "AND matter_id=? AND job_id<>? "
+                    "AND state IN ('queued','running') LIMIT 1",
+                    (conversation_id, matter_id, job_id),
+                ).fetchone()
+                if active_answer is not None or active_research is not None:
+                    raise WorkspaceProblem(
+                        "This conversation already has review work in progress."
+                    )
             self.connection.execute(
                 "UPDATE workbench_research_job SET state='queued',stage='queued',"
                 "message='Research queued to try again.',worker_id=NULL,cancellation_requested=0,"
