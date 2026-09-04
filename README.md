@@ -27,7 +27,7 @@ workflows use local models for retrieval, answers, and media transcription.
 
 | Workflow | Current capabilities |
 | --- | --- |
-| **Bring records together** | File and folder uploads, malware scanning, text extraction, and bounded OCR. |
+| **Bring records together** | Review selected loose files before transfer, explicitly confirm the ready subset, then use resumable file and folder uploads, malware scanning, text extraction, and bounded OCR. |
 | **Review documents and media** | Source browsing, word and meaning-based search, timestamped transcripts, playback, and clips. |
 | **Ask questions with sources in view** | Local AI answers and follow-up conversations with citations and coverage information. |
 | **Screen a collection** | Apply a criterion to a frozen source population, then inspect coverage and human-review status. |
@@ -52,8 +52,9 @@ separate because it freezes a population and produces one decision per source.
 
 ## How it works
 
-1. **Intake:** RecordBench copies an upload into a private staging area and
-   scans it for malware.
+1. **Intake:** RecordBench previews selected loose-file metadata without
+   copying bytes, then revalidates the confirmed subset as it enters a private
+   staging area and applies any required malware scan.
 2. **Processing:** It extracts usable text, applies bounded OCR where needed,
    and sends selected media through the bundled transcription queue.
 3. **Indexing:** It divides the resulting text into traceable passages and

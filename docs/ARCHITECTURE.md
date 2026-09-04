@@ -25,12 +25,21 @@ matter source units. Candidate retrieval combines lexical and vector lanes,
 then a cross-encoder reranks a bounded set. The generator sees only the selected
 evidence; a separate deterministic verifier checks claims and citations.
 
-Documents pass through staged intake and ClamAV before extraction. Text PDFs
-use native extraction; missing-text pages use bounded CPU OCR. Media enters a
-durable transcription queue. The WhisperX worker performs transcription,
-alignment, optional anonymous speaker clustering, and export generation; the
-app projects transcript segments back into the matter index and generates an
-automatic source summary.
+Loose-file selection first uses a matter-authorized, CSRF-protected metadata
+preflight. It returns one content-minimized row per selected file without
+copying bytes, reserving capacity, or creating an upload session; filename
+type is explicitly provisional, while detected type, readability, source
+version, content duplicates, and scan results remain pending. Explicit staff
+confirmation sends only the eligible subset through the retained upload route,
+which revalidates metadata and remains authoritative for staging, signature
+checks, configured ClamAV policy, and failure recovery.
+
+Accepted documents then enter extraction. Text PDFs use native extraction;
+missing-text pages use bounded CPU OCR. Media enters a durable transcription
+queue. The WhisperX worker performs transcription, alignment, optional
+anonymous speaker clustering, and export generation; the app projects
+transcript segments back into the matter index and generates an automatic
+source summary.
 
 Model workers have no published ports and run on an internal Docker network.
 The transcription worker has no network namespace at runtime. The app may need

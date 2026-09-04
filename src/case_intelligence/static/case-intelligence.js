@@ -313,6 +313,13 @@
   const uploadErrors = document.querySelector("[data-upload-errors]");
   const uploadCancel = document.querySelector("[data-upload-cancel]");
   const uploadReview = document.querySelector("[data-upload-review]");
+  const uploadPreflight = document.querySelector("[data-upload-preflight]");
+  const uploadPreflightState = document.querySelector("[data-upload-preflight-state]");
+  const uploadPreflightStatus = document.querySelector("[data-upload-preflight-status]");
+  const uploadPreflightCounts = document.querySelector("[data-upload-preflight-counts]");
+  const uploadPreflightItems = document.querySelector("[data-upload-preflight-items]");
+  const uploadPreflightConfirm = document.querySelector("[data-upload-preflight-confirm]");
+  const uploadPreflightRetry = document.querySelector("[data-upload-preflight-retry]");
   const uploadSessionKey = uploadForm?.dataset.matterSlug
     ? `case-intelligence:upload:${uploadForm.dataset.matterSlug}`
     : "";
@@ -336,6 +343,10 @@
   let activeUpload = null;
   let uploadAbortController = null;
   let uploadProcessingTimer = 0;
+  let preflightFiles = [];
+  let activePreflight = null;
+  let preflightAbortController = null;
+  let preflightVersion = 0;
   const securityCheckedSuffixes = new Set(["jpg", "jpeg", "png", "tif", "tiff", "eml", "csv", "tsv", "xlsx"]);
   const requiresSecurityCheck = (name) => {
     const normalized = String(name || "").toLowerCase();
@@ -368,6 +379,176 @@
       return { ...activeUpload, ...payload, items, delta: false };
     }
     return payload;
+  };
+
+  const preflightStateLabels = {
+    valid: "Ready",
+    needs_attention: "Needs attention",
+    unsupported: "Unsupported",
+    duplicate_candidate: "Repeated path",
+    over_limit: "Over limit",
+    failed: "Cannot use",
+  };
+
+  const revealUploadPreflight = () => {
+    if (!uploadPreflight || uploadPreflight.hidden) return;
+    window.requestAnimationFrame(() => {
+      uploadPreflight.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "start",
+      });
+    });
+  };
+
+  const renderUploadPreflight = (preview) => {
+    if (!uploadPreflight || !preview) return;
+    uploadPreflight.hidden = false;
+    const eligible = Array.isArray(preview.eligible_indexes) ? preview.eligible_indexes.length : 0;
+    const selected = Number(preview.selected_count || 0);
+    const counts = preview.counts || {};
+    if (uploadPreflightState) {
+      uploadPreflightState.textContent = preview.status === "ready"
+        ? "Ready to confirm"
+        : preview.status === "partial"
+          ? "Some files need attention"
+          : "Nothing ready yet";
+    }
+    if (uploadPreflightStatus) {
+      uploadPreflightStatus.textContent = preview.status === "ready"
+        ? `${selected.toLocaleString()} selected ${selected === 1 ? "file is" : "files are"} ready. Nothing has been copied yet.`
+        : preview.status === "partial"
+          ? `${eligible.toLocaleString()} of ${selected.toLocaleString()} selected files can proceed. Files needing attention will stay visible and will not be uploaded.`
+          : `None of the ${selected.toLocaleString()} selected files can proceed. Nothing has been copied.`;
+    }
+    if (uploadPreflightCounts) {
+      const labels = [
+        ["valid", "ready"],
+        ["needs_attention", "need attention"],
+        ["unsupported", "unsupported"],
+        ["duplicate_candidate", "repeated paths"],
+        ["over_limit", "over limit"],
+        ["failed", "cannot use"],
+      ];
+      uploadPreflightCounts.replaceChildren();
+      labels.forEach(([key, label]) => {
+        const count = Number(counts[key] || 0);
+        const item = document.createElement("span");
+        item.textContent = `${count.toLocaleString()} ${label}`;
+        uploadPreflightCounts.append(item);
+      });
+    }
+    if (uploadPreflightItems) {
+      uploadPreflightItems.replaceChildren();
+      (preview.items || []).forEach((item) => {
+        const row = document.createElement("li");
+        row.className = "upload-preflight-item";
+        row.dataset.state = String(item.state || "failed");
+
+        const identity = document.createElement("div");
+        const name = document.createElement("strong");
+        name.textContent = String(item.display_name || "Selected file");
+        const state = document.createElement("span");
+        state.className = "upload-preflight-item-state";
+        state.textContent = preflightStateLabels[item.state] || "Cannot use";
+        identity.append(name, state);
+
+        const copy = document.createElement("div");
+        copy.className = "upload-preflight-item-copy";
+        const facts = document.createElement("span");
+        const expected = item.expected_type
+          ? `Expected from filename: ${item.expected_type}`
+          : "Expected type: unavailable";
+        const supplied = item.supplied_type ? `Supplied by browser: ${item.supplied_type}` : "Browser type not supplied";
+        facts.textContent = `${formatBytes(Number(item.size || 0))} · ${expected} · ${supplied}`;
+        const pending = document.createElement("span");
+        const scan = item.scan || {};
+        const scanText = scan.required
+          ? scan.capability === "ready"
+            ? "Security scan required and not run yet"
+            : "Security scan required, unavailable, and not run"
+          : "Security scan not required";
+        pending.textContent = `Detected type, readability, source version, and content duplicates pending upload · ${scanText}`;
+        const message = document.createElement("span");
+        message.textContent = String(item.message || "Choose this file again.");
+        copy.append(facts, pending, message);
+        row.append(identity, copy);
+        uploadPreflightItems.append(row);
+      });
+    }
+    if (uploadPreflightConfirm) {
+      uploadPreflightConfirm.textContent = `Upload ${eligible.toLocaleString()} ready ${eligible === 1 ? "file" : "files"}`;
+      uploadPreflightConfirm.disabled = eligible === 0;
+    }
+    if (uploadPreflightRetry) uploadPreflightRetry.hidden = true;
+    revealUploadPreflight();
+  };
+
+  const previewSelectedFiles = async (files) => {
+    if (!uploadForm?.dataset.preflightUrl || !uploadPreflight) return;
+    const version = preflightVersion + 1;
+    preflightVersion = version;
+    preflightAbortController?.abort();
+    preflightAbortController = new AbortController();
+    preflightFiles = Array.from(files || []);
+    activePreflight = null;
+    uploadPreflight.hidden = false;
+    uploadDrop?.classList.remove("upload-error");
+    if (uploadPreflightCounts) uploadPreflightCounts.replaceChildren();
+    if (uploadPreflightItems) uploadPreflightItems.replaceChildren();
+    if (uploadPreflightConfirm) {
+      uploadPreflightConfirm.disabled = true;
+      uploadPreflightConfirm.textContent = "Upload 0 ready files";
+    }
+    if (uploadPreflightRetry) uploadPreflightRetry.hidden = true;
+    if (!preflightFiles.length) {
+      uploadPreflight.removeAttribute("aria-busy");
+      if (uploadPreflightState) uploadPreflightState.textContent = "Waiting for a selection";
+      if (uploadPreflightStatus) uploadPreflightStatus.textContent = "Choose files to see what can proceed.";
+      if (fileSummary) fileSummary.textContent = "Only records you deliberately select are copied into this temporary matter.";
+      return;
+    }
+    if (fileSummary) {
+      fileSummary.textContent = `${preflightFiles.length.toLocaleString()} selected ${preflightFiles.length === 1 ? "file" : "files"} · reviewing before upload`;
+    }
+    uploadPreflight.setAttribute("aria-busy", "true");
+    if (uploadPreflightState) uploadPreflightState.textContent = "Reviewing selection";
+    if (uploadPreflightStatus) uploadPreflightStatus.textContent = "Checking filenames, sizes, format support, and required capabilities. No file bytes are being copied.";
+    try {
+      const response = await fetch(uploadForm.dataset.preflightUrl, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+        },
+        body: JSON.stringify({
+          files: preflightFiles.map((file) => ({
+            name: file.name,
+            relative_path: file.webkitRelativePath || file.name,
+            size: file.size,
+            media_type: file.type,
+          })),
+        }),
+        cache: "no-store",
+        signal: preflightAbortController.signal,
+      });
+      const preview = await readUploadJson(response);
+      if (version !== preflightVersion) return;
+      activePreflight = preview;
+      renderUploadPreflight(preview);
+      const eligible = preview.eligible_indexes.length;
+      const total = preflightFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
+      if (fileSummary) fileSummary.textContent = `${preflightFiles.length.toLocaleString()} selected · ${eligible.toLocaleString()} ready · ${formatBytes(total)}`;
+    } catch (error) {
+      if (error.name === "AbortError" || version !== preflightVersion) return;
+      uploadDrop?.classList.add("upload-error");
+      if (uploadPreflightState) uploadPreflightState.textContent = "Selection review paused";
+      if (uploadPreflightStatus) uploadPreflightStatus.textContent = `${error.message} Your selection is still here; retry before uploading.`;
+      if (uploadPreflightRetry) uploadPreflightRetry.hidden = false;
+      revealUploadPreflight();
+    } finally {
+      if (version === preflightVersion) uploadPreflight.removeAttribute("aria-busy");
+    }
   };
 
   const renderUpload = (session, errorMessage = "") => {
@@ -768,12 +949,39 @@
     }
   };
 
+  const confirmUploadPreflight = () => {
+    const indexes = Array.isArray(activePreflight?.eligible_indexes)
+      ? activePreflight.eligible_indexes
+      : [];
+    const eligibleFiles = indexes
+      .filter((index) => Number.isSafeInteger(index) && index >= 0 && index < preflightFiles.length)
+      .map((index) => preflightFiles[index]);
+    if (!eligibleFiles.length || eligibleFiles.length !== indexes.length) {
+      previewSelectedFiles(preflightFiles);
+      return;
+    }
+    if (uploadPreflightConfirm) uploadPreflightConfirm.disabled = true;
+    if (uploadPreflightState) uploadPreflightState.textContent = "Uploading reviewed files";
+    if (uploadPreflightStatus) {
+      uploadPreflightStatus.textContent = `${eligibleFiles.length.toLocaleString()} reviewed ${eligibleFiles.length === 1 ? "file is" : "files are"} starting the retained upload checks. Other selected files will not be copied.`;
+    }
+    startResumableUpload(eligibleFiles);
+  };
+
   uploadForm?.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (fileInput?.files?.length) startResumableUpload(fileInput.files);
+    if (activePreflight?.eligible_indexes?.length) {
+      confirmUploadPreflight();
+    } else if (preflightFiles.length) {
+      previewSelectedFiles(preflightFiles);
+    } else if (fileInput?.files?.length) {
+      previewSelectedFiles(fileInput.files);
+    }
   });
-  fileInput?.addEventListener("change", () => startResumableUpload(fileInput.files));
-  folderInput?.addEventListener("change", () => startResumableUpload(folderInput.files));
+  uploadPreflightConfirm?.addEventListener("click", confirmUploadPreflight);
+  uploadPreflightRetry?.addEventListener("click", () => previewSelectedFiles(preflightFiles));
+  fileInput?.addEventListener("change", () => previewSelectedFiles(fileInput.files));
+  folderInput?.addEventListener("change", () => previewSelectedFiles(folderInput.files));
   ["dragenter", "dragover"].forEach((name) => uploadDrop?.addEventListener(name, (event) => {
     event.preventDefault();
     uploadDrop.classList.add("drag-active");
@@ -784,7 +992,7 @@
   }));
   uploadDrop?.addEventListener("drop", (event) => {
     if (!event.dataTransfer?.files?.length) return;
-    startResumableUpload(event.dataTransfer.files);
+    previewSelectedFiles(event.dataTransfer.files);
   });
 
   uploadCancel?.addEventListener("click", async () => {

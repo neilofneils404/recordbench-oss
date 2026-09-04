@@ -4,6 +4,18 @@
 
 - Versioned the stacked-record favicon and application-mark URLs so browsers
   cannot retain the superseded monogram after an upgrade.
+- Added the first staff-visible Slice 1A increment: loose-file selection now
+  receives a matter-scoped metadata preview before byte transfer, accounts for
+  every selected row, distinguishes ready, scanner-blocked, unsupported,
+  repeated-path, oversized, and invalid entries, and requires explicit staff
+  confirmation before the ready subset enters the retained resumable upload
+  path. The UI keeps ineligible rows visible, preserves retry/reselection and
+  the direct no-JavaScript fallback, and labels detected type, readability,
+  source version, content duplicates, and scans as pending or not run rather
+  than inventing results. Synthetic API, isolation, retained-upload, desktop,
+  mobile, keyboard, focus, and no-overflow acceptance pass locally. This is an
+  OSS review candidate, not deployed; byte-derived preflight, durable caching,
+  and content/near-duplicate analysis remain deferred.
 - Recovered an interrupted Review Map refresh as a visible, retryable failure
   on application restart so abandoned analysis state cannot block safe matter
   closure indefinitely; completed work and prior review decisions stay intact.

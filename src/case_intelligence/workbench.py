@@ -81,6 +81,7 @@ from .media_evidence import (
 )
 from .managed_storage import ManagedMatterStorage, StoragePolicy, format_bytes
 from .malware_scan import MalwareScanner, scanner_from_environment, scanner_status
+from .loose_file_preflight import evaluate_loose_file_preflight
 from .matter_analysis import MAX_ANALYSIS_UNITS, analyze_candidates
 from .media_playback import BrowserPlaybackCoordinator
 from .model_portfolio import model_portfolio_projection
@@ -9378,6 +9379,77 @@ def create_workbench_app(
             media_activity_projection(matter),
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.post(
+        "/matters/{slug}/upload-preflight",
+        dependencies=[Depends(require_csrf_header)],
+    )
+    async def loose_file_upload_preflight(request: Request, slug: str):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        content_length = request.headers.get("content-length", "")
+        if content_length:
+            try:
+                if int(content_length) > 6 * 1024 * 1024:
+                    raise ValueError
+            except ValueError:
+                return JSONResponse(
+                    {"message": "The selected-file list is too large."},
+                    status_code=413,
+                    headers={"Cache-Control": "no-store"},
+                )
+        raw = await request.body()
+        if len(raw) > 6 * 1024 * 1024:
+            return JSONResponse(
+                {"message": "The selected-file list is too large."},
+                status_code=413,
+                headers={"Cache-Control": "no-store"},
+            )
+        try:
+            payload = json.loads(raw)
+        except (UnicodeDecodeError, ValueError):
+            return JSONResponse(
+                {"message": "The selected-file list could not be read."},
+                status_code=400,
+                headers={"Cache-Control": "no-store"},
+            )
+        if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+            return JSONResponse(
+                {"message": "Choose one or more files to review."},
+                status_code=400,
+                headers={"Cache-Control": "no-store"},
+            )
+        selected = payload["files"]
+        if not 1 <= len(selected) <= MAX_UPLOAD_INTAKE_ITEMS:
+            return JSONResponse(
+                {
+                    "message": (
+                        f"Choose between 1 and {MAX_UPLOAD_INTAKE_ITEMS:,} files "
+                        "to review."
+                    )
+                },
+                status_code=413 if len(selected) > MAX_UPLOAD_INTAKE_ITEMS else 400,
+                headers={"Cache-Control": "no-store"},
+            )
+        result = evaluate_loose_file_preflight(
+            selected,
+            document_limit=bench.storage_policy.document_file_bytes,
+            media_limit=bench.storage_policy.media_file_bytes,
+            malware_scan_mode=bench.malware_scan_mode,
+            scanner_ready=scanner_status(bench.malware_scanner).ready,
+        )
+        audit(
+            request,
+            "source.upload_preflight",
+            "success",
+            context=context,
+            matter=matter,
+            details={
+                "count": result["selected_count"],
+                "result_count": len(result["eligible_indexes"]),
+            },
+        )
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
     @app.post(
         "/matters/{slug}/upload-sessions",
