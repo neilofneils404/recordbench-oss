@@ -1766,7 +1766,10 @@ class CaseIntelligenceWorkbench:
         """Incrementally reconcile derived search rows without a startup rebuild."""
 
         matters = self.workspace.all_matters()
-        if self.postgres_ready and self.postgres_connection is not None:
+        postgres_reconciliation_ready = bool(
+            self.postgres_ready and self.postgres_connection is not None
+        )
+        if postgres_reconciliation_ready:
             try:
                 retain_postgres_workbench_matters(
                     self.postgres_connection,
@@ -1775,10 +1778,10 @@ class CaseIntelligenceWorkbench:
             except Exception:
                 self.postgres_connection.rollback()
                 self.learned_retrieval = False
-                return
+                postgres_reconciliation_ready = False
         for matter in matters:
             store = self.source_store(matter)
-            if self.postgres_ready and self.postgres_connection is not None:
+            if postgres_reconciliation_ready:
                 try:
                     with self.postgres_connection.cursor() as cursor:
                         cursor.execute(
@@ -1800,6 +1803,7 @@ class CaseIntelligenceWorkbench:
                 except Exception:
                     self.postgres_connection.rollback()
                     self.learned_retrieval = False
+                    postgres_reconciliation_ready = False
 
     @staticmethod
     def _kind(document: PilotDocument) -> str:

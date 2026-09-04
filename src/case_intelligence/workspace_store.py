@@ -9330,6 +9330,20 @@ class WorkspaceStore:
                 "si.matter_id=c.matter_id AND si.document_id=c.document_id AND si.source_set_id=?)"
                 if scope_id is not None else ""
             )
+            basis_parameters: tuple[object, ...] = (matter_id,)
+            if scope_id is not None:
+                basis_parameters += (scope_id,)
+            missing_basis = self.connection.execute(
+                "SELECT 1 FROM workbench_source_catalog c "
+                "WHERE c.matter_id=? AND c.source_state='ready' "
+                "AND c.content_basis_digest=''" + scope_clause + " LIMIT 1",
+                basis_parameters,
+            ).fetchone()
+            if missing_basis is not None:
+                raise WorkspaceProblem(
+                    "One or more searchable sources need exact source-content tracking. "
+                    "Reopen the matter to refresh its sources, then retry this review."
+                )
             parameters: tuple[object, ...] = (run_id, now, now, matter_id)
             if scope_id is not None:
                 parameters += (scope_id,)
