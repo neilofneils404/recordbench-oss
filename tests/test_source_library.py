@@ -322,6 +322,91 @@ def test_resumable_upload_offsets_finalize_review_and_range_content(tmp_path):
         assert ranged.headers["content-range"] == f"bytes 0-4/{len(body)}"
 
 
+def test_upload_resume_mismatch_is_generic_and_write_free(tmp_path):
+    app = create_workbench_app(
+        tmp_path / "runtime",
+        generator=UnavailableGenerator(),
+        auth_mode="test",
+        background_ingestion=True,
+    )
+    with TestClient(app) as client:
+        first_slug = _matter(client, "First synthetic resume matter")
+        second_slug = _matter(client, "Second synthetic resume matter")
+        manifest = {
+            "collection_name": "Synthetic resumable batch",
+            "files": [
+                {
+                    "name": "notes.txt",
+                    "relative_path": "Production/notes.txt",
+                    "size": 12,
+                    "media_type": "text/plain",
+                }
+            ],
+        }
+        created = client.post(f"/matters/{first_slug}/upload-sessions", json=manifest)
+        assert created.status_code == 201
+        session = created.json()
+        workspace = client.app.state.workbench.workspace
+
+        def durable_state(slug: str):
+            matter = client.app.state.workbench.matter(slug, ACTOR)
+            return (
+                workspace.source_collections(matter.matter_id),
+                workspace.recent_upload_sessions(matter.matter_id, ACTOR),
+                workspace.pending_upload_bytes(matter.matter_id),
+            )
+
+        cases = (
+            (
+                second_slug,
+                {**manifest, "resume_session_id": session["upload_session_id"]},
+            ),
+            (
+                first_slug,
+                {
+                    **manifest,
+                    "resume_session_id": "upload-session-ffffffffffffffffffffffffffffffff",
+                },
+            ),
+            (
+                first_slug,
+                {
+                    **manifest,
+                    "resume_session_id": session["upload_session_id"],
+                    "files": [{**manifest["files"][0], "size": 13}],
+                },
+            ),
+            (
+                first_slug,
+                {
+                    **manifest,
+                    "resume_session_id": session["upload_session_id"],
+                    "collection_id": "source-collection-ffffffffffffffffffffffffffffffff",
+                },
+            ),
+        )
+        for slug, payload in cases:
+            before = durable_state(slug)
+            response = client.post(f"/matters/{slug}/upload-sessions", json=payload)
+            assert response.status_code == 409
+            assert response.json() == {
+                "code": "upload_resume_mismatch",
+                "message": "The saved upload no longer matches this reviewed selection.",
+            }
+            assert durable_state(slug) == before
+
+        cancelled = client.post(session["cancel_url"])
+        assert cancelled.status_code == 200
+        before_cancelled_resume = durable_state(first_slug)
+        response = client.post(
+            f"/matters/{first_slug}/upload-sessions",
+            json={**manifest, "resume_session_id": session["upload_session_id"]},
+        )
+        assert response.status_code == 409
+        assert response.json()["code"] == "upload_resume_mismatch"
+        assert durable_state(first_slug) == before_cancelled_resume
+
+
 def test_upload_metadata_caps_duplicates_and_actor_matter_scope(tmp_path):
     app = create_workbench_app(
         tmp_path / "runtime",

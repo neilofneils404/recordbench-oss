@@ -330,6 +330,7 @@
   };
   const maximumUploadItems = configuredUploadLimit("maxUploadItems", 2000);
   const maximumUploadBatchItems = configuredUploadLimit("maxUploadBatchItems", 2000);
+  const maximumPreflightRequestBytes = configuredUploadLimit("maxPreflightRequestBytes", 6 * 1024 * 1024);
   const maximumUploadFileBytes = configuredUploadLimit("maxDocumentBytes", 25 * 1024 * 1024);
   const maximumMediaFileBytes = configuredUploadLimit("maxMediaBytes", 5 * 1024 * 1024 * 1024);
   const maximumUploadSessionBytes = configuredUploadLimit("maxCollectionBytes", 5 * 1024 * 1024 * 1024);
@@ -367,6 +368,7 @@
     if (!response.ok) {
       const error = new Error(payload.message || payload.detail || "The upload could not continue.");
       error.status = response.status;
+      error.code = String(payload.code || "");
       throw error;
     }
     if (payload.delta && activeUpload?.upload_session_id === payload.upload_session_id) {
@@ -483,12 +485,138 @@
     revealUploadPreflight();
   };
 
+  const preflightDescriptor = (file) => ({
+    name: file.name,
+    relative_path: file.webkitRelativePath || file.name,
+    size: file.size,
+    media_type: file.type,
+  });
+
+  const localPreflightFailure = (index) => ({
+    index,
+    display_name: `Selected file ${index + 1}`,
+    state: "failed",
+    eligible: false,
+    supplied_type: null,
+    expected_type: null,
+    detected_type: null,
+    size: null,
+    readability: "pending_upload",
+    source_version: "pending_upload",
+    scan: { required: false, capability: "not_required", result: "not_run" },
+    duplicate: "not_evaluated",
+    message: "This selection entry is too large to review safely. Choose it again.",
+  });
+
+  const selectionNonce = () => {
+    if (!window.crypto?.getRandomValues) {
+      throw new Error("Selection review is unavailable in this browser.");
+    }
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  };
+
+  const buildPreflightBatches = (files, nonce) => {
+    const encoder = new TextEncoder();
+    const prefix = `{"selection_nonce":${JSON.stringify(nonce)},"files":[`;
+    const suffix = "]}";
+    const emptyBytes = encoder.encode(prefix + suffix).byteLength;
+    const batches = [];
+    const failures = new Map();
+    let entries = [];
+    let bodyBytes = emptyBytes;
+    const flush = () => {
+      if (!entries.length) return;
+      const body = prefix + entries.map((entry) => entry.serialized).join(",") + suffix;
+      batches.push({ entries, body, bytes: encoder.encode(body).byteLength });
+      entries = [];
+      bodyBytes = emptyBytes;
+    };
+    files.forEach((file, index) => {
+      const serialized = JSON.stringify(preflightDescriptor(file));
+      const descriptorBytes = encoder.encode(serialized).byteLength;
+      const addition = descriptorBytes + (entries.length ? 1 : 0);
+      if (
+        entries.length
+        && (entries.length >= maximumUploadBatchItems || bodyBytes + addition > maximumPreflightRequestBytes)
+      ) {
+        flush();
+      }
+      if (emptyBytes + descriptorBytes > maximumPreflightRequestBytes) {
+        failures.set(index, localPreflightFailure(index));
+        return;
+      }
+      entries.push({ index, serialized });
+      bodyBytes += descriptorBytes + (entries.length > 1 ? 1 : 0);
+    });
+    flush();
+    return { batches, failures };
+  };
+
+  const consolidatePreflight = (selectedCount, batches, responses, failures) => {
+    const items = Array(selectedCount);
+    failures.forEach((item, index) => { items[index] = item; });
+    batches.forEach((batch, batchIndex) => {
+      const responseItems = responses[batchIndex]?.items;
+      if (!Array.isArray(responseItems) || responseItems.length !== batch.entries.length) {
+        throw new Error("The selection review returned an incomplete result.");
+      }
+      responseItems.forEach((item, localIndex) => {
+        if (!item || item.index !== localIndex) {
+          throw new Error("The selection review returned files out of order.");
+        }
+        const index = batch.entries[localIndex].index;
+        items[index] = { ...item, index };
+      });
+    });
+    if (Array.from(items).some((item) => !item)) {
+      throw new Error("The selection review returned an incomplete result.");
+    }
+    const counts = Object.fromEntries(Object.keys(preflightStateLabels).map((state) => [state, 0]));
+    const eligibleIndexes = [];
+    const seenTokens = new Set();
+    items.forEach((item, index) => {
+      const token = typeof item.duplicate_token === "string"
+        && /^[0-9a-f]{64}$/.test(item.duplicate_token)
+        ? item.duplicate_token
+        : "";
+      if (["valid", "needs_attention", "duplicate_candidate", "over_limit"].includes(item.state) && !token) {
+        throw new Error("The selection review returned an incomplete duplicate check.");
+      }
+      if (token && seenTokens.has(token)) {
+        item.state = "duplicate_candidate";
+        item.eligible = false;
+        item.duplicate = "selection_collision";
+        item.message = "This relative path appears more than once in the selection. Keep one copy or rename it before upload.";
+      }
+      if (token) seenTokens.add(token);
+      delete item.duplicate_token;
+      if (!(item.state in counts)) item.state = "failed";
+      counts[item.state] += 1;
+      if (item.state === "valid" && item.eligible === true) eligibleIndexes.push(index);
+      else item.eligible = false;
+    });
+    return {
+      status: eligibleIndexes.length === 0
+        ? "blocked"
+        : eligibleIndexes.length === selectedCount
+          ? "ready"
+          : "partial",
+      selected_count: selectedCount,
+      counts,
+      eligible_indexes: eligibleIndexes,
+      items,
+    };
+  };
+
   const previewSelectedFiles = async (files) => {
     if (!uploadForm?.dataset.preflightUrl || !uploadPreflight) return;
     const version = preflightVersion + 1;
     preflightVersion = version;
     preflightAbortController?.abort();
-    preflightAbortController = new AbortController();
+    const controller = new AbortController();
+    preflightAbortController = controller;
     preflightFiles = Array.from(files || []);
     activePreflight = null;
     uploadPreflight.hidden = false;
@@ -514,26 +642,28 @@
     if (uploadPreflightState) uploadPreflightState.textContent = "Reviewing selection";
     if (uploadPreflightStatus) uploadPreflightStatus.textContent = "Checking filenames, sizes, format support, and required capabilities. No file bytes are being copied.";
     try {
-      const response = await fetch(uploadForm.dataset.preflightUrl, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "X-CSRF-Token": csrfToken,
-        },
-        body: JSON.stringify({
-          files: preflightFiles.map((file) => ({
-            name: file.name,
-            relative_path: file.webkitRelativePath || file.name,
-            size: file.size,
-            media_type: file.type,
-          })),
-        }),
-        cache: "no-store",
-        signal: preflightAbortController.signal,
-      });
-      const preview = await readUploadJson(response);
+      if (preflightFiles.length > maximumUploadItems) {
+        throw new Error(`Choose no more than ${maximumUploadItems.toLocaleString()} items in one collection.`);
+      }
+      const { batches, failures } = buildPreflightBatches(preflightFiles, selectionNonce());
+      const responses = [];
+      for (const batch of batches) {
+        if (version !== preflightVersion) return;
+        const response = await fetch(uploadForm.dataset.preflightUrl, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken,
+          },
+          body: batch.body,
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        responses.push(await readUploadJson(response));
+      }
       if (version !== preflightVersion) return;
+      const preview = consolidatePreflight(preflightFiles.length, batches, responses, failures);
       activePreflight = preview;
       renderUploadPreflight(preview);
       const eligible = preview.eligible_indexes.length;
@@ -832,6 +962,83 @@
     return batches;
   };
 
+  const clearUploadResumeState = () => {
+    if (!uploadSessionKey) return;
+    try { window.localStorage.removeItem(uploadSessionKey); } catch (_error) { /* no-op */ }
+  };
+
+  const uploadPlanFingerprint = async (batches) => {
+    if (!window.crypto?.subtle || typeof TextEncoder === "undefined") {
+      clearUploadResumeState();
+      return "";
+    }
+    const plan = batches.map((batch) => batch.map((file) => ({
+      name: String(file.name || "").normalize("NFC"),
+      relative_path: String(file.webkitRelativePath || file.name || "").normalize("NFC"),
+      size: Number(file.size),
+      media_type: String(file.type || "").trim().toLowerCase(),
+      last_modified: Number(file.lastModified),
+    })));
+    try {
+      const digest = await window.crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(JSON.stringify({ version: 1, batches: plan })),
+      );
+      return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
+    } catch (_error) {
+      clearUploadResumeState();
+      return "";
+    }
+  };
+
+  const readUploadResumeState = (planFingerprint, batchCount) => {
+    const empty = { session_id: "", collection_id: "", batch_index: 0 };
+    if (!uploadSessionKey || !planFingerprint) return empty;
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(uploadSessionKey) || "null");
+      const sessionId = String(parsed?.session_id || "");
+      const collectionId = String(parsed?.collection_id || "");
+      const sessionIdValid = !sessionId || /^upload-session-[0-9a-f]{32}$/.test(sessionId);
+      const collectionIdValid = !collectionId || /^source-collection-[0-9a-f]{32}$/.test(collectionId);
+      const linkageValid = parsed?.batch_index === 0
+        ? Boolean(sessionId) === Boolean(collectionId)
+        : Boolean(collectionId);
+      if (
+        parsed?.version === 3
+        && parsed.plan_fingerprint === planFingerprint
+        && Number.isSafeInteger(parsed.batch_index)
+        && parsed.batch_index >= 0
+        && parsed.batch_index < batchCount
+        && sessionIdValid
+        && collectionIdValid
+        && linkageValid
+      ) {
+        return {
+          session_id: sessionId,
+          collection_id: collectionId,
+          batch_index: parsed.batch_index,
+        };
+      }
+    } catch (_error) {
+      // Invalid or unavailable storage cannot authorize a resume.
+    }
+    clearUploadResumeState();
+    return empty;
+  };
+
+  const writeUploadResumeState = (planFingerprint, sessionId, collectionId, batchIndex) => {
+    if (!uploadSessionKey || !planFingerprint) return;
+    try {
+      window.localStorage.setItem(uploadSessionKey, JSON.stringify({
+        version: 3,
+        plan_fingerprint: planFingerprint,
+        session_id: sessionId,
+        collection_id: collectionId,
+        batch_index: batchIndex,
+      }));
+    } catch (_error) { /* no-op */ }
+  };
+
   const startResumableUpload = async (files) => {
     if (!uploadForm?.dataset.sessionUrl) return;
     selectedUploadFiles = Array.from(files);
@@ -844,6 +1051,7 @@
       return;
     }
     uploadBatches = buildUploadBatches(selectedUploadFiles);
+    const planFingerprint = await uploadPlanFingerprint(uploadBatches);
     selectedUploadTotalBytes = totalBytes;
     const names = selectedUploadFiles.slice(0, 3).map((file) => file.name);
     const remainder = selectedUploadFiles.length - names.length;
@@ -855,88 +1063,79 @@
     if (uploadProgress) uploadProgress.hidden = false;
     if (uploadTitle) uploadTitle.textContent = "Saving upload collection";
     if (uploadStatus) uploadStatus.textContent = "Creating a durable queue for the selected records.";
-    let resumeState = { session_id: "", collection_id: "", batch_index: 0 };
+    let resumeState = readUploadResumeState(planFingerprint, uploadBatches.length);
     try {
-      const saved = uploadSessionKey ? window.localStorage.getItem(uploadSessionKey) || "" : "";
-      if (saved.startsWith("{")) {
-        const parsed = JSON.parse(saved);
-        resumeState = {
-          session_id: String(parsed.session_id || ""),
-          collection_id: String(parsed.collection_id || ""),
-          batch_index: Number.isSafeInteger(parsed.batch_index) ? parsed.batch_index : 0,
-        };
-      } else if (saved) {
-        resumeState.session_id = saved;
-      }
-    } catch (_error) {
-      // Upload still works without browser storage; only cross-refresh resume is lost.
-    }
-    if (resumeState.batch_index < 0 || resumeState.batch_index >= uploadBatches.length) {
-      resumeState = { session_id: "", collection_id: "", batch_index: 0 };
-    }
-    try {
-      let collectionId = resumeState.collection_id;
-      for (
-        activeUploadBatchIndex = resumeState.batch_index;
-        activeUploadBatchIndex < uploadBatches.length;
-        activeUploadBatchIndex += 1
-      ) {
-        selectedUploadFiles = uploadBatches[activeUploadBatchIndex];
-        if (uploadTitle && uploadBatches.length > 1) {
-          uploadTitle.textContent = `Creating batch ${activeUploadBatchIndex + 1} of ${uploadBatches.length}`;
-        }
-        const response = await fetch(uploadForm.dataset.sessionUrl, {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            "X-CSRF-Token": csrfToken,
-          },
-          body: JSON.stringify({
-            collection_name: uploadCollectionName?.value || "Uploaded sources",
-            collection_id: collectionId,
-            resume_session_id: activeUploadBatchIndex === resumeState.batch_index
+      let retriedFresh = false;
+      while (true) {
+        let collectionId = resumeState.collection_id;
+        try {
+          for (
+            activeUploadBatchIndex = resumeState.batch_index;
+            activeUploadBatchIndex < uploadBatches.length;
+            activeUploadBatchIndex += 1
+          ) {
+            selectedUploadFiles = uploadBatches[activeUploadBatchIndex];
+            if (uploadTitle && uploadBatches.length > 1) {
+              uploadTitle.textContent = `Creating batch ${activeUploadBatchIndex + 1} of ${uploadBatches.length}`;
+            }
+            const resumeSessionId = activeUploadBatchIndex === resumeState.batch_index
               ? resumeState.session_id
-              : "",
-            files: selectedUploadFiles.map((file) => ({
-              name: file.name,
-              relative_path: file.webkitRelativePath || file.name,
-              size: file.size,
-              media_type: file.type,
-            })),
-          }),
-          signal: uploadAbortController.signal,
-        });
-        activeUpload = await readUploadJson(response);
-        collectionId = activeUpload.collection_id;
-        if (uploadSessionKey) {
-          try {
-            window.localStorage.setItem(uploadSessionKey, JSON.stringify({
-              version: 2,
-              session_id: activeUpload.upload_session_id,
-              collection_id: collectionId,
-              batch_index: activeUploadBatchIndex,
-            }));
-          } catch (_error) { /* no-op */ }
-        }
-        renderUpload(activeUpload);
-        await runUploadQueue(selectedUploadFiles);
-        if (uploadSessionKey && activeUploadBatchIndex + 1 < uploadBatches.length) {
-          try {
-            window.localStorage.setItem(uploadSessionKey, JSON.stringify({
-              version: 2,
-              session_id: "",
-              collection_id: collectionId,
-              batch_index: activeUploadBatchIndex + 1,
-            }));
-          } catch (_error) { /* no-op */ }
+              : "";
+            const response = await fetch(uploadForm.dataset.sessionUrl, {
+              method: "POST",
+              headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrfToken,
+              },
+              body: JSON.stringify({
+                collection_name: uploadCollectionName?.value || "Uploaded sources",
+                collection_id: collectionId,
+                resume_session_id: resumeSessionId,
+                files: selectedUploadFiles.map(preflightDescriptor),
+              }),
+              signal: uploadAbortController.signal,
+            });
+            activeUpload = await readUploadJson(response);
+            collectionId = activeUpload.collection_id;
+            writeUploadResumeState(
+              planFingerprint,
+              activeUpload.upload_session_id,
+              collectionId,
+              activeUploadBatchIndex,
+            );
+            renderUpload(activeUpload);
+            await runUploadQueue(selectedUploadFiles);
+            if (activeUploadBatchIndex + 1 < uploadBatches.length) {
+              writeUploadResumeState(
+                planFingerprint,
+                "",
+                collectionId,
+                activeUploadBatchIndex + 1,
+              );
+            }
+          }
+          break;
+        } catch (error) {
+          if (
+            error.code === "upload_resume_mismatch"
+            && resumeState.session_id
+            && !retriedFresh
+          ) {
+            clearUploadResumeState();
+            resumeState = { session_id: "", collection_id: "", batch_index: 0 };
+            activeUpload = null;
+            retriedFresh = true;
+            continue;
+          }
+          throw error;
         }
       }
       activeUploadBatchIndex = Math.max(uploadBatches.length - 1, 0);
       renderUpload(activeUpload);
       pollUploadProcessing();
-      if (["complete", "partial"].includes(activeUpload.state) && uploadSessionKey) {
-        try { window.localStorage.removeItem(uploadSessionKey); } catch (_error) { /* no-op */ }
+      if (["complete", "partial"].includes(activeUpload.state)) {
+        clearUploadResumeState();
       }
     } catch (error) {
       if (error.name !== "AbortError") {

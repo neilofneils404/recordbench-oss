@@ -5,6 +5,7 @@ unknown until the retained upload/finalization path revalidates the source.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -78,6 +79,7 @@ def evaluate_loose_file_preflight(
     media_limit: int,
     malware_scan_mode: str,
     scanner_ready: bool,
+    duplicate_token_scope: str | None = None,
 ) -> dict[str, object]:
     """Return one stable, content-free admission result per input descriptor."""
 
@@ -155,6 +157,11 @@ def evaluate_loose_file_preflight(
             counts["failed"] += 1
             items.append(result)
             continue
+
+        if duplicate_token_scope is not None:
+            result["duplicate_token"] = hashlib.sha256(
+                f"{duplicate_token_scope}\0{path_key}".encode("utf-8")
+            ).hexdigest()
 
         if path_key in seen_paths:
             result["state"] = "duplicate_candidate"

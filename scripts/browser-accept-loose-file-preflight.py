@@ -124,6 +124,58 @@ def _replace_selection(driver: webdriver.Chrome, input_element, files: list[Path
     _select(input_element, files)
 
 
+def _synthetic_selection(
+    driver: webdriver.Chrome,
+    input_element,
+    count: int,
+    *,
+    long_paths: bool,
+    cross_boundary_duplicate: bool = True,
+) -> dict[str, int]:
+    return driver.execute_script(
+        """
+        const input = arguments[0];
+        const count = arguments[1];
+        const longPaths = arguments[2];
+        const crossBoundaryDuplicate = arguments[3];
+        const transfer = new DataTransfer();
+        const segments = ["a", "b", "c", "d"].map((value) => value.repeat(180));
+        const descriptors = [];
+        for (let index = 0; index < count; index += 1) {
+          let name = `record-${String(index).padStart(5, "0")}.txt`;
+          if (crossBoundaryDuplicate && count > 2000 && index === 1999) name = "Straße.txt";
+          if (crossBoundaryDuplicate && count > 2000 && index === 2000) name = "STRASSE.txt";
+          const folder = longPaths ? `Production/${segments.join("/")}` : "Production";
+          const relativePath = `${folder}/${name}`;
+          const file = new File(["x"], name, {
+            type: "text/plain",
+            lastModified: 1700000000000 + index,
+          });
+          Object.defineProperty(file, "webkitRelativePath", { value: relativePath });
+          transfer.items.add(file);
+          descriptors.push({
+            name: file.name,
+            relative_path: relativePath,
+            size: file.size,
+            media_type: file.type,
+          });
+        }
+        const serializedBytes = new TextEncoder().encode(JSON.stringify({
+          selection_nonce: "0".repeat(32),
+          files: descriptors,
+        })).byteLength;
+        input.value = "";
+        input.files = transfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return { count: transfer.files.length, serialized_bytes: serializedBytes };
+        """,
+        input_element,
+        count,
+        long_paths,
+        cross_boundary_duplicate,
+    )
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--chrome-binary", type=Path, required=True)
@@ -213,6 +265,7 @@ def main() -> int:
                 options=options,
             )
             driver.set_page_load_timeout(20)
+            driver.set_script_timeout(60)
             wait = WebDriverWait(driver, 20)
             base_url = f"http://127.0.0.1:{port}"
             driver.get(f"{base_url}/matters/new")
@@ -236,9 +289,358 @@ def main() -> int:
             _require(bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR) == (), "new matter unexpectedly has an upload session")
 
             file_input = driver.find_element(By.CSS_SELECTOR, "[data-file-input]")
+            panel = driver.find_element(By.CSS_SELECTOR, "[data-upload-preflight]")
+            driver.execute_script(
+                """
+                window.__slice1aScaleOriginalFetch = window.fetch;
+                window.__slice1aScaleRequests = [];
+                window.fetch = (...args) => {
+                  if (String(args[0]).includes('/upload-preflight')) {
+                    const body = String(args[1]?.body || '');
+                    const payload = JSON.parse(body);
+                    window.__slice1aScaleRequests.push({
+                      bytes: new TextEncoder().encode(body).byteLength,
+                      count: payload.files.length,
+                      nonce: payload.selection_nonce,
+                    });
+                  }
+                  return window.__slice1aScaleOriginalFetch(...args);
+                };
+                """
+            )
+            scale_status_calls = scanner.status_calls
+            scale_selection = _synthetic_selection(
+                driver, file_input, 10_000, long_paths=True
+            )
+            _require(
+                scale_selection["serialized_bytes"] > 6 * 1024 * 1024,
+                "ten-thousand-row fixture did not exceed the one-request cap",
+            )
+            WebDriverWait(driver, 120).until(
+                lambda current: len(
+                    current.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                )
+                == 10_000
+                and current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 9,999 ready files"
+            )
+            scale_requests = driver.execute_script(
+                "return window.__slice1aScaleRequests;"
+            )
+            _require(len(scale_requests) > 1, "large selection used only one request")
+            _require(
+                sum(request["count"] for request in scale_requests) == 10_000,
+                "large selection did not account for exactly ten thousand rows",
+            )
+            _require(
+                all(request["count"] <= 2_000 for request in scale_requests),
+                "a preflight request exceeded the two-thousand-row cap",
+            )
+            _require(
+                all(request["bytes"] <= 6 * 1024 * 1024 for request in scale_requests),
+                "a preflight request exceeded the six-MiB cap",
+            )
+            _require(
+                len({request["nonce"] for request in scale_requests}) == 1,
+                "large selection did not retain one selection nonce",
+            )
+            scale_rows = driver.find_elements(
+                By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+            )
+            _require(
+                scale_rows[1999].get_attribute("data-state") == "valid"
+                and scale_rows[2000].get_attribute("data-state")
+                == "duplicate_candidate",
+                "server-canonical duplicate across the batch boundary was not preserved",
+            )
+            _require(
+                scale_rows[0].text.startswith("record-00000.txt")
+                and scale_rows[-1].text.startswith("record-09999.txt"),
+                "consolidated preview did not preserve global selection order",
+            )
+            _require(
+                "1 repeated path"
+                in driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-counts]"
+                ).text,
+                "consolidated preview did not report the cross-batch duplicate",
+            )
+            _require(
+                scanner.status_calls == scale_status_calls + len(scale_requests),
+                "large preview did not perform one scanner-status check per bounded request",
+            )
+            _require(
+                bench.workspace.source_collections(matter.matter_id) == ()
+                and bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR)
+                == ()
+                and bench.workspace.pending_upload_bytes(matter.matter_id) == 0,
+                "large preflight created durable upload state before confirmation",
+            )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aScaleOriginalFetch;
+                delete window.__slice1aScaleOriginalFetch;
+                delete window.__slice1aScaleRequests;
+                """
+            )
+
+            oversized_status_calls = scanner.status_calls
+            driver.execute_script(
+                """
+                window.__slice1aOversizedOriginalFetch = window.fetch;
+                window.__slice1aOversizedFetchCount = 0;
+                window.fetch = (...args) => {
+                  if (String(args[0]).includes('/upload-preflight')) {
+                    window.__slice1aOversizedFetchCount += 1;
+                  }
+                  return window.__slice1aOversizedOriginalFetch(...args);
+                };
+                const input = arguments[0];
+                const transfer = new DataTransfer();
+                const file = new File(['x'], 'synthetic.txt', {
+                  type: 'text/plain',
+                  lastModified: 1700000000000,
+                });
+                Object.defineProperty(file, 'webkitRelativePath', {
+                  value: `Synthetic/${'x'.repeat(6 * 1024 * 1024)}.txt`,
+                });
+                transfer.items.add(file);
+                input.value = '';
+                input.files = transfer.files;
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                """,
+                file_input,
+            )
+            wait.until(
+                lambda current: len(
+                    current.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                )
+                == 1
+                and current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 0 ready files"
+            )
+            oversized_row = driver.find_element(
+                By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+            )
+            _require(
+                oversized_row.get_attribute("data-state") == "failed"
+                and oversized_row.text.startswith("Selected file 1")
+                and driver.execute_script(
+                    "return window.__slice1aOversizedFetchCount;"
+                )
+                == 0
+                and scanner.status_calls == oversized_status_calls,
+                "one oversized descriptor was not handled locally and content-free",
+            )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aOversizedOriginalFetch;
+                delete window.__slice1aOversizedOriginalFetch;
+                delete window.__slice1aOversizedFetchCount;
+                """
+            )
+
+            driver.execute_script(
+                """
+                window.__slice1aBatchOriginalFetch = window.fetch;
+                window.__slice1aBatchRequestCount = 0;
+                window.__slice1aSecondBatchPending = false;
+                window.fetch = (...args) => {
+                  if (!String(args[0]).includes('/upload-preflight')) {
+                    return window.__slice1aBatchOriginalFetch(...args);
+                  }
+                  window.__slice1aBatchRequestCount += 1;
+                  if (window.__slice1aBatchRequestCount !== 2) {
+                    return window.__slice1aBatchOriginalFetch(...args);
+                  }
+                  window.__slice1aSecondBatchPending = true;
+                  return new Promise((_resolve, reject) => {
+                    const signal = args[1]?.signal;
+                    signal?.addEventListener(
+                      'abort',
+                      () => reject(new DOMException('Aborted', 'AbortError')),
+                      { once: true },
+                    );
+                  });
+                };
+                """
+            )
+            _synthetic_selection(driver, file_input, 2_001, long_paths=False)
+            wait.until(
+                lambda current: current.execute_script(
+                    "return window.__slice1aSecondBatchPending === true;"
+                )
+                and panel.get_attribute("aria-busy") == "true"
+            )
+            _require(
+                not driver.find_elements(
+                    By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                ),
+                "partial first-batch rows became visible before consolidated completion",
+            )
+            _replace_selection(driver, file_input, [files[0]])
+            wait.until(
+                lambda current: len(
+                    current.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                )
+                == 1
+                and current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 1 ready file"
+            )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aBatchOriginalFetch;
+                delete window.__slice1aBatchOriginalFetch;
+                delete window.__slice1aBatchRequestCount;
+                delete window.__slice1aSecondBatchPending;
+                """
+            )
+
+            _synthetic_selection(
+                driver,
+                file_input,
+                2_001,
+                long_paths=False,
+                cross_boundary_duplicate=False,
+            )
+            WebDriverWait(driver, 60).until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 2,001 ready files"
+            )
+            corrupt_plan_fingerprint = driver.execute_async_script(
+                """
+                const input = arguments[0];
+                const done = arguments[arguments.length - 1];
+                const form = document.querySelector('[data-upload-form]');
+                const maximumItems = Number(form.dataset.maxUploadBatchItems);
+                const maximumBytes = Number(form.dataset.maxCollectionBytes);
+                const batches = [];
+                let batch = [];
+                let bytes = 0;
+                Array.from(input.files).forEach((file) => {
+                  if (batch.length && (batch.length >= maximumItems || bytes + file.size > maximumBytes)) {
+                    batches.push(batch);
+                    batch = [];
+                    bytes = 0;
+                  }
+                  batch.push(file);
+                  bytes += file.size;
+                });
+                if (batch.length) batches.push(batch);
+                const plan = batches.map((files) => files.map((file) => ({
+                  name: String(file.name || '').normalize('NFC'),
+                  relative_path: String(file.webkitRelativePath || file.name || '').normalize('NFC'),
+                  size: Number(file.size),
+                  media_type: String(file.type || '').trim().toLowerCase(),
+                  last_modified: Number(file.lastModified),
+                })));
+                crypto.subtle.digest(
+                  'SHA-256',
+                  new TextEncoder().encode(JSON.stringify({ version: 1, batches: plan })),
+                ).then((digest) => done(
+                  Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
+                )).catch((error) => done({ error: String(error) }));
+                """,
+                file_input,
+            )
+            _require(
+                isinstance(corrupt_plan_fingerprint, str)
+                and len(corrupt_plan_fingerprint) == 64,
+                "browser could not reproduce the deterministic upload-plan fingerprint",
+            )
+            upload_session_key = f"case-intelligence:upload:{slug}"
+            driver.execute_script(
+                "window.localStorage.setItem(arguments[0], arguments[1]);",
+                upload_session_key,
+                json.dumps(
+                    {
+                        "version": 3,
+                        "plan_fingerprint": corrupt_plan_fingerprint,
+                        "session_id": "",
+                        "collection_id": "",
+                        "batch_index": 1,
+                    }
+                ),
+            )
+            driver.execute_script(
+                """
+                window.__slice1aCorruptOriginalFetch = window.fetch;
+                window.__slice1aCorruptBodies = [];
+                window.fetch = (...args) => {
+                  const method = String(args[1]?.method || 'GET').toUpperCase();
+                  if (String(args[0]).includes('/upload-sessions') && method === 'POST') {
+                    window.__slice1aCorruptBodies.push(JSON.parse(String(args[1].body)));
+                    return Promise.reject(new Error('Synthetic corrupt-state stop'));
+                  }
+                  return window.__slice1aCorruptOriginalFetch(...args);
+                };
+                """
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            corrupt_body = WebDriverWait(driver, 30).until(
+                lambda current: (
+                    bodies[0]
+                    if (
+                        bodies
+                        := current.execute_script(
+                            "return window.__slice1aCorruptBodies;"
+                        )
+                    )
+                    else None
+                )
+            )
+            _require(
+                corrupt_body["resume_session_id"] == ""
+                and corrupt_body["collection_id"] == ""
+                and corrupt_body["files"][0]["relative_path"].endswith(
+                    "/record-00000.txt"
+                )
+                and len(
+                    driver.execute_script(
+                        "return window.__slice1aCorruptBodies;"
+                    )
+                )
+                == 1,
+                "corrupt matching-fingerprint resume state skipped the first batch",
+            )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aCorruptOriginalFetch;
+                delete window.__slice1aCorruptOriginalFetch;
+                delete window.__slice1aCorruptBodies;
+                window.localStorage.removeItem(arguments[0]);
+                """,
+                upload_session_key,
+            )
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-form]"
+                ).get_attribute("aria-busy")
+                is None
+            )
+
             status_calls_before_preview = scanner.status_calls
             driver.execute_script("arguments[0].focus({preventScroll: true});", file_input)
-            _select(file_input, files)
+            _replace_selection(driver, file_input, files)
             panel = wait.until(
                 lambda current: current.find_element(By.CSS_SELECTOR, "[data-upload-preflight]:not([hidden])")
             )
@@ -506,6 +908,299 @@ def main() -> int:
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", progress)
             driver.save_screenshot(str(output / "mobile-partial-upload.png"))
 
+            driver.set_window_size(1536, 1024)
+            resume_matter = bench.create_matter(
+                "Synthetic cross-refresh resume matter",
+                "Generated exact-plan resume acceptance",
+                ACTOR,
+            )
+            resume_key = f"case-intelligence:upload:{resume_matter.slug}"
+            driver.get(f"{base_url}/matters/{resume_matter.slug}/setup")
+            resume_input = wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-file-input]"
+                )
+            )
+            _select(resume_input, [files[0]])
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 1 ready file"
+            )
+            driver.execute_script(
+                """
+                window.__slice1aResumeOriginalFetch = window.fetch;
+                window.fetch = (...args) => {
+                  if (String(args[1]?.method || '').toUpperCase() === 'PUT') {
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aResumeOriginalFetch(...args);
+                };
+                """
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            saved_resume = WebDriverWait(driver, 30).until(
+                lambda current: current.execute_script(
+                    "return window.localStorage.getItem(arguments[0]);", resume_key
+                )
+            )
+            saved_resume_state = json.loads(saved_resume)
+            _require(saved_resume_state["version"] == 3, "resume state was not v3")
+            _require(
+                len(saved_resume_state["plan_fingerprint"]) == 64,
+                "resume state did not bind the exact upload plan",
+            )
+            original_resume_session = saved_resume_state["session_id"]
+            original_resume_collection = saved_resume_state["collection_id"]
+
+            driver.refresh()
+            resume_input = wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-file-input]"
+                )
+            )
+            _select(resume_input, [files[0]])
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 1 ready file"
+            )
+            driver.execute_script(
+                """
+                window.__slice1aResumeOriginalFetch = window.fetch;
+                window.__slice1aResumeBodies = [];
+                window.fetch = (...args) => {
+                  const method = String(args[1]?.method || 'GET').toUpperCase();
+                  if (String(args[0]).includes('/upload-sessions') && method === 'POST') {
+                    window.__slice1aResumeBodies.push(JSON.parse(String(args[1].body)));
+                  }
+                  if (method === 'PUT') {
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aResumeOriginalFetch(...args);
+                };
+                """
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            resumed_body = WebDriverWait(driver, 30).until(
+                lambda current: (
+                    bodies[0]
+                    if (
+                        bodies
+                        := current.execute_script(
+                            "return window.__slice1aResumeBodies;"
+                        )
+                    )
+                    else None
+                )
+            )
+            _require(
+                resumed_body["resume_session_id"] == original_resume_session
+                and resumed_body["collection_id"] == original_resume_collection,
+                "same-subset cross-refresh did not resume the exact saved session",
+            )
+            _require(
+                len(
+                    bench.workspace.recent_upload_sessions(
+                        resume_matter.matter_id, ACTOR
+                    )
+                )
+                == 1,
+                "exact resume created a second upload session",
+            )
+
+            driver.refresh()
+            missing_resume_state = {
+                **saved_resume_state,
+                "session_id": "upload-session-ffffffffffffffffffffffffffffffff",
+            }
+            driver.execute_script(
+                "window.localStorage.setItem(arguments[0], arguments[1]);",
+                resume_key,
+                json.dumps(missing_resume_state),
+            )
+            resume_input = driver.find_element(By.CSS_SELECTOR, "[data-file-input]")
+            _select(resume_input, [files[0]])
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 1 ready file"
+            )
+            driver.execute_script(
+                """
+                window.__slice1aRetryOriginalFetch = window.fetch;
+                window.__slice1aRetryBodies = [];
+                window.fetch = (...args) => {
+                  const method = String(args[1]?.method || 'GET').toUpperCase();
+                  if (String(args[0]).includes('/upload-sessions') && method === 'POST') {
+                    window.__slice1aRetryBodies.push(JSON.parse(String(args[1].body)));
+                  }
+                  if (method === 'PUT') {
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aRetryOriginalFetch(...args);
+                };
+                """
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            retry_bodies = WebDriverWait(driver, 30).until(
+                lambda current: (
+                    bodies
+                    if len(
+                        bodies
+                        := current.execute_script(
+                            "return window.__slice1aRetryBodies;"
+                        )
+                    )
+                    == 2
+                    else None
+                )
+            )
+            _require(
+                retry_bodies[0]["resume_session_id"]
+                == missing_resume_state["session_id"]
+                and retry_bodies[1]["resume_session_id"] == ""
+                and retry_bodies[1]["collection_id"] == "",
+                "resume mismatch did not clear identifiers and retry fresh exactly once",
+            )
+            WebDriverWait(driver, 30).until(
+                lambda current: (
+                    value
+                    if (
+                        value
+                        := current.execute_script(
+                            "return window.localStorage.getItem(arguments[0]);",
+                            resume_key,
+                        )
+                    )
+                    and json.loads(value)["session_id"]
+                    != missing_resume_state["session_id"]
+                    else None
+                )
+            )
+
+            driver.refresh()
+            driver.execute_script(
+                "window.localStorage.setItem(arguments[0], arguments[1]);",
+                resume_key,
+                saved_resume,
+            )
+            changed_input = driver.find_element(By.CSS_SELECTOR, "[data-file-input]")
+            _select(changed_input, [files[0], files[1]])
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 2 ready files"
+            )
+            sessions_before_changed_plan = len(
+                bench.workspace.recent_upload_sessions(
+                    resume_matter.matter_id, ACTOR
+                )
+            )
+            driver.execute_script(
+                """
+                window.__slice1aChangedOriginalFetch = window.fetch;
+                window.__slice1aChangedBodies = [];
+                window.fetch = (...args) => {
+                  const method = String(args[1]?.method || 'GET').toUpperCase();
+                  if (String(args[0]).includes('/upload-sessions') && method === 'POST') {
+                    window.__slice1aChangedBodies.push(JSON.parse(String(args[1].body)));
+                  }
+                  if (method === 'PUT') {
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aChangedOriginalFetch(...args);
+                };
+                """
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            changed_body = WebDriverWait(driver, 30).until(
+                lambda current: (
+                    bodies[0]
+                    if (
+                        bodies
+                        := current.execute_script(
+                            "return window.__slice1aChangedBodies;"
+                        )
+                    )
+                    else None
+                )
+            )
+            changed_saved = json.loads(
+                WebDriverWait(driver, 30).until(
+                    lambda current: current.execute_script(
+                        "return window.localStorage.getItem(arguments[0]);",
+                        resume_key,
+                    )
+                )
+            )
+            _require(
+                changed_body["resume_session_id"] == ""
+                and changed_body["collection_id"] == ""
+                and changed_saved["collection_id"] != original_resume_collection
+                and len(
+                    bench.workspace.recent_upload_sessions(
+                        resume_matter.matter_id, ACTOR
+                    )
+                )
+                == sessions_before_changed_plan + 1
+                and len(
+                    driver.execute_script(
+                        "return window.__slice1aChangedBodies;"
+                    )
+                )
+                == 1,
+                "changed eligible subset did not start once in a new collection",
+            )
+
             javascript_errors = [
                 entry
                 for entry in driver.get_log("browser")
@@ -515,6 +1210,10 @@ def main() -> int:
             report["checks"] = [
                 "real matter creation and setup route",
                 "metadata-only API before bytes",
+                "ten-thousand-row preview uses bounded requests and one consolidated ordered result",
+                "cross-batch canonical duplicate accounting",
+                "oversized single descriptor fails locally without echo or request",
+                "in-flight later batch aborts without exposing partial results",
                 "all five synthetic rows and exact category totals",
                 "truthful pending and not-run states",
                 "one capability-status check and no content scan before initial confirmation",
@@ -523,6 +1222,9 @@ def main() -> int:
                 "clearing an in-flight selection clears busy state",
                 "keyboard confirmation uploads only the two eligible files",
                 "retained upload path reports malformed PDF as partial",
+                "exact-plan cross-refresh resume and one-shot mismatch recovery",
+                "changed eligible subset clears stale resume identifiers",
+                "corrupt matching-fingerprint resume state cannot skip batch zero",
                 "desktop and 390px mobile views have no horizontal overflow",
                 "no severe browser JavaScript error",
             ]

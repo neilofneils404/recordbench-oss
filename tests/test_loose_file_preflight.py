@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 from fastapi import HTTPException
@@ -40,6 +41,36 @@ class ReadyCountingScanner(UnavailableCountingScanner):
         del force
         self.status_calls += 1
         return MalwareScannerStatus("ready", "synthetic")
+
+
+class EventLoopLivenessScanner(ReadyCountingScanner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.released_by_loop = False
+        self.timed_out = False
+
+    def status(self, *, force: bool = False) -> MalwareScannerStatus:
+        del force
+        self.status_calls += 1
+        assert self.loop is not None
+        released = threading.Event()
+
+        def release() -> None:
+            self.released_by_loop = True
+            released.set()
+
+        self.loop.call_soon_threadsafe(release)
+        if not released.wait(1):
+            self.timed_out = True
+        return MalwareScannerStatus("ready", "synthetic")
+
+
+class RaisingStatusScanner(UnavailableCountingScanner):
+    def status(self, *, force: bool = False) -> MalwareScannerStatus:
+        del force
+        self.status_calls += 1
+        raise OSError("synthetic scanner status failure")
 
 
 def _matter(client: TestClient, name: str = "Synthetic preflight matter") -> str:
@@ -164,6 +195,102 @@ def test_selection_preflight_rejects_foreign_matter_before_consuming_body(tmp_pa
 
     assert status == 404
     assert consumed_chunks == 0
+
+
+def test_selection_preflight_scanner_status_does_not_block_the_event_loop(tmp_path):
+    scanner = EventLoopLivenessScanner()
+    app = _app(tmp_path, scanner)
+
+    @app.middleware("http")
+    async def capture_event_loop(request, call_next):
+        scanner.loop = asyncio.get_running_loop()
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        slug = _matter(client)
+        response = client.post(
+            f"/matters/{slug}/upload-preflight",
+            json={"files": [{"name": "notes.txt", "size": 12}]},
+        )
+
+    assert response.status_code == 200
+    assert scanner.released_by_loop is True
+    assert scanner.timed_out is False
+    assert response.json()["eligible_indexes"] == [0]
+
+
+def test_selection_preflight_preserves_unavailable_scanner_status_projection(tmp_path):
+    scanner = RaisingStatusScanner()
+    app = _app(tmp_path, scanner)
+    with TestClient(app) as client:
+        slug = _matter(client)
+        response = client.post(
+            f"/matters/{slug}/upload-preflight",
+            json={"files": [{"name": "scan.png", "size": 68}]},
+        )
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["state"] == "needs_attention"
+    assert item["scan"] == {
+        "required": True,
+        "capability": "unavailable",
+        "result": "not_run",
+    }
+    assert scanner.status_calls == 1
+    assert scanner.scan_calls == 0
+
+
+def test_selection_preflight_duplicate_tokens_are_canonical_and_matter_bound(tmp_path):
+    scanner = ReadyCountingScanner()
+    app = _app(tmp_path, scanner)
+    nonce = "0123456789abcdef0123456789abcdef"
+    with TestClient(app) as client:
+        first_slug = _matter(client, "First synthetic token matter")
+        second_slug = _matter(client, "Second synthetic token matter")
+
+        def preview(slug: str, path: str):
+            return client.post(
+                f"/matters/{slug}/upload-preflight",
+                json={
+                    "selection_nonce": nonce,
+                    "files": [{"name": "record.txt", "relative_path": path, "size": 12}],
+                },
+            )
+
+        first = preview(first_slug, "Production/Stra\u00dfe.txt")
+        canonical_peer = preview(first_slug, "production/STRASSE.txt")
+        other_matter = preview(second_slug, "Production/Stra\u00dfe.txt")
+        unsafe = preview(first_slug, "../unsafe.txt")
+        unsupported = preview(first_slug, "archive.zip")
+        invalid_size = client.post(
+            f"/matters/{first_slug}/upload-preflight",
+            json={
+                "selection_nonce": nonce,
+                "files": [{"name": "record.txt", "size": 0}],
+            },
+        )
+
+        before_invalid_nonce_calls = scanner.status_calls
+        invalid_nonce = client.post(
+            f"/matters/{first_slug}/upload-preflight",
+            json={
+                "selection_nonce": "NOT-A-VALID-NONCE",
+                "files": [{"name": "record.txt", "size": 12}],
+            },
+        )
+
+    assert first.status_code == canonical_peer.status_code == other_matter.status_code == 200
+    first_token = first.json()["items"][0]["duplicate_token"]
+    assert first_token == canonical_peer.json()["items"][0]["duplicate_token"]
+    assert first_token != other_matter.json()["items"][0]["duplicate_token"]
+    assert len(first_token) == 64
+    assert all(character in "0123456789abcdef" for character in first_token)
+    assert "duplicate_token" not in unsafe.json()["items"][0]
+    assert "duplicate_token" not in unsupported.json()["items"][0]
+    assert "duplicate_token" not in invalid_size.json()["items"][0]
+    assert invalid_nonce.status_code == 400
+    assert scanner.status_calls == before_invalid_nonce_calls
 
 
 def test_selection_preflight_accounts_for_every_file_without_durable_writes(tmp_path):
@@ -433,6 +560,7 @@ def test_setup_exposes_review_before_upload_and_no_script_fallback(tmp_path):
 
     assert response.status_code == 200
     assert f'data-preflight-url="/matters/{slug}/upload-preflight"' in response.text
+    assert f'data-max-preflight-request-bytes="{PREFLIGHT_REQUEST_BYTES}"' in response.text
     assert 'data-upload-preflight' in response.text
     assert 'data-upload-preflight-items' in response.text
     assert 'data-upload-preflight-confirm' in response.text

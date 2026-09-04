@@ -34,6 +34,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask, BackgroundTasks
+from starlette.concurrency import run_in_threadpool
 
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
@@ -198,6 +199,7 @@ DEFAULT_RUNTIME = PROJECT_ROOT / ".tmp/milestone-a-workbench"
 MAX_SEARCH_CHARS = 512
 MAX_QUESTION_CHARS = 2_000
 MAX_FINAL_BUNDLE_LEDGER_ITEMS = 500
+MAX_UPLOAD_PREFLIGHT_REQUEST_BYTES = 6 * 1024 * 1024
 _WORD = re.compile(r"[a-z0-9]+")
 _FOLLOWUP_WORDS = {"it", "that", "those", "they", "them", "this", "these", "he", "she", "there"}
 _COLLECTION_WIDE_QUESTION = re.compile(
@@ -7744,6 +7746,7 @@ def create_workbench_app(
                     "item_label": f"{MAX_UPLOAD_INTAKE_ITEMS:,}",
                     "batch_items": MAX_UPLOAD_SESSION_ITEMS,
                     "batch_item_label": f"{MAX_UPLOAD_SESSION_ITEMS:,}",
+                    "preflight_request_bytes": MAX_UPLOAD_PREFLIGHT_REQUEST_BYTES,
                     "document_bytes": bench.storage_policy.document_file_bytes,
                     "media_bytes": bench.storage_policy.media_file_bytes,
                     "collection_bytes": bench.storage_policy.upload_session_bytes,
@@ -9387,7 +9390,7 @@ def create_workbench_app(
     async def loose_file_upload_preflight(request: Request, slug: str):
         context = auth_context(request)
         matter = authorized_matter(request, slug)
-        request_limit = 6 * 1024 * 1024
+        request_limit = MAX_UPLOAD_PREFLIGHT_REQUEST_BYTES
         content_length = request.headers.get("content-length", "")
         if content_length:
             try:
@@ -9434,12 +9437,30 @@ def create_workbench_app(
                 status_code=413 if len(selected) > MAX_UPLOAD_INTAKE_ITEMS else 400,
                 headers={"Cache-Control": "no-store"},
             )
+        selection_nonce = payload.get("selection_nonce")
+        if "selection_nonce" in payload and (
+            not isinstance(selection_nonce, str)
+            or re.fullmatch(r"[0-9a-f]{32}", selection_nonce) is None
+        ):
+            return JSONResponse(
+                {"message": "The selected-file review request is invalid."},
+                status_code=400,
+                headers={"Cache-Control": "no-store"},
+            )
+        scanner_projection = await run_in_threadpool(
+            scanner_status, bench.malware_scanner
+        )
         result = evaluate_loose_file_preflight(
             selected,
             document_limit=bench.storage_policy.document_file_bytes,
             media_limit=bench.storage_policy.media_file_bytes,
             malware_scan_mode=bench.malware_scan_mode,
-            scanner_ready=scanner_status(bench.malware_scanner).ready,
+            scanner_ready=scanner_projection.ready,
+            duplicate_token_scope=(
+                f"recordbench:loose-file-preflight:v1:{matter.matter_id}:{selection_nonce}"
+                if selection_nonce is not None
+                else None
+            ),
         )
         audit(
             request,
@@ -9547,10 +9568,20 @@ def create_workbench_app(
             return JSONResponse({"message": str(exc)}, status_code=exc.status_code)
 
         resume_session_id = str(payload.get("resume_session_id") or "")
+        collection_id = str(payload.get("collection_id") or "")
         if resume_session_id:
+            requested_manifest = tuple(
+                (
+                    str(item["display_name"]),
+                    str(item["relative_path"]),
+                    str(item["media_type"]),
+                    int(item["expected_size"]),
+                )
+                for item in prepared
+            )
             try:
-                session, existing_items = reconcile_upload_session(
-                    matter, context.principal_id, resume_session_id
+                session, existing_items = bench.workspace.upload_session(
+                    matter.matter_id, context.principal_id, resume_session_id
                 )
                 existing_manifest = tuple(
                     (
@@ -9561,36 +9592,44 @@ def create_workbench_app(
                     )
                     for item in existing_items
                 )
-                requested_manifest = tuple(
-                    (
-                        str(item["display_name"]),
-                        str(item["relative_path"]),
-                        str(item["media_type"]),
-                        int(item["expected_size"]),
-                    )
-                    for item in prepared
-                )
-                if session.state in {"open", "complete", "partial"} and (
-                    existing_manifest == requested_manifest
-                ):
-                    audit(
-                        request,
-                        "source.upload_resume",
-                        "success",
-                        context=context,
-                        matter=matter,
-                        object_type="upload_session",
-                        object_id=session.upload_session_id,
-                        details={"count": session.item_count, "state": session.state},
-                    )
-                    return JSONResponse(
-                        upload_projection(matter, session, existing_items), status_code=200
-                    )
             except KeyError:
-                pass
+                session = None
+                existing_items = ()
+                existing_manifest = ()
+            if (
+                session is None
+                or session.state not in {"open", "complete", "partial"}
+                or existing_manifest != requested_manifest
+                or (collection_id and collection_id != session.collection_id)
+            ):
+                return JSONResponse(
+                    {
+                        "code": "upload_resume_mismatch",
+                        "message": (
+                            "The saved upload no longer matches this reviewed selection."
+                        ),
+                    },
+                    status_code=409,
+                    headers={"Cache-Control": "no-store"},
+                )
+            session, existing_items = reconcile_upload_session(
+                matter, context.principal_id, resume_session_id
+            )
+            audit(
+                request,
+                "source.upload_resume",
+                "success",
+                context=context,
+                matter=matter,
+                object_type="upload_session",
+                object_id=session.upload_session_id,
+                details={"count": session.item_count, "state": session.state},
+            )
+            return JSONResponse(
+                upload_projection(matter, session, existing_items), status_code=200
+            )
 
         collection_name = str(payload.get("collection_name") or "Uploaded sources")
-        collection_id = str(payload.get("collection_id") or "")
         try:
             session, items = bench.create_upload_session(
                 matter,
