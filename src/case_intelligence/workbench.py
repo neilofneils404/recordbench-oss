@@ -3611,6 +3611,7 @@ class CaseIntelligenceWorkbench:
                 window.location,
                 window.excerpt,
                 "transcript",
+                document_id=document.document_id,
             )
             for window in windows
         )
@@ -3925,6 +3926,7 @@ class CaseIntelligenceWorkbench:
                 citation.location,
                 citation.excerpt[:6_000],
                 citation.evidence_kind,
+                document_id=citation.document_id,
             )
             for identifier, citation in evidence.items()
         )
@@ -4104,6 +4106,7 @@ class CaseIntelligenceWorkbench:
                     citation.location,
                     citation.excerpt[:6_000],
                     citation.evidence_kind,
+                    document_id=citation.document_id,
                 )
                 for identifier, citation in evidence.items()
             )
@@ -4509,6 +4512,7 @@ class CaseIntelligenceWorkbench:
                     citation.location,
                     citation.excerpt[:6_000],
                     citation.evidence_kind,
+                    document_id=citation.document_id,
                 )
                 for identifier, citation in evidence.items()
             )
@@ -4594,6 +4598,7 @@ class CaseIntelligenceWorkbench:
                 citation.location,
                 citation.excerpt[:6_000],
                 citation.evidence_kind,
+                document_id=citation.document_id,
             )
             for identifier, citation in final_evidence.items()
         )
@@ -4766,6 +4771,7 @@ class CaseIntelligenceWorkbench:
                 citation.location,
                 citation.excerpt[:6_000],
                 citation.evidence_kind,
+                document_id=citation.document_id,
             )
             for identifier, citation in evidence.items()
         )

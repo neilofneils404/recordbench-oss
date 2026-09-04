@@ -68,8 +68,10 @@ _IDENTIFIER = re.compile(
     r"[A-Z0-9]+(?:-[A-Z0-9]+)*\b"
 )
 _SOURCE_REFERENCE_IDENTIFIER = re.compile(
-    r"\b(?:using|from|per|according\s+to)\s+"
-    r"(?:(?:the|a|an)\s+)?(?:reports?|documents?|sources?|files?|exhibits?)\s+"
+    r"\b(?:(?:using|from|per)\s+"
+    r"(?:(?:the|a|an)\s+)?(?:reports?|documents?|sources?|files?|exhibits?)\s+|"
+    r"according\s+to\s+(?:(?:(?:the|a|an)\s+)?"
+    r"(?:reports?|documents?|sources?|files?|exhibits?)\s+)?)"
     r"(?P<identifier>\b(?=[A-Z0-9-]{4,}\b)(?=[A-Z0-9-]*[A-Z])"
     r"(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)*\b)",
     re.IGNORECASE,

@@ -82,6 +82,7 @@ class EvidenceItem:
     location: str
     excerpt: str
     evidence_kind: str = "document"
+    document_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -884,8 +885,10 @@ class GroundedGenerationService:
         required_kinds = intent.required_evidence_kinds
         available_kinds = {item.evidence_kind for item in bounded}
 
-        def source_key(item: EvidenceItem) -> str:
-            return item.source_name.casefold()
+        def source_key(item: EvidenceItem) -> tuple[str, str]:
+            if item.document_id:
+                return ("document_id", item.document_id)
+            return ("source_name", item.source_name.casefold())
 
         def used_required_kinds(answer: VerifiedAnswer) -> set[str]:
             used_ids = set(answer.used_evidence_ids)
@@ -953,7 +956,11 @@ class GroundedGenerationService:
                     "The generated answer did not address the question's exact objective."
                 ) from exc
             return first
-        except (GenerationRejected, GenerationUnavailable):
+        except (GenerationRejected, GenerationUnavailable) as exc:
+            if needs_objective_repair:
+                raise GenerationGroundingRejected(
+                    "The generated answer did not address the question's exact objective."
+                ) from exc
             return first
         if not second.answerable or not second.claims:
             if needs_objective_repair:
