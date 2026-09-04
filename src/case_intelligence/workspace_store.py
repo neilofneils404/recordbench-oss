@@ -3141,6 +3141,9 @@ class WorkspaceStore:
         actor = self.membership(matter_id, actor_id).principal_id
         now = self._now()
         with self._lock, self.connection:
+            # Serialize the final active-work checks with admissions made by
+            # other workspace connections before changing organization state.
+            self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute(
                 "SELECT state FROM workbench_conversation_organization "
                 "WHERE conversation_id=? AND matter_id=?",

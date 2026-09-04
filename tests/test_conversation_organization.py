@@ -301,6 +301,73 @@ def test_conversation_deletion_accounts_for_and_removes_linked_investigations(tm
     store.close()
 
 
+def test_conversation_archive_serializes_against_new_investigation_admission(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "workbench.sqlite"
+    archiving = WorkspaceStore(path, clock=lambda: FIXED)
+    owner, _member = _seed_people(archiving)
+    matter = archiving.create_matter("Synthetic archive race", "", owner)
+    conversation = archiving.create_conversation(
+        matter.matter_id, "Archive race record", actor_id=owner
+    )
+    contender = WorkspaceStore(path, clock=lambda: FIXED)
+    attempted = threading.Event()
+    finished = threading.Event()
+    outcome: list[object] = []
+
+    def admit_investigation() -> None:
+        attempted.set()
+        try:
+            contender.queue_research_job(
+                matter.matter_id,
+                owner,
+                "Can a generated investigation enter during archive?",
+                "Generated archive race",
+                "research-request-" + "b" * 32,
+                conversation_id=conversation.conversation_id,
+            )
+        except Exception as exc:  # The exact staff-safe rejection is asserted below.
+            outcome.append(exc)
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=admit_investigation, daemon=True)
+    original_active_answer_check = archiving._conversation_has_active_answer_locked
+
+    def observe_write_lock(conversation_id: str) -> bool:
+        thread.start()
+        assert attempted.wait(timeout=1)
+        assert not finished.wait(timeout=0.25), (
+            "investigation admission escaped the conversation archive transaction"
+        )
+        return original_active_answer_check(conversation_id)
+
+    monkeypatch.setattr(
+        archiving, "_conversation_has_active_answer_locked", observe_write_lock
+    )
+    replacement = archiving.archive_conversation(
+        matter.matter_id, conversation.conversation_id, owner
+    )
+    thread.join(timeout=5)
+
+    assert replacement.conversation_id != conversation.conversation_id
+    assert archiving.conversation_summary(
+        matter.matter_id, conversation.conversation_id
+    ).state == "archived"
+    assert finished.is_set()
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], WorkspaceProblem)
+    assert "not available in this matter" in str(outcome[0])
+    assert contender.connection.execute(
+        "SELECT COUNT(*) FROM workbench_research_job WHERE conversation_id=?",
+        (conversation.conversation_id,),
+    ).fetchone()[0] == 0
+    assert contender.messages(matter.matter_id, conversation.conversation_id) == ()
+    contender.close()
+    archiving.close()
+
+
 def test_conversation_deletion_serializes_against_new_investigation_admission(
     tmp_path, monkeypatch
 ):
