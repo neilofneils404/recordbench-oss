@@ -115,10 +115,10 @@ NVIDIA Container Toolkit. The intended deployment model supports one suitable
 GPU, with additional GPUs separating generation, transcription, and retrieval
 work. Each configuration still needs deployment validation.
 
-Matter storage may be a dedicated local path or a host-mounted NAS path. The
-free-space figures above still need room for container images, model files,
-temporary processing, and the configured safety reserve. Collection storage is
-additional and depends on what the organization intends to review.
+Matter storage may be a dedicated local path or a host-mounted NAS path.
+Free-space targets cover application images, models, temporary processing,
+and the configured safety reserve; matter contents require additional local
+or NAS capacity.
 
 ## What RecordBench is not
 

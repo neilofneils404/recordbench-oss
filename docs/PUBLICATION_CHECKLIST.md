@@ -48,6 +48,10 @@ artifact.
 
 ## Approval checklist
 
+The [first-party release authorization](RELEASE_READINESS.md#first-party-release-authorization)
+section records the maintainer-confirmed approval status. The remaining
+publication requirements below still apply.
+
 - Organization approves the project name, copyright ownership, and full
   Apache-2.0 license text.
 - First-party transcription code is approved for release.

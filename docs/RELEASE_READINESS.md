@@ -18,7 +18,15 @@ valid full-profile target; larger hosts separate service lanes automatically or
 accept explicit assignments. Hardware support still requires a receipt from
 the exact card, VRAM, driver, runtime, collection, and concurrency shape.
 
-## Publication blockers
+## First-party release authorization
+
+The maintainer has confirmed that release of RecordBench's first-party code
+under Apache-2.0 is approved. This records the maintainer-confirmed approval
+status; it does not complete third-party license review, sanitization, or
+deployment acceptance. Keep any supporting private approval records outside
+this repository.
+
+## Publication requirements
 
 The following evidence is required before changing repository visibility:
 

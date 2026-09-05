@@ -3,8 +3,8 @@
 ## Hardware and capability profiles
 
 RecordBench targets a modern x86-64 Linux host with Docker Engine and Docker
-Compose v2. These are the minimum hardware recommendations for a practical
-alpha installation:
+Compose v2. The figures below are starting targets for alpha evaluation, not
+validated minimums:
 
 | Intended use | CPU | RAM | NVIDIA GPU | Free SSD before matter data |
 | --- | ---: | ---: | --- | ---: |
@@ -12,11 +12,12 @@ alpha installation:
 | Local document review | 12 cores | 32 GB | 1 GPU with 16 GB VRAM | 200 GB |
 | Every-source checks and media | 16 cores | 64 GB | 1 GPU with 24 GB VRAM | 300 GB |
 
-These are starting recommendations, not collection-size, speed, or concurrency
-guarantees. More sources, longer recordings, and more simultaneous users need
-more capacity. Free-space recommendations cover application images, models,
-temporary processing, and the default storage reserve; matter contents require
-additional local or NAS capacity.
+These targets do not guarantee collection size, speed, or concurrency. More
+sources, longer recordings, and more simultaneous users need more capacity.
+Consult [release readiness](RELEASE_READINESS.md) before treating a
+configuration as supported. Free-space targets cover application images,
+models, temporary processing, and the configured safety reserve; matter
+contents require additional local or NAS capacity.
 
 The installer exposes four capability profiles:
 
@@ -28,10 +29,10 @@ The installer exposes four capability profiles:
 | `all` | document review plus transcription and optional diarization |
 
 GPU profiles require NVIDIA compute capability 7.5 or newer and the NVIDIA
-Container Toolkit. RecordBench can start with one suitable GPU. When more are
-available, the installer can separate generation, transcription, and retrieval
-work; the product workflows stay the same. Advanced placement controls are
-documented in [Models](MODELS.md).
+Container Toolkit. The intended deployment model supports one suitable GPU,
+with additional GPUs separating generation, transcription, and retrieval work.
+Each configuration still needs deployment validation. Advanced placement
+controls are documented in [Models](MODELS.md).
 
 The installer never opens a public port by default. Its initial listener is
 `127.0.0.1:8443`; a LAN bind requires an explicit address and an existing
