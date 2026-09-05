@@ -448,7 +448,7 @@
 
         const identity = document.createElement("div");
         const name = document.createElement("strong");
-        name.textContent = String(item.display_name || "Selected file");
+        name.textContent = String(item.display_path || item.display_name || "Selected file");
         const state = document.createElement("span");
         state.className = "upload-preflight-item-state";
         state.textContent = preflightStateLabels[item.state] || "Cannot use";
@@ -492,6 +492,59 @@
     media_type: file.type,
   });
 
+  const safeFolderDisplayPath = (relativePath, displayName, duplicateToken) => {
+    if (typeof relativePath !== "string" || typeof displayName !== "string") return "";
+    if (typeof duplicateToken !== "string" || !/^[0-9a-f]{64}$/.test(duplicateToken)) return "";
+    const normalized = relativePath.normalize("NFC");
+    const normalizedName = displayName.normalize("NFC");
+    if (
+      !normalized.includes("/")
+      || normalized.startsWith("/")
+      || normalized.startsWith("\\")
+      || normalized.includes("\\")
+      || normalized.includes(":")
+    ) return "";
+    const parts = normalized.split("/");
+    if (parts.some((part) => !part || part === "." || part === "..")) return "";
+    return parts[parts.length - 1] === normalizedName ? normalized : "";
+  };
+
+  const scannerSnapshotCapability = (responses) => {
+    for (const response of responses) {
+      if (!Array.isArray(response?.items)) continue;
+      for (const item of response.items) {
+        if (item?.scan?.required !== true) continue;
+        if (!["ready", "unavailable"].includes(item.scan.capability)) {
+          throw new Error("The selection review returned an incomplete security check.");
+        }
+        return item.scan.capability;
+      }
+    }
+    return "";
+  };
+
+  const applyScannerSnapshot = (item, capability) => {
+    if (item?.scan?.required !== true) return item;
+    if (!["ready", "unavailable"].includes(item.scan.capability) || !capability) {
+      throw new Error("The selection review returned an incomplete security check.");
+    }
+    const normalized = {
+      ...item,
+      scan: { ...item.scan, capability, result: "not_run" },
+    };
+    if (!["valid", "needs_attention"].includes(normalized.state)) return normalized;
+    if (capability === "ready") {
+      normalized.state = "valid";
+      normalized.eligible = true;
+      normalized.message = "Ready to upload. File contents will be checked after transfer.";
+    } else {
+      normalized.state = "needs_attention";
+      normalized.eligible = false;
+      normalized.message = "A security scan is required but has not run because scanning is unavailable. Retry when security checks are ready.";
+    }
+    return normalized;
+  };
+
   const localPreflightFailure = (index) => ({
     index,
     display_name: `Selected file ${index + 1}`,
@@ -534,7 +587,8 @@
       bodyBytes = emptyBytes;
     };
     files.forEach((file, index) => {
-      const serialized = JSON.stringify(preflightDescriptor(file));
+      const descriptor = preflightDescriptor(file);
+      const serialized = JSON.stringify(descriptor);
       const descriptorBytes = encoder.encode(serialized).byteLength;
       const addition = descriptorBytes + (entries.length ? 1 : 0);
       if (
@@ -547,7 +601,11 @@
         failures.set(index, localPreflightFailure(index));
         return;
       }
-      entries.push({ index, serialized });
+      entries.push({
+        index,
+        serialized,
+        folderRelativePath: file.webkitRelativePath ? descriptor.relative_path : "",
+      });
       bodyBytes += descriptorBytes + (entries.length > 1 ? 1 : 0);
     });
     flush();
@@ -556,6 +614,7 @@
 
   const consolidatePreflight = (selectedCount, batches, responses, failures) => {
     const items = Array(selectedCount);
+    const scannerCapability = scannerSnapshotCapability(responses);
     failures.forEach((item, index) => { items[index] = item; });
     batches.forEach((batch, batchIndex) => {
       const responseItems = responses[batchIndex]?.items;
@@ -566,8 +625,16 @@
         if (!item || item.index !== localIndex) {
           throw new Error("The selection review returned files out of order.");
         }
-        const index = batch.entries[localIndex].index;
-        items[index] = { ...item, index };
+        const entry = batch.entries[localIndex];
+        const index = entry.index;
+        const displayPath = safeFolderDisplayPath(
+          entry.folderRelativePath,
+          item.display_name,
+          item.duplicate_token,
+        );
+        const normalized = applyScannerSnapshot({ ...item, index }, scannerCapability);
+        if (displayPath) normalized.display_path = displayPath;
+        items[index] = normalized;
       });
     });
     if (Array.from(items).some((item) => !item)) {

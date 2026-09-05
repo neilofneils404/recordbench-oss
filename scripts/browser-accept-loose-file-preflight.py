@@ -43,14 +43,20 @@ class SyntheticUnavailableScanner:
     def __init__(self) -> None:
         self.status_calls = 0
         self.scan_calls = 0
+        self.scripted_statuses: list[str] = []
 
     def status(self, *, force: bool = False) -> MalwareScannerStatus:
         del force
         self.status_calls += 1
+        state = (
+            self.scripted_statuses.pop(0)
+            if self.scripted_statuses
+            else "unavailable"
+        )
         return MalwareScannerStatus(
-            "unavailable",
+            state,
             "synthetic",
-            message="Synthetic scanner is unavailable.",
+            message=f"Synthetic scanner is {state}.",
         )
 
     def scan(self, _path: Path) -> MalwareScanResult:
@@ -132,6 +138,8 @@ def _synthetic_selection(
     long_paths: bool,
     cross_boundary_duplicate: bool = True,
     file_size: int = 1,
+    suffix: str = "txt",
+    media_type: str = "text/plain",
 ) -> dict[str, int]:
     return driver.execute_script(
         """
@@ -140,17 +148,19 @@ def _synthetic_selection(
         const longPaths = arguments[2];
         const crossBoundaryDuplicate = arguments[3];
         const fileSize = arguments[4];
+        const suffix = arguments[5];
+        const mediaType = arguments[6];
         const transfer = new DataTransfer();
         const segments = ["a", "b", "c", "d"].map((value) => value.repeat(180));
         const descriptors = [];
         for (let index = 0; index < count; index += 1) {
-          let name = `record-${String(index).padStart(5, "0")}.txt`;
-          if (crossBoundaryDuplicate && count > 2000 && index === 1999) name = "Straße.txt";
-          if (crossBoundaryDuplicate && count > 2000 && index === 2000) name = "STRASSE.txt";
+          let name = `record-${String(index).padStart(5, "0")}.${suffix}`;
+          if (crossBoundaryDuplicate && count > 2000 && index === 1999) name = `Straße.${suffix}`;
+          if (crossBoundaryDuplicate && count > 2000 && index === 2000) name = `STRASSE.${suffix}`;
           const folder = longPaths ? `Production/${segments.join("/")}` : "Production";
           const relativePath = `${folder}/${name}`;
           const file = new File(["x".repeat(fileSize)], name, {
-            type: "text/plain",
+            type: mediaType,
             lastModified: 1700000000000 + index,
           });
           Object.defineProperty(file, "webkitRelativePath", { value: relativePath });
@@ -176,6 +186,8 @@ def _synthetic_selection(
         long_paths,
         cross_boundary_duplicate,
         file_size,
+        suffix,
+        media_type,
     )
 
 
@@ -337,6 +349,106 @@ def main() -> int:
 
             file_input = driver.find_element(By.CSS_SELECTOR, "[data-file-input]")
             panel = driver.find_element(By.CSS_SELECTOR, "[data-upload-preflight]")
+            review_finding_failures: list[str] = []
+            scanner.scripted_statuses = ["ready", "unavailable"]
+            scanner_snapshot_calls = scanner.status_calls
+            _synthetic_selection(
+                driver,
+                file_input,
+                2_001,
+                long_paths=False,
+                cross_boundary_duplicate=False,
+                suffix="png",
+                media_type="image/png",
+            )
+            WebDriverWait(driver, 60).until(
+                lambda current: len(
+                    current.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                )
+                == 2_001
+                and panel.get_attribute("aria-busy") is None
+            )
+            scanner_snapshot_rows = driver.find_elements(
+                By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+            )
+            scanner_snapshot_states = {
+                row.get_attribute("data-state") for row in scanner_snapshot_rows
+            }
+            if not (
+                scanner_snapshot_states == {"valid"}
+                and driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 2,001 ready files"
+                and "Security scan required and not run yet"
+                in scanner_snapshot_rows[0].text
+                and "Security scan required and not run yet"
+                in scanner_snapshot_rows[-1].text
+                and scanner.status_calls == scanner_snapshot_calls + 2
+                and not scanner.scripted_statuses
+            ):
+                review_finding_failures.append(
+                    "one logical selection displayed mixed scanner availability across batches"
+                )
+
+            driver.execute_script(
+                """
+                const input = arguments[0];
+                const transfer = new DataTransfer();
+                ["Folder Alpha", "Folder Beta"].forEach((folder, index) => {
+                  const file = new File([`synthetic-${index}`], "same-name.txt", {
+                    type: "text/plain",
+                    lastModified: 1700000100000 + index,
+                  });
+                  Object.defineProperty(file, "webkitRelativePath", {
+                    value: `${folder}/same-name.txt`,
+                  });
+                  transfer.items.add(file);
+                });
+                input.value = "";
+                input.files = transfer.files;
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                """,
+                file_input,
+            )
+            WebDriverWait(driver, 30).until(
+                lambda current: len(
+                    current.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                )
+                == 2
+                and panel.get_attribute("aria-busy") is None
+            )
+            folder_labels = [
+                row.find_element(By.TAG_NAME, "strong").text
+                for row in driver.find_elements(
+                    By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                )
+            ]
+            if not (
+                folder_labels
+                == [
+                    "Folder Alpha/same-name.txt",
+                    "Folder Beta/same-name.txt",
+                ]
+                and all(
+                    not label.startswith(("/", "\\"))
+                    and ":" not in label
+                    and str(temporary_root) not in label
+                    for label in folder_labels
+                )
+            ):
+                review_finding_failures.append(
+                    "folder selection did not safely disambiguate duplicate leaf names"
+                )
+            _require(
+                not review_finding_failures,
+                "; ".join(review_finding_failures),
+            )
+
             driver.execute_script(
                 """
                 window.__slice1aScaleOriginalFetch = window.fetch;
@@ -405,8 +517,12 @@ def main() -> int:
                 "server-canonical duplicate across the batch boundary was not preserved",
             )
             _require(
-                scale_rows[0].text.startswith("record-00000.txt")
-                and scale_rows[-1].text.startswith("record-09999.txt"),
+                scale_rows[0].find_element(By.TAG_NAME, "strong").text.endswith(
+                    "/record-00000.txt"
+                )
+                and scale_rows[-1]
+                .find_element(By.TAG_NAME, "strong")
+                .text.endswith("/record-09999.txt"),
                 "consolidated preview did not preserve global selection order",
             )
             _require(
@@ -1567,6 +1683,8 @@ def main() -> int:
             report["checks"] = [
                 "real matter creation and setup route",
                 "metadata-only API before bytes",
+                "one scanner-availability snapshot across a logical multi-batch review",
+                "safe folder-relative labels disambiguate duplicate leaf names",
                 "ten-thousand-row preview uses bounded requests and one consolidated ordered result",
                 "cross-batch canonical duplicate accounting",
                 "oversized single descriptor fails locally without echo or request",
