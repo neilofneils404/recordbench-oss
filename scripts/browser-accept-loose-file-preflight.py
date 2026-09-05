@@ -350,6 +350,118 @@ def main() -> int:
             file_input = driver.find_element(By.CSS_SELECTOR, "[data-file-input]")
             panel = driver.find_element(By.CSS_SELECTOR, "[data-upload-preflight]")
             review_finding_failures: list[str] = []
+            malformed_scan_modes = (
+                "omitted-required",
+                "invalid-capability",
+                "invalid-result",
+                "unavailable-valid",
+            )
+            scanner.scripted_statuses = ["ready"] * len(malformed_scan_modes)
+            driver.execute_script(
+                """
+                window.__slice1aMalformedScanOriginalFetch = window.fetch;
+                window.__slice1aMalformedScanMode = '';
+                window.fetch = async (...args) => {
+                  const response = await window.__slice1aMalformedScanOriginalFetch(...args);
+                  if (!String(args[0]).includes('/upload-preflight')) return response;
+                  const payload = await response.json();
+                  const scan = payload.items[0].scan;
+                  if (window.__slice1aMalformedScanMode === 'omitted-required') {
+                    delete scan.required;
+                  } else if (window.__slice1aMalformedScanMode === 'invalid-capability') {
+                    scan.capability = 'client-ready';
+                  } else if (window.__slice1aMalformedScanMode === 'invalid-result') {
+                    scan.result = 'clean';
+                  } else if (window.__slice1aMalformedScanMode === 'unavailable-valid') {
+                    scan.capability = 'unavailable';
+                  }
+                  return new Response(JSON.stringify(payload), {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: response.headers,
+                  });
+                };
+                """
+            )
+            for malformed_scan_mode in malformed_scan_modes:
+                driver.execute_script(
+                    "window.__slice1aMalformedScanMode = arguments[0];",
+                    malformed_scan_mode,
+                )
+                _synthetic_selection(
+                    driver,
+                    file_input,
+                    1,
+                    long_paths=False,
+                    cross_boundary_duplicate=False,
+                    suffix="png",
+                    media_type="image/png",
+                )
+                wait.until(lambda current: panel.get_attribute("aria-busy") is None)
+                if not (
+                    driver.find_element(
+                        By.CSS_SELECTOR, "[data-upload-preflight-state]"
+                    ).text
+                    == "Selection review paused"
+                    and not driver.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                    and not driver.find_element(
+                        By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                    ).is_enabled()
+                ):
+                    review_finding_failures.append(
+                        "malformed scanner projection remained eligible instead of "
+                        f"failing closed ({malformed_scan_mode})"
+                    )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aMalformedScanOriginalFetch;
+                delete window.__slice1aMalformedScanOriginalFetch;
+                delete window.__slice1aMalformedScanMode;
+                """
+            )
+
+            driver.execute_script(
+                """
+                window.__slice1aInjectedPathOriginalFetch = window.fetch;
+                window.fetch = async (...args) => {
+                  const response = await window.__slice1aInjectedPathOriginalFetch(...args);
+                  if (!String(args[0]).includes('/upload-preflight')) return response;
+                  const payload = await response.json();
+                  payload.items[0].display_path = '/private/absolute/evidence.png';
+                  return new Response(JSON.stringify(payload), {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: response.headers,
+                  });
+                };
+                """
+            )
+            _replace_selection(driver, file_input, [files[0]])
+            wait.until(
+                lambda current: len(
+                    current.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                )
+                == 1
+                and panel.get_attribute("aria-busy") is None
+            )
+            injected_path_label = driver.find_element(
+                By.CSS_SELECTOR, "[data-upload-preflight-items] strong"
+            ).text
+            if injected_path_label != "incident-notes.txt":
+                review_finding_failures.append(
+                    "response-originated absolute display path reached rendered output"
+                )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aInjectedPathOriginalFetch;
+                delete window.__slice1aInjectedPathOriginalFetch;
+                """
+            )
+
             scanner.scripted_statuses = ["ready", "unavailable"]
             scanner_snapshot_calls = scanner.status_calls
             _synthetic_selection(
@@ -1683,6 +1795,8 @@ def main() -> int:
             report["checks"] = [
                 "real matter creation and setup route",
                 "metadata-only API before bytes",
+                "malformed or contradictory scanner projections fail the preview closed",
+                "response-originated display paths never reach rendered output",
                 "one scanner-availability snapshot across a logical multi-batch review",
                 "safe folder-relative labels disambiguate duplicate leaf names",
                 "ten-thousand-row preview uses bounded requests and one consolidated ordered result",

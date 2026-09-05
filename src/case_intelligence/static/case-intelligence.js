@@ -509,23 +509,50 @@
     return parts[parts.length - 1] === normalizedName ? normalized : "";
   };
 
-  const scannerSnapshotCapability = (responses) => {
-    for (const response of responses) {
-      if (!Array.isArray(response?.items)) continue;
-      for (const item of response.items) {
-        if (item?.scan?.required !== true) continue;
-        if (!["ready", "unavailable"].includes(item.scan.capability)) {
-          throw new Error("The selection review returned an incomplete security check.");
-        }
-        return item.scan.capability;
-      }
+  const validatedScannerCapability = (item) => {
+    const scan = item?.scan;
+    const invalid = () => {
+      throw new Error("The selection review returned an incomplete security check.");
+    };
+    if (!scan || typeof scan !== "object" || Array.isArray(scan) || typeof scan.required !== "boolean") {
+      return invalid();
     }
+    if ((item.state === "valid") !== (item.eligible === true)) return invalid();
+    if (scan.required) {
+      if (!["ready", "unavailable"].includes(scan.capability) || scan.result !== "not_run") {
+        return invalid();
+      }
+      if (
+        (item.state === "valid" && scan.capability !== "ready")
+        || (item.state === "needs_attention" && scan.capability !== "unavailable")
+      ) return invalid();
+      return scan.capability;
+    }
+    if (
+      scan.capability !== "not_required"
+      || !["not_required", "not_run"].includes(scan.result)
+      || item.state === "needs_attention"
+      || (item.state === "valid" && scan.result !== "not_required")
+    ) return invalid();
     return "";
   };
 
+  const scannerSnapshotCapability = (responses) => {
+    let capability = "";
+    for (const response of responses) {
+      if (!Array.isArray(response?.items)) continue;
+      for (const item of response.items) {
+        const candidate = validatedScannerCapability(item);
+        if (!capability && candidate) capability = candidate;
+      }
+    }
+    return capability;
+  };
+
   const applyScannerSnapshot = (item, capability) => {
-    if (item?.scan?.required !== true) return item;
-    if (!["ready", "unavailable"].includes(item.scan.capability) || !capability) {
+    const itemCapability = validatedScannerCapability(item);
+    if (!itemCapability) return item;
+    if (!capability) {
       throw new Error("The selection review returned an incomplete security check.");
     }
     const normalized = {
@@ -632,7 +659,9 @@
           item.display_name,
           item.duplicate_token,
         );
-        const normalized = applyScannerSnapshot({ ...item, index }, scannerCapability);
+        const normalizedItem = { ...item, index };
+        delete normalizedItem.display_path;
+        const normalized = applyScannerSnapshot(normalizedItem, scannerCapability);
         if (displayPath) normalized.display_path = displayPath;
         items[index] = normalized;
       });
