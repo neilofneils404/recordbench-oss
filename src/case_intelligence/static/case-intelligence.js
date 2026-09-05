@@ -356,7 +356,12 @@
     return dot >= 0 && securityCheckedSuffixes.has(normalized.slice(dot + 1));
   };
 
-  if (folderInput && folderChooser) folderChooser.hidden = false;
+  if (folderInput && folderChooser) {
+    folderInput.removeAttribute("hidden");
+    folderInput.removeAttribute("disabled");
+    folderInput.removeAttribute("tabindex");
+    folderChooser.hidden = false;
+  }
 
   const formatBytes = (value) => {
     if (!Number.isFinite(value) || value <= 0) return "0 B";

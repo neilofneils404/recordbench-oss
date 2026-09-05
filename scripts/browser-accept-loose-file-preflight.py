@@ -347,14 +347,55 @@ def main() -> int:
             _require(bench.workspace.source_collections(matter.matter_id) == (), "new matter unexpectedly has a collection")
             _require(bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR) == (), "new matter unexpectedly has an upload session")
 
+            driver.execute_cdp_cmd(
+                "Emulation.setScriptExecutionDisabled", {"value": True}
+            )
+            try:
+                driver.refresh()
+                no_script_folder_input = driver.find_element(By.ID, "source-folder")
+                no_script_folder_chooser = driver.find_element(
+                    By.CSS_SELECTOR, "[data-folder-chooser]"
+                )
+                _require(
+                    not no_script_folder_input.is_enabled()
+                    and not no_script_folder_input.is_displayed()
+                    and no_script_folder_input.get_attribute("hidden") is not None
+                    and no_script_folder_input.get_attribute("disabled") is not None
+                    and no_script_folder_input.get_attribute("tabindex") == "-1"
+                    and not no_script_folder_chooser.is_displayed(),
+                    "folder selection remained interactive without JavaScript",
+                )
+                driver.save_screenshot(str(output / "no-javascript-folder.png"))
+            finally:
+                driver.execute_cdp_cmd(
+                    "Emulation.setScriptExecutionDisabled", {"value": False}
+                )
+            driver.refresh()
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-folder-chooser]"
+                ).is_displayed()
+            )
+            folder_input = driver.find_element(By.ID, "source-folder")
+            folder_chooser = driver.find_element(
+                By.CSS_SELECTOR, "[data-folder-chooser]"
+            )
+            _require(
+                folder_input.is_enabled()
+                and folder_input.get_attribute("hidden") is None
+                and folder_input.get_attribute("disabled") is None
+                and folder_input.get_attribute("tabindex") is None
+                and folder_chooser.get_attribute("for") == "source-folder"
+                and driver.execute_script(
+                    "return arguments[0].control === arguments[1];",
+                    folder_chooser,
+                    folder_input,
+                ),
+                "JavaScript did not expose an accessible folder chooser",
+            )
+
             file_input = driver.find_element(By.CSS_SELECTOR, "[data-file-input]")
             panel = driver.find_element(By.CSS_SELECTOR, "[data-upload-preflight]")
-            _require(
-                driver.find_element(
-                    By.CSS_SELECTOR, "[data-folder-chooser]"
-                ).is_displayed(),
-                "JavaScript did not reveal the folder chooser",
-            )
             review_finding_failures: list[str] = []
             malformed_scan_modes = (
                 "omitted-required",

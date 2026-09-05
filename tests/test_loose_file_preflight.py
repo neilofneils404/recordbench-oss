@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 
 import pytest
@@ -657,6 +658,12 @@ def test_setup_exposes_review_before_upload_and_no_script_fallback(tmp_path):
     assert 'data-upload-preflight' in response.text
     assert 'data-upload-preflight-items' in response.text
     assert 'data-upload-preflight-confirm' in response.text
+    folder_input = re.search(r'<input\b[^>]*\bid="source-folder"[^>]*>', response.text)
+    assert folder_input is not None
+    folder_input_markup = folder_input.group(0)
+    assert " hidden" in folder_input_markup
+    assert " disabled" in folder_input_markup
+    assert 'tabindex="-1"' in folder_input_markup
     assert 'class="choose-folder-action" data-folder-chooser hidden' in response.text
     assert "Review selected files" in response.text
     assert "Upload 0 ready files" in response.text
