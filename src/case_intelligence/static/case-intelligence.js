@@ -1017,6 +1017,13 @@
     const eligibleFiles = eligibleIndexes.map((index) => files[index]);
     const uploadPlanBatches = buildUploadBatches(eligibleFiles);
     const planFingerprint = await uploadPlanFingerprint(uploadPlanBatches);
+    if (
+      checkpoint?.version === 3
+      && checkpoint.batch_index > 0
+      && (!planFingerprint || checkpoint.plan_fingerprint !== planFingerprint)
+    ) {
+      throw new Error("The saved multi-batch upload cannot be safely resumed from this capacity snapshot.");
+    }
     const checkpointBinding = (
       rawFingerprint
       && structureFingerprint

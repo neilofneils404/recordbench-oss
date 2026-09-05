@@ -1706,7 +1706,7 @@ def main() -> int:
                     ],
                 )
             capacity_sessions_before = bench.workspace.recent_upload_sessions(
-                capacity_resume_matter.matter_id, ACTOR
+                capacity_resume_matter.matter_id, ACTOR, limit=20
             )
             _require(
                 completed_batch.state == "complete"
@@ -1727,6 +1727,51 @@ def main() -> int:
                 "collection_id": open_batch.collection_id,
                 "batch_index": 1,
             }
+            capacity_panel = driver.find_element(
+                By.CSS_SELECTOR, "[data-upload-preflight]"
+            )
+            capacity_legacy_checkpoint = {
+                "version": 3,
+                "plan_fingerprint": capacity_checkpoint["plan_fingerprint"],
+                "session_id": open_batch.upload_session_id,
+                "collection_id": open_batch.collection_id,
+                "batch_index": 1,
+            }
+            driver.execute_script(
+                "window.localStorage.setItem(arguments[0], arguments[1]);",
+                capacity_resume_key,
+                json.dumps(capacity_legacy_checkpoint),
+            )
+            _synthetic_selection(
+                driver,
+                capacity_resume_input,
+                5,
+                long_paths=False,
+                cross_boundary_duplicate=False,
+                file_size=128,
+            )
+            wait.until(
+                lambda current: capacity_panel.get_attribute("aria-busy") is None
+                and current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-state]"
+                ).text
+                == "Selection review paused"
+            )
+            _require(
+                bench.workspace.upload_session(
+                    capacity_resume_matter.matter_id,
+                    ACTOR,
+                    open_batch.upload_session_id,
+                )[0].state
+                == "open"
+                and len(
+                    bench.workspace.recent_upload_sessions(
+                        capacity_resume_matter.matter_id, ACTOR, limit=20
+                    )
+                )
+                == len(capacity_sessions_before),
+                "legacy later-batch checkpoint changed its plan or server state",
+            )
             driver.execute_script(
                 "window.localStorage.setItem(arguments[0], arguments[1]);",
                 capacity_resume_key,
@@ -1739,9 +1784,6 @@ def main() -> int:
                 long_paths=False,
                 cross_boundary_duplicate=False,
                 file_size=128,
-            )
-            capacity_panel = driver.find_element(
-                By.CSS_SELECTOR, "[data-upload-preflight]"
             )
             wait.until(
                 lambda current: capacity_panel.get_attribute("aria-busy") is None
@@ -1828,7 +1870,7 @@ def main() -> int:
                 completed_batch.upload_session_id,
             )
             capacity_sessions_after = bench.workspace.recent_upload_sessions(
-                capacity_resume_matter.matter_id, ACTOR
+                capacity_resume_matter.matter_id, ACTOR, limit=20
             )
             capacity_documents = tuple(
                 document.relative_path
@@ -3128,6 +3170,7 @@ def main() -> int:
                 "collection-only checkpoint cannot skip batch zero or mutate a stale collection",
                 "cancelled later-batch checkpoint retries once from a fresh collection",
                 "exact partial checkpoint advances without duplicating its completed batch",
+                "legacy later-batch checkpoint cannot silently change its frozen plan",
                 "exact v4 resume excludes completed batches from capacity accounting",
                 "v4 resume mismatch preserves its exact recovery checkpoint",
                 "desktop and 390px mobile views have no horizontal overflow",
