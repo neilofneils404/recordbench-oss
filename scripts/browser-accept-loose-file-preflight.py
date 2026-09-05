@@ -349,6 +349,12 @@ def main() -> int:
 
             file_input = driver.find_element(By.CSS_SELECTOR, "[data-file-input]")
             panel = driver.find_element(By.CSS_SELECTOR, "[data-upload-preflight]")
+            _require(
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-folder-chooser]"
+                ).is_displayed(),
+                "JavaScript did not reveal the folder chooser",
+            )
             review_finding_failures: list[str] = []
             malformed_scan_modes = (
                 "omitted-required",
@@ -1881,13 +1887,38 @@ def main() -> int:
                     resume_matter.matter_id, ACTOR
                 )
             )
+            stale_session_before, _ = bench.workspace.upload_session(
+                resume_matter.matter_id, ACTOR, original_resume_session
+            )
+            stale_pending_before = bench.workspace.pending_upload_bytes(
+                resume_matter.matter_id
+            )
+            _require(
+                stale_session_before.state == "open"
+                and stale_pending_before >= stale_session_before.total_bytes > 0,
+                "changed-plan fixture was not a live reserved upload session",
+            )
             driver.execute_script(
                 """
                 window.__slice1aChangedOriginalFetch = window.fetch;
+                window.__slice1aChangedEvents = [];
                 window.__slice1aChangedBodies = [];
+                const staleSessionId = arguments[0];
                 window.fetch = (...args) => {
+                  const url = String(args[0]);
                   const method = String(args[1]?.method || 'GET').toUpperCase();
-                  if (String(args[0]).includes('/upload-sessions') && method === 'POST') {
+                  if (url.includes(`/upload-sessions/${staleSessionId}/cancel`) && method === 'POST') {
+                    window.__slice1aChangedEvents.push({
+                      kind: 'cancel',
+                      body: String(args[1]?.body || ''),
+                    });
+                    return Promise.resolve(new Response(
+                      JSON.stringify({ message: 'Synthetic cancellation unavailable.' }),
+                      { status: 503, headers: { 'Content-Type': 'application/json' } },
+                    ));
+                  }
+                  if (url.endsWith('/upload-sessions') && method === 'POST') {
+                    window.__slice1aChangedEvents.push({ kind: 'create' });
                     window.__slice1aChangedBodies.push(JSON.parse(String(args[1].body)));
                   }
                   if (method === 'PUT') {
@@ -1901,7 +1932,108 @@ def main() -> int:
                   }
                   return window.__slice1aChangedOriginalFetch(...args);
                 };
+                """,
+                original_resume_session,
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            failed_cancel_events = WebDriverWait(driver, 30).until(
+                lambda current: (
+                    events
+                    if (
+                        events
+                        := current.execute_script(
+                            "return window.__slice1aChangedEvents;"
+                        )
+                    )
+                    and (
+                        current.find_element(
+                            By.CSS_SELECTOR, "[data-upload-form]"
+                        ).get_attribute("aria-busy")
+                        is None
+                        or current.execute_script(
+                            "return window.__slice1aChangedBodies.length > 0;"
+                        )
+                    )
+                    else None
+                )
+            )
+            failed_cancel_checkpoint = driver.execute_script(
+                "return window.localStorage.getItem(arguments[0]);", resume_key
+            )
+            failed_cancel_bodies = driver.execute_script(
+                "return window.__slice1aChangedBodies;"
+            )
+            driver.execute_script(
                 """
+                window.fetch = window.__slice1aChangedOriginalFetch;
+                delete window.__slice1aChangedOriginalFetch;
+                """
+            )
+            _require(
+                failed_cancel_events == [{"kind": "cancel", "body": ""}]
+                and failed_cancel_bodies == []
+                and failed_cancel_checkpoint == saved_resume
+                and bench.workspace.upload_session(
+                    resume_matter.matter_id, ACTOR, original_resume_session
+                )[0].state
+                == "open"
+                and bench.workspace.pending_upload_bytes(resume_matter.matter_id)
+                == stale_pending_before
+                and len(
+                    bench.workspace.recent_upload_sessions(
+                        resume_matter.matter_id, ACTOR
+                    )
+                )
+                == sessions_before_changed_plan,
+                "failed stale-session cancellation cleared recovery state or started new work",
+            )
+
+            _replace_selection(driver, changed_input, [files[0], files[1]])
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).is_enabled()
+                and current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 2 ready files"
+            )
+            driver.execute_script(
+                """
+                window.__slice1aChangedOriginalFetch = window.fetch;
+                window.__slice1aChangedEvents = [];
+                window.__slice1aChangedBodies = [];
+                const staleSessionId = arguments[0];
+                window.fetch = (...args) => {
+                  const url = String(args[0]);
+                  const method = String(args[1]?.method || 'GET').toUpperCase();
+                  if (url.includes(`/upload-sessions/${staleSessionId}/cancel`) && method === 'POST') {
+                    window.__slice1aChangedEvents.push({
+                      kind: 'cancel',
+                      body: String(args[1]?.body || ''),
+                    });
+                  } else if (url.endsWith('/upload-sessions') && method === 'POST') {
+                    window.__slice1aChangedEvents.push({ kind: 'create' });
+                    window.__slice1aChangedBodies.push(JSON.parse(String(args[1].body)));
+                  }
+                  if (method === 'PUT') {
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aChangedOriginalFetch(...args);
+                };
+                """,
+                original_resume_session,
             )
             driver.execute_script(
                 "arguments[0].click();",
@@ -1921,6 +2053,9 @@ def main() -> int:
                     else None
                 )
             )
+            changed_events = driver.execute_script(
+                "return window.__slice1aChangedEvents;"
+            )
             changed_saved = json.loads(
                 WebDriverWait(driver, 30).until(
                     lambda current: current.execute_script(
@@ -1930,9 +2065,25 @@ def main() -> int:
                 )
             )
             _require(
-                changed_body["resume_session_id"] == ""
+                changed_events
+                == [
+                    {"kind": "cancel", "body": ""},
+                    {"kind": "create"},
+                ]
+                and changed_body["resume_session_id"] == ""
                 and changed_body["collection_id"] == ""
+                and changed_body["files"][0]["relative_path"]
+                == "incident-notes.txt"
                 and changed_saved["collection_id"] != original_resume_collection
+                and changed_saved["session_id"] != original_resume_session
+                and bench.workspace.upload_session(
+                    resume_matter.matter_id, ACTOR, original_resume_session
+                )[0].state
+                == "cancelled"
+                and bench.workspace.pending_upload_bytes(resume_matter.matter_id)
+                == stale_pending_before
+                - stale_session_before.total_bytes
+                + sum(path.stat().st_size for path in files[:2])
                 and len(
                     bench.workspace.recent_upload_sessions(
                         resume_matter.matter_id, ACTOR
@@ -1945,7 +2096,7 @@ def main() -> int:
                     )
                 )
                 == 1,
-                "changed eligible subset did not start once in a new collection",
+                "changed plan did not release its live stale reservation before batch-zero recovery",
             )
 
             javascript_errors = [
@@ -1956,6 +2107,7 @@ def main() -> int:
             _require(not javascript_errors, f"browser JavaScript errors: {javascript_errors}")
             report["checks"] = [
                 "real matter creation and setup route",
+                "folder chooser is hidden without JavaScript and revealed when enhanced",
                 "metadata-only API before bytes",
                 "malformed or contradictory scanner projections fail the preview closed",
                 "response-originated display paths never reach rendered output",
@@ -1975,7 +2127,8 @@ def main() -> int:
                 "keyboard confirmation uploads only the two eligible files",
                 "retained upload path reports malformed PDF as partial",
                 "exact-plan cross-refresh resume and one-shot mismatch recovery",
-                "changed eligible subset clears stale resume identifiers",
+                "failed stale-session cancellation preserves recovery state and starts no work",
+                "changed plan cancels its live stale reservation before fresh batch-zero recovery",
                 "collection-only checkpoint cannot skip batch zero or mutate a stale collection",
                 "cancelled later-batch checkpoint retries once from a fresh collection",
                 "exact partial checkpoint advances without duplicating its completed batch",

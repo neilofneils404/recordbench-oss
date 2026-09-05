@@ -657,6 +657,7 @@ def test_setup_exposes_review_before_upload_and_no_script_fallback(tmp_path):
     assert 'data-upload-preflight' in response.text
     assert 'data-upload-preflight-items' in response.text
     assert 'data-upload-preflight-confirm' in response.text
+    assert 'class="choose-folder-action" data-folder-chooser hidden' in response.text
     assert "Review selected files" in response.text
     assert "Upload 0 ready files" in response.text
     assert "Without JavaScript, the retained direct upload is limited to 1–10 files per request." in response.text

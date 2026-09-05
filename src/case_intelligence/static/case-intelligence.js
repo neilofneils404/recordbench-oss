@@ -302,6 +302,7 @@
   const uploadDrop = document.querySelector("[data-upload-drop]");
   const fileInput = document.querySelector("[data-file-input]");
   const folderInput = document.querySelector("[data-folder-input]");
+  const folderChooser = document.querySelector("[data-folder-chooser]");
   const fileSummary = document.querySelector("[data-file-summary]");
   const uploadCollectionName = document.querySelector("[data-upload-collection-name]");
   const uploadProgress = document.querySelector("[data-upload-progress]");
@@ -354,6 +355,8 @@
     const dot = normalized.lastIndexOf(".");
     return dot >= 0 && securityCheckedSuffixes.has(normalized.slice(dot + 1));
   };
+
+  if (folderInput && folderChooser) folderChooser.hidden = false;
 
   const formatBytes = (value) => {
     if (!Number.isFinite(value) || value <= 0) return "0 B";
@@ -1071,7 +1074,6 @@
 
   const uploadPlanFingerprint = async (batches) => {
     if (!window.crypto?.subtle || typeof TextEncoder === "undefined") {
-      clearUploadResumeState();
       return "";
     }
     const plan = batches.map((batch) => batch.map((file) => ({
@@ -1088,14 +1090,13 @@
       );
       return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
     } catch (_error) {
-      clearUploadResumeState();
       return "";
     }
   };
 
   const readUploadResumeState = (planFingerprint, batchCount) => {
-    const empty = { session_id: "", collection_id: "", batch_index: 0 };
-    if (!uploadSessionKey || !planFingerprint) return empty;
+    const empty = { session_id: "", collection_id: "", batch_index: 0, stale: false };
+    if (!uploadSessionKey) return empty;
     try {
       const parsed = JSON.parse(window.localStorage.getItem(uploadSessionKey) || "null");
       const sessionId = String(parsed?.session_id || "");
@@ -1104,10 +1105,9 @@
       const collectionIdValid = /^source-collection-[0-9a-f]{32}$/.test(collectionId);
       if (
         parsed?.version === 3
-        && parsed.plan_fingerprint === planFingerprint
+        && /^[0-9a-f]{64}$/.test(String(parsed.plan_fingerprint || ""))
         && Number.isSafeInteger(parsed.batch_index)
         && parsed.batch_index >= 0
-        && parsed.batch_index < batchCount
         && sessionIdValid
         && collectionIdValid
       ) {
@@ -1115,6 +1115,11 @@
           session_id: sessionId,
           collection_id: collectionId,
           batch_index: parsed.batch_index,
+          stale: (
+            !planFingerprint
+            || parsed.plan_fingerprint !== planFingerprint
+            || parsed.batch_index >= batchCount
+          ),
         };
       }
     } catch (_error) {
@@ -1122,6 +1127,39 @@
     }
     clearUploadResumeState();
     return empty;
+  };
+
+  const reconcileStaleUploadResumeState = async (resumeState) => {
+    if (!resumeState.stale) return resumeState;
+    const sessionRoot = String(uploadForm?.dataset.sessionUrl || "").replace(/\/+$/, "");
+    const failureMessage = "The earlier interrupted upload could not be released. Retry this selection before starting new work.";
+    if (!sessionRoot) throw new Error(failureMessage);
+    try {
+      const response = await fetch(
+        `${sessionRoot}/${encodeURIComponent(resumeState.session_id)}/cancel`,
+        {
+          method: "POST",
+          headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+          cache: "no-store",
+          signal: uploadAbortController.signal,
+        },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (
+        !response.ok
+        || payload.upload_session_id !== resumeState.session_id
+        || payload.collection_id !== resumeState.collection_id
+        || payload.state !== "cancelled"
+      ) {
+        throw new Error(failureMessage);
+      }
+    } catch (error) {
+      if (error.name === "AbortError") throw error;
+      throw new Error(failureMessage);
+    }
+    clearUploadResumeState();
+    activeUpload = null;
+    return { session_id: "", collection_id: "", batch_index: 0, stale: false };
   };
 
   const writeUploadResumeState = (planFingerprint, sessionId, collectionId, batchIndex) => {
@@ -1172,6 +1210,7 @@
     if (uploadStatus) uploadStatus.textContent = "Creating a durable queue for the selected records.";
     let resumeState = readUploadResumeState(planFingerprint, uploadBatches.length);
     try {
+      resumeState = await reconcileStaleUploadResumeState(resumeState);
       let retriedFresh = false;
       while (true) {
         let collectionId = resumeState.collection_id;
