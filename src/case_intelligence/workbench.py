@@ -9533,7 +9533,8 @@ def create_workbench_app(
             ),
         )
         try:
-            result["matter_capacity"] = bench.upload_preflight_capacity_projection(
+            result["matter_capacity"] = await run_in_threadpool(
+                bench.upload_preflight_capacity_projection,
                 matter,
                 context.principal_id,
                 checkpoint_session_id=checkpoint_session_id,

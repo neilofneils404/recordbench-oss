@@ -74,6 +74,26 @@ class RaisingStatusScanner(UnavailableCountingScanner):
         raise OSError("synthetic scanner status failure")
 
 
+class EventLoopLivenessCapacityProbe:
+    def __init__(self) -> None:
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.released_by_loop = False
+        self.timed_out = False
+
+    def __call__(self, _matter_id: str) -> int:
+        assert self.loop is not None
+        released = threading.Event()
+
+        def release() -> None:
+            self.released_by_loop = True
+            released.set()
+
+        self.loop.call_soon_threadsafe(release)
+        if not released.wait(1):
+            self.timed_out = True
+        return 0
+
+
 def _matter(client: TestClient, name: str = "Synthetic preflight matter") -> str:
     response = client.post(
         "/matters",
@@ -218,6 +238,36 @@ def test_selection_preflight_scanner_status_does_not_block_the_event_loop(tmp_pa
     assert scanner.released_by_loop is True
     assert scanner.timed_out is False
     assert response.json()["eligible_indexes"] == [0]
+
+
+def test_selection_preflight_capacity_projection_does_not_block_event_loop(
+    tmp_path, monkeypatch
+):
+    scanner = ReadyCountingScanner()
+    capacity_probe = EventLoopLivenessCapacityProbe()
+    app = _app(tmp_path, scanner)
+
+    @app.middleware("http")
+    async def capture_event_loop(request, call_next):
+        capacity_probe.loop = asyncio.get_running_loop()
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        slug = _matter(client)
+        monkeypatch.setattr(
+            client.app.state.workbench.storage,
+            "matter_payload_usage_bytes",
+            capacity_probe,
+        )
+        response = client.post(
+            f"/matters/{slug}/upload-preflight",
+            json={"files": [{"name": "notes.txt", "size": 12}]},
+        )
+
+    assert response.status_code == 200
+    assert capacity_probe.released_by_loop is True
+    assert capacity_probe.timed_out is False
+    assert response.json()["matter_capacity"]["used_bytes"] == 0
 
 
 def test_selection_preflight_preserves_unavailable_scanner_status_projection(tmp_path):
