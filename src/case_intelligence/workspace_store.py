@@ -6190,7 +6190,7 @@ class WorkspaceStore:
                 "WHEN i.state IN ('failed','cancelled') THEN 'attention' "
                 "WHEN i.document_id IS NULL THEN i.state "
                 "WHEN c.source_state='ready' THEN 'ready' "
-                "WHEN c.source_state IN ('failed','needs_ocr','changed','missing') "
+                "WHEN c.source_state IN ('failed','needs_ocr','changed','missing','needs_review','playback_only') "
                 "THEN 'attention' "
                 "WHEN mj.state IN ('succeeded','degraded') THEN 'ready' "
                 "WHEN mj.state='failed' THEN 'attention' "

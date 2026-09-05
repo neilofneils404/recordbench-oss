@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import wave
+import pytest
 from pathlib import Path
 
 from case_intelligence.media_preflight import inspect_recording
@@ -370,3 +371,71 @@ def test_late_speech_keeps_transcript_citations_and_exports_on_original_time(tmp
         exported = client.get(f"/matters/{slug}/sources/{token}/transcript-export?format=srt")
         assert exported.status_code == 200
         assert "00:00:30,000 --> 00:00:32,000" in exported.text
+
+
+@pytest.mark.parametrize('outcome', ['no_audio', 'no_speech', 'uncertain', 'failed'])
+def test_held_resumable_upload_finishes_processing(tmp_path, monkeypatch, outcome):
+    import case_intelligence.media_evidence as module
+    result = {'outcome': outcome, 'complete': True, 'quality': [], 'language': 'not_assessed'}
+    monkeypatch.setattr(module, 'inspect_recording', lambda *a, **kw: dict(result))
+    source = tmp_path / 'quiet.wav'
+    silence(source)
+    body = source.read_bytes()
+    processor = ObservedProcessor()
+    with TestClient(app_for(tmp_path / 'runtime', processor, background=True)) as client:
+        slug = _matter(client)
+        created = client.post(f'/matters/{slug}/upload-sessions', json={
+            'collection_name': 'Synthetic recordings', 'files': [{
+                'name': source.name, 'relative_path': source.name,
+                'size': len(body), 'media_type': 'audio/wav'}]})
+        assert created.status_code == 201
+        item = created.json()['items'][0]
+        assert client.put(item['chunk_url'], content=body, headers={
+            'Content-Type': 'application/octet-stream', 'X-Upload-Offset': '0'}).status_code == 200
+        finalized = client.post(item['finalize_url'])
+        assert finalized.status_code == 200
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = next(iter(bench.source_store(matter).documents.values()))
+        wait_job(bench, matter, document)
+        payload = client.get(finalized.json()['status_url']).json()
+        compact = client.get(finalized.json()['status_url'] + '?compact=true').json()
+        assert compact['work_complete'] is True
+        assert compact['processing_count'] == 0
+        assert compact['attention_count'] == 1
+        assert payload['work_complete'] is True
+        assert payload['processing_count'] == payload['ready_count'] == 0
+        assert payload['attention_count'] == 1
+        assert payload['items'][0]['work_state'] == 'attention'
+        assert processor.submissions == 0
+
+
+def test_recording_decision_remains_in_activity_after_navigation(tmp_path):
+    source = tmp_path / 'quiet.wav'
+    silence(source)
+    with TestClient(app_for(tmp_path / 'runtime', ObservedProcessor())) as client:
+        slug = _matter(client, 'Synthetic pending recording')
+        bench, matter, document, _ = upload(client, slug, source)
+        wait_job(bench, matter, document)
+        page = client.get(f'/matters/{slug}')
+        assert 'data-activity-badge >1</strong>' in page.text
+        other = _matter(client, 'Synthetic other matter')
+        assert client.get(f'/matters/{other}/home').status_code == 200
+        activity = client.get(f'/activity?matter={other}')
+        assert 'Synthetic pending recording' in activity.text
+        assert 'data-attention-count="1"' in activity.text
+        assert 'Needs review' in activity.text
+
+
+def test_recording_decision_panel_is_actionable_before_javascript(tmp_path):
+    source = tmp_path / 'quiet.wav'
+    silence(source)
+    with TestClient(app_for(tmp_path / 'runtime', ObservedProcessor())) as client:
+        slug = _matter(client)
+        bench, matter, document, _ = upload(client, slug, source)
+        wait_job(bench, matter, document)
+        page = client.get(f'/matters/{slug}')
+        panel = page.text.split('data-media-activity-list>')[1].split('</section>')[0]
+        assert 'media-activity-marker attention' in panel
+        assert '>Review recording</a>' in panel
+        assert 'processing-pulse' not in panel

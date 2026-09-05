@@ -5794,7 +5794,7 @@ def create_workbench_app(
         """Project content-minimized work status across a member's matters."""
 
         active_states = {"queued", "running"}
-        attention_states = {"failed"}
+        attention_states = {"failed", "needs_review"}
         items: list[dict[str, object]] = []
         active_count = 0
         attention_count = 0
@@ -5832,7 +5832,7 @@ def create_workbench_app(
                 active_count += 1
             elif state in attention_states:
                 tone = "attention"
-                state_label = "Needs attention"
+                state_label = "Needs review" if state == "needs_review" else "Needs attention"
                 attention_count += 1
             elif state == "cancelled":
                 tone = "quiet"
@@ -5863,6 +5863,7 @@ def create_workbench_app(
             if matter.slug == active_slug or readiness["state"] in {
                 "preparing",
                 "attention",
+                "review",
             }:
                 readiness_state = str(readiness["state"])
                 append_item(
@@ -5875,6 +5876,8 @@ def create_workbench_app(
                         if readiness_state == "preparing"
                         else "failed"
                         if readiness_state == "attention"
+                        else "needs_review"
+                        if readiness_state == "review"
                         else "ready"
                         if readiness_state == "ready"
                         else "saved"
@@ -6046,6 +6049,7 @@ def create_workbench_app(
         if active_readiness is not None and active_readiness["state"] in {
             "preparing",
             "attention",
+            "review",
         }:
             initial_activity_count += 1
         if assistant and assistant["active_answer"]:

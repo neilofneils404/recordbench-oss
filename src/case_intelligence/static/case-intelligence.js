@@ -2069,7 +2069,7 @@
       const marker = document.createElement("span");
       marker.className = ["queued", "running"].includes(item.state)
         ? "processing-pulse"
-        : item.state === "failed"
+        : ["failed", "needs_review"].includes(item.state)
           ? "media-activity-marker attention"
           : "media-activity-marker ready";
       marker.setAttribute("aria-hidden", "true");
@@ -2086,9 +2086,11 @@
       link.href = item.review_url;
       link.textContent = item.state === "failed"
         ? "Review issue"
-        : ["succeeded", "degraded"].includes(item.state)
-          ? "Open transcript"
-          : "View status";
+        : item.state === "needs_review"
+          ? "Review recording"
+          : ["succeeded", "degraded"].includes(item.state)
+            ? "Open transcript"
+            : "View status";
       row.append(marker, copy, link);
       mediaActivityList.append(row);
     });
@@ -2096,7 +2098,7 @@
       mediaActivityNote.textContent = active
         ? "This progress is saved. You may leave this conversation and return later."
         : attention
-          ? "Open the recording to review the failure and try again."
+          ? "Open the recording to review its status and choose the next step."
           : "The transcript is now searchable and ready beside the recording.";
     }
   };

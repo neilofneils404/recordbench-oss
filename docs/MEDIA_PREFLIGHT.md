@@ -100,7 +100,10 @@ noise, clipping, absent capability, partial/multiple-track checks, original-byte
 explicit and duplicate decisions, repeated upload admission, source tampering,
 cross-matter denial, restart, interrupted work, stopped-state backup/restore,
 non-searchability, original-time transcript citations/SRT, reserved inspection
-metadata and closure cleanup. It is separate from frozen acceptance packs.
+metadata and closure cleanup. Compact upload polling treats every held check as
+terminal review work. Pending decisions remain visible in global Activity after
+switching matters; initial and refreshed recording panels offer Review recording
+with an attention marker, without claiming transcript readiness. It is separate from frozen acceptance packs.
 
 The committed speech fixture is synthesized from invented text; its generation
 command is in `tests/fixtures/media-preflight/README.md`. On one development
@@ -117,7 +120,8 @@ for speech and can miss quiet/brief speech. This slice makes no validated
 intelligibility, language, forensic-integrity or exhaustive-review claim.
 
 `scripts/browser-accept-media-preflight.py` exercises real selection/confirmation,
-upload, video-only playback, failed-check retry, saved no-speech review, mobile
+upload completion, video-only playback, failed-check retry, saved no-speech review,
+recording-panel status and Activity after switching matters, mobile
 explicit continuation, original-byte submission and original-time seek/reload.
 It uses synthetic recordings and a deterministic transcription processor; it
 does not measure ASR accuracy. Supply Chrome/ChromeDriver and an output directory.

@@ -45,19 +45,19 @@
     {% if media_activity.active_count or media_activity.attention_count %}
     <section class="matter-media-activity" data-media-activity data-status-url="{{ media_activity.status_url }}" aria-live="polite" aria-labelledby="matter-media-activity-heading">
       <header>
-        <div><p class="eyebrow">Recordings</p><h2 id="matter-media-activity-heading" data-media-activity-title>Media processing</h2></div>
+        <div><p class="eyebrow">Recordings</p><h2 id="matter-media-activity-heading" data-media-activity-title>{{ 'Media processing' if media_activity.active_count else 'Media needs attention' }}</h2></div>
         <a href="{{ media_activity.library_url }}">Open recordings</a>
       </header>
       <div class="matter-media-activity-list" data-media-activity-list>
         {% for item in media_activity['items'] %}
         <article>
-          <span class="processing-pulse" aria-hidden="true"></span>
+          <span class="{{ 'processing-pulse' if item.state in ('queued', 'running') else 'media-activity-marker attention' if item.state in ('failed', 'needs_review') else 'media-activity-marker ready' }}" aria-hidden="true"></span>
           <div><strong>{{ item.source_name }}</strong><small>{{ item.stage }}{% if item.state in ('queued', 'running') %} · {{ (item.progress * 100)|round|int }}%{% endif %}</small></div>
-          <a href="{{ item.review_url }}">{{ 'Review issue' if item.state == 'failed' else 'View status' }}</a>
+          <a href="{{ item.review_url }}">{{ 'Review issue' if item.state == 'failed' else 'Review recording' if item.state == 'needs_review' else 'Open transcript' if item.state in ('succeeded', 'degraded') else 'View status' }}</a>
         </article>
         {% endfor %}
       </div>
-      <p data-media-activity-note>The workbench reports saved preparation stages. You may leave this conversation and return later.</p>
+      <p data-media-activity-note>{{ 'The workbench reports saved preparation stages. You may leave this conversation and return later.' if media_activity.active_count else 'Open the recording to review its status and choose the next step.' }}</p>
     </section>
     {% endif %}
 

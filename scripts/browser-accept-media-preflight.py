@@ -101,6 +101,7 @@ def main():
                 click("[data-upload-preflight-confirm]")
                 document = wait.until(lambda _: next((d for d in store.documents.values() if d.display_name == path.name), None))
                 wait.until(lambda _: document.state not in {"queued", "processing"})
+                wait.until(lambda d: "0 processing" in d.find_element(By.CSS_SELECTOR, "[data-upload-progress]").text)
                 token = store.action_token(document)
                 go(prefix + f"/sources/{token}")
                 wait.until(lambda d: d.find_elements(By.CSS_SELECTOR, "[data-recording-check]"))
@@ -131,6 +132,23 @@ def main():
             assert "No speech detected" in driver.find_element(By.CSS_SELECTOR, "[data-recording-check]").text
             assert processor.submissions == 0
             checks.append("Failed inspection has a working retry; a no-speech decision survives navigation/reload without submission")
+
+            go(prefix)
+            wait.until(lambda d: d.find_elements(By.CSS_SELECTOR, "[data-media-activity-list] .media-activity-marker.attention"))
+            panel = driver.find_element(By.CSS_SELECTOR, "[data-media-activity]")
+            assert "Review recording" in panel.text
+            assert "review the failure" not in panel.text
+            assert not panel.find_elements(By.CSS_SELECTOR, ".media-activity-marker.ready, .processing-pulse")
+            go("/matters/new")
+            driver.find_element(By.ID, "matter-name").send_keys("Synthetic second workspace")
+            click(".matter-form button[type=submit]")
+            wait.until(lambda d: "/setup" in d.current_url)
+            click("[data-activity-toggle]")
+            wait.until(lambda d: "Synthetic recording checks" in d.find_element(By.CSS_SELECTOR, "[data-activity-content]").text)
+            wait.until(lambda d: "needs review" in d.find_element(By.CSS_SELECTOR, "[data-activity-content]").text.lower())
+            assert int(driver.find_element(By.CSS_SELECTOR, "[data-activity-badge]").text) >= 1
+            go(prefix + f"/sources/{quiet_token}")
+            checks.append("Upload polling finishes after a held check; recording review stays actionable in its panel and global Activity after switching matters")
 
             driver.set_window_size(390, 844)
             toggle = driver.find_elements(By.CSS_SELECTOR, "[data-rail-toggle]")

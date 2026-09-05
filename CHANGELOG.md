@@ -5,7 +5,9 @@
 - 2026-09-05: Check audio and likely speech before transcription. Accept
   video-only playback, retain original recording timestamps/bytes, and hold
   no-speech, uncertain or failed checks for review/retry. Version-bound decisions
-  survive restart and reject stale/duplicate submissions. Bounded CPU VAD,
+  survive restart and reject stale/duplicate submissions. Upload polling finishes
+  on held checks, and pending recording decisions stay visible in Activity with
+  an actionable review marker. Bounded CPU VAD,
   low-volume/clipping findings and explicit unassessed language replace no
   existing transcription model. Synthetic workflow/browser and previous-reader
   checks cover the additive state; no persistent schema or deployment change.
