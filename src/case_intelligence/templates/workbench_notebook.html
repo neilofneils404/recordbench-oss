@@ -102,18 +102,7 @@
       {% if edit_item %}
       <section class="notebook-edit-panel" aria-labelledby="edit-notebook-heading">
         <div class="section-heading-row"><h2 id="edit-notebook-heading">Edit notebook item</h2><a href="/matters/{{ matter.slug }}/notebook#{{ edit_item.item_id }}">Cancel</a></div>
-        <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ edit_item.item_id }}" class="notebook-item-form" data-working-form data-working-label="Saving changes…">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <div class="notebook-form-row">
-            <label>Type<select name="item_type">{% for value in notebook_types %}<option value="{{ value }}" {% if edit_item.item_type == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
-            <label>Status<select name="status">{% for value in notebook_statuses %}<option value="{{ value }}" {% if edit_item.status == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
-          </div>
-          <label>Title<input name="title" value="{{ edit_item.title }}" maxlength="160" required></label>
-          <label>Date or time <span>(optional)</span><input name="date_label" value="{{ edit_item.date_label }}" maxlength="100"></label>
-          <label>Details<textarea name="body" maxlength="20000" rows="6">{{ edit_item.body }}</textarea></label>
-          <label class="notebook-check"><input type="checkbox" name="pinned" value="yes" {% if edit_item.is_pinned %}checked{% endif %}> Pin near the top</label>
-          <button class="button button-primary" type="submit">Save changes</button>
-        </form>
+        {% include "workbench_notebook_edit_form.html" %}
       </section>
       {% endif %}
 
@@ -138,14 +127,14 @@
             <span>Updated by {{ item.updated_by_name }} · <time datetime="{{ item.updated_at }}">{{ item.updated_at[:10] }}</time></span>
             <div class="notebook-item-actions">
               {% if item.status == 'suggested' %}
-              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="confirmed"><button type="submit" class="confirm-action">Confirm</button></form>
-              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="dismissed"><button type="submit">Dismiss</button></form>
+              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_updated_at" value="{{ item.updated_at }}"><input type="hidden" name="status" value="confirmed"><button type="submit" class="confirm-action">Confirm</button></form>
+              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_updated_at" value="{{ item.updated_at }}"><input type="hidden" name="status" value="dismissed"><button type="submit">Dismiss</button></form>
               {% elif item.status != 'confirmed' and item.status != 'dismissed' %}
-              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="confirmed"><button type="submit" class="confirm-action">Confirm</button></form>
+              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_updated_at" value="{{ item.updated_at }}"><input type="hidden" name="status" value="confirmed"><button type="submit" class="confirm-action">Confirm</button></form>
               {% endif %}
               <a href="/matters/{{ matter.slug }}/notebook?edit={{ item.item_id }}#edit-notebook-heading">Edit</a>
               <a href="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/export?format=docx" data-download>Export</a>
-              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/delete" data-confirm="Permanently delete this notebook item? Its source material and prior conversations will not be deleted."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="danger-link">Delete</button></form>
+              <form method="post" action="/matters/{{ matter.slug }}/notebook/items/{{ item.item_id }}/delete" data-confirm="Permanently delete this notebook item? Its source material and prior conversations will not be deleted."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_updated_at" value="{{ item.updated_at }}"><button type="submit" class="danger-link">Delete</button></form>
             </div>
           </footer>
         </article>

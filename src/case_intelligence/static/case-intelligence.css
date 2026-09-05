@@ -7904,3 +7904,10 @@ body.activity-open .activity-drawer { transform: translateX(0); }
   .matter-danger-zone { align-items: stretch; flex-direction: column; }
   .matter-danger-zone > .button { justify-content: center; }
 }
+
+.notebook-recovery-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+.notebook-recovery-columns > * { min-width: 0; overflow-wrap: anywhere; }
+.notebook-recovery .notebook-body { white-space: pre-wrap; }
+.notebook-recovery .notebook-item-form { grid-template-columns: minmax(0, 1fr); }
+.notebook-recovery .notebook-item-form > * { grid-column: 1; }
+@media (max-width: 760px) { .notebook-recovery-columns { grid-template-columns: minmax(0, 1fr); } }

@@ -1,0 +1,13 @@
+        <form method="post" {% if can_save|default(true) %}action="/matters/{{ matter.slug }}/notebook/items/{{ edit_item.item_id }}"{% endif %} class="notebook-item-form" data-working-form data-working-label="Saving changes…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="expected_updated_at" value="{{ edit_revision|default(edit_item.updated_at) }}">
+          <div class="notebook-form-row">
+            <label>Type<select name="item_type">{% for value in notebook_types %}<option value="{{ value }}" {% if edit_item.item_type == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
+            <label>Status<select name="status">{% for value in notebook_statuses %}<option value="{{ value }}" {% if edit_item.status == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
+          </div>
+          <label>Title<input name="title" value="{{ edit_item.title }}" maxlength="160" required></label>
+          <label>Date or time <span>(optional)</span><input name="date_label" value="{{ edit_item.date_label }}" maxlength="100"></label>
+          <label>Details<textarea name="body" maxlength="20000" rows="6">{{ edit_item.body }}</textarea></label>
+          <label class="notebook-check"><input type="checkbox" name="pinned" value="yes" {% if edit_item.is_pinned %}checked{% endif %}> Pin near the top</label>
+          {% if can_save|default(true) %}<button class="button button-primary" type="submit">Save changes</button>{% else %}<p>Copy your unsaved text before leaving this page.</p>{% endif %}
+        </form>

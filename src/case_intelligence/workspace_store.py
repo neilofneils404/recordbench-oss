@@ -99,6 +99,10 @@ class MatterNameConflict(WorkspaceProblem):
     """The name displayed when the edit began is no longer current."""
 
 
+class NotebookEditConflict(WorkspaceProblem):
+    """A case note changed after its form was displayed."""
+
+
 @dataclass(frozen=True)
 class MatterRecord:
     matter_id: str
@@ -7851,12 +7855,35 @@ class WorkspaceStore:
             ).fetchall()
         return tuple(self._notebook_item(row) for row in rows)
 
+    def _notebook_item_for_edit_locked(
+        self, matter_id: str, actor_id: str, item_id: str, expected_updated_at: str,
+    ) -> NotebookItemRecord:
+        # Callers hold an immediate transaction across the final authority and
+        # revision checks and the mutation, including independent connections.
+        self.membership(matter_id, actor_id)
+        if not _NOTEBOOK_ITEM.fullmatch(item_id):
+            raise KeyError(item_id)
+        current = self._notebook_item_by_id_locked(matter_id, item_id)
+        if not expected_updated_at or expected_updated_at != current.updated_at:
+            raise NotebookEditConflict(
+                "This case note changed since the page was opened. "
+                "Review the saved note before trying again."
+            )
+        return current
+
+    def _notebook_edit_time(self, current: NotebookItemRecord) -> str:
+        # Existing timestamps are also edit tokens. Advance even if the clock
+        # repeats or moves backwards so an earlier form cannot become current.
+        previous = datetime.fromisoformat(current.updated_at.replace("Z", "+00:00"))
+        return self._timestamp(max(self.current_time(), previous + timedelta(microseconds=1)))
+
     def update_notebook_item(
         self,
         matter_id: str,
         actor_id: str,
         item_id: str,
         *,
+        expected_updated_at: str,
         item_type: str,
         status: str,
         title: str,
@@ -7864,9 +7891,6 @@ class WorkspaceStore:
         date_label: str = "",
         pinned: bool = False,
     ) -> NotebookItemRecord:
-        actor = self.membership(matter_id, actor_id).principal_id
-        if not _NOTEBOOK_ITEM.fullmatch(item_id):
-            raise KeyError(item_id)
         kind = self._notebook_choice(item_type, NOTEBOOK_TYPES, "type")
         state = self._notebook_choice(status, NOTEBOOK_STATUSES, "status")
         heading = self._safe_text(title, label="Notebook title", maximum=160)
@@ -7878,57 +7902,50 @@ class WorkspaceStore:
         )
         if kind in {"date", "event"} and not (content or date_value):
             raise WorkspaceProblem("Add a date or details for this notebook item.")
-        now = self._now()
         with self._lock, self.connection:
-            changed = self.connection.execute(
+            self.connection.execute("BEGIN IMMEDIATE")
+            current = self._notebook_item_for_edit_locked(matter_id, actor_id, item_id, expected_updated_at)
+            now = self._notebook_edit_time(current)
+            self.connection.execute(
                 "UPDATE workbench_notebook_item SET item_type=?,status=?,title=?,body=?,"
                 "date_label=?,is_pinned=?,updated_by=?,updated_at=? "
                 "WHERE matter_id=? AND item_id=?",
-                (
-                    kind, state, heading, content, date_value, 1 if pinned else 0,
-                    actor, now, matter_id, item_id,
-                ),
-            ).rowcount
-            if changed != 1:
-                raise KeyError(item_id)
+                (kind, state, heading, content, date_value, 1 if pinned else 0,
+                 actor_id, now, matter_id, item_id),
+            )
             self.connection.execute(
-                "UPDATE workbench_matter SET updated_at=? WHERE matter_id=?",
-                (now, matter_id),
+                "UPDATE workbench_matter SET updated_at=? WHERE matter_id=?", (now, matter_id),
             )
             return self._notebook_item_by_id_locked(matter_id, item_id)
 
     def set_notebook_item_status(
-        self, matter_id: str, actor_id: str, item_id: str, status: str
+        self, matter_id: str, actor_id: str, item_id: str, status: str, *, expected_updated_at: str,
     ) -> NotebookItemRecord:
-        current = self.notebook_item(matter_id, actor_id, item_id)
-        return self.update_notebook_item(
-            matter_id,
-            actor_id,
-            item_id,
-            item_type=current.item_type,
-            status=status,
-            title=current.title,
-            body=current.body,
-            date_label=current.date_label,
-            pinned=bool(current.is_pinned),
-        )
+        state = self._notebook_choice(status, NOTEBOOK_STATUSES, "status")
+        with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            current = self._notebook_item_for_edit_locked(matter_id, actor_id, item_id, expected_updated_at)
+            now = self._notebook_edit_time(current)
+            self.connection.execute(
+                "UPDATE workbench_notebook_item SET status=?,updated_by=?,updated_at=? "
+                "WHERE matter_id=? AND item_id=?", (state, actor_id, now, matter_id, item_id),
+            )
+            self.connection.execute(
+                "UPDATE workbench_matter SET updated_at=? WHERE matter_id=?", (now, matter_id),
+            )
+            return self._notebook_item_by_id_locked(matter_id, item_id)
 
     def delete_notebook_item(
-        self, matter_id: str, actor_id: str, item_id: str
+        self, matter_id: str, actor_id: str, item_id: str, *, expected_updated_at: str,
     ) -> NotebookItemRecord:
-        actor = self.membership(matter_id, actor_id).principal_id
-        current = self.notebook_item(matter_id, actor, item_id)
-        now = self._now()
         with self._lock, self.connection:
-            changed = self.connection.execute(
-                "DELETE FROM workbench_notebook_item WHERE matter_id=? AND item_id=?",
-                (matter_id, item_id),
-            ).rowcount
-            if changed != 1:
-                raise KeyError(item_id)
+            self.connection.execute("BEGIN IMMEDIATE")
+            current = self._notebook_item_for_edit_locked(matter_id, actor_id, item_id, expected_updated_at)
             self.connection.execute(
-                "UPDATE workbench_matter SET updated_at=? WHERE matter_id=?",
-                (now, matter_id),
+                "DELETE FROM workbench_notebook_item WHERE matter_id=? AND item_id=?", (matter_id, item_id),
+            )
+            self.connection.execute(
+                "UPDATE workbench_matter SET updated_at=? WHERE matter_id=?", (self._now(), matter_id),
             )
         return current
 

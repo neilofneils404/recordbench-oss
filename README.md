@@ -34,6 +34,10 @@ workflows use local models for retrieval, answers, and media transcription.
 | **Organize the work** | Shared matters with owner/admin renaming, attributed activity, notes, people, places, dates, and report drafting. |
 | **Take work product with you** | Export conversations, transcripts, summaries, clips, notebooks, and reports. Complete matter bundles include every saved draft and final Report in Word and Markdown. |
 
+Case-note edits preserve unsaved fields when another team member has changed
+the note. Confirm/Delete actions also require the version just reviewed. See
+[shared note editing and recovery](docs/CASE_NOTE_EDITING.md).
+
 Matter owners and administrators can rename a matter in **Settings**. Stale edits
 keep the proposed name for review; existing source links and saved work remain
 available. See the [matter settings contract](docs/MATTER_SETTINGS.md).

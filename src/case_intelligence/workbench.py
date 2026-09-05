@@ -174,6 +174,7 @@ from .workspace_store import (
     TranscriptSegmentRecord,
     UploadItemRecord,
     WorkspaceProblem,
+    NotebookEditConflict,
     WorkspaceStore,
 )
 from .workflow_jobs import (
@@ -12813,6 +12814,35 @@ def create_workbench_app(
             status_code=303,
         )
 
+    def notebook_edit_recovery(
+        request: Request, slug: str, item_id: str, *, error: str,
+        draft: Mapping[str, object] | None = None, status_code: int = 409,
+    ):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        try:
+            current = bench.workspace.notebook_item(matter.matter_id, context.principal_id, item_id)
+            references = bench.workspace.notebook_references(matter.matter_id, context.principal_id, item_id)
+        except KeyError:
+            # Recheck matter authority before retaining the submitted draft for
+            # a deleted note. Never recreate a deleted item or its source links.
+            matter = authorized_matter(request, slug)
+            current, references = None, ()
+            error = "This case note was deleted. Your unsaved text is below." if draft else "This case note is no longer available."
+        return templates.TemplateResponse(
+            request=request, name="workbench_notebook_edit_recovery.html",
+            context={
+                **base_context(request, matter), "matter": matter,
+                "current_item": current, "edit_item": draft,
+                "edit_revision": current.updated_at if current else "",
+                "can_save": current is not None, "error": error,
+                "notebook_types": NOTEBOOK_TYPES, "notebook_statuses": NOTEBOOK_STATUSES,
+                "references": references,
+                "available_support_tokens": bench.available_notebook_support_tokens(matter, references),
+            },
+            status_code=status_code, headers={"Cache-Control": "no-store"},
+        )
+
     @app.post(
         "/matters/{slug}/notebook/items/{item_id}",
         dependencies=[Depends(require_csrf)],
@@ -12827,10 +12857,13 @@ def create_workbench_app(
         body: str = Form("", max_length=20_000),
         date_label: str = Form("", max_length=100),
         pinned: str = Form("", max_length=8),
+        expected_updated_at: str = Form("", max_length=64),
     ):
         context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        draft = dict(item_id=item_id, item_type=item_type, status=status, title=title,
+                     body=body, date_label=date_label, is_pinned=pinned == "yes")
         try:
-            matter = authorized_matter(request, slug)
             item = bench.workspace.update_notebook_item(
                 matter.matter_id,
                 context.principal_id,
@@ -12841,15 +12874,14 @@ def create_workbench_app(
                 body=body,
                 date_label=date_label,
                 pinned=pinned == "yes",
+                expected_updated_at=expected_updated_at,
             )
-        except KeyError as exc:
-            raise HTTPException(404, "Matter notebook item not found") from exc
+        except KeyError:
+            return notebook_edit_recovery(request, slug, item_id, error="Case note unavailable.", draft=draft)
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(
-                    f"/matters/{slug}/notebook", edit=item_id, error=str(exc)
-                ),
-                status_code=303,
+            return notebook_edit_recovery(
+                request, slug, item_id, error=str(exc), draft=draft,
+                status_code=409 if isinstance(exc, NotebookEditConflict) else 400,
             )
         audit(
             request,
@@ -12876,19 +12908,21 @@ def create_workbench_app(
         slug: str,
         item_id: str,
         status: str = Form(..., max_length=24),
+        expected_updated_at: str = Form("", max_length=64),
     ):
         context = auth_context(request)
         try:
             matter = authorized_matter(request, slug)
             item = bench.workspace.set_notebook_item_status(
-                matter.matter_id, context.principal_id, item_id, status
+                matter.matter_id, context.principal_id, item_id, status,
+                expected_updated_at=expected_updated_at
             )
         except KeyError as exc:
             raise HTTPException(404, "Matter notebook item not found") from exc
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(f"/matters/{slug}/notebook", error=str(exc)),
-                status_code=303,
+            return notebook_edit_recovery(
+                request, slug, item_id, error=str(exc),
+                status_code=409 if isinstance(exc, NotebookEditConflict) else 400,
             )
         audit(
             request,
@@ -12910,15 +12944,21 @@ def create_workbench_app(
         "/matters/{slug}/notebook/items/{item_id}/delete",
         dependencies=[Depends(require_csrf)],
     )
-    def delete_notebook_item(request: Request, slug: str, item_id: str):
+    def delete_notebook_item(
+        request: Request, slug: str, item_id: str,
+        expected_updated_at: str = Form("", max_length=64),
+    ):
         context = auth_context(request)
         try:
             matter = authorized_matter(request, slug)
             item = bench.workspace.delete_notebook_item(
-                matter.matter_id, context.principal_id, item_id
+                matter.matter_id, context.principal_id, item_id,
+                expected_updated_at=expected_updated_at
             )
         except KeyError as exc:
             raise HTTPException(404, "Matter notebook item not found") from exc
+        except WorkspaceProblem as exc:
+            return notebook_edit_recovery(request, slug, item_id, error=str(exc))
         audit(
             request,
             "notebook.item_delete",

@@ -1,0 +1,36 @@
+{% extends "workbench_base.html" %}
+{% block title %}Review case note changes · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}notebook-page{% endblock %}
+{% block content %}
+<main class="notebook-shell notebook-recovery">
+  <header class="matter-heading notebook-heading">
+    <div><p class="eyebrow">Case notes</p><h1>Review changes</h1><p>{{ matter.display_name }}</p></div>
+    <a class="button button-secondary" href="/matters/{{ matter.slug }}/notebook">Return to case notes</a>
+  </header>
+  <div class="notice notice-error" role="alert">{{ error }}</div>
+  <div class="notebook-recovery-columns">
+    {% if current_item %}
+    <section class="notebook-edit-panel" aria-labelledby="saved-note-heading">
+      <h2 id="saved-note-heading">Current saved note</h2>
+      <p>Updated by {{ current_item.updated_by_name }} · <time datetime="{{ current_item.updated_at }}">{{ current_item.updated_at[:10] }}</time></p>
+      <h3>{{ current_item.title }}</h3>
+      <p>{{ current_item.item_type|replace('_', ' ')|title }} · {{ current_item.status|replace('_', ' ')|title }}{% if current_item.is_pinned %} · Pinned{% endif %}</p>
+      {% if current_item.date_label %}<p>{{ current_item.date_label }}</p>{% endif %}
+      <p class="notebook-body">{{ current_item.body }}</p>
+      {% if references %}<div class="notebook-provenance"><strong>Source support</strong>
+        {% for reference in references %}
+        {% if reference.support_token in available_support_tokens %}<a href="/matters/{{ matter.slug }}?support={{ reference.support_token }}#support-pane"><span>{{ reference.source_name }}</span><small>{{ reference.location }}</small></a>{% else %}<span>{{ reference.source_name }} · {{ reference.location }} · source unavailable</span>{% endif %}
+        {% endfor %}
+      </div>{% endif %}
+    </section>
+    {% endif %}
+    {% if edit_item %}
+    <section class="notebook-edit-panel" aria-labelledby="unsaved-note-heading">
+      <h2 id="unsaved-note-heading">Your unsaved changes</h2>
+      {% if current_item %}<p>Compare your changes with the saved note. Adjust the fields below, then save when ready.</p>{% endif %}
+      {% include "workbench_notebook_edit_form.html" %}
+    </section>
+    {% else %}<p>Return to case notes to review the current version before trying the action again.</p>{% endif %}
+  </div>
+</main>
+{% endblock %}

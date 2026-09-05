@@ -48,3 +48,11 @@ The current-name comparison, active principal/matter and owner membership
 checks, update, and content-free audit share an immediate control-database
 transaction. Exact-name deletion confirmation serializes with that transaction.
 No source identities, access grants, or external files change.
+
+## Shared note mutations
+
+[Case-note editing](CASE_NOTE_EDITING.md) rechecks active principal, membership,
+matter and item identity with the displayed update token inside an immediate
+transaction for edit, review and deletion. Tokens convey no access. Missing or
+stale forms cannot overwrite, approve or delete newer text; recovery preserves
+submitted edits only within the authorized matter. No note text is added to audit.

@@ -92,10 +92,11 @@ def test_notebook_crud_provenance_isolation_and_answer_snapshot(tmp_path):
             item_type="person",
             status="confirmed",
             title="Cross-matter write",
+            expected_updated_at=item.updated_at,
         )
 
     confirmed = store.set_notebook_item_status(
-        matter.matter_id, ACTOR, item.item_id, "confirmed"
+        matter.matter_id, ACTOR, item.item_id, "confirmed", expected_updated_at=item.updated_at
     )
     assert confirmed.status == "confirmed"
     page = store.notebook_page(
@@ -115,7 +116,7 @@ def test_notebook_crud_provenance_isolation_and_answer_snapshot(tmp_path):
     mode, snapshot = store.answer_notebook_context(matter.matter_id, job.job_id)
     assert mode == "confirmed"
     assert [entry.title for entry in snapshot] == ["Officer Jane Rivera"]
-    store.update_notebook_item(
+    revised = store.update_notebook_item(
         matter.matter_id,
         ACTOR,
         item.item_id,
@@ -123,9 +124,10 @@ def test_notebook_crud_provenance_isolation_and_answer_snapshot(tmp_path):
         status="disputed",
         title="Officer Jane Rivera — disputed",
         body="The saved scope must not mutate.",
+        expected_updated_at=confirmed.updated_at,
     )
     assert store.answer_notebook_context(matter.matter_id, job.job_id)[1][0].title == "Officer Jane Rivera"
-    store.delete_notebook_item(matter.matter_id, ACTOR, item.item_id)
+    store.delete_notebook_item(matter.matter_id, ACTOR, item.item_id, expected_updated_at=revised.updated_at)
     assert store.notebook_page(matter.matter_id, ACTOR).total == 0
     assert store.answer_notebook_context(matter.matter_id, job.job_id)[1][0].title == "Officer Jane Rivera"
 
@@ -266,7 +268,7 @@ def test_notebook_web_capture_review_context_suggestions_and_exports(tmp_path):
         )
         confirmed = client.post(
             f"/matters/{slug}/notebook/items/{saved_item.item_id}/status",
-            data={"status": "confirmed"},
+            data={"status": "confirmed", "expected_updated_at": saved_item.updated_at},
             follow_redirects=False,
         )
         assert confirmed.status_code == 303

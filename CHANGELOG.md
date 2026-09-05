@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-05: Protect shared case notes from stale edits, review actions and
+  deletions. Recovery shows current saved text and retains all unsaved fields;
+  repeated conflicts remain safe, and deleted notes are not recreated.
+  Status-only changes no longer rewrite note text. Existing update timestamps
+  advance monotonically as required edit tokens, with active membership and
+  matter checks inside each mutation transaction. No schema change; current
+  attribution, exact source support, frozen answer context and exports remain.
+
 - 2026-09-05: Owners and administrators can rename active matters in Settings.
   Stale forms retain the proposed name with a current-name conflict; team views
   and new exports use the saved name while URLs, sources, citations, and work
