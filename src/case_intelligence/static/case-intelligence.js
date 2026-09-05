@@ -998,11 +998,8 @@
       const parsed = JSON.parse(window.localStorage.getItem(uploadSessionKey) || "null");
       const sessionId = String(parsed?.session_id || "");
       const collectionId = String(parsed?.collection_id || "");
-      const sessionIdValid = !sessionId || /^upload-session-[0-9a-f]{32}$/.test(sessionId);
-      const collectionIdValid = !collectionId || /^source-collection-[0-9a-f]{32}$/.test(collectionId);
-      const linkageValid = parsed?.batch_index === 0
-        ? Boolean(sessionId) === Boolean(collectionId)
-        : Boolean(collectionId);
+      const sessionIdValid = /^upload-session-[0-9a-f]{32}$/.test(sessionId);
+      const collectionIdValid = /^source-collection-[0-9a-f]{32}$/.test(collectionId);
       if (
         parsed?.version === 3
         && parsed.plan_fingerprint === planFingerprint
@@ -1011,7 +1008,6 @@
         && parsed.batch_index < batchCount
         && sessionIdValid
         && collectionIdValid
-        && linkageValid
       ) {
         return {
           session_id: sessionId,
@@ -1028,6 +1024,15 @@
 
   const writeUploadResumeState = (planFingerprint, sessionId, collectionId, batchIndex) => {
     if (!uploadSessionKey || !planFingerprint) return;
+    if (
+      !/^upload-session-[0-9a-f]{32}$/.test(sessionId)
+      || !/^source-collection-[0-9a-f]{32}$/.test(collectionId)
+      || !Number.isSafeInteger(batchIndex)
+      || batchIndex < 0
+    ) {
+      clearUploadResumeState();
+      return;
+    }
     try {
       window.localStorage.setItem(uploadSessionKey, JSON.stringify({
         version: 3,
@@ -1106,14 +1111,6 @@
             );
             renderUpload(activeUpload);
             await runUploadQueue(selectedUploadFiles);
-            if (activeUploadBatchIndex + 1 < uploadBatches.length) {
-              writeUploadResumeState(
-                planFingerprint,
-                "",
-                collectionId,
-                activeUploadBatchIndex + 1,
-              );
-            }
           }
           break;
         } catch (error) {

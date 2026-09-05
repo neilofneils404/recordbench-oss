@@ -131,6 +131,7 @@ def _synthetic_selection(
     *,
     long_paths: bool,
     cross_boundary_duplicate: bool = True,
+    file_size: int = 1,
 ) -> dict[str, int]:
     return driver.execute_script(
         """
@@ -138,6 +139,7 @@ def _synthetic_selection(
         const count = arguments[1];
         const longPaths = arguments[2];
         const crossBoundaryDuplicate = arguments[3];
+        const fileSize = arguments[4];
         const transfer = new DataTransfer();
         const segments = ["a", "b", "c", "d"].map((value) => value.repeat(180));
         const descriptors = [];
@@ -147,7 +149,7 @@ def _synthetic_selection(
           if (crossBoundaryDuplicate && count > 2000 && index === 2000) name = "STRASSE.txt";
           const folder = longPaths ? `Production/${segments.join("/")}` : "Production";
           const relativePath = `${folder}/${name}`;
-          const file = new File(["x"], name, {
+          const file = new File(["x".repeat(fileSize)], name, {
             type: "text/plain",
             lastModified: 1700000000000 + index,
           });
@@ -173,7 +175,52 @@ def _synthetic_selection(
         count,
         long_paths,
         cross_boundary_duplicate,
+        file_size,
     )
+
+
+def _upload_plan_fingerprint(driver: webdriver.Chrome, input_element) -> str:
+    fingerprint = driver.execute_async_script(
+        """
+        const input = arguments[0];
+        const done = arguments[arguments.length - 1];
+        const form = document.querySelector('[data-upload-form]');
+        const maximumItems = Number(form.dataset.maxUploadBatchItems);
+        const maximumBytes = Number(form.dataset.maxCollectionBytes);
+        const batches = [];
+        let batch = [];
+        let bytes = 0;
+        Array.from(input.files).forEach((file) => {
+          if (batch.length && (batch.length >= maximumItems || bytes + file.size > maximumBytes)) {
+            batches.push(batch);
+            batch = [];
+            bytes = 0;
+          }
+          batch.push(file);
+          bytes += file.size;
+        });
+        if (batch.length) batches.push(batch);
+        const plan = batches.map((files) => files.map((file) => ({
+          name: String(file.name || '').normalize('NFC'),
+          relative_path: String(file.webkitRelativePath || file.name || '').normalize('NFC'),
+          size: Number(file.size),
+          media_type: String(file.type || '').trim().toLowerCase(),
+          last_modified: Number(file.lastModified),
+        })));
+        crypto.subtle.digest(
+          'SHA-256',
+          new TextEncoder().encode(JSON.stringify({ version: 1, batches: plan })),
+        ).then((digest) => done(
+          Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
+        )).catch((error) => done({ error: String(error) }));
+        """,
+        input_element,
+    )
+    _require(
+        isinstance(fingerprint, str) and len(fingerprint) == 64,
+        "browser could not reproduce the deterministic upload-plan fingerprint",
+    )
+    return fingerprint
 
 
 def _parse_args() -> argparse.Namespace:
@@ -508,6 +555,18 @@ def main() -> int:
                 """
             )
 
+            checkpoint_matter = bench.create_matter(
+                "Synthetic multi-batch checkpoint matter",
+                "Generated resume checkpoint isolation acceptance",
+                ACTOR,
+            )
+            driver.get(f"{base_url}/matters/{checkpoint_matter.slug}/setup")
+            file_input = wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-file-input]"
+                )
+            )
+            panel = driver.find_element(By.CSS_SELECTOR, "[data-upload-preflight]")
             _synthetic_selection(
                 driver,
                 file_input,
@@ -521,48 +580,40 @@ def main() -> int:
                 ).text
                 == "Upload 2,001 ready files"
             )
-            corrupt_plan_fingerprint = driver.execute_async_script(
-                """
-                const input = arguments[0];
-                const done = arguments[arguments.length - 1];
-                const form = document.querySelector('[data-upload-form]');
-                const maximumItems = Number(form.dataset.maxUploadBatchItems);
-                const maximumBytes = Number(form.dataset.maxCollectionBytes);
-                const batches = [];
-                let batch = [];
-                let bytes = 0;
-                Array.from(input.files).forEach((file) => {
-                  if (batch.length && (batch.length >= maximumItems || bytes + file.size > maximumBytes)) {
-                    batches.push(batch);
-                    batch = [];
-                    bytes = 0;
-                  }
-                  batch.push(file);
-                  bytes += file.size;
-                });
-                if (batch.length) batches.push(batch);
-                const plan = batches.map((files) => files.map((file) => ({
-                  name: String(file.name || '').normalize('NFC'),
-                  relative_path: String(file.webkitRelativePath || file.name || '').normalize('NFC'),
-                  size: Number(file.size),
-                  media_type: String(file.type || '').trim().toLowerCase(),
-                  last_modified: Number(file.lastModified),
-                })));
-                crypto.subtle.digest(
-                  'SHA-256',
-                  new TextEncoder().encode(JSON.stringify({ version: 1, batches: plan })),
-                ).then((digest) => done(
-                  Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
-                )).catch((error) => done({ error: String(error) }));
-                """,
-                file_input,
+            corrupt_plan_fingerprint = _upload_plan_fingerprint(driver, file_input)
+            stale_files = [
+                {
+                    "display_name": f"record-{ordinal:05d}.txt",
+                    "relative_path": f"Production/record-{ordinal:05d}.txt",
+                    "media_type": "text/plain",
+                    "expected_size": 1,
+                }
+                for ordinal in range(512, 1_024)
+            ]
+            stale_session, _ = bench.create_upload_session(
+                checkpoint_matter,
+                ACTOR,
+                "Synthetic cancelled resume checkpoint",
+                stale_files,
             )
-            _require(
-                isinstance(corrupt_plan_fingerprint, str)
-                and len(corrupt_plan_fingerprint) == 64,
-                "browser could not reproduce the deterministic upload-plan fingerprint",
+            bench.workspace.cancel_upload_session(
+                checkpoint_matter.matter_id, ACTOR, stale_session.upload_session_id
             )
-            upload_session_key = f"case-intelligence:upload:{slug}"
+            stale_session, _ = bench.workspace.upload_session(
+                checkpoint_matter.matter_id, ACTOR, stale_session.upload_session_id
+            )
+            stale_collections = bench.workspace.source_collections(
+                checkpoint_matter.matter_id
+            )
+            stale_sessions = bench.workspace.recent_upload_sessions(
+                checkpoint_matter.matter_id, ACTOR
+            )
+            stale_collection = bench.workspace.source_collection(
+                checkpoint_matter.matter_id, stale_session.collection_id
+            )
+            upload_session_key = (
+                f"case-intelligence:upload:{checkpoint_matter.slug}"
+            )
             driver.execute_script(
                 "window.localStorage.setItem(arguments[0], arguments[1]);",
                 upload_session_key,
@@ -571,7 +622,7 @@ def main() -> int:
                         "version": 3,
                         "plan_fingerprint": corrupt_plan_fingerprint,
                         "session_id": "",
-                        "collection_id": "",
+                        "collection_id": stale_session.collection_id,
                         "batch_index": 1,
                     }
                 ),
@@ -614,13 +665,19 @@ def main() -> int:
                 and corrupt_body["files"][0]["relative_path"].endswith(
                     "/record-00000.txt"
                 )
+                and bench.workspace.source_collections(checkpoint_matter.matter_id)
+                == stale_collections
+                and bench.workspace.recent_upload_sessions(
+                    checkpoint_matter.matter_id, ACTOR
+                )
+                == stale_sessions
                 and len(
                     driver.execute_script(
                         "return window.__slice1aCorruptBodies;"
                     )
                 )
                 == 1,
-                "corrupt matching-fingerprint resume state skipped the first batch",
+                "collection-only matching-fingerprint state skipped batch zero or mutated its stale collection",
             )
             driver.execute_script(
                 """
@@ -637,6 +694,306 @@ def main() -> int:
                 ).get_attribute("aria-busy")
                 is None
             )
+
+            _synthetic_selection(
+                driver,
+                file_input,
+                2_001,
+                long_paths=False,
+                cross_boundary_duplicate=False,
+            )
+            WebDriverWait(driver, 60).until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).is_enabled()
+                and current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 2,001 ready files"
+            )
+            driver.execute_script(
+                "window.localStorage.setItem(arguments[0], arguments[1]);",
+                upload_session_key,
+                json.dumps(
+                    {
+                        "version": 3,
+                        "plan_fingerprint": corrupt_plan_fingerprint,
+                        "session_id": stale_session.upload_session_id,
+                        "collection_id": stale_session.collection_id,
+                        "batch_index": 1,
+                    }
+                ),
+            )
+            driver.execute_script(
+                """
+                window.__slice1aCancelledOriginalFetch = window.fetch;
+                window.__slice1aCancelledBodies = [];
+                window.fetch = (...args) => {
+                  const method = String(args[1]?.method || 'GET').toUpperCase();
+                  if (String(args[0]).includes('/upload-sessions') && method === 'POST') {
+                    window.__slice1aCancelledBodies.push(JSON.parse(String(args[1].body)));
+                  }
+                  if (method === 'PUT') {
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aCancelledOriginalFetch(...args);
+                };
+                """
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            cancelled_bodies = WebDriverWait(driver, 30).until(
+                lambda current: (
+                    bodies
+                    if len(
+                        bodies
+                        := current.execute_script(
+                            "return window.__slice1aCancelledBodies;"
+                        )
+                    )
+                    == 2
+                    else None
+                )
+            )
+            recovered_checkpoint = json.loads(
+                WebDriverWait(driver, 30).until(
+                    lambda current: (
+                        value
+                        if (
+                            value
+                            := current.execute_script(
+                                "return window.localStorage.getItem(arguments[0]);",
+                                upload_session_key,
+                            )
+                        )
+                        and json.loads(value)["session_id"]
+                        != stale_session.upload_session_id
+                        else None
+                    )
+                )
+            )
+            _require(
+                cancelled_bodies[0]["resume_session_id"]
+                == stale_session.upload_session_id
+                and cancelled_bodies[0]["collection_id"]
+                == stale_session.collection_id
+                and cancelled_bodies[0]["files"][0]["relative_path"].endswith(
+                    "/record-00512.txt"
+                )
+                and cancelled_bodies[1]["resume_session_id"] == ""
+                and cancelled_bodies[1]["collection_id"] == ""
+                and cancelled_bodies[1]["files"][0]["relative_path"].endswith(
+                    "/record-00000.txt"
+                )
+                and recovered_checkpoint["batch_index"] == 0
+                and recovered_checkpoint["collection_id"]
+                != stale_session.collection_id
+                and bench.workspace.source_collection(
+                    checkpoint_matter.matter_id, stale_session.collection_id
+                )
+                == stale_collection
+                and len(
+                    bench.workspace.recent_upload_sessions(
+                        checkpoint_matter.matter_id, ACTOR
+                    )
+                )
+                == len(stale_sessions) + 1,
+                "cancelled later-batch checkpoint did not retry once from a new batch-zero collection",
+            )
+
+            partial_matter = bench.create_matter(
+                "Synthetic partial checkpoint matter",
+                "Generated completed-batch advancement acceptance",
+                ACTOR,
+            )
+            partial_key = f"case-intelligence:upload:{partial_matter.slug}"
+            driver.get(f"{base_url}/matters/{partial_matter.slug}/setup")
+            partial_input = wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-file-input]"
+                )
+            )
+            _synthetic_selection(
+                driver,
+                partial_input,
+                5,
+                long_paths=False,
+                cross_boundary_duplicate=False,
+                file_size=128,
+            )
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 5 ready files"
+            )
+            partial_fingerprint = _upload_plan_fingerprint(driver, partial_input)
+            partial_session, partial_items = bench.create_upload_session(
+                partial_matter,
+                ACTOR,
+                "Synthetic partial first batch",
+                [
+                    {
+                        "display_name": f"record-{ordinal:05d}.txt",
+                        "relative_path": f"Production/record-{ordinal:05d}.txt",
+                        "media_type": "text/plain",
+                        "expected_size": 128,
+                    }
+                    for ordinal in range(4)
+                ],
+            )
+            for item in partial_items:
+                bench.workspace.fail_upload_item(
+                    partial_matter.matter_id,
+                    ACTOR,
+                    partial_session.upload_session_id,
+                    item.upload_item_id,
+                    "Synthetic completed-batch failure",
+                )
+            partial_session, partial_items = bench.workspace.upload_session(
+                partial_matter.matter_id,
+                ACTOR,
+                partial_session.upload_session_id,
+            )
+            _require(
+                partial_session.state == "partial"
+                and all(item.state == "failed" for item in partial_items),
+                "synthetic partial checkpoint was not prepared",
+            )
+            driver.execute_script(
+                "window.localStorage.setItem(arguments[0], arguments[1]);",
+                partial_key,
+                json.dumps(
+                    {
+                        "version": 3,
+                        "plan_fingerprint": partial_fingerprint,
+                        "session_id": partial_session.upload_session_id,
+                        "collection_id": partial_session.collection_id,
+                        "batch_index": 0,
+                    }
+                ),
+            )
+            driver.execute_script(
+                """
+                window.__slice1aPartialOriginalFetch = window.fetch;
+                window.__slice1aPartialBodies = [];
+                window.fetch = (...args) => {
+                  const method = String(args[1]?.method || 'GET').toUpperCase();
+                  if (String(args[0]).includes('/upload-sessions') && method === 'POST') {
+                    window.__slice1aPartialBodies.push(JSON.parse(String(args[1].body)));
+                  }
+                  if (method === 'PUT') {
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aPartialOriginalFetch(...args);
+                };
+                """
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            partial_bodies = WebDriverWait(driver, 30).until(
+                lambda current: (
+                    bodies
+                    if len(
+                        bodies
+                        := current.execute_script(
+                            "return window.__slice1aPartialBodies;"
+                        )
+                    )
+                    == 2
+                    else None
+                )
+            )
+            advanced_checkpoint = json.loads(
+                WebDriverWait(driver, 30).until(
+                    lambda current: (
+                        value
+                        if (
+                            value
+                            := current.execute_script(
+                                "return window.localStorage.getItem(arguments[0]);",
+                                partial_key,
+                            )
+                        )
+                        and json.loads(value)["session_id"]
+                        != partial_session.upload_session_id
+                        else None
+                    )
+                )
+            )
+            _require(
+                partial_bodies[0]["resume_session_id"]
+                == partial_session.upload_session_id
+                and partial_bodies[0]["collection_id"]
+                == partial_session.collection_id
+                and len(partial_bodies[0]["files"]) == 4
+                and partial_bodies[1]["resume_session_id"] == ""
+                and partial_bodies[1]["collection_id"]
+                == partial_session.collection_id
+                and len(partial_bodies[1]["files"]) == 1
+                and partial_bodies[1]["files"][0]["relative_path"].endswith(
+                    "/record-00004.txt"
+                )
+                and advanced_checkpoint["batch_index"] == 1
+                and advanced_checkpoint["collection_id"]
+                == partial_session.collection_id
+                and advanced_checkpoint["session_id"]
+                != partial_session.upload_session_id
+                and bench.workspace.upload_session(
+                    partial_matter.matter_id,
+                    ACTOR,
+                    partial_session.upload_session_id,
+                )[0].state
+                == "partial"
+                and len(
+                    bench.workspace.recent_upload_sessions(
+                        partial_matter.matter_id, ACTOR
+                    )
+                )
+                == 2,
+                "exact partial checkpoint was duplicated or did not advance to the next batch",
+            )
+
+            driver.get(f"{base_url}/matters/{slug}/setup")
+            file_input = wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-file-input]"
+                )
+            )
+            panel = driver.find_element(By.CSS_SELECTOR, "[data-upload-preflight]")
+            if "assistant-collapsed" not in driver.find_element(
+                By.TAG_NAME, "body"
+            ).get_attribute("class").split():
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-assistant-collapse]"
+                ).click()
+                wait.until(
+                    lambda current: "assistant-collapsed"
+                    in current.find_element(By.TAG_NAME, "body")
+                    .get_attribute("class")
+                    .split()
+                )
+            _network_urls(driver)
 
             status_calls_before_preview = scanner.status_calls
             driver.execute_script("arguments[0].focus({preventScroll: true});", file_input)
@@ -1224,7 +1581,9 @@ def main() -> int:
                 "retained upload path reports malformed PDF as partial",
                 "exact-plan cross-refresh resume and one-shot mismatch recovery",
                 "changed eligible subset clears stale resume identifiers",
-                "corrupt matching-fingerprint resume state cannot skip batch zero",
+                "collection-only checkpoint cannot skip batch zero or mutate a stale collection",
+                "cancelled later-batch checkpoint retries once from a fresh collection",
+                "exact partial checkpoint advances without duplicating its completed batch",
                 "desktop and 390px mobile views have no horizontal overflow",
                 "no severe browser JavaScript error",
             ]
