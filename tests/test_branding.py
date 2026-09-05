@@ -31,6 +31,7 @@ def test_recordbench_identity_is_consistent_across_health_login_and_mark(tmp_pat
         assert f"Sign in · {PRODUCT_NAME}" in login.text
         assert PRODUCT_TAGLINE in login.text
         assert 'class="login-brand-mark"' in login.text
+        assert login.text.count("/static/favicon.svg?v=stacked-record-1") == 2
         assert "Choose a preview identity" in login.text
         assert "Temporary evaluation access" in login.text
         assert "Choosing a synthetic identity is not authentication" in login.text
@@ -50,3 +51,6 @@ def test_recordbench_identity_is_consistent_across_health_login_and_mark(tmp_pat
         if "{% block title %}" in text:
             title = text.split("{% block title %}", 1)[1].split("{% endblock %}", 1)[0]
             assert "product_name" in title, path.name
+
+    workbench_base = (TEMPLATES / "workbench_base.html").read_text(encoding="utf-8")
+    assert workbench_base.count("favicon.svg') }}?v=stacked-record-1") == 2

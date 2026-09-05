@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Versioned the stacked-record favicon and application-mark URLs so browsers
+  cannot retain the superseded monogram after an upgrade.
 - Recovered an interrupted Review Map refresh as a visible, retryable failure
   on application restart so abandoned analysis state cannot block safe matter
   closure indefinitely; completed work and prior review decisions stay intact.

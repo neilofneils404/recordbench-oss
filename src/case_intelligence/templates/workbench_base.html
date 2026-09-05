@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}{{ product_name }}{% endblock %}</title>
-  <link rel="icon" href="{{ url_for('static', path='favicon.svg') }}">
+  <link rel="icon" href="{{ url_for('static', path='favicon.svg') }}?v=stacked-record-1">
   <link rel="stylesheet" href="{{ url_for('static', path='case-intelligence.css') }}">
   <script src="{{ url_for('static', path='case-intelligence.js') }}" defer></script>
 </head>
@@ -16,7 +16,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
       <a class="brand" href="/" aria-label="{{ product_name }} home">
-        <img class="brand-mark" src="{{ url_for('static', path='favicon.svg') }}" alt="">
+        <img class="brand-mark" src="{{ url_for('static', path='favicon.svg') }}?v=stacked-record-1" alt="">
         <span>{{ product_name }}</span>
       </a>
     </div>
