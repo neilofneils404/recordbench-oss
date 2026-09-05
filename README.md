@@ -1,45 +1,42 @@
-<p align="center">
-  <img src="src/case_intelligence/static/favicon.svg" width="104" alt="RecordBench logo">
-</p>
+<h1 align="center">
+  <img src="docs/assets/recordbench-banner.svg" width="1040" alt="RecordBench. Review the record. Build the work.">
+</h1>
 
-<h1 align="center">RecordBench</h1>
+<p align="center"><strong>Local-first discovery and case review for defense teams.</strong></p>
 
-<p align="center"><strong>Review sensitive records while keeping the sources in view.</strong></p>
+Discovery arrives in folders. Understanding a case takes more.
 
-RecordBench is a self-hosted workspace for legal and investigation teams. It
-brings documents, images, email, spreadsheets, audio, and video into one
-temporary matter workspace where a team can search, review, ask questions,
-organize findings, and export its work.
+RecordBench is a self-hosted workspace being built for the work of federal
+criminal defense. It brings documents, images, email, spreadsheets, audio,
+and video into one place to search, review, ask questions, and develop work
+product with the source material close at hand.
 
-RecordBench is designed to run on infrastructure you control. Source material
-and local AI requests do not need to be sent to a commercial cloud service.
+The aim is practical: help attorneys, investigators, and support staff turn
+unorganized discovery into a clearer understanding of the case. The same
+tools can support other legal and investigation teams.
 
-> **Alpha software:** RecordBench is a prerelease project. It is not yet a
-> self-service production release. Test it with synthetic material and validate
-> installation, security, backup, restore, and model behavior before using
-> confidential records.
+RecordBench is designed to run on infrastructure you control. Its bundled AI
+workflows use local models for retrieval, answers, and media transcription.
 
-## What you can do
+> **Development alpha:** Start with synthetic material. RecordBench is not yet
+> a self-service production release or validated for confidential casework.
+> See [release readiness](docs/RELEASE_READINESS.md) for the validation still
+> ahead.
 
-- Create private matters with individual membership, administrator oversight,
-  session identity, and attributed audit history.
-- Upload individual files or a folder containing PDFs, Word documents, text,
-  email, spreadsheets, images, audio, and video.
-- Scan every upload with ClamAV before it enters a matter.
-- Extract existing text and apply OCR to scanned pages and images.
-- Transcribe audio and video, optionally separate speakers, follow the
-  transcript during playback, and open cited moments at the relevant time.
-- Review the record in one saved conversation: ask a focused question,
-  investigate more deeply, and refine the cited result without starting over.
-- Check every source against a defined criterion as a specialized task while
-  preserving the frozen population, coverage, and human-review status.
-- Keep conversations, notes, people, places, dates, reports, and other work
-  product organized inside the matter.
-- Export answers, conversations, transcripts, summaries, clips, notebooks,
-  reports, and complete matter work product.
-- Manage temporary matters from one place. Matter owners and RecordBench
-  administrators can export, then deliberately close and delete a matter when
-  the work is finished.
+## What you can explore today
+
+| Workflow | Current capabilities |
+| --- | --- |
+| **Bring records together** | File and folder uploads, malware scanning, text extraction, and bounded OCR. |
+| **Review documents and media** | Source browsing, word and meaning-based search, timestamped transcripts, playback, and clips. |
+| **Ask questions with sources in view** | Local AI answers and follow-up conversations with citations and coverage information. |
+| **Screen a collection** | Apply a criterion to a frozen source population, then inspect coverage and human-review status. |
+| **Organize the work** | Shared matters, attributed activity, notes, people, places, dates, and report drafting. |
+| **Take work product with you** | Export conversations, transcripts, summaries, clips, notebooks, and individual reports. |
+
+AI availability depends on the selected deployment profile. OCR, transcription,
+source screening, and generated answers require human review. A completed task
+does not establish that every page was read or every relevant fact was found.
 
 ## Review without choosing a processing mode
 
@@ -98,11 +95,13 @@ Models are run locally after a one-time staging step. Runtime model containers
 are configured for offline operation. Diarization is optional because its
 upstream model terms require separate acceptance.
 
-## Minimum recommended hardware
+## Hardware planning targets
 
-These are straightforward starting recommendations for the alpha. They are not
-collection-size or concurrency guarantees; larger matters, longer recordings,
-and more simultaneous users need additional storage and capacity.
+These are starting targets for alpha evaluation, not validated minimums or
+collection-size and concurrency guarantees. Larger matters, longer recordings,
+and more simultaneous users need additional storage and capacity. Consult
+[release readiness](docs/RELEASE_READINESS.md) before treating a configuration
+as supported.
 
 | Intended use | CPU | RAM | NVIDIA GPU | Free SSD before matter data |
 | --- | ---: | ---: | --- | ---: |
@@ -112,9 +111,9 @@ and more simultaneous users need additional storage and capacity.
 
 Use a modern x86-64 Linux host with Docker Engine and Docker Compose v2. GPU
 profiles require an NVIDIA card with compute capability 7.5 or newer and the
-NVIDIA Container Toolkit. One suitable GPU is enough to begin; additional GPUs
-can separate generation, transcription, and retrieval work. They improve
-capacity but do not change the available workflows.
+NVIDIA Container Toolkit. The intended deployment model supports one suitable
+GPU, with additional GPUs separating generation, transcription, and retrieval
+work. Each configuration still needs deployment validation.
 
 Matter storage may be a dedicated local path or a host-mounted NAS path. The
 free-space figures above still need room for container images, model files,
@@ -167,9 +166,11 @@ isolated restore testing, and versioned updates:
 
 ## Data and repository boundaries
 
-RecordBench is a temporary review workspace. Matter bytes live under the
+The current alpha uses temporary review workspaces. Matter bytes live under the
 operator-selected managed storage path. Closing a matter can permanently
-remove that workspace, so users should export anything they need to retain.
+remove that workspace, so users should export and verify anything they need to
+retain. Export authored reports individually; the current final matter bundle
+does not include their saved contents and is not a reopenable case package.
 Deletion refuses active work, requires the exact matter name plus a permanent
 deletion acknowledgement, preserves originals outside RecordBench, and leaves
 only content-minimized attributed audit and closure records.
@@ -177,13 +178,42 @@ only content-minimized attributed audit and closure records.
 No case data, organization secrets, internal accounts, private deployment
 coordinates, certificates, or credentials belong in this repository.
 
+## Where this is going
+
+The long-term goal is a first-class discovery workspace that an office can
+install, operate, and make its own.
+
+- Guided intake that helps a team understand what arrived, what processed,
+  and what still needs attention.
+- Durable team matters and temporary review matters, chosen per matter,
+  with complete, reopenable case packages.
+- Relativity-style load file imports and exports.
+- Connected people, places, events, and timelines with reviewable links to
+  the source record.
+- Local AI first, with optional frontier models controlled per matter.
+- Installation and recovery that another office can follow without private
+  deployment knowledge.
+
+These are development goals. They are not all available in the current alpha.
+
+## Help build it
+
+Useful contributions include synthetic discovery examples, clear descriptions
+of review tasks, reproducible bugs, accessibility feedback, documentation,
+and clean-host installation results. A small, well-described problem is a good
+place to start. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development
+workflow, and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+
+Use invented examples. Keep case material, private logs, and deployment
+details out of issues, pull requests, and screenshots.
+
 ## Project status
 
-`0.1.0-alpha.2` is a private publication candidate. The repository remains
-private while clean-host installation, licensing, ownership, recovery, and
-external review requirements are completed. See
-[release readiness](docs/RELEASE_READINESS.md) and the
-[publication checklist](docs/PUBLICATION_CHECKLIST.md) for the remaining work.
+RecordBench is a prerelease project in active alpha development. The repository
+remains private while publication review and release requirements are completed. Sharing the
+source and supporting confidential casework each require the evidence described
+in [release readiness](docs/RELEASE_READINESS.md) and the
+[publication checklist](docs/PUBLICATION_CHECKLIST.md).
 
 ## Documentation
 
@@ -196,10 +226,10 @@ external review requirements are completed. See
 - [Storage, backup, and restore](docs/STORAGE_AND_BACKUP.md)
 - [Security model](docs/SECURITY_MODEL.md)
 - [Release readiness](docs/RELEASE_READINESS.md)
+- [Brand assets and project copy](docs/BRANDING.md)
 
 ## License
 
-The intended project license is Apache-2.0; see [LICENSE](LICENSE). Publication
-remains gated on confirmation that the contributing organization may release
-all first-party code and that every bundled dependency and model notice is
-complete.
+RecordBench is licensed under [Apache-2.0](LICENSE). Dependencies, containers,
+and models retain their respective licenses and terms. Their notice inventory
+remains part of the [publication review](docs/PUBLICATION_CHECKLIST.md).
