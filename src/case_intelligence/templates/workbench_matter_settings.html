@@ -9,7 +9,7 @@
     <div>
       <p class="eyebrow">Matter settings</p>
       <h1>{{ matter.display_name }}</h1>
-      <p>Review access, retention, export, and permanent closure from one place.</p>
+      <p>Manage the matter name, access, review period, and work-product export.</p>
     </div>
     <a class="button button-secondary" href="/matters/{{ matter.slug }}/home">Return to matter</a>
   </header>
@@ -18,11 +18,26 @@
   {% if administrator_override %}
   <div class="notice notice-neutral administrator-authority-notice" role="status">
     <strong>Administrator authority</strong>
-    <span>{{ owner_name }} owns this matter. You may close it without joining the case team, and the permanent action will be attributed to your account.</span>
+    <span>{{ owner_name }} owns this matter. You may rename or close it without joining the case team. These actions are attributed to your account.</span>
   </div>
   {% endif %}
 
+  {% if notice %}<div class="notice notice-neutral" role="status">{{ notice }}</div>{% endif %}
   <div class="matter-settings-grid">
+    {% if (membership and membership.role == 'owner') or is_administrator %}
+    <section class="matter-settings-card" aria-labelledby="rename-settings-heading">
+      <h2 id="rename-settings-heading">Rename matter</h2>
+      <p>The new name appears for everyone on the case team.</p>
+      {% if rename_error %}<p class="notice notice-error" id="rename-error" role="alert">{{ rename_error }}</p>{% endif %}
+      <form id="rename-matter-form" method="post" action="/matters/{{ matter.slug }}/rename" data-working-form data-working-label="Saving…">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="expected_name" value="{{ matter.display_name }}">
+        <label for="matter-name">Matter name</label>
+        <input id="matter-name" name="name" type="text" value="{{ proposed_name }}" maxlength="140" required{% if rename_error %} aria-invalid="true" aria-describedby="rename-error"{% endif %}>
+        <button class="button button-primary" type="submit">Save matter name</button>
+      </form>
+    </section>
+    {% endif %}
     <section class="matter-settings-card" aria-labelledby="lifecycle-settings-heading">
       <p class="eyebrow">Temporary lifecycle</p>
       <h2 id="lifecycle-settings-heading">Review period</h2>

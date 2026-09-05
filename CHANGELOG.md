@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-05: Owners and administrators can rename active matters in Settings.
+  Stale forms retain the proposed name with a current-name conflict; team views
+  and new exports use the saved name while URLs, sources, citations, and work
+  retain their identities. Rename and content-free audit commit together.
+  Exact-name closure serializes with rename across database connections.
+  Synthetic permission, rollback, concurrency, browser, source, and export
+  checks cover the change without schema or dependency changes.
+
 - 2026-09-05: Check audio and likely speech before transcription. Accept
   video-only playback, retain original recording timestamps/bytes, and hold
   no-speech, uncertain or failed checks for review/retry. Version-bound decisions

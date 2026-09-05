@@ -149,6 +149,7 @@ from .workspace_store import (
     MatterLifecycleRecord,
     MatterReadinessRecord,
     MatterRecord,
+    MatterNameConflict,
     MatterRetentionRecord,
     MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS,
     MediaClipRecord,
@@ -7597,10 +7598,12 @@ def create_workbench_app(
             headers={"Cache-Control": "no-store"},
         )
 
-    @app.get("/matters/{slug}/settings", response_class=HTMLResponse)
-    def matter_settings(request: Request, slug: str):
+    def render_matter_settings(
+        request: Request, slug: str, *, proposed_name: str | None = None,
+        rename_error: str = "", notice: str = "", status_code: int = 200,
+    ):
         context = auth_context(request)
-        matter = authorized_matter(request, slug)
+        matter = authorized_matter(request, slug, allow_administrator_write=True)
         owner = bench.workspace.get_principal(matter.owner_id)
         administrator_override = bool(
             context.is_administrator and matter.owner_id != context.principal_id
@@ -7627,9 +7630,43 @@ def create_workbench_app(
                 "matter": matter,
                 "owner_name": owner.display_name,
                 "administrator_override": administrator_override,
+                "proposed_name": matter.display_name if proposed_name is None else proposed_name,
+                "rename_error": rename_error,
+                "notice": notice,
             },
+            status_code=status_code,
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.get("/matters/{slug}/settings", response_class=HTMLResponse)
+    def matter_settings(request: Request, slug: str, renamed: bool = False):
+        return render_matter_settings(request, slug, notice="Matter renamed." if renamed else "")
+
+    @app.post("/matters/{slug}/rename", dependencies=[Depends(require_csrf)])
+    def rename_matter(
+        request: Request, slug: str, name: str = Form("", max_length=4096),
+        expected_name: str = Form("", max_length=140),
+    ):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug, allow_administrator_write=True)
+        if matter.owner_id != context.principal_id and not context.is_administrator:
+            audit(request, "matter.rename", "denied", context=context, matter=matter)
+            raise HTTPException(403, "Only the matter owner or an administrator can rename this matter.")
+        try:
+            bench.workspace.rename_matter(
+                slug, context.principal_id, name, expected_name=expected_name,
+                administrator_override=context.is_administrator,
+                request_id=request.state.request_id,
+                session_id=context.session.session_id if context.session else None,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        except WorkspaceProblem as exc:
+            return render_matter_settings(
+                request, slug, proposed_name=name, rename_error=str(exc),
+                status_code=409 if isinstance(exc, MatterNameConflict) else 400,
+            )
+        return RedirectResponse(f"/matters/{slug}/settings?renamed=true", status_code=303)
 
     @app.get("/matters/{slug}/home", response_class=HTMLResponse)
     def matter_home(

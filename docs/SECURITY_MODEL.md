@@ -39,3 +39,12 @@ closure records.
 
 Report vulnerabilities privately under [SECURITY.md](../SECURITY.md). Do not
 attach case files, transcripts, credentials, or internal topology to a report.
+
+## Matter naming
+
+The [matter settings contract](MATTER_SETTINGS.md) permits owner/admin rename
+under the existing authenticated authority. Ordinary members cannot rename.
+The current-name comparison, active principal/matter and owner membership
+checks, update, and content-free audit share an immediate control-database
+transaction. Exact-name deletion confirmation serializes with that transaction.
+No source identities, access grants, or external files change.

@@ -95,6 +95,10 @@ class WorkspaceProblem(ValueError):
     """Expected staff-safe matter or conversation input failure."""
 
 
+class MatterNameConflict(WorkspaceProblem):
+    """The name displayed when the edit began is no longer current."""
+
+
 @dataclass(frozen=True)
 class MatterRecord:
     matter_id: str
@@ -2169,6 +2173,56 @@ class WorkspaceStore:
             )
         return MatterRecord(matter_id, slug, name, detail, owner, now, now)
 
+    def rename_matter(
+        self, slug: str, actor_id: str, display_name: str, *,
+        expected_name: str, request_id: str, session_id: str | None = None,
+        administrator_override: bool = False,
+    ) -> MatterRecord:
+        """Rename under already validated administrator authority, if needed.
+
+        Serialize authorization, current-name comparison, mutation, and audit
+        across connections. No source or derived-work identity changes.
+        """
+        if not _SLUG.fullmatch(slug):
+            raise KeyError(slug)
+        name = self._safe_text(display_name, label="Matter name", maximum=140)
+        expected = self._safe_text(expected_name, label="Previous matter name", maximum=140)
+        with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            row = self.connection.execute(
+                "SELECT m.matter_id,m.slug,m.display_name,m.descriptor,m.owner_id,"
+                "m.created_at,m.updated_at FROM workbench_matter m "
+                "JOIN workbench_matter_lifecycle ml ON ml.matter_id=m.matter_id "
+                "JOIN workbench_principal p ON p.principal_id=? AND p.active=1 "
+                "WHERE m.slug=? AND ml.state='active' AND (?=1 OR (m.owner_id=? "
+                "AND EXISTS (SELECT 1 FROM workbench_matter_membership mm "
+                "WHERE mm.matter_id=m.matter_id AND mm.principal_id=p.principal_id "
+                "AND mm.role='owner' AND mm.state='active')))",
+                (actor_id, slug, int(administrator_override), actor_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(slug)
+            matter = self._matter(row)
+            if matter.display_name != expected:
+                raise MatterNameConflict(
+                    "The matter name changed while you were editing. Your proposed name is below. "
+                    "Review the current name before saving again."
+                )
+            if name == matter.display_name:
+                return matter
+            self.connection.execute(
+                "UPDATE workbench_matter SET display_name=?,updated_at=? WHERE matter_id=?",
+                (name, self._now(), matter.matter_id),
+            )
+            self._append_audit_event_locked(
+                actor_principal_id=actor_id, session_id=session_id,
+                matter_id=matter.matter_id, request_id=request_id,
+                action="matter.rename", outcome="success", object_type="matter",
+                object_id=matter.matter_id,
+                details={"role": "owner" if matter.owner_id == actor_id else "administrator"},
+            )
+            return self.get_active_matter(slug)
+
     def list_matters(self, principal_id: str) -> tuple[MatterRecord, ...]:
         principal = self._safe_text(principal_id, label="Principal identity", maximum=100)
         with self._lock:
@@ -2572,6 +2626,9 @@ class WorkspaceStore:
         parameters = (slug,) if administrator_override else (slug, actor)
         now = self._now()
         with self._lock, self.connection:
+            # Keep exact-name confirmation current through the deletion claim,
+            # including renames admitted by another workspace connection.
+            self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute(
                 "SELECT m.matter_id,m.slug,m.display_name,m.descriptor,m.owner_id,"
                 "m.created_at,m.updated_at,ml.state,ml.purge_id "

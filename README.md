@@ -31,8 +31,12 @@ workflows use local models for retrieval, answers, and media transcription.
 | **Review documents and media** | Source browsing, word and meaning-based search, recording checks before transcription, timestamped transcripts, playback, and clips. Videos without audio remain playable; uncertain checks offer listen/continue/retry. |
 | **Ask questions with sources in view** | Local AI answers and follow-up conversations with citations and coverage information. |
 | **Screen a collection** | Apply a criterion to a frozen source population, then inspect coverage and human-review status. |
-| **Organize the work** | Shared matters, attributed activity, notes, people, places, dates, and report drafting. |
+| **Organize the work** | Shared matters with owner/admin renaming, attributed activity, notes, people, places, dates, and report drafting. |
 | **Take work product with you** | Export conversations, transcripts, summaries, clips, notebooks, and reports. Complete matter bundles include every saved draft and final Report in Word and Markdown. |
+
+Matter owners and administrators can rename a matter in **Settings**. Stale edits
+keep the proposed name for review; existing source links and saved work remain
+available. See the [matter settings contract](docs/MATTER_SETTINGS.md).
 
 AI availability depends on the selected deployment profile. OCR, transcription,
 source screening, and generated answers require human review. A completed task
