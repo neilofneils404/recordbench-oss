@@ -10,7 +10,9 @@
 >
   <div class="matter-readiness-summary">
     <span class="matter-readiness-mark" data-readiness-mark aria-hidden="true">
-      {% if matter_readiness.state == 'ready' %}
+      {% if matter_readiness.state == 'review' %}
+      <svg viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></svg>
+      {% elif matter_readiness.state == 'ready' %}
       <svg viewBox="0 0 24 24"><path d="m5 12 4 4 10-10"/></svg>
       {% elif matter_readiness.state == 'attention' %}
       <svg viewBox="0 0 24 24"><path d="M12 4 3.5 20h17L12 4Z"/><path d="M12 9v5m0 3h.01"/></svg>

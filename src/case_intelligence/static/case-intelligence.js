@@ -2558,7 +2558,7 @@
         }
       }
       const transcriptChanged = payload.state !== observedMediaJobState
-        && ["succeeded", "degraded", "failed"].includes(payload.state);
+        && ["succeeded", "degraded", "failed", "needs_review", "playback_only"].includes(payload.state);
       const playbackChanged = nextPlaybackState !== observedPlaybackState
         && ["original", "ready", "failed"].includes(nextPlaybackState);
       const summaryChanged = payload.summary_state !== observedSummaryState
@@ -2672,6 +2672,7 @@
   });
 
   const readinessMark = (state) => {
+    if (state === "review") return '<svg viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></svg>';
     if (state === "ready") return '<svg viewBox="0 0 24 24"><path d="m5 12 4 4 10-10"/></svg>';
     if (state === "attention") return '<svg viewBox="0 0 24 24"><path d="M12 4 3.5 20h17L12 4Z"/><path d="M12 9v5m0 3h.01"/></svg>';
     if (state === "empty") return '<svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 11h6M12 8v6"/></svg>';
@@ -2710,7 +2711,7 @@
   };
 
   const renderReadiness = (payload) => {
-    ["empty", "preparing", "attention", "ready"].forEach((state) => {
+    ["empty", "preparing", "attention", "ready", "review"].forEach((state) => {
       readiness.classList.toggle(`state-${state}`, payload.state === state);
     });
     readiness.dataset.state = payload.state || "";
@@ -2744,7 +2745,7 @@
     (payload.stages || []).forEach((stage) => {
       const row = readiness.querySelector(`[data-processing-stage="${stage.key}"]`);
       if (!row) return;
-      ["waiting", "working", "complete", "attention"].forEach((state) => {
+      ["waiting", "working", "complete", "attention", "review"].forEach((state) => {
         row.classList.toggle(`state-${state}`, stage.state === state);
       });
       const count = row.querySelector("[data-stage-count]");
@@ -2758,7 +2759,9 @@
       overview.hidden = !payload.overview_note;
     }
     const updated = readiness.querySelector("[data-readiness-updated]");
-    if (updated) updated.textContent = "Updated just now · Work continues if you leave this page.";
+    if (updated) updated.textContent = payload.state === "review"
+      ? "Saved · Recordings are available for review."
+      : "Updated just now · Work continues if you leave this page.";
 
     document.querySelectorAll(".matter-search-form input[name=\"q\"], .matter-search-form button[type=\"submit\"]").forEach((control) => {
       control.disabled = payload.can_query !== true;

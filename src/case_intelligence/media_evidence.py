@@ -19,6 +19,11 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .media_preflight import (
+    MESSAGES as PREFLIGHT_MESSAGES,
+    REVISION as PREFLIGHT_REVISION,
+    inspect_recording,
+)
 from .branding import PRODUCT_NAME
 from .generation import GenerationRejected, GenerationUnavailable
 from .pilot_uploads import PilotDocument, PilotStore, PilotUnit, UploadProblem
@@ -759,7 +764,11 @@ class MediaCoordinator:
             matter = self.resolve_matter(job.matter_id)
             store = self.resolve_store(matter)
             document = store.get(job.document_id)
-            if document.version_id != job.source_version_id:
+            if (
+                document.version_id != job.source_version_id
+                or document.digest != job.source_sha256
+                or document.size != job.byte_size
+            ):
                 raise MediaProcessorError("The source version changed before transcription.")
             if self._project_existing(job, matter, document):
                 if self.processor is not None and external_id:
@@ -780,6 +789,44 @@ class MediaCoordinator:
                     provenance=transcript.provenance,
                 )
                 return
+            source = store.source_path(job.document_id, verify_digest=True)
+            if not external_id:
+                preflight = job.preflight
+                if not (
+                    preflight.get("revision") == PREFLIGHT_REVISION
+                    and (preflight.get("outcome") == "ready" or preflight.get("continued") is True)
+                ):
+                    store.mark_media_processing(job.document_id, stage="Checking recording")
+                    self.workspace.update_media_job(
+                        job.media_job_id, stage="Checking recording", progress=0
+                    )
+                    result = inspect_recording(
+                        source, job.media_type,
+                        cancelled=lambda: self._stop.is_set() or self._matter_cancelled(job.matter_id),
+                    )
+                    if self._stop.is_set():
+                        return  # durable running job is recovered on restart
+                    if self._matter_cancelled(job.matter_id):
+                        raise MediaProcessorError("Recording check cancelled because the matter is closing.")
+                    with store.mutation_guard():
+                        if document.version_id != job.source_version_id or document.digest != job.source_sha256:
+                            raise MediaProcessorError("The source version changed during the recording check.")
+                        store.source_path(job.document_id, verify_digest=True)
+                        hold = result["outcome"] != "ready"
+                        message = PREFLIGHT_MESSAGES[str(result["outcome"])]
+                        if hold:
+                            document.state = "playback_only" if result["outcome"] == "no_audio" else "needs_review"
+                            document.message = message
+                            document.processing_stage = "Recording checked"
+                            document.completed_units = document.total_units = 0
+                            store._save((document.document_id,))
+                        # Save the source projection first. An interruption before
+                        # this queue transition remains recoverable as running work.
+                        job = self.workspace.save_media_preflight(
+                            job.media_job_id, result, hold=hold, message=message
+                        )
+                        if hold:
+                            return
             if self.processor is None or not self.processor.available:
                 raise MediaProcessorError(
                     "The local transcription service is not configured. Choose Try again after it is restored."

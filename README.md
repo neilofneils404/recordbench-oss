@@ -28,7 +28,7 @@ workflows use local models for retrieval, answers, and media transcription.
 | Workflow | Current capabilities |
 | --- | --- |
 | **Bring records together** | Review selected loose files before transfer, explicitly confirm the ready subset, then use resumable file and folder uploads, malware scanning, text extraction, and bounded OCR. |
-| **Review documents and media** | Source browsing, word and meaning-based search, timestamped transcripts, playback, and clips. |
+| **Review documents and media** | Source browsing, word and meaning-based search, recording checks before transcription, timestamped transcripts, playback, and clips. Videos without audio remain playable; uncertain checks offer listen/continue/retry. |
 | **Ask questions with sources in view** | Local AI answers and follow-up conversations with citations and coverage information. |
 | **Screen a collection** | Apply a criterion to a frozen source population, then inspect coverage and human-review status. |
 | **Organize the work** | Shared matters, attributed activity, notes, people, places, dates, and report drafting. |
@@ -56,7 +56,9 @@ separate because it freezes a population and produces one decision per source.
    copying bytes, then revalidates the confirmed subset as it enters a private
    staging area and applies any required malware scan.
 2. **Processing:** It extracts usable text, applies bounded OCR where needed,
-   and sends selected media through the bundled transcription queue.
+   and checks audio/likely speech before sending media through the bundled
+   transcription queue. [Recording checks](docs/MEDIA_PREFLIGHT.md) preserve
+   original timestamps and keep uncertain results reviewable.
 3. **Indexing:** It divides the resulting text into traceable passages and
    makes them available to word and meaning-based search.
 4. **Evidence selection:** A multi-stage retrieval pipeline finds candidate

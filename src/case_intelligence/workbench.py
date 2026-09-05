@@ -265,6 +265,12 @@ def _source_coverage(readiness: MatterReadinessRecord) -> dict[str, object]:
             f"{readiness.total_count:,} sources. {excluded:,} {source_word} "
             f"{need_word} attention and {excluded_word} excluded."
         )
+    if partial and (readiness.playback_only_count or readiness.recording_review_count):
+        notice = (
+            f"Search and answers use {readiness.searchable_count:,} of {readiness.total_count:,} sources. "
+            f"{excluded:,} sources are not searchable and are excluded. "
+            "Recordings without a transcript remain available for playback and review."
+        )
     return {
         "mode": "partial" if partial else "complete",
         "searchable_count": readiness.searchable_count,
@@ -5489,6 +5495,10 @@ def create_workbench_app(
         record: MatterReadinessRecord | None = None,
     ) -> dict[str, object]:
         readiness = record or bench.workspace.matter_readiness(matter.matter_id)
+        recording_hold_only = (
+            readiness.state == "attention" and readiness.attention_count > 0 and
+            readiness.playback_only_count + readiness.recording_review_count == readiness.attention_count
+        )
         if readiness.state == "empty":
             headline = "Add sources to begin"
             summary = "Upload the records you want RecordBench to prepare for review."
@@ -5509,6 +5519,16 @@ def create_workbench_app(
             )
             action_label = "View processing details"
             action_url = ""
+        elif recording_hold_only:
+            headline = "Sources available for review"
+            summary = (
+                f"{readiness.searchable_count:,} of {readiness.total_count:,} sources searchable · "
+                f"{readiness.playback_only_count:,} playback only · "
+                f"{readiness.recording_review_count:,} awaiting a recording decision"
+            )
+            guidance = "You can play and review recordings. Search and answers require a transcript."
+            action_label = "Review recordings"
+            action_url = f"/matters/{matter.slug}/setup?view=list&status=attention#source-library"
         elif readiness.state == "attention":
             if readiness.can_query:
                 headline = "Review available with exclusions"
@@ -5579,6 +5599,8 @@ def create_workbench_app(
                 state = "complete"
             elif working:
                 state = "working"
+            elif recording_hold_only:
+                state = "review"
             elif readiness.attention_count:
                 state = "attention"
             elif completed:
@@ -5600,6 +5622,7 @@ def create_workbench_app(
                     "working": "Working",
                     "complete": "Complete",
                     "attention": "Needs attention",
+                    "review": "Playback only" if not readiness.recording_review_count else "Awaiting review",
                 }[state],
             }
 
@@ -5648,7 +5671,7 @@ def create_workbench_app(
             )
         coverage = _source_coverage(readiness)
         return {
-            "state": readiness.state,
+            "state": "review" if recording_hold_only else readiness.state,
             "can_query": readiness.can_query,
             "partial_query": readiness.partial_query,
             "excluded_count": int(coverage["excluded_count"]),
@@ -6398,7 +6421,7 @@ def create_workbench_app(
         jobs = bench.workspace.media_jobs_for_matter(matter.matter_id)
         summaries = bench.workspace.media_summaries_for_matter(matter.matter_id)
         active_jobs = [job for job in jobs if job.state in {"queued", "running"}]
-        attention_jobs = [job for job in jobs if job.state == "failed"]
+        attention_jobs = [job for job in jobs if job.display_state in {"failed", "needs_review"}]
         ready_jobs = [job for job in jobs if job.state in {"succeeded", "degraded"}]
         active_summaries = [
             summary
@@ -6429,7 +6452,7 @@ def create_workbench_app(
             projected.append(
                 {
                     "document_id": job.document_id,
-                    "state": job.state,
+                    "state": job.display_state,
                     "stage": job.stage,
                     "progress": job.progress,
                     "message": job.message,
@@ -10224,6 +10247,49 @@ def create_workbench_app(
         )
 
     @app.post(
+        "/matters/{slug}/sources/{token}/recording-check",
+        dependencies=[Depends(require_csrf)],
+    )
+    async def decide_recording_check(request: Request, slug: str, token: str):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        store = bench.source_store(matter)
+        form = await request.form()
+        action = str(form.get("action") or "")
+        if action not in {"retry", "continue"}:
+            return PlainTextResponse("Choose a recording action.", status_code=400)
+        try:
+            with store.mutation_guard():
+                document = store.get_by_action_token(token)
+                store.source_path(document.document_id, verify_digest=True)
+                try:
+                    bench.workspace.decide_media_preflight(
+                        matter.matter_id, document.document_id, document.version_id,
+                        context.principal_id, str(form.get("inspection_id") or ""),
+                        retry=action == "retry",
+                    )
+                except KeyError:
+                    return PlainTextResponse(
+                        "This recording check changed. Reload the source to see its current state.",
+                        status_code=409,
+                    )
+                document.state = "queued"
+                document.message = "Checking recording" if action == "retry" else "Queued for transcription"
+                document.processing_stage = document.message
+                store._save((document.document_id,))
+        except KeyError as exc:
+            raise HTTPException(404, "Source not found") from exc
+        except UploadProblem as exc:
+            return PlainTextResponse(str(exc), status_code=exc.status_code)
+        except ValueError:
+            return PlainTextResponse("Check the recording again before transcription.", status_code=409)
+        if bench.media is not None:
+            bench.media.notify()
+        audit(request, f"media.preflight_{action}", "success", matter=matter,
+              details={"state": "queued"})
+        return RedirectResponse(f"/matters/{slug}/sources/{token}", status_code=303)
+
+    @app.post(
         "/matters/{slug}/sources/{token}/remove",
         dependencies=[Depends(require_csrf)],
     )
@@ -10547,7 +10613,7 @@ def create_workbench_app(
             raise HTTPException(404, "Media source not found") from exc
         return JSONResponse(
             {
-                "state": job.state if job is not None else "unavailable",
+                "state": job.display_state if job is not None else "unavailable",
                 "stage": job.stage if job is not None else "Not queued",
                 "progress": job.progress if job is not None else 0,
                 "message": job.message if job is not None else "",

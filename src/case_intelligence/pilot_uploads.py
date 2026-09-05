@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -291,6 +292,8 @@ class _MediaProbe:
     duration_ms: int
     has_video: bool
     browser_compatible: bool
+    has_audio: bool = True
+    audio_track_count: int = 1
     video_codec: str = ""
     audio_codec: str = ""
     pixel_format: str = ""
@@ -303,7 +306,7 @@ class _MediaProbe:
             "yuv420p",
             "yuvj420p",
         }:
-            if self.audio_codec in {"aac", "mp3"}:
+            if self.audio_codec in {"aac", "mp3", ""}:
                 return "remux"
             return "audio_only"
         return "full_transcode"
@@ -353,7 +356,7 @@ def _browser_playback_command(
         "-map",
         "0:v:0",
         "-map",
-        "0:a:0",
+        "0:a:0?",
         "-map_metadata",
         "-1",
         "-map_chapters",
@@ -460,7 +463,7 @@ def _probe_media(source: Path, media_type: str) -> _MediaProbe:
         duration = float((payload.get("format") or {}).get("duration") or 0)
     except (AttributeError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise UploadProblem("That file is not readable audio or video media.") from exc
-    if not has_audio or duration <= 0:
+    if not (has_audio or has_video) or not math.isfinite(duration) or duration <= 0:
         raise UploadProblem("Media must contain a readable audio track.")
     if duration > 12 * 60 * 60:
         raise UploadProblem("Recordings longer than 12 hours are not supported.", 413)
@@ -478,14 +481,14 @@ def _probe_media(source: Path, media_type: str) -> _MediaProbe:
         if media_type == "video/mp4":
             browser_compatible = (
                 video_codec == "h264"
-                and audio_codec in {"aac", "mp3"}
+                and (not has_audio or audio_codec in {"aac", "mp3"})
                 and pixel_format in {"yuv420p", "yuvj420p"}
             )
         elif media_type == "video/webm":
-            browser_compatible = video_codec in {"vp8", "vp9", "av1"} and audio_codec in {
+            browser_compatible = video_codec in {"vp8", "vp9", "av1"} and (not has_audio or audio_codec in {
                 "opus",
                 "vorbis",
-            }
+            })
         else:
             # MOV commonly contains HEVC, ProRes, PCM, or another combination
             # that Chromium cannot decode. Prepare a predictable MP4 rendition.
@@ -493,6 +496,8 @@ def _probe_media(source: Path, media_type: str) -> _MediaProbe:
     return _MediaProbe(
         duration_ms=max(1, round(duration * 1000)),
         has_video=has_video,
+        has_audio=has_audio,
+        audio_track_count=sum(item.get("codec_type") == "audio" for item in streams),
         browser_compatible=browser_compatible,
         video_codec=video_codec if has_video else "",
         audio_codec=audio_codec if has_video else "",
@@ -1478,7 +1483,7 @@ class PilotStore:
                 name_key=name_key,
                 relative_path=upload_path,
                 processing_stage=(
-                    "Queued for transcription"
+                    "Queued to check recording"
                     if suffix in MEDIA_TYPES
                     else ("Queued" if defer_processing else "Extracting text")
                 ),
@@ -1496,7 +1501,7 @@ class PilotStore:
             )
             if suffix in MEDIA_TYPES:
                 document.state = "queued"
-                document.message = "Queued for transcription"
+                document.message = "Queued to check recording"
             elif not defer_processing:
                 try:
                     self._extract(document, stage)
@@ -1714,14 +1719,14 @@ class PilotStore:
                 size=expected_size,
                 state="queued",
                 message=(
-                    "Queued for transcription" if suffix in MEDIA_TYPES else "Queued for processing"
+                    "Queued to check recording" if suffix in MEDIA_TYPES else "Queued for processing"
                 ),
                 units=[],
                 digest=hexdigest,
                 version_id=uuid.uuid4().hex,
                 name_key=name_key,
                 relative_path=upload_path,
-                processing_stage=("Queued for transcription" if suffix in MEDIA_TYPES else "Queued"),
+                processing_stage=("Queued to check recording" if suffix in MEDIA_TYPES else "Queued"),
                 duration_ms=duration_ms,
                 has_video=has_video,
                 playback_media_type=expected_type if not has_video or browser_compatible else "",
@@ -2136,7 +2141,7 @@ class PilotStore:
                 raise
             return tuple(created)
 
-    def source_path(self, document_id: str) -> Path:
+    def source_path(self, document_id: str, *, verify_digest: bool = False) -> Path:
         """Resolve one owned upload to a regular, size-matched source path."""
 
         with self._lock:
@@ -2159,6 +2164,21 @@ class PilotStore:
                 )
             ):
                 raise UploadProblem("The stored source is unavailable.", 409)
+            if verify_digest:
+                try:
+                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                    with os.fdopen(fd, "rb") as stream:
+                        opened = os.fstat(stream.fileno())
+                        if not stat.S_ISREG(opened.st_mode) or opened.st_size != document.size:
+                            raise UploadProblem("The stored source changed. Upload a fresh copy.", 409)
+                        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                        after = os.fstat(stream.fileno())
+                    if (digest != document.digest or opened.st_size != after.st_size
+                            or opened.st_mtime_ns != after.st_mtime_ns
+                            or opened.st_ctime_ns != after.st_ctime_ns):
+                        raise UploadProblem("The stored source changed. Upload a fresh copy.", 409)
+                except OSError as exc:
+                    raise UploadProblem("The stored source is unavailable.", 409) from exc
             return path
 
     def queue_browser_playback(

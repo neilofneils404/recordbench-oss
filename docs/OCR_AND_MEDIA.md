@@ -12,7 +12,13 @@ video is prepared asynchronously with FFmpeg, using remux or audio-only
 conversion before full re-encoding when possible. Playback follows the active
 transcript, and cited media timestamps can seek directly to the relevant span.
 
-The bundled transcription queue reports submission, queue, transcription,
+Before transcription, a bounded offline [recording check](MEDIA_PREFLIGHT.md)
+looks for audio and likely speech. Videos without audio remain playable;
+uncertain/no-speech results wait for an explicit decision and failed inspection
+can be retried. Language is not assessed. The complete original recording is
+submitted when transcription proceeds.
+
+The bundled transcription queue reports inspection, submission, queue, transcription,
 alignment, diarization, projection, summary, completion, degraded, and failed
 states. RecordBench indexes timestamped segments and automatically generates a
 source summary after projection. Users can export transcripts, summaries,

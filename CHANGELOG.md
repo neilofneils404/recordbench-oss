@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-05: Check audio and likely speech before transcription. Accept
+  video-only playback, retain original recording timestamps/bytes, and hold
+  no-speech, uncertain or failed checks for review/retry. Version-bound decisions
+  survive restart and reject stale/duplicate submissions. Bounded CPU VAD,
+  low-volume/clipping findings and explicit unassessed language replace no
+  existing transcription model. Synthetic workflow/browser and previous-reader
+  checks cover the additive state; no persistent schema or deployment change.
+
 - 2026-09-05: Complete matter bundles now include every saved draft and final
   Report as editable Markdown and Word with a manifest inventory, including
   empty Reports and collision-safe filenames. A bounded database snapshot

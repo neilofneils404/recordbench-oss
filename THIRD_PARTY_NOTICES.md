@@ -14,6 +14,14 @@ Container and Python package metadata retain the authoritative upstream license
 and notice material. Operators must review the resolved image and package lock
 inventory for the release they deploy.
 
+## Recording-check dependency
+
+The recording check pins `webrtcvad-wheels` 2.0.14. The Python wrapper uses the
+MIT license; the bundled WebRTC implementation has its own BSD notice. Retain
+the [upstream license texts](https://github.com/roman-nekrasov/py-webrtcvad-wheels/blob/master/LICENSE)
+shipped with the dependency. This CPU VAD adds no downloaded model weights or
+network service.
+
 ## Default model artifacts
 
 The immutable IDs and revisions are recorded in `config/models.json`. The

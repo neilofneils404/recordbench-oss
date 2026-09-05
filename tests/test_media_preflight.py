@@ -1,0 +1,372 @@
+"""Synthetic pre-transcription inspection contracts, separate from frozen packs."""
+import subprocess
+import hashlib
+import os
+import shutil
+import sys
+import threading
+import time
+import wave
+from pathlib import Path
+
+from case_intelligence.media_preflight import inspect_recording
+from case_intelligence.pilot_uploads import _probe_media
+from case_intelligence.generation import UnavailableGenerator
+from case_intelligence.workbench import create_workbench_app
+from fastapi.testclient import TestClient
+from tests.test_matter_media_workflow import ACTOR, ImmediateMediaProcessor, _matter
+
+SPEECH = Path(__file__).parent / "fixtures/media-preflight/generated-speech.wav"
+
+
+def silence(path: Path, seconds=2):
+    with wave.open(str(path), "wb") as output:
+        output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        output.writeframes(b"\x00\x00" * 16000 * seconds)
+
+
+def test_silence_is_reviewable_and_language_is_unknown(tmp_path):
+    source = tmp_path / "silence.wav"
+    silence(source)
+    result = inspect_recording(source, "audio/wav")
+    assert result["outcome"] == "no_speech"
+    assert result["first_speech_ms"] is None
+    assert result["last_speech_ms"] is None
+    assert result["language"] == "not_assessed"
+    assert result["complete"] is True
+    assert result["quiet_ms"] >= 1980
+
+
+def test_no_audio_video_is_admitted_for_playback(tmp_path):
+    source = tmp_path / "silent-video.mp4"
+    subprocess.run(["/usr/bin/ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "color=c=blue:s=160x120:d=1", "-an", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", str(source)], check=True)
+    assert _probe_media(source, "video/mp4").browser_compatible
+    result = inspect_recording(source, "video/mp4")
+    assert result["outcome"] == "no_audio"
+    assert result["complete"] is True
+
+
+def test_failed_inspection_is_not_no_speech(tmp_path):
+    source = tmp_path / "broken.wav"
+    source.write_bytes(b"not a recording")
+    assert inspect_recording(source, "audio/wav")["outcome"] == "failed"
+
+
+def test_original_time_after_leading_and_interior_silence(tmp_path):
+    source = tmp_path / "late-speech.wav"
+    with wave.open(str(SPEECH), "rb") as speech:
+        data = speech.readframes(speech.getnframes())
+    with wave.open(str(source), "wb") as output:
+        output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        output.writeframes(b"\0\0" * 16000 * 30 + data + b"\0\0" * 16000 * 3 + data + b"\0\0" * 16000 * 2)
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    result = inspect_recording(source, "audio/wav")
+    assert result["outcome"] == "ready"
+    assert 30_000 <= result["first_speech_ms"] < 31_000
+    assert 43_000 <= result["last_speech_ms"] < 45_000
+    assert result["leading_quiet_ms"] >= 30_000
+    assert result["trailing_quiet_ms"] >= 1_900
+    assert result["quiet_ms"] >= 35_000
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+
+
+def test_unavailable_detector_and_partial_check_are_uncertain(tmp_path, monkeypatch):
+    import case_intelligence.media_preflight as module
+    monkeypatch.setitem(sys.modules, "webrtcvad", None)
+    assert inspect_recording(SPEECH, "audio/wav")["outcome"] == "uncertain"
+    monkeypatch.undo()
+    monkeypatch.setattr(module, "MAX_SECONDS", 1)
+    result = inspect_recording(SPEECH, "audio/wav")
+    assert result["outcome"] == "uncertain"
+    assert not result["complete"]
+    assert result["checked_ms"] <= 1_000
+
+
+def test_noise_clipping_and_low_volume_remain_reviewable(tmp_path):
+    for name, expression in (
+        ("noise", "anoisesrc=d=3:c=white:a=0.1:seed=42"),
+        ("clipping", "aevalsrc=0.99*sgn(sin(2*PI*440*t)):d=3"),
+    ):
+        source = tmp_path / f"{name}.wav"
+        subprocess.run(["/usr/bin/ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                        expression, "-ar", "16000", "-ac", "1", str(source)], check=True)
+        result = inspect_recording(source, "audio/wav")
+        assert result["outcome"] == "uncertain"
+        if name == "clipping":
+            assert "clipping" in result["quality"]
+    source = tmp_path / "quiet-speech.wav"
+    subprocess.run(["/usr/bin/ffmpeg", "-v", "error", "-i", str(SPEECH),
+                    "-af", "volume=0.001", str(source)], check=True)
+    result = inspect_recording(source, "audio/wav")
+    assert result["outcome"] == "uncertain"
+    assert "low_volume" in result["quality"]
+
+
+def test_multiple_audio_tracks_cannot_claim_a_complete_check(tmp_path):
+    quiet = tmp_path / "quiet.wav"
+    silence(quiet, 8)
+    source = tmp_path / "two-audio-tracks.mp4"
+    subprocess.run(["/usr/bin/ffmpeg", "-v", "error", "-i", str(quiet), "-i", str(SPEECH),
+                    "-f", "lavfi", "-i", "color=c=blue:s=160x120:d=5",
+                    "-map", "2:v", "-map", "0:a", "-map", "1:a", "-c:v", "libx264",
+                    "-c:a", "aac", "-shortest", str(source)], check=True)
+    result = inspect_recording(source, "video/mp4")
+    assert result["outcome"] == "uncertain"
+    assert not result["complete"]
+    assert "multiple_audio_tracks" in result["quality"]
+
+
+class ObservedProcessor(ImmediateMediaProcessor):
+    def __init__(self):
+        super().__init__()
+        self.readiness_calls = 0
+        self.input_digest = ""
+
+    def ready(self, owner):
+        self.readiness_calls += 1
+        return True
+
+    def submit(self, owner, source, media_type, source_sha256):
+        self.input_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        return super().submit(owner, source, media_type, source_sha256)
+
+
+def app_for(path, processor, *, background=False):
+    return create_workbench_app(path, generator=UnavailableGenerator(), auth_mode="test",
+                                media_processor=processor, media_poll_seconds=0.01, background_ingestion=background)
+
+
+def upload(client, slug, source, media_type="audio/wav"):
+    response = client.post(f"/matters/{slug}/uploads", files=[
+        ("files", (source.name, source.read_bytes(), media_type))], follow_redirects=False)
+    assert response.status_code == 303, response.text
+    bench = client.app.state.workbench
+    matter = bench.matter(slug, ACTOR)
+    store = bench.source_store(matter)
+    document = next(iter(store.documents.values()))
+    token = store.action_token(document)
+    return bench, matter, document, token
+
+
+def wait_job(bench, matter, document, states=("cancelled",)):
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        job = bench.workspace.media_job(matter.matter_id, document.document_id, document.version_id)
+        if job and job.state in states:
+            return job
+        time.sleep(0.02)
+    raise AssertionError(f"Media did not reach {states}: {job}")
+
+
+def test_review_survives_restart_then_explicit_continue_submits_once(tmp_path):
+    source = tmp_path / "silence.wav"
+    silence(source, 8)
+    processor = ObservedProcessor()
+    runtime = tmp_path / "runtime"
+    with TestClient(app_for(runtime, processor)) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        job = wait_job(bench, matter, document)
+        assert job.preflight["outcome"] == "no_speech"
+        assert processor.readiness_calls == processor.submissions == 0
+        assert document.state == "needs_review"
+        assert not bench.source_store(matter).ready_documents()
+        inspection = job.preflight["inspection_id"]
+        upload(client, slug, source)
+        assert len(bench.workspace.media_jobs_for_matter(matter.matter_id)) == 1
+        assert wait_job(bench, matter, document).preflight["inspection_id"] == inspection
+        page = client.get(f"/matters/{slug}/sources/{token}")
+        assert page.status_code == 200
+        assert "No speech detected" in page.text
+        assert "Transcribe this recording" in page.text
+        content = client.get(f"/matters/{slug}/sources/{token}/content", headers={"Range": "bytes=0-15"})
+        assert content.status_code == 206
+        assert content.content == source.read_bytes()[:16]
+        foreign = _matter(client, "Separate synthetic matter")
+        assert client.get(f"/matters/{foreign}/sources/{token}").status_code == 404
+        assert client.post(f"/matters/{foreign}/sources/{token}/recording-check",
+                           data={"action": "continue", "inspection_id": inspection}).status_code == 404
+    with TestClient(app_for(runtime, processor)) as client:
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = bench.source_store(matter).get_by_action_token(token)
+        assert wait_job(bench, matter, document).preflight["inspection_id"] == inspection
+        assert processor.submissions == 0
+        decision_url = f"/matters/{slug}/sources/{token}/recording-check"
+        data = {"action": "continue", "inspection_id": inspection}
+        assert client.post(decision_url, data=data, follow_redirects=False).status_code == 303
+        assert client.post(decision_url, data=data, follow_redirects=False).status_code == 409
+        finished = wait_job(bench, matter, document, ("succeeded", "degraded"))
+        assert finished.preflight["continued"] is True
+        assert processor.submissions == 1
+        assert processor.input_digest == hashlib.sha256(source.read_bytes()).hexdigest()
+
+
+def test_changed_source_cannot_reuse_review_decision(tmp_path):
+    source = tmp_path / "silence.wav"
+    silence(source, 8)
+    processor = ObservedProcessor()
+    with TestClient(app_for(tmp_path / "runtime", processor)) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        job = wait_job(bench, matter, document)
+        stored = bench.source_store(matter).source_path(document.document_id)
+        metadata = stored.stat()
+        body = bytearray(stored.read_bytes())
+        body[-1] = 1
+        stored.write_bytes(body)
+        os.utime(stored, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+        response = client.post(f"/matters/{slug}/sources/{token}/recording-check",
+                               data={"action": "continue", "inspection_id": job.preflight["inspection_id"]})
+        assert response.status_code == 409
+        assert processor.submissions == 0
+
+
+def test_no_audio_video_plays_without_processor_and_is_not_searchable(tmp_path):
+    source = tmp_path / "silent-video.mov"
+    subprocess.run(["/usr/bin/ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "color=c=blue:s=160x120:d=1", "-an", "-c:v", "mpeg4",
+                    str(source)], check=True)
+    processor = ObservedProcessor()
+    with TestClient(app_for(tmp_path / "runtime", processor)) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source, "video/quicktime")
+        job = wait_job(bench, matter, document)
+        assert job.display_state == "playback_only"
+        deadline = time.monotonic() + 10
+        while document.playback_state not in {"ready", "failed"} and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert document.playback_state == "ready", document.playback_message
+        assert document.state == "playback_only"
+        assert processor.readiness_calls == processor.submissions == 0
+        page = client.get(f"/matters/{slug}/sources/{token}")
+        assert page.status_code == 200
+        assert "Video without audio" in page.text
+        assert "Sources available for review" in page.text
+        assert "Retry or remove an affected source" not in page.text
+        assert "Transcribe this recording" not in page.text
+        content = client.get(f"/matters/{slug}/sources/{token}/content", headers={"Range": "bytes=0-63"})
+        assert content.status_code == 206
+        assert "video/mp4" in content.headers["content-type"]
+        assert client.get(f"/matters/{slug}/sources/{token}/media-status").json()["ready"] is False
+        assert client.post(f"/matters/{slug}/sources/{token}/recording-check", data={
+            "action": "continue", "inspection_id": job.preflight["inspection_id"]}).status_code == 409
+        assert not bench.source_store(matter).ready_documents()
+        readiness = bench.workspace.matter_readiness(matter.matter_id)
+        assert readiness.playback_only_count == 1
+        assert readiness.searchable_count == 0
+        assert not readiness.can_query
+        closed = client.post(f"/matters/{slug}/close", data={
+            "confirmed_name": matter.display_name, "acknowledge": "yes"}, follow_redirects=False)
+        assert closed.status_code == 303
+        assert bench.workspace.connection.execute(
+            "SELECT COUNT(*) FROM workbench_media_job WHERE matter_id=?", (matter.matter_id,)
+        ).fetchone()[0] == 0
+        assert source.is_file()
+
+
+def test_failed_check_retry_invalidates_prior_decision(tmp_path, monkeypatch):
+    import case_intelligence.media_evidence as module
+    source = tmp_path / "silence.wav"
+    silence(source, 8)
+    failed = inspect_recording(tmp_path / "absent.wav", "audio/wav")
+    monkeypatch.setattr(module, "inspect_recording", lambda *a, **kw: dict(failed))
+    processor = ObservedProcessor()
+    with TestClient(app_for(tmp_path / "runtime", processor)) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        job = wait_job(bench, matter, document)
+        old_id = job.preflight["inspection_id"]
+        assert job.preflight["outcome"] == "failed"
+        url = f"/matters/{slug}/sources/{token}/recording-check"
+        assert client.post(url, data={"action": "continue", "inspection_id": old_id}).status_code == 409
+        assert processor.readiness_calls == 0
+        monkeypatch.undo()
+        assert client.post(url, data={"action": "retry", "inspection_id": old_id}, follow_redirects=False).status_code == 303
+        checked = wait_job(bench, matter, document)
+        assert checked.preflight["outcome"] == "no_speech"
+        assert checked.preflight["inspection_id"] != old_id
+        assert client.post(url, data={"action": "continue", "inspection_id": old_id}).status_code == 409
+        assert processor.submissions == 0
+
+
+def test_interrupted_inspection_recovers_and_backup_restores_hold(tmp_path, monkeypatch):
+    import case_intelligence.media_evidence as module
+    source = tmp_path / "silence.wav"
+    silence(source, 8)
+    entered = threading.Event()
+
+    def interrupted(source, media_type, *, cancelled):
+        entered.set()
+        deadline = time.monotonic() + 10
+        while not cancelled() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return {"outcome": "uncertain"}
+
+    monkeypatch.setattr(module, "inspect_recording", interrupted)
+    processor = ObservedProcessor()
+    runtime = tmp_path / "runtime"
+    with TestClient(app_for(runtime, processor)) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        assert entered.wait(3)
+        assert processor.submissions == 0
+    monkeypatch.undo()
+    with TestClient(app_for(runtime, processor)) as client:
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = bench.source_store(matter).get_by_action_token(token)
+        job = wait_job(bench, matter, document)
+        assert job.preflight["outcome"] == "no_speech"
+        assert job.attempts == 2
+        inspection_id = job.preflight["inspection_id"]
+    restored = tmp_path / "restored"
+    shutil.copytree(runtime, restored)  # stopped synthetic whole boundary, no external originals
+    with TestClient(app_for(restored, processor)) as client:
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = bench.source_store(matter).get_by_action_token(token)
+        job = wait_job(bench, matter, document)
+        assert job.preflight["inspection_id"] == inspection_id
+        assert processor.submissions == 0
+        assert client.get(f"/matters/{slug}/sources/{token}/content").content == source.read_bytes()
+
+
+def test_late_speech_keeps_transcript_citations_and_exports_on_original_time(tmp_path):
+    class OriginalTimeProcessor(ObservedProcessor):
+        def transcript(self, owner, external_job_id):
+            payload = dict(super().transcript(owner, external_job_id))
+            for segment in payload["segments"]:
+                segment["start"] += 30
+                segment["end"] += 30
+            payload["quality"]["preflight"] = {"outcome": "no_audio"}
+            return payload
+
+    source = tmp_path / "late.wav"
+    with wave.open(str(SPEECH), "rb") as speech:
+        data = speech.readframes(speech.getnframes())
+    with wave.open(str(source), "wb") as output:
+        output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        output.writeframes(b"\0\0" * 16000 * 30 + data + b"\0\0" * 16000 * 10)
+    processor = OriginalTimeProcessor()
+    with TestClient(app_for(tmp_path / "runtime", processor)) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        job = wait_job(bench, matter, document, ("succeeded", "degraded"))
+        assert job.preflight["outcome"] == "ready"  # processor cannot overwrite app inspection
+        assert job.preflight["first_speech_ms"] >= 30_000
+        assert processor.input_digest == hashlib.sha256(source.read_bytes()).hexdigest()
+        unit = document.parsed_units()[0]
+        assert unit.start_ms == 30_000 and unit.end_ms == 32_000
+        candidate = bench._candidate(matter, document, unit, 1)
+        support_token = bench._support_token(candidate)
+        support = bench.support(matter, support_token)
+        assert support.start_ms == 30_000 and support.end_ms == 32_000
+        opened = client.get(f"/matters/{slug}?support={support_token}")
+        assert opened.status_code == 200
+        assert 'data-support-media data-start-ms="30000"' in opened.text
+        exported = client.get(f"/matters/{slug}/sources/{token}/transcript-export?format=srt")
+        assert exported.status_code == 200
+        assert "00:00:30,000 --> 00:00:32,000" in exported.text

@@ -4,7 +4,7 @@
 {% block body_class %}source-review-page media-review-page{% endblock %}
 
 {% block content %}
-<main class="source-review-main media-review-main" data-media-review data-start-ms="{{ media.start_ms }}" data-transcript-page="{{ segment_page }}" data-transcript-pages="{{ segment_pages }}" data-transcript-filtered="{{ 'true' if transcript_query or transcript_speaker or transcript_flag else 'false' }}" data-media-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status" data-media-resume-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/resume" data-media-job-state="{{ media.job.state if media.job else 'unavailable' }}" data-playback-state="{{ media.document.playback_state or 'unknown' }}" data-summary-state="{{ media.summary.state if media.summary else 'not_created' }}">
+<main class="source-review-main media-review-main" data-media-review data-start-ms="{{ media.start_ms }}" data-transcript-page="{{ segment_page }}" data-transcript-pages="{{ segment_pages }}" data-transcript-filtered="{{ 'true' if transcript_query or transcript_speaker or transcript_flag else 'false' }}" data-media-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status" data-media-resume-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/resume" data-media-job-state="{{ media.job.display_state if media.job else 'unavailable' }}" data-playback-state="{{ media.document.playback_state or 'unknown' }}" data-summary-state="{{ media.summary.state if media.summary else 'not_created' }}">
   <header class="source-review-heading media-review-heading">
     <div>
       <a class="back-link" href="/matters/{{ matter.slug }}/setup?view=list&amp;collection={{ media.row.collection_id }}#source-library">← Review sources</a>
@@ -50,6 +50,33 @@
   <section class="media-processing-card media-processing-failed" role="alert">
     <div><p class="eyebrow">Transcription needs attention</p><h2>{{ media.job.stage }}</h2><p>{{ media.job.message }}</p><p class="media-independent-note">The uploaded recording remains available for playback even without a transcript.</p></div>
     <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">Try again</button></form>
+  </section>
+  {% endif %}
+
+  {% if media.job and media.job.preflight %}
+  {% set check = media.job.preflight %}
+  <section class="media-processing-card" data-recording-check aria-labelledby="recording-check-heading">
+    <h2 id="recording-check-heading">{{ {'no_audio': 'Video without audio', 'no_speech': 'No speech detected', 'uncertain': 'Listen before transcribing', 'failed': 'Recording check did not finish', 'ready': 'Likely speech found'}.get(check.outcome, 'Recording check') }}</h2>
+    {% if media.job.display_state in ('needs_review', 'playback_only') %}<p>{{ media.job.message }}</p>{% endif %}
+    {% if check.outcome != 'no_audio' %}
+    <p>{% if check.complete %}Checked the full recording.{% else %}Checked {{ format_timestamp(check.checked_ms or 0) }} from the start of the first audio track. This check does not cover the entire recording.{% endif %} Language is not assessed by this check.</p>
+    {% if check.first_speech_ms is not none %}
+    <p>Likely speech: <button class="quiet-action" type="button" data-seek-ms="{{ check.first_speech_ms }}">Play at {{ format_timestamp(check.first_speech_ms) }}</button> to {{ format_timestamp(check.last_speech_ms) }}. Times refer to the original recording.</p>
+    {% endif %}
+    {% if check.checked_ms %}<p>Quiet audio: {{ format_timestamp(check.quiet_ms) }} total · {{ format_timestamp(check.leading_quiet_ms) }} at the start · {{ format_timestamp(check.trailing_quiet_ms) }} at the end.</p>{% endif %}
+    {% if 'multiple_audio_tracks' in check.quality %}<p>This recording has multiple audio tracks. Only the first was checked; listen to the other tracks before deciding how to transcribe it.</p>{% endif %}
+    {% if 'low_volume' in check.quality %}<p>The audio level is low. Listen with suitable volume before deciding.</p>{% endif %}
+    {% if 'clipping' in check.quality %}<p>The audio reaches its maximum level repeatedly and may sound distorted.</p>{% endif %}
+    {% if 'check_unavailable' in check.quality %}<p>The local speech check is unavailable. You can listen and choose whether to transcribe.</p>{% endif %}
+    {% endif %}
+    {% if media.job.display_state == 'needs_review' %}
+    <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/recording-check">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="inspection_id" value="{{ check.inspection_id }}">
+      {% if check.outcome != 'failed' %}<button class="button button-primary" name="action" value="continue" type="submit">Transcribe this recording</button>{% endif %}
+      <button class="button button-secondary" name="action" value="retry" type="submit">Check recording again</button>
+    </form>
+    {% endif %}
   </section>
   {% endif %}
 

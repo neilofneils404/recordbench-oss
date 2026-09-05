@@ -348,6 +348,17 @@ class MediaJobRecord:
     finished_at: str | None
     updated_at: str
 
+    @property
+    def preflight(self) -> Mapping[str, object]:
+        value = self.quality.get("preflight")
+        return value if isinstance(value, dict) else {}
+
+    @property
+    def display_state(self) -> str:
+        if self.state == "cancelled" and self.preflight:
+            return "playback_only" if self.preflight.get("outcome") == "no_audio" else "needs_review"
+        return self.state
+
 
 @dataclass(frozen=True)
 class MediaTranscriptRecord:
@@ -519,6 +530,8 @@ class MatterReadinessRecord:
     overview_attention_count: int
     progress_percent: int
     updated_at: str
+    playback_only_count: int = 0
+    recording_review_count: int = 0
 
     @property
     def can_query(self) -> bool:
@@ -3892,6 +3905,70 @@ class WorkspaceStore:
             raise KeyError(media_job_id)
         return self._media_job(row)
 
+    def save_media_preflight(
+        self, media_job_id: str, result: Mapping[str, object], *, hold: bool, message: str
+    ) -> MediaJobRecord:
+        """Persist inspection before any submission; held ASR occupies no worker.
+
+        The existing cancelled queue state means no transcription is scheduled.
+        The bound preflight distinguishes playback-only/review from cancellation
+        in staff views. No new schema or false transcript-success row is needed.
+        """
+        metadata = dict(result)
+        metadata["inspection_id"] = uuid.uuid4().hex
+        metadata["continued"] = False
+        encoded = self._media_metadata_json({"preflight": metadata}, kind="quality")
+        message = self._safe_text(message, label="Media message", maximum=240)
+        now = self._now()
+        with self._lock, self.connection:
+            changed = self.connection.execute(
+                "UPDATE workbench_media_job SET quality_json=?,state=?,stage=?,message=?,"
+                "worker_id=CASE WHEN ? THEN NULL ELSE worker_id END,updated_at=? "
+                "WHERE media_job_id=? AND state='running' AND external_job_id IS NULL",
+                (encoded, "cancelled" if hold else "running", "Recording checked",
+                 message, int(hold), now, media_job_id),
+            ).rowcount
+            row = self.connection.execute(
+                "SELECT * FROM workbench_media_job WHERE media_job_id=?", (media_job_id,)
+            ).fetchone()
+        if changed != 1 or row is None:
+            raise KeyError(media_job_id)
+        return self._media_job(row)
+
+    def decide_media_preflight(
+        self, matter_id: str, document_id: str, source_version_id: str,
+        actor_id: str, inspection_id: str, *, retry: bool
+    ) -> MediaJobRecord:
+        """One version-bound review decision, atomic against duplicate requests."""
+        self.membership(matter_id, actor_id)
+        now = self._now()
+        with self._lock, self.connection:
+            self.membership(matter_id, actor_id)
+            job = self.media_job(matter_id, document_id, source_version_id)
+            if (job is None or job.state != "cancelled" or not inspection_id
+                    or job.preflight.get("inspection_id") != inspection_id):
+                raise KeyError(document_id)
+            if not retry and job.preflight.get("outcome") in {"no_audio", "failed"}:
+                raise ValueError("Check the recording again before transcription.")
+            metadata = dict(job.preflight)
+            metadata["continued"] = True
+            encoded = self._media_metadata_json(
+                {} if retry else {"preflight": metadata}, kind="quality"
+            )
+            changed = self.connection.execute(
+                "UPDATE workbench_media_job SET state='queued',stage=?,message='',"
+                "progress=0,quality_json=?,started_at=NULL,finished_at=NULL,updated_at=? "
+                "WHERE media_job_id=? AND state='cancelled'",
+                ("Checking recording" if retry else "Queued for transcription",
+                 encoded, now, job.media_job_id),
+            ).rowcount
+            row = self.connection.execute(
+                "SELECT * FROM workbench_media_job WHERE media_job_id=?", (job.media_job_id,)
+            ).fetchone()
+        if changed != 1 or row is None:
+            raise KeyError(document_id)
+        return self._media_job(row)
+
     def finish_media_job(
         self,
         media_job_id: str,
@@ -3904,7 +3981,9 @@ class WorkspaceStore:
     ) -> MediaJobRecord:
         state = "degraded" if degraded else "succeeded"
         warning_json = self._media_metadata_json(list(warnings), kind="warnings")
-        quality_json = self._media_metadata_json(dict(quality or {}), kind="quality")
+        quality_values = dict(quality or {})
+        quality_values.pop("preflight", None)
+        quality_json = self._media_metadata_json(quality_values, kind="quality")
         provenance_json = self._media_metadata_json(
             dict(provenance or {}), kind="provenance"
         )
@@ -3913,6 +3992,15 @@ class WorkspaceStore:
         )
         now = self._now()
         with self._lock, self.connection:
+            existing = self.connection.execute(
+                "SELECT * FROM workbench_media_job WHERE media_job_id=?", (media_job_id,)
+            ).fetchone()
+            if existing is not None:
+                preflight = self._media_job(existing).preflight
+                if preflight:
+                    quality_json = self._media_metadata_json(
+                        {**quality_values, "preflight": dict(preflight)}, kind="quality"
+                    )
             changed = self.connection.execute(
                 "UPDATE workbench_media_job SET state=?,stage='Transcript ready',progress=1,"
                 "worker_id=NULL,degraded=?,message=?,warnings_json=?,quality_json=?,"
@@ -5395,6 +5483,10 @@ class WorkspaceStore:
                 "AS overview_processing_count,"
                 "(SELECT COUNT(*) FROM workbench_media_summary "
                 "WHERE matter_id=:matter_id AND state='failed') AS overview_attention_count,"
+                "(SELECT COUNT(*) FROM workbench_source_catalog WHERE matter_id=:matter_id "
+                "AND source_state='playback_only') AS playback_only_count,"
+                "(SELECT COUNT(*) FROM workbench_source_catalog WHERE matter_id=:matter_id "
+                "AND source_state='needs_review') AS recording_review_count,"
                 "COALESCE(MAX(updated_at),(SELECT updated_at FROM workbench_matter "
                 "WHERE matter_id=:matter_id)) AS updated_at FROM combined",
                 {"matter_id": matter_id},
@@ -5432,6 +5524,8 @@ class WorkspaceStore:
                 overview_attention_count=int(row["overview_attention_count"] or 0),
                 progress_percent=round((searchable / total) * 100) if total else 0,
                 updated_at=str(row["updated_at"] or self._now()),
+                playback_only_count=int(row["playback_only_count"] or 0),
+                recording_review_count=int(row["recording_review_count"] or 0),
             )
             self._matter_readiness_cache[matter_id] = (cache_token, record)
             return record

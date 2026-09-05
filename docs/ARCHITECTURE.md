@@ -35,8 +35,11 @@ which revalidates metadata and remains authoritative for staging, signature
 checks, configured ClamAV policy, and failure recovery.
 
 Accepted documents then enter extraction. Text PDFs use native extraction;
-missing-text pages use bounded CPU OCR. Media enters a durable transcription
-queue. The WhisperX worker performs transcription, alignment, optional
+missing-text pages use bounded CPU OCR. Media enters the durable media queue,
+which performs a bounded offline recording check before processor submission.
+An existing cancelled queue state plus source/version-bound inspection metadata
+holds playback-only or review-needed recordings without claiming transcript
+success; see [recording-check contracts](MEDIA_PREFLIGHT.md). The WhisperX worker performs transcription, alignment, optional
 anonymous speaker clustering, and export generation; the app projects
 transcript segments back into the matter index and generates an automatic
 source summary.
