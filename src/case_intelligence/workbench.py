@@ -1196,6 +1196,51 @@ class CaseIntelligenceWorkbench:
             "percent": min(round((projected / quota) * 100, 1), 100.0),
         }
 
+    def upload_preflight_capacity_projection(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        *,
+        checkpoint_session_id: str = "",
+        checkpoint_collection_id: str = "",
+    ) -> dict[str, int]:
+        """Return a matter-scoped capacity snapshot without reserving bytes."""
+
+        with self._storage_reservation_lock:
+            used = self.storage.matter_payload_usage_bytes(matter.matter_id)
+            reserved = self.workspace.pending_upload_bytes(
+                matter.matter_id
+            ) + self._playback_reserved_bytes(matter.matter_id)
+            checkpoint_credit = 0
+            if checkpoint_session_id and checkpoint_collection_id:
+                try:
+                    session, items = self.workspace.upload_session(
+                        matter.matter_id, actor_id, checkpoint_session_id
+                    )
+                except KeyError:
+                    session = None
+                    items = ()
+                if (
+                    session is not None
+                    and session.state == "open"
+                    and session.collection_id == checkpoint_collection_id
+                ):
+                    checkpoint_credit = sum(
+                        max(item.expected_size - item.received_size, 0)
+                        for item in items
+                        if item.state in {"pending", "uploading", "uploaded"}
+                    )
+            other_reserved = max(reserved - min(checkpoint_credit, reserved), 0)
+            quota = self.storage_policy.matter_quota_bytes
+            available = max(quota - used - other_reserved, 0)
+        return {
+            "version": 1,
+            "quota_bytes": quota,
+            "used_bytes": used,
+            "other_reserved_bytes": other_reserved,
+            "available_bytes": available,
+        }
+
     def storage_capacity_projection(self, *, include_managed_usage: bool) -> dict[str, object]:
         try:
             capacity = self.storage.capacity(
@@ -9447,6 +9492,31 @@ def create_workbench_app(
                 status_code=400,
                 headers={"Cache-Control": "no-store"},
             )
+        checkpoint_session_id = payload.get("checkpoint_session_id", "")
+        checkpoint_collection_id = payload.get("checkpoint_collection_id", "")
+        if (
+            not isinstance(checkpoint_session_id, str)
+            or not isinstance(checkpoint_collection_id, str)
+            or bool(checkpoint_session_id) != bool(checkpoint_collection_id)
+            or (
+                bool(checkpoint_session_id)
+                and (
+                    re.fullmatch(
+                        r"upload-session-[0-9a-f]{32}", checkpoint_session_id
+                    )
+                    is None
+                    or re.fullmatch(
+                        r"source-collection-[0-9a-f]{32}", checkpoint_collection_id
+                    )
+                    is None
+                )
+            )
+        ):
+            return JSONResponse(
+                {"message": "The selected-file review request is invalid."},
+                status_code=400,
+                headers={"Cache-Control": "no-store"},
+            )
         scanner_projection = await run_in_threadpool(
             scanner_status, bench.malware_scanner
         )
@@ -9462,6 +9532,19 @@ def create_workbench_app(
                 else None
             ),
         )
+        try:
+            result["matter_capacity"] = bench.upload_preflight_capacity_projection(
+                matter,
+                context.principal_id,
+                checkpoint_session_id=checkpoint_session_id,
+                checkpoint_collection_id=checkpoint_collection_id,
+            )
+        except (OSError, RuntimeError):
+            return JSONResponse(
+                {"message": "Matter upload capacity is temporarily unavailable."},
+                status_code=503,
+                headers={"Cache-Control": "no-store"},
+            )
         audit(
             request,
             "source.upload_preflight",

@@ -141,6 +141,7 @@ def _synthetic_selection(
     suffix: str = "txt",
     media_type: str = "text/plain",
     oversized_first_duplicate: bool = False,
+    capacity_gap: bool = False,
 ) -> dict[str, int]:
     return driver.execute_script(
         """
@@ -152,6 +153,7 @@ def _synthetic_selection(
         const suffix = arguments[5];
         const mediaType = arguments[6];
         const oversizedFirstDuplicate = arguments[7];
+        const capacityGap = arguments[8];
         const transfer = new DataTransfer();
         const segments = ["a", "b", "c", "d"].map((value) => value.repeat(180));
         const descriptors = [];
@@ -159,10 +161,14 @@ def _synthetic_selection(
           let name = `record-${String(index).padStart(5, "0")}.${suffix}`;
           if (crossBoundaryDuplicate && count > 2000 && index === 1999) name = `Straße.${suffix}`;
           if (crossBoundaryDuplicate && count > 2000 && index === 2000) name = `STRASSE.${suffix}`;
+          if (capacityGap && index === 4096) name = `CapacityGap.${suffix}`;
+          if (capacityGap && index === 4097) name = `CAPACITYGAP.${suffix}`;
           const folder = longPaths ? `Production/${segments.join("/")}` : "Production";
           const relativePath = `${folder}/${name}`;
           const selectedSize = oversizedFirstDuplicate && index === 1999
             ? 129
+            : capacityGap && index === 4096
+              ? 2
             : fileSize;
           const file = new File(["x".repeat(selectedSize)], name, {
             type: mediaType,
@@ -194,6 +200,7 @@ def _synthetic_selection(
         suffix,
         media_type,
         oversized_first_duplicate,
+        capacity_gap,
     )
 
 
@@ -472,6 +479,64 @@ def main() -> int:
                 window.fetch = window.__slice1aMalformedScanOriginalFetch;
                 delete window.__slice1aMalformedScanOriginalFetch;
                 delete window.__slice1aMalformedScanMode;
+                """
+            )
+
+            driver.execute_script(
+                """
+                window.__slice1aMalformedCapacityOriginalFetch = window.fetch;
+                window.__slice1aMalformedCapacityMode = '';
+                window.fetch = async (...args) => {
+                  const response = await window.__slice1aMalformedCapacityOriginalFetch(...args);
+                  if (!String(args[0]).includes('/upload-preflight')) return response;
+                  const payload = await response.json();
+                  if (window.__slice1aMalformedCapacityMode === 'missing') {
+                    delete payload.matter_capacity;
+                  } else {
+                    payload.matter_capacity = {
+                      version: 1,
+                      quota_bytes: 4096,
+                      used_bytes: 0,
+                      other_reserved_bytes: 0,
+                      available_bytes: 4095,
+                    };
+                  }
+                  return new Response(JSON.stringify(payload), {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: response.headers,
+                  });
+                };
+                """
+            )
+            for capacity_mode in ("missing", "inconsistent"):
+                driver.execute_script(
+                    "window.__slice1aMalformedCapacityMode = arguments[0];",
+                    capacity_mode,
+                )
+                _replace_selection(driver, file_input, [files[0]])
+                wait.until(lambda current: panel.get_attribute("aria-busy") is None)
+                if not (
+                    driver.find_element(
+                        By.CSS_SELECTOR, "[data-upload-preflight-state]"
+                    ).text
+                    == "Selection review paused"
+                    and not driver.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                    and not driver.find_element(
+                        By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                    ).is_enabled()
+                ):
+                    review_finding_failures.append(
+                        "invalid matter-capacity projection did not fail the preview "
+                        f"closed ({capacity_mode})"
+                    )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aMalformedCapacityOriginalFetch;
+                delete window.__slice1aMalformedCapacityOriginalFetch;
+                delete window.__slice1aMalformedCapacityMode;
                 """
             )
 
@@ -796,7 +861,7 @@ def main() -> int:
             )
             scale_status_calls = scanner.status_calls
             scale_selection = _synthetic_selection(
-                driver, file_input, 10_000, long_paths=True
+                driver, file_input, 10_000, long_paths=True, capacity_gap=True
             )
             _require(
                 scale_selection["serialized_bytes"] > 6 * 1024 * 1024,
@@ -812,7 +877,7 @@ def main() -> int:
                 and current.find_element(
                     By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
                 ).text
-                == "Upload 9,999 ready files"
+                == "Upload 4,096 ready files"
             )
             scale_requests = driver.execute_script(
                 "return window.__slice1aScaleRequests;"
@@ -842,6 +907,22 @@ def main() -> int:
                 and scale_rows[2000].get_attribute("data-state")
                 == "duplicate_candidate",
                 "server-canonical duplicate across the batch boundary was not preserved",
+            )
+            _require(
+                scale_rows[4096].get_attribute("data-state") == "over_limit"
+                and "matter has 1 B of upload capacity remaining"
+                in scale_rows[4096].text
+                and scale_rows[4097].get_attribute("data-state") == "valid",
+                "a capacity-blocked path suppressed its smaller canonical duplicate",
+            )
+            _require(
+                sum(
+                    2 if index == 4096 else 1
+                    for index, row in enumerate(scale_rows)
+                    if row.get_attribute("data-state") == "valid"
+                )
+                <= 4_096,
+                "preflight marked more ready bytes than matter capacity",
             )
             _require(
                 scale_rows[0].find_element(By.TAG_NAME, "strong").text.endswith(
@@ -1867,14 +1948,19 @@ def main() -> int:
                             "return window.__slice1aTerminalEvents;"
                         )
                     )
-                    and (
-                        current.execute_script(
-                            "return window.__slice1aTerminalBodies.length > 0;"
-                        )
-                        or current.find_element(
-                            By.CSS_SELECTOR, "[data-upload-form]"
-                        ).get_attribute("aria-busy")
-                        is None
+                    and current.execute_script(
+                        """
+                        const stored = window.localStorage.getItem(arguments[0]);
+                        if (!stored) return false;
+                        try {
+                          const parsed = JSON.parse(stored);
+                          return parsed.session_id && parsed.session_id !== arguments[1];
+                        } catch (_error) {
+                          return false;
+                        }
+                        """,
+                        terminal_key,
+                        terminal_session.upload_session_id,
                     )
                     else None
                 )
@@ -1891,6 +1977,20 @@ def main() -> int:
                 delete window.__slice1aTerminalOriginalFetch;
                 """
             )
+            terminal_current_sessions = bench.workspace.recent_upload_sessions(
+                terminal_matter.matter_id, ACTOR
+            )
+            terminal_pending = bench.workspace.pending_upload_bytes(
+                terminal_matter.matter_id
+            )
+            terminal_expected_pending = sum(
+                path.stat().st_size for path in files[:2]
+            )
+            terminal_original_state = bench.workspace.upload_session(
+                terminal_matter.matter_id,
+                ACTOR,
+                terminal_session.upload_session_id,
+            )[0].state
             _require(
                 terminal_events == [{"kind": "status"}, {"kind": "create"}]
                 and len(terminal_bodies) == 1
@@ -1899,21 +1999,16 @@ def main() -> int:
                 and terminal_saved is not None
                 and json.loads(terminal_saved)["session_id"]
                 != terminal_session.upload_session_id
-                and bench.workspace.upload_session(
-                    terminal_matter.matter_id,
-                    ACTOR,
-                    terminal_session.upload_session_id,
-                )[0].state
-                == "complete"
-                and len(
-                    bench.workspace.recent_upload_sessions(
-                        terminal_matter.matter_id, ACTOR
-                    )
-                )
-                == terminal_sessions_before + 1
-                and bench.workspace.pending_upload_bytes(terminal_matter.matter_id)
-                == sum(path.stat().st_size for path in files[:2]),
-                "completed stale checkpoint trapped changed-plan recovery",
+                and terminal_original_state == "complete"
+                and len(terminal_current_sessions) == terminal_sessions_before + 1
+                and terminal_pending == terminal_expected_pending,
+                (
+                    "completed stale checkpoint trapped changed-plan recovery "
+                    f"(events={terminal_events!r}, bodies={terminal_bodies!r}, "
+                    f"saved={terminal_saved!r}, original_state={terminal_original_state!r}, "
+                    f"sessions={len(terminal_current_sessions)}/{terminal_sessions_before + 1}, "
+                    f"pending={terminal_pending}/{terminal_expected_pending})"
+                ),
             )
 
             terminal_new_state = json.loads(terminal_saved)
@@ -2655,12 +2750,14 @@ def main() -> int:
                 "folder chooser is hidden without JavaScript and revealed when enhanced",
                 "metadata-only API before bytes",
                 "malformed or contradictory scanner projections fail the preview closed",
+                "malformed matter-capacity projections fail the preview closed",
                 "response-originated display paths never reach rendered output",
                 "one scanner-availability snapshot across a logical multi-batch review",
                 "server-attested safe folder labels distinguish eligible and blocked rows",
                 "unsafe paths and missing path attestations never reach rendered output",
                 "ten-thousand-row preview uses bounded requests and one consolidated ordered result",
                 "cross-batch canonical duplicate accounting",
+                "matter capacity bounds the ordered ready subset across batches",
                 "blocked rows cannot claim the cross-batch duplicate winner",
                 "oversized single descriptor fails locally without echo or request",
                 "in-flight later batch aborts without exposing partial results",

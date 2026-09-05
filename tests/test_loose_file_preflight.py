@@ -407,6 +407,139 @@ def test_selection_preflight_accounts_for_every_file_without_durable_writes(tmp_
         assert preflight_event.details == {"count": 5, "result_count": 2}
 
 
+def test_selection_preflight_reports_scoped_matter_capacity_without_writes(
+    tmp_path, monkeypatch
+):
+    scanner = ReadyCountingScanner()
+    app = _app(tmp_path, scanner)
+    with TestClient(app) as client:
+        slug = _matter(client, "Capacity snapshot matter")
+        other_slug = _matter(client, "Other capacity snapshot matter")
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        other = bench.matter(other_slug, ACTOR)
+
+        def reserve(target, name: str, size: int, *, actor: str = ACTOR):
+            session, _ = bench.create_upload_session(
+                target,
+                actor,
+                f"Synthetic {name} reservation",
+                (
+                    {
+                        "display_name": f"{name}.txt",
+                        "relative_path": f"capacity/{name}.txt",
+                        "media_type": "text/plain",
+                        "expected_size": size,
+                    },
+                ),
+            )
+            return session
+
+        checkpoint = reserve(matter, "checkpoint", 200)
+        reserve(matter, "other", 300)
+        foreign = reserve(other, "foreign", 400)
+        other_actor = "development-jordan-lee"
+        bench.workspace.add_member(matter.matter_id, other_actor, ACTOR)
+        foreign_actor = reserve(matter, "foreign-actor", 50, actor=other_actor)
+        cancelled = reserve(matter, "cancelled", 100)
+        bench.workspace.cancel_upload_session(
+            matter.matter_id, ACTOR, cancelled.upload_session_id
+        )
+        monkeypatch.setattr(
+            bench.storage,
+            "matter_payload_usage_bytes",
+            lambda matter_id: 111 if matter_id == matter.matter_id else 222,
+        )
+
+        def snapshot(**extra):
+            before = (
+                bench.workspace.source_collections(matter.matter_id),
+                bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR),
+                bench.workspace.pending_upload_bytes(matter.matter_id),
+            )
+            response = client.post(
+                f"/matters/{slug}/upload-preflight",
+                json={
+                    "selection_nonce": "c" * 32,
+                    "files": [
+                        {
+                            "name": "small.txt",
+                            "relative_path": "capacity/small.txt",
+                            "size": 12,
+                            "media_type": "text/plain",
+                        }
+                    ],
+                    **extra,
+                },
+            )
+            after = (
+                bench.workspace.source_collections(matter.matter_id),
+                bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR),
+                bench.workspace.pending_upload_bytes(matter.matter_id),
+            )
+            assert after == before
+            return response
+
+        ordinary = snapshot()
+        assert ordinary.status_code == 200
+        assert ordinary.json()["matter_capacity"] == {
+            "version": 1,
+            "quota_bytes": 1_024,
+            "used_bytes": 111,
+            "other_reserved_bytes": 550,
+            "available_bytes": 363,
+        }
+
+        credited = snapshot(
+            checkpoint_session_id=checkpoint.upload_session_id,
+            checkpoint_collection_id=checkpoint.collection_id,
+        )
+        assert credited.status_code == 200
+        assert credited.json()["matter_capacity"] == {
+            "version": 1,
+            "quota_bytes": 1_024,
+            "used_bytes": 111,
+            "other_reserved_bytes": 350,
+            "available_bytes": 563,
+        }
+
+        for session_id, collection_id in (
+            (foreign.upload_session_id, foreign.collection_id),
+            (foreign_actor.upload_session_id, foreign_actor.collection_id),
+            ("upload-session-" + "f" * 32, "source-collection-" + "f" * 32),
+            (cancelled.upload_session_id, cancelled.collection_id),
+            (checkpoint.upload_session_id, cancelled.collection_id),
+        ):
+            uncredited = snapshot(
+                checkpoint_session_id=session_id,
+                checkpoint_collection_id=collection_id,
+            )
+            assert uncredited.status_code == 200
+            assert uncredited.json()["matter_capacity"] == ordinary.json()[
+                "matter_capacity"
+            ]
+
+        for malformed in (
+            {"checkpoint_session_id": checkpoint.upload_session_id},
+            {"checkpoint_collection_id": checkpoint.collection_id},
+            {
+                "checkpoint_session_id": "upload-session-not-valid",
+                "checkpoint_collection_id": checkpoint.collection_id,
+            },
+            {
+                "checkpoint_session_id": checkpoint.upload_session_id,
+                "checkpoint_collection_id": "source-collection-not-valid",
+            },
+        ):
+            before = bench.workspace.pending_upload_bytes(matter.matter_id)
+            response = snapshot(**malformed)
+            assert response.status_code == 400
+            assert response.json() == {
+                "message": "The selected-file review request is invalid."
+            }
+            assert bench.workspace.pending_upload_bytes(matter.matter_id) == before
+
+
 def test_selection_preflight_minimizes_unsafe_names_and_marks_repeated_paths(tmp_path):
     scanner = UnavailableCountingScanner()
     app = _app(tmp_path, scanner)

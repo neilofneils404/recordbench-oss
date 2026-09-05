@@ -500,6 +500,30 @@
     media_type: file.type,
   });
 
+  const storedPreflightCheckpoint = () => {
+    const empty = { session_id: "", collection_id: "" };
+    if (!uploadSessionKey) return empty;
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(uploadSessionKey) || "null");
+      if (
+        parsed?.version === 3
+        && /^[0-9a-f]{64}$/.test(String(parsed.plan_fingerprint || ""))
+        && /^upload-session-[0-9a-f]{32}$/.test(String(parsed.session_id || ""))
+        && /^source-collection-[0-9a-f]{32}$/.test(String(parsed.collection_id || ""))
+        && Number.isSafeInteger(parsed.batch_index)
+        && parsed.batch_index >= 0
+      ) {
+        return {
+          session_id: String(parsed.session_id),
+          collection_id: String(parsed.collection_id),
+        };
+      }
+    } catch (_error) {
+      // Untrusted browser storage cannot authorize a capacity credit.
+    }
+    return empty;
+  };
+
   const safeFolderDisplayPath = (relativePath, displayName, pathSafetyValidated) => {
     if (typeof relativePath !== "string" || typeof displayName !== "string") return "";
     if (pathSafetyValidated !== true) return "";
@@ -616,9 +640,15 @@
     return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
   };
 
-  const buildPreflightBatches = (files, nonce) => {
+  const buildPreflightBatches = (files, nonce, checkpoint) => {
     const encoder = new TextEncoder();
-    const prefix = `{"selection_nonce":${JSON.stringify(nonce)},"files":[`;
+    const context = { selection_nonce: nonce };
+    if (checkpoint.session_id && checkpoint.collection_id) {
+      context.checkpoint_session_id = checkpoint.session_id;
+      context.checkpoint_collection_id = checkpoint.collection_id;
+    }
+    const serializedContext = JSON.stringify(context);
+    const prefix = `${serializedContext.slice(0, -1)},"files":[`;
     const suffix = "]}";
     const emptyBytes = encoder.encode(prefix + suffix).byteLength;
     const batches = [];
@@ -658,9 +688,38 @@
     return { batches, failures };
   };
 
+  const validatedMatterCapacity = (response) => {
+    const capacity = response?.matter_capacity;
+    const quota = capacity?.quota_bytes;
+    const used = capacity?.used_bytes;
+    const otherReserved = capacity?.other_reserved_bytes;
+    const available = capacity?.available_bytes;
+    if (
+      !capacity
+      || typeof capacity !== "object"
+      || Array.isArray(capacity)
+      || capacity.version !== 1
+      || !Number.isSafeInteger(quota)
+      || quota <= 0
+      || !Number.isSafeInteger(used)
+      || used < 0
+      || !Number.isSafeInteger(otherReserved)
+      || otherReserved < 0
+      || !Number.isSafeInteger(available)
+      || available < 0
+      || available !== Math.max(quota - used - otherReserved, 0)
+    ) {
+      throw new Error("The selection review returned an incomplete matter-capacity check.");
+    }
+    return available;
+  };
+
   const consolidatePreflight = (selectedCount, batches, responses, failures) => {
     const items = Array(selectedCount);
     const scannerCapability = scannerSnapshotCapability(responses);
+    const availableCapacity = responses.length
+      ? Math.min(...responses.map(validatedMatterCapacity))
+      : 0;
     failures.forEach((item, index) => { items[index] = item; });
     batches.forEach((batch, batchIndex) => {
       const responseItems = responses[batchIndex]?.items;
@@ -697,6 +756,7 @@
     const counts = Object.fromEntries(Object.keys(preflightStateLabels).map((state) => [state, 0]));
     const eligibleIndexes = [];
     const seenTokens = new Set();
+    let remainingCapacity = availableCapacity;
     items.forEach((item, index) => {
       const token = typeof item.duplicate_token === "string"
         && /^[0-9a-f]{64}$/.test(item.duplicate_token)
@@ -706,13 +766,21 @@
         throw new Error("The selection review returned an incomplete duplicate check.");
       }
       if (item.state === "valid" && item.eligible === true) {
-        if (token && seenTokens.has(token)) {
+        if (!Number.isSafeInteger(item.size) || item.size <= 0) {
+          throw new Error("The selection review returned an incomplete matter-capacity check.");
+        }
+        if (item.size > remainingCapacity) {
+          item.state = "over_limit";
+          item.eligible = false;
+          item.message = `This matter has ${formatBytes(remainingCapacity)} of upload capacity remaining. Remove unneeded sources or choose another matter; smaller later files may still fit.`;
+        } else if (token && seenTokens.has(token)) {
           item.state = "duplicate_candidate";
           item.eligible = false;
           item.duplicate = "selection_collision";
           item.message = "This relative path appears more than once in the selection. Keep one copy or rename it before upload.";
         } else if (token) {
           seenTokens.add(token);
+          remainingCapacity -= item.size;
         }
       }
       delete item.duplicate_token;
@@ -769,7 +837,11 @@
       if (preflightFiles.length > maximumUploadItems) {
         throw new Error(`Choose no more than ${maximumUploadItems.toLocaleString()} items in one collection.`);
       }
-      const { batches, failures } = buildPreflightBatches(preflightFiles, selectionNonce());
+      const { batches, failures } = buildPreflightBatches(
+        preflightFiles,
+        selectionNonce(),
+        storedPreflightCheckpoint(),
+      );
       const responses = [];
       for (const batch of batches) {
         if (version !== preflightVersion) return;
