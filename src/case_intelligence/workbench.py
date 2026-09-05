@@ -3272,12 +3272,36 @@ class CaseIntelligenceWorkbench:
         frozen_source_catalog: Sequence[SourceCatalogRecord] | None = None,
         exported_at: str | None = None,
     ) -> ExportArtifact:
-        """Resolve every report citation under the source mutation boundary."""
+        return self.export_report_work_products(
+            matter, report, sections, (format_name,),
+            frozen_source_catalog=frozen_source_catalog,
+            exported_at=exported_at,
+        )[0]
+
+    def export_report_work_products(
+        self,
+        matter: MatterRecord,
+        report: ReportRecord,
+        sections: Sequence[
+            tuple[ReportSectionRecord, Sequence[ReportCitationRecord]]
+        ],
+        format_names: Sequence[str],
+        *,
+        frozen_source_catalog: Sequence[SourceCatalogRecord] | None = None,
+        exported_at: str | None = None,
+    ) -> tuple[ExportArtifact, ...]:
+        """Resolve citations once, then render formats inside the same boundary."""
+
+        def render() -> tuple[ExportArtifact, ...]:
+            return tuple(
+                export_report(
+                    matter, report, sections, format_name, exported_at=exported_at
+                )
+                for format_name in format_names
+            )
 
         if not any(citations for _section, citations in sections):
-            return export_report(
-                matter, report, sections, format_name, exported_at=exported_at
-            )
+            return render()
         if frozen_source_catalog is not None:
             # Saved Report citations do not retain the full verification basis
             # available in investigation ledgers. Never reopen quarantined
@@ -3344,9 +3368,7 @@ class CaseIntelligenceWorkbench:
                             "Open the Report to repair or remove unavailable source "
                             "support, then retry the export."
                         ) from exc
-            return export_report(
-                matter, report, sections, format_name, exported_at=exported_at
-            )
+            return render()
 
     def export_research_work_product(
         self,
@@ -13189,12 +13211,13 @@ def create_workbench_app(
                     "section_count": len(sections),
                     "updated_at": report.updated_at,
                 }
-                for format_name in ("markdown", "docx"):
-                    report_artifact = bench.export_report_work_product(
-                        matter, report, sections, format_name,
-                        frozen_source_catalog=frozen_source_catalog,
-                        exported_at=exported_at,
-                    )
+                formats = ("markdown", "docx")
+                report_artifacts = bench.export_report_work_products(
+                    matter, report, sections, formats,
+                    frozen_source_catalog=frozen_source_catalog,
+                    exported_at=exported_at,
+                )
+                for format_name, report_artifact in zip(formats, report_artifacts, strict=True):
                     additional_work_product_bytes += len(report_artifact.body)
                     if additional_work_product_bytes > MAX_BUNDLE_UNCOMPRESSED_BYTES:
                         raise ExportProblem(

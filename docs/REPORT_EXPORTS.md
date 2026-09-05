@@ -21,7 +21,10 @@ editors; this does not promise RecordBench package import or archival storage.
 The bundle reads Report headers, sections, and citations in one SQLite snapshot.
 Concurrent edits appear either before or after that snapshot, never as mixed
 header/body revisions. Reports are validated using the same source-version,
-passage, location, and clip checks as individual Report exports. The response
+passage, location, and clip checks as individual Report exports. Each saved
+Report is resolved once inside the source mutation boundary, then both formats
+are rendered there; Word does not repeat the potentially corpus-wide lookup
+already performed for Markdown. The response
 lease prevents matter closure while an export is being prepared or delivered.
 
 No complete bundle is returned if any saved Report cannot be included safely.
@@ -62,8 +65,8 @@ reintroduces the omission defect: use verified individual Report downloads
 before closure until the correction is restored. Production activation is a
 separate deployment decision.
 
-Local validation on September 5: 19 focused Report regressions pass; the full
-application suite passes with 705 tests and 9 environment-gated skips. The
+Local validation on September 5: 20 focused Report regressions pass; the full
+application suite passes with 706 tests and 9 environment-gated skips. The
 synthetic browser acceptance passes all seven workflow checks. Compilation,
 publication tree/history checks, and both Compose graphs pass. Hosted PR code
 and security reviews and required CI remain separate merge gates.

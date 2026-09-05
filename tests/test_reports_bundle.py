@@ -123,6 +123,24 @@ def test_cited_report_matches_individual_export_and_opens_exact_support(workspac
     assert "Synthetic exact source passage." in bundled
 
 
+def test_bundle_resolves_report_citations_once_for_both_formats(workspace, monkeypatch):
+    client, bench, matter = workspace
+    cited_report(bench, matter)
+    original_find = bench._find_support
+    resolved = []
+    def count_resolution(*args, **kwargs):
+        resolved.append(True)
+        return original_find(*args, **kwargs)
+    monkeypatch.setattr(bench, "_find_support", count_resolution)
+    response = client.get(f"/matters/{matter.slug}/export")
+    assert response.status_code == 200
+    assert len(resolved) == 1
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        report = json.loads(archive.read("manifest.json"))["reports"][0]
+        assert archive.read(report["markdown"])
+        assert archive.read(report["docx"])
+
+
 @pytest.mark.parametrize("column,value", [
     ("excerpt", "FOREIGN CONTENT CANARY"), ("source_version_id", "f" * 32),
     ("document_id", "e" * 32), ("location", "Line 99"), ("support_token", "d" * 40),
@@ -207,16 +225,16 @@ def test_bundle_keeps_neighbor_report_out_and_refuses_close_during_render(worksp
     response = client.post("/matters", data={"name": "Neighbor synthetic matter"}, follow_redirects=False)
     neighbor = bench.matter(response.headers["location"].split("/")[2], ACTOR)
     saved_report(bench, neighbor, "FOREIGN REPORT CANARY")
-    original_export = bench.export_report_work_product
+    original_export = bench.export_report_work_products
     attempts = []
     def render_with_close_attempt(*args, **kwargs):
         with pytest.raises(WorkspaceProblem):
             bench.begin_matter_purge(matter.slug, ACTOR, matter.display_name)
         attempts.append(True)
         return original_export(*args, **kwargs)
-    monkeypatch.setattr(bench, "export_report_work_product", render_with_close_attempt)
+    monkeypatch.setattr(bench, "export_report_work_products", render_with_close_attempt)
     response = client.get(f"/matters/{matter.slug}/export")
-    assert response.status_code == 200 and len(attempts) == 2
+    assert response.status_code == 200 and len(attempts) == 1
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert b"FOREIGN REPORT CANARY" not in archive.read("manifest.json")
         assert json.loads(archive.read("manifest.json"))["report_count"] == 1
