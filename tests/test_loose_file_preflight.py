@@ -367,6 +367,7 @@ def test_selection_preflight_accounts_for_every_file_without_durable_writes(tmp_
         assert payload["items"][0] == {
             "index": 0,
             "display_name": "incident-notes.txt",
+            "path_safety_validated": True,
             "state": "valid",
             "eligible": True,
             "supplied_type": "text/plain",
@@ -436,6 +437,7 @@ def test_selection_preflight_minimizes_unsafe_names_and_marks_repeated_paths(tmp
             "duplicate_candidate",
         ]
         assert payload["items"][0]["display_name"] == "Selected file 1"
+        assert payload["items"][0]["path_safety_validated"] is False
         assert payload["items"][2]["duplicate"] == "selection_collision"
         assert payload["eligible_indexes"] == [1]
         assert scanner.scan_calls == 0
@@ -476,6 +478,97 @@ def test_selection_preflight_keeps_scan_policy_on_duplicate_and_over_limit_rows(
         )
         assert scanner.status_calls == before_status_calls + 1
         assert scanner.scan_calls == 0
+
+
+def test_selection_preflight_attests_only_shared_validator_safe_paths(tmp_path):
+    scanner = UnavailableCountingScanner()
+    app = _app(tmp_path, scanner)
+    safe_paths = [
+        "Folder A/archive.zip",
+        "Folder B/archive.zip",
+        "Folder A/empty.txt",
+        "Folder B/missing-size.txt",
+        "Folder A/oversize.txt",
+    ]
+    unsafe_paths = [
+        "/private/evidence.txt",
+        "../private/evidence.txt",
+        "Folder/\x00evidence.txt",
+        "Folder/\u202eevidence.txt",
+        "CON/evidence.txt",
+    ]
+    with TestClient(app) as client:
+        slug = _matter(client)
+        response = client.post(
+            f"/matters/{slug}/upload-preflight",
+            json={
+                "selection_nonce": "a" * 32,
+                "files": [
+                    {
+                        "name": "archive.zip",
+                        "relative_path": safe_paths[0],
+                        "size": 4,
+                        "media_type": "application/zip",
+                    },
+                    {
+                        "name": "archive.zip",
+                        "relative_path": safe_paths[1],
+                        "size": 4,
+                        "media_type": "application/zip",
+                    },
+                    {
+                        "name": "empty.txt",
+                        "relative_path": safe_paths[2],
+                        "size": 0,
+                        "media_type": "text/plain",
+                    },
+                    {
+                        "name": "missing-size.txt",
+                        "relative_path": safe_paths[3],
+                        "media_type": "text/plain",
+                    },
+                    {
+                        "name": "oversize.txt",
+                        "relative_path": safe_paths[4],
+                        "size": 129,
+                        "media_type": "text/plain",
+                    },
+                    *[
+                        {
+                            "name": "evidence.txt",
+                            "relative_path": path,
+                            "size": 12,
+                            "media_type": "text/plain",
+                        }
+                        for path in unsafe_paths
+                    ],
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["state"] for item in payload["items"][:5]] == [
+        "unsupported",
+        "unsupported",
+        "failed",
+        "failed",
+        "over_limit",
+    ]
+    assert [item["path_safety_validated"] for item in payload["items"]] == [
+        True,
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+        False,
+        False,
+        False,
+    ]
+    assert all(path not in response.text for path in safe_paths + unsafe_paths)
+    assert scanner.scan_calls == 0
 
 
 def test_selection_preflight_is_matter_scoped_and_never_claims_a_completed_scan(tmp_path):
@@ -566,4 +659,38 @@ def test_setup_exposes_review_before_upload_and_no_script_fallback(tmp_path):
     assert 'data-upload-preflight-confirm' in response.text
     assert "Review selected files" in response.text
     assert "Upload 0 ready files" in response.text
-    assert "Without JavaScript, selected files use the retained direct upload path." in response.text
+    assert "Without JavaScript, the retained direct upload is limited to 1–10 files per request." in response.text
+    assert "Turn on JavaScript to review up to 10,000 selected records in resumable batches." in response.text
+
+
+def test_no_script_direct_upload_rejects_eleven_files_without_durable_state(tmp_path):
+    scanner = UnavailableCountingScanner()
+    app = _app(tmp_path, scanner)
+    with TestClient(app) as client:
+        slug = _matter(client)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        store = bench.source_store(matter)
+        before_documents = tuple(store.documents)
+        before_collections = bench.workspace.source_collections(matter.matter_id)
+        before_sessions = bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR)
+        before_reserved = bench.workspace.pending_upload_bytes(matter.matter_id)
+
+        response = client.post(
+            f"/matters/{slug}/uploads",
+            files=[
+                ("files", (f"record-{index:02d}.txt", b"x", "text/plain"))
+                for index in range(11)
+            ],
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert "Choose+between+1+and+10+files+for+each+upload." in response.headers[
+            "location"
+        ]
+        assert tuple(store.documents) == before_documents
+        assert bench.workspace.source_collections(matter.matter_id) == before_collections
+        assert bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR) == before_sessions
+        assert bench.workspace.pending_upload_bytes(matter.matter_id) == before_reserved
+        assert scanner.scan_calls == 0

@@ -492,9 +492,9 @@
     media_type: file.type,
   });
 
-  const safeFolderDisplayPath = (relativePath, displayName, duplicateToken) => {
+  const safeFolderDisplayPath = (relativePath, displayName, pathSafetyValidated) => {
     if (typeof relativePath !== "string" || typeof displayName !== "string") return "";
-    if (typeof duplicateToken !== "string" || !/^[0-9a-f]{64}$/.test(duplicateToken)) return "";
+    if (pathSafetyValidated !== true) return "";
     const normalized = relativePath.normalize("NFC");
     const normalizedName = displayName.normalize("NFC");
     if (
@@ -652,12 +652,18 @@
         if (!item || item.index !== localIndex) {
           throw new Error("The selection review returned files out of order.");
         }
+        if (
+          typeof item.path_safety_validated !== "boolean"
+          || (item.path_safety_validated !== true && item.state !== "failed")
+        ) {
+          throw new Error("The selection review returned an incomplete path check.");
+        }
         const entry = batch.entries[localIndex];
         const index = entry.index;
         const displayPath = safeFolderDisplayPath(
           entry.folderRelativePath,
           item.display_name,
-          item.duplicate_token,
+          item.path_safety_validated,
         );
         const normalizedItem = { ...item, index };
         delete normalizedItem.display_path;

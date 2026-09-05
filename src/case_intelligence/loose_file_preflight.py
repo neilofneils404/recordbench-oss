@@ -54,6 +54,7 @@ def _base_item(index: int) -> dict[str, Any]:
     return {
         "index": index,
         "display_name": f"Selected file {index + 1}",
+        "path_safety_validated": False,
         "state": "failed",
         "eligible": False,
         "supplied_type": None,
@@ -122,6 +123,7 @@ def evaluate_loose_file_preflight(
             if str(exc).startswith("Supported sources are"):
                 # This error is reached only after the shared path/name safety
                 # validator has accepted every component.
+                result["path_safety_validated"] = True
                 result["display_name"] = PurePosixPath(
                     unicodedata.normalize("NFC", raw_path)
                 ).name
@@ -138,6 +140,7 @@ def evaluate_loose_file_preflight(
             items.append(result)
             continue
 
+        result["path_safety_validated"] = True
         del relative_path
         result["display_name"] = filename
         expected_type = canonical_media_type(suffix)

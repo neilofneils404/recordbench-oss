@@ -424,6 +424,58 @@ def main() -> int:
 
             driver.execute_script(
                 """
+                window.__slice1aMissingPathAttestationOriginalFetch = window.fetch;
+                window.__slice1aPathAttestationMode = '';
+                window.fetch = async (...args) => {
+                  const response = await window.__slice1aMissingPathAttestationOriginalFetch(...args);
+                  if (!String(args[0]).includes('/upload-preflight')) return response;
+                  const payload = await response.json();
+                  if (window.__slice1aPathAttestationMode === 'missing') {
+                    delete payload.items[0].path_safety_validated;
+                  } else {
+                    payload.items[0].path_safety_validated = false;
+                  }
+                  return new Response(JSON.stringify(payload), {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: response.headers,
+                  });
+                };
+                """
+            )
+            for path_attestation_mode in ("missing", "false-valid"):
+                driver.execute_script(
+                    "window.__slice1aPathAttestationMode = arguments[0];",
+                    path_attestation_mode,
+                )
+                _replace_selection(driver, file_input, [files[0]])
+                wait.until(lambda current: panel.get_attribute("aria-busy") is None)
+                if not (
+                    driver.find_element(
+                        By.CSS_SELECTOR, "[data-upload-preflight-state]"
+                    ).text
+                    == "Selection review paused"
+                    and not driver.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                    and not driver.find_element(
+                        By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                    ).is_enabled()
+                ):
+                    review_finding_failures.append(
+                        "invalid path-safety attestation did not fail the preview "
+                        f"closed ({path_attestation_mode})"
+                    )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aMissingPathAttestationOriginalFetch;
+                delete window.__slice1aMissingPathAttestationOriginalFetch;
+                delete window.__slice1aPathAttestationMode;
+                """
+            )
+
+            driver.execute_script(
+                """
                 window.__slice1aInjectedPathOriginalFetch = window.fetch;
                 window.fetch = async (...args) => {
                   const response = await window.__slice1aInjectedPathOriginalFetch(...args);
@@ -507,6 +559,24 @@ def main() -> int:
 
             driver.execute_script(
                 """
+                window.__slice1aInvalidSizeOriginalFetch = window.fetch;
+                window.fetch = (...args) => {
+                  if (!String(args[0]).includes('/upload-preflight')) {
+                    return window.__slice1aInvalidSizeOriginalFetch(...args);
+                  }
+                  const payload = JSON.parse(String(args[1].body));
+                  payload.files.forEach((item) => {
+                    if (item.name === 'missing-size.txt') delete item.size;
+                  });
+                  return window.__slice1aInvalidSizeOriginalFetch(args[0], {
+                    ...args[1],
+                    body: JSON.stringify(payload),
+                  });
+                };
+                """
+            )
+            driver.execute_script(
+                """
                 const input = arguments[0];
                 const transfer = new DataTransfer();
                 ["Folder Alpha", "Folder Beta"].forEach((folder, index) => {
@@ -555,6 +625,98 @@ def main() -> int:
             ):
                 review_finding_failures.append(
                     "folder selection did not safely disambiguate duplicate leaf names"
+                )
+
+            driver.execute_script(
+                """
+                const input = arguments[0];
+                const transfer = new DataTransfer();
+                const fixtures = [
+                  ["Folder Alpha/archive.zip", "archive.zip", 4, "application/zip"],
+                  ["Folder Beta/archive.zip", "archive.zip", 4, "application/zip"],
+                  ["Folder Alpha/empty.txt", "empty.txt", 0, "text/plain"],
+                  ["Folder Beta/empty.txt", "empty.txt", 0, "text/plain"],
+                  ["Folder Alpha/missing-size.txt", "missing-size.txt", 1, "text/plain"],
+                  ["Folder Beta/missing-size.txt", "missing-size.txt", 1, "text/plain"],
+                  ["Folder Alpha/oversize.txt", "oversize.txt", 129, "text/plain"],
+                  ["Folder Beta/oversize.txt", "oversize.txt", 129, "text/plain"],
+                  ["../private/absolute/evidence.txt", "evidence.txt", 1, "text/plain"],
+                ];
+                fixtures.forEach(([relativePath, name, size, mediaType], index) => {
+                  const file = new File(["x".repeat(size)], name, {
+                    type: mediaType,
+                    lastModified: 1700000200000 + index,
+                  });
+                  Object.defineProperty(file, "webkitRelativePath", {
+                    value: relativePath,
+                  });
+                  transfer.items.add(file);
+                });
+                input.value = "";
+                input.files = transfer.files;
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                """,
+                file_input,
+            )
+            WebDriverWait(driver, 30).until(
+                lambda current: len(
+                    current.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                )
+                == 9
+                and panel.get_attribute("aria-busy") is None
+            )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aInvalidSizeOriginalFetch;
+                delete window.__slice1aInvalidSizeOriginalFetch;
+                """
+            )
+            blocked_rows = driver.find_elements(
+                By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+            )
+            blocked_labels = [
+                row.find_element(By.TAG_NAME, "strong").text for row in blocked_rows
+            ]
+            blocked_states = [
+                row.get_attribute("data-state") for row in blocked_rows
+            ]
+            if not (
+                blocked_labels
+                == [
+                    "Folder Alpha/archive.zip",
+                    "Folder Beta/archive.zip",
+                    "Folder Alpha/empty.txt",
+                    "Folder Beta/empty.txt",
+                    "Folder Alpha/missing-size.txt",
+                    "Folder Beta/missing-size.txt",
+                    "Folder Alpha/oversize.txt",
+                    "Folder Beta/oversize.txt",
+                    "Selected file 9",
+                ]
+                and blocked_states
+                == [
+                    "unsupported",
+                    "unsupported",
+                    "failed",
+                    "failed",
+                    "failed",
+                    "failed",
+                    "over_limit",
+                    "over_limit",
+                    "failed",
+                ]
+                and all(
+                    "../" not in label
+                    and not label.startswith(("/", "\\"))
+                    and ":" not in label
+                    and str(temporary_root) not in label
+                    for label in blocked_labels
+                )
+            ):
+                review_finding_failures.append(
+                    "safe blocked folder rows were ambiguous or an unsafe path rendered"
                 )
             _require(
                 not review_finding_failures,
@@ -1798,7 +1960,8 @@ def main() -> int:
                 "malformed or contradictory scanner projections fail the preview closed",
                 "response-originated display paths never reach rendered output",
                 "one scanner-availability snapshot across a logical multi-batch review",
-                "safe folder-relative labels disambiguate duplicate leaf names",
+                "server-attested safe folder labels distinguish eligible and blocked rows",
+                "unsafe paths and missing path attestations never reach rendered output",
                 "ten-thousand-row preview uses bounded requests and one consolidated ordered result",
                 "cross-batch canonical duplicate accounting",
                 "oversized single descriptor fails locally without echo or request",
