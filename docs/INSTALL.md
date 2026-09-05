@@ -142,8 +142,13 @@ not fetch or merge source code: review and update the clone first, then run:
 ./install update --root /srv/recordbench
 ```
 
-An update requires a newly successful encrypted backup unless the operator
-explicitly supplies `--no-backup`. The new capsule is built without overwriting
+An update requires a newly successful bundled encrypted backup unless no
+bundled backup is configured and the operator supplies `--no-backup`. Operators
+using their own backup method can use that flag after verifying their external
+recovery copy against the [backup consistency requirements](STORAGE_AND_BACKUP.md).
+It skips the bundled requirement; it does not validate an external backup or
+ignore a configured bundled backup's failed/deferred receipt.
+The new capsule is built without overwriting
 the prior image set. If startup acceptance fails, configuration is returned to
 the previous release and its images are relaunched. Old releases and images are
 retained for deliberate operator cleanup; the updater never prunes them.

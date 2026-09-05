@@ -153,8 +153,12 @@ accounts. NVIDIA Container Toolkit is required only when selecting a GPU
 profile. Read the complete [installation playbook](docs/INSTALL.md) before an
 installation intended for staff access.
 
-The installer also provides commands for node diagnostics, encrypted backup,
-isolated restore testing, and versioned updates:
+The installer also provides commands for node diagnostics, optional encrypted
+backup, isolated restore testing, and versioned updates. Operators can use
+their existing backup system or the bundled restic method with a destination
+available through their host filesystem; RecordBench does not mount shares or
+choose a storage provider. Follow the [consistency and recovery requirements](docs/STORAGE_AND_BACKUP.md)
+for either method.
 
 ```bash
 ./install doctor --root /srv/recordbench

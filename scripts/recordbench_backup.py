@@ -390,23 +390,73 @@ def _copy_linked(source: Path, destination: Path) -> None:
     _run(("cp", "-al", "--", str(source), str(destination)), capture=True)
 
 
+def _snapshot_files(*roots: Path) -> list[Path]:
+    """Inventory the frozen boundary without reading through symbolic links."""
+    def walk_error(error: OSError) -> None:
+        raise BackupError("snapshot boundary could not be read") from error
+
+    files: list[Path] = []
+    for root in roots:
+        if root.is_symlink() or not root.is_dir():
+            raise BackupError("snapshot boundary is unavailable or is a symbolic link")
+        for parent, directories, names in os.walk(root, followlinks=False, onerror=walk_error):
+            for name in directories + names:
+                path = Path(parent) / name
+                mode = path.lstat().st_mode
+                if stat.S_ISLNK(mode):
+                    raise BackupError("snapshot boundary contains a symbolic link")
+                if stat.S_ISREG(mode):
+                    files.append(path)
+                elif not stat.S_ISDIR(mode):
+                    raise BackupError("snapshot boundary contains an unsupported file type")
+    return sorted(files)
+
+
+def _sqlite_files(files: Iterable[Path]) -> list[Path]:
+    return [path for path in files if path.suffix.casefold() in {".sqlite", ".sqlite3", ".db"}]
+
+
+def _check_sqlite(connection: sqlite3.Connection) -> None:
+    if connection.execute("PRAGMA quick_check;").fetchall() != [("ok",)]:
+        raise BackupError("SQLite integrity validation failed")
+    if connection.execute("PRAGMA foreign_key_check;").fetchall():
+        raise BackupError("SQLite foreign-key validation failed")
+
+
 def _validate_sqlite(path: Path) -> None:
-    temporary = path.with_name(path.name + f".independent-{os.getpid()}")
-    shutil.copy2(path, temporary)
-    os.replace(temporary, path)
+    """Consolidate a stopped SQLite store into an independent snapshot file.
+
+    Copy the journal boundary before opening SQLite: even a read-only WAL
+    connection may update shared memory. Neither it nor resumed live writes
+    may touch a hard-linked snapshot companion.
+    """
+    companions = [path.with_name(path.name + suffix) for suffix in ("-wal", "-shm", "-journal")]
     try:
-        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        quick = connection.execute("PRAGMA quick_check;").fetchall()
-        foreign = connection.execute("PRAGMA foreign_key_check;").fetchall()
+        with tempfile.TemporaryDirectory(prefix=".sqlite-freeze-", dir=path.parent) as temporary:
+            copied = Path(temporary) / "source.sqlite"
+            frozen = Path(temporary) / "frozen.sqlite"
+            shutil.copy2(path, copied)
+            for companion in companions:
+                if companion.exists():
+                    shutil.copy2(companion, copied.with_name(copied.name + companion.name[len(path.name):]))
+            source = sqlite3.connect(copied.as_uri() + "?mode=ro", uri=True)
+            try:
+                destination = sqlite3.connect(frozen)
+                try:
+                    source.backup(destination)
+                    destination.execute("PRAGMA journal_mode=DELETE")
+                    _check_sqlite(destination)
+                finally:
+                    destination.close()
+            finally:
+                source.close()
+            shutil.copystat(path, frozen)
+            os.replace(frozen, path)
+        # These are names in the snapshot only; the live companions remain.
+        for companion in companions:
+            companion.unlink(missing_ok=True)
     except sqlite3.Error as exc:
-        raise BackupError(f"SQLite validation failed for {path.name}") from exc
-    finally:
-        try:
-            connection.close()
-        except UnboundLocalError:
-            pass
-    if quick != [("ok",)] or foreign:
-        raise BackupError(f"SQLite integrity validation failed for {path.name}")
+        raise BackupError("SQLite snapshot validation failed") from exc
 
 
 def _hash_controls(payload: Path) -> None:
@@ -504,6 +554,10 @@ def backup(args: argparse.Namespace) -> int:
     storage_snapshot = storage_snapshot_parent / "managed-storage"
     app_stopped = False
     try:
+        # Stop the writer before capturing either the projection or source/control
+        # stores. Work finishing after the admission probe must be in all of them.
+        app_stopped = True
+        _run((*compose, "stop", "--timeout", "120", "gateway", "app"), capture=False)
         (payload / "postgres").mkdir()
         postgres_dump = _run(
             (*compose, "exec", "-T", "postgres", "pg_dump", "-U", "recordbench", "-d", "recordbench", "--format=custom")
@@ -514,8 +568,6 @@ def backup(args: argparse.Namespace) -> int:
             input_bytes=postgres_dump.stdout,
         )
 
-        _run((*compose, "stop", "--timeout", "120", "gateway", "app"), capture=False)
-        app_stopped = True
         for name, source in sources.items():
             _copy_linked(source, payload / name)
         _copy_linked(managed_storage, storage_snapshot)
@@ -523,11 +575,8 @@ def backup(args: argparse.Namespace) -> int:
         control.mkdir()
         shutil.copy2(node / "compose.env", control / "compose.env")
         shutil.copy2(node / "installation.json", control / "installation.json")
-        for database in sorted(
-            path
-            for path in payload.rglob("*")
-            if path.is_file() and path.suffix.casefold() in {".sqlite", ".sqlite3", ".db"}
-        ):
+        databases = _sqlite_files(_snapshot_files(payload, storage_snapshot))
+        for database in databases:
             _validate_sqlite(database)
         metadata = payload / "metadata"
         metadata.mkdir()
@@ -541,6 +590,8 @@ def backup(args: argparse.Namespace) -> int:
                     "retention": config["retention"],
                     "layout": "split-hardlink-snapshot-v1",
                     "managed_storage_root": str(managed_storage),
+                    "sqlite_stores": len(databases),
+                    "managed_sqlite_stores": sum(database.is_relative_to(storage_snapshot) for database in databases),
                 },
                 indent=2,
             )
@@ -676,12 +727,13 @@ def restore(args: argparse.Namespace) -> int:
         _restic(
             config,
             password,
-            ("restore", args.snapshot, "--tag", "recordbench", "--target", str(target)),
+            ("restore", args.snapshot, "--verify", "--tag", "recordbench", "--target", str(target)),
         )
+        files = _snapshot_files(target)
         checksums = [
             path
-            for path in target.rglob("CONTROL_SHA256SUMS")
-            if path.is_file() and not path.is_symlink()
+            for path in files
+            if path.name == "CONTROL_SHA256SUMS"
         ]
         if len(checksums) != 1:
             raise BackupError("restored control checksum manifest is unavailable")
@@ -689,28 +741,33 @@ def restore(args: argparse.Namespace) -> int:
         payload = checksum.parent
         for line in checksum.read_text(encoding="ascii").splitlines():
             _verify_checksum_line(payload, line)
-        databases = [
-            path
-            for path in payload.rglob("*")
-            if path.is_file() and path.suffix.casefold() in {".sqlite", ".sqlite3", ".db"}
-        ]
-        if not databases:
+        storage_markers = [path for path in files if path.name == ".recordbench-managed-storage.json"]
+        if len(storage_markers) != 1:
+            raise BackupError("restored managed storage boundary is unavailable or ambiguous")
+        managed_storage = storage_markers[0].parent
+        databases = _sqlite_files(files)
+        if not any(database.is_relative_to(payload) for database in databases):
             raise BackupError("restore drill found no SQLite control stores")
+        managed_databases = sum(database.is_relative_to(managed_storage) for database in databases)
+        manifest = _read_json(payload / "metadata/backup-manifest.json", label="backup manifest", private=False)
+        # Older snapshots lack these counts and still receive all-store checks.
+        for name, count in (("sqlite_stores", len(databases)), ("managed_sqlite_stores", managed_databases)):
+            if name in manifest and (type(manifest[name]) is not int or manifest[name] != count):
+                raise BackupError("restored SQLite inventory does not match the backup manifest")
         for database in databases:
             connection: sqlite3.Connection | None = None
             try:
-                connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
-                if connection.execute("PRAGMA quick_check;").fetchall() != [("ok",)]:
-                    raise BackupError(f"restored SQLite integrity check failed for {database.name}")
-                if connection.execute("PRAGMA foreign_key_check;").fetchall():
-                    raise BackupError(f"restored SQLite foreign-key check failed for {database.name}")
+                connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)
+                _check_sqlite(connection)
+            except sqlite3.Error as exc:
+                raise BackupError("restored SQLite validation failed") from exc
             finally:
                 if connection is not None:
                     connection.close()
         dumps = [
             path
-            for path in target.rglob("review-index.dump")
-            if path.is_file() and not path.is_symlink()
+            for path in files
+            if path.name == "review-index.dump"
         ]
         if len(dumps) != 1:
             raise BackupError("restored PostgreSQL projection dump is unavailable")
@@ -723,6 +780,7 @@ def restore(args: argparse.Namespace) -> int:
             "snapshot": args.snapshot,
             "target": str(target),
             "sqlite_stores": len(databases),
+            "managed_sqlite_stores": managed_databases,
         }
         _private_write(
             target / "RESTORE_DRILL_VERIFIED.json",

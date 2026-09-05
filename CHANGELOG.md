@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Keep bundled backups consistent after application restart: freeze managed
+  registries and WAL-backed control databases independently, and capture the
+  PostgreSQL projection inside the same stopped application boundary. Restore
+  now verifies managed SQLite stores and recorded inventory as well as control
+  stores. Synthetic mutation, failure/recovery and optional encrypted
+  repository/PostgreSQL import tests cover the boundary. Operators retain the
+  choice of an external backup system or the optional bundled method with a
+  host-accessible destination.
 - Versioned the stacked-record favicon and application-mark URLs so browsers
   cannot retain the superseded monogram after an upgrade.
 - Added the first staff-visible Slice 1A increment: loose-file selection now
