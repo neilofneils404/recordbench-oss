@@ -1208,10 +1208,11 @@ class CaseIntelligenceWorkbench:
 
         with self._storage_reservation_lock:
             used = self.storage.matter_payload_usage_bytes(matter.matter_id)
-            reserved = self.workspace.pending_upload_bytes(
+            total_reserved = self.workspace.pending_upload_bytes(
                 matter.matter_id
             ) + self._playback_reserved_bytes(matter.matter_id)
-            checkpoint_credit = 0
+            checkpoint_validated = False
+            checkpoint_remaining = 0
             if checkpoint_session_id and checkpoint_collection_id:
                 try:
                     session, items = self.workspace.upload_session(
@@ -1222,21 +1223,29 @@ class CaseIntelligenceWorkbench:
                     items = ()
                 if (
                     session is not None
-                    and session.state == "open"
+                    and session.state in {"open", "complete", "partial"}
                     and session.collection_id == checkpoint_collection_id
                 ):
-                    checkpoint_credit = sum(
-                        max(item.expected_size - item.received_size, 0)
-                        for item in items
-                        if item.state in {"pending", "uploading", "uploaded"}
-                    )
-            other_reserved = max(reserved - min(checkpoint_credit, reserved), 0)
+                    checkpoint_validated = True
+                    if session.state == "open":
+                        checkpoint_remaining = sum(
+                            max(item.expected_size - item.received_size, 0)
+                            for item in items
+                            if item.state in {"pending", "uploading", "uploaded"}
+                        )
+            checkpoint_remaining = min(checkpoint_remaining, total_reserved)
+            other_reserved = total_reserved - checkpoint_remaining
             quota = self.storage_policy.matter_quota_bytes
+            fresh_available = max(quota - used - total_reserved, 0)
             available = max(quota - used - other_reserved, 0)
         return {
-            "version": 1,
+            "version": 2,
             "quota_bytes": quota,
             "used_bytes": used,
+            "total_reserved_bytes": total_reserved,
+            "fresh_available_bytes": fresh_available,
+            "checkpoint_validated": checkpoint_validated,
+            "checkpoint_remaining_bytes": checkpoint_remaining,
             "other_reserved_bytes": other_reserved,
             "available_bytes": available,
         }

@@ -500,28 +500,75 @@
     media_type: file.type,
   });
 
-  const storedPreflightCheckpoint = () => {
-    const empty = { session_id: "", collection_id: "" };
-    if (!uploadSessionKey) return empty;
+  const storedUploadCheckpoint = () => {
+    const fingerprintPattern = /^[0-9a-f]{64}$/;
+    const sessionPattern = /^upload-session-[0-9a-f]{32}$/;
+    const collectionPattern = /^source-collection-[0-9a-f]{32}$/;
+    if (!uploadSessionKey) return null;
     try {
       const parsed = JSON.parse(window.localStorage.getItem(uploadSessionKey) || "null");
+      const sessionId = String(parsed?.session_id || "");
+      const collectionId = String(parsed?.collection_id || "");
+      const identifiersValid = sessionPattern.test(sessionId) && collectionPattern.test(collectionId);
       if (
         parsed?.version === 3
-        && /^[0-9a-f]{64}$/.test(String(parsed.plan_fingerprint || ""))
-        && /^upload-session-[0-9a-f]{32}$/.test(String(parsed.session_id || ""))
-        && /^source-collection-[0-9a-f]{32}$/.test(String(parsed.collection_id || ""))
+        && fingerprintPattern.test(String(parsed.plan_fingerprint || ""))
+        && identifiersValid
         && Number.isSafeInteger(parsed.batch_index)
         && parsed.batch_index >= 0
       ) {
         return {
-          session_id: String(parsed.session_id),
-          collection_id: String(parsed.collection_id),
+          version: 3,
+          plan_fingerprint: String(parsed.plan_fingerprint),
+          session_id: sessionId,
+          collection_id: collectionId,
+          batch_index: parsed.batch_index,
+        };
+      }
+      const eligibleIndexes = parsed?.eligible_indexes;
+      if (
+        parsed?.version === 4
+        && fingerprintPattern.test(String(parsed.raw_selection_fingerprint || ""))
+        && fingerprintPattern.test(String(parsed.structure_fingerprint || ""))
+        && fingerprintPattern.test(String(parsed.plan_fingerprint || ""))
+        && identifiersValid
+        && Array.isArray(eligibleIndexes)
+        && eligibleIndexes.length > 0
+        && eligibleIndexes.length <= maximumUploadItems
+        && eligibleIndexes.every((index, offset) => (
+          Number.isSafeInteger(index)
+          && index >= 0
+          && index < maximumUploadItems
+          && (offset === 0 || index > eligibleIndexes[offset - 1])
+        ))
+        && Number.isSafeInteger(parsed.batch_count)
+        && parsed.batch_count > 0
+        && parsed.batch_count <= maximumUploadItems
+        && Number.isSafeInteger(parsed.batch_index)
+        && parsed.batch_index >= 0
+        && parsed.batch_index < parsed.batch_count
+      ) {
+        return {
+          version: 4,
+          raw_selection_fingerprint: String(parsed.raw_selection_fingerprint),
+          structure_fingerprint: String(parsed.structure_fingerprint),
+          eligible_indexes: eligibleIndexes.slice(),
+          plan_fingerprint: String(parsed.plan_fingerprint),
+          batch_count: parsed.batch_count,
+          session_id: sessionId,
+          collection_id: collectionId,
+          batch_index: parsed.batch_index,
         };
       }
     } catch (_error) {
       // Untrusted browser storage cannot authorize a capacity credit.
     }
-    return empty;
+    return null;
+  };
+
+  const storedPreflightCheckpoint = () => {
+    const checkpoint = storedUploadCheckpoint();
+    return checkpoint || { version: 0, session_id: "", collection_id: "" };
   };
 
   const safeFolderDisplayPath = (relativePath, displayName, pathSafetyValidated) => {
@@ -640,6 +687,35 @@
     return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
   };
 
+  const sha256Fingerprint = async (value) => {
+    if (!window.crypto?.subtle || typeof TextEncoder === "undefined") return "";
+    try {
+      const digest = await window.crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(JSON.stringify(value)),
+      );
+      return Array.from(
+        new Uint8Array(digest),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+    } catch (_error) {
+      return "";
+    }
+  };
+
+  const normalizedFileBinding = (file) => ({
+    name: String(file.name || "").normalize("NFC"),
+    relative_path: String(file.webkitRelativePath || file.name || "").normalize("NFC"),
+    size: Number(file.size),
+    media_type: String(file.type || "").trim().toLowerCase(),
+    last_modified: Number(file.lastModified),
+  });
+
+  const rawSelectionFingerprint = (files) => sha256Fingerprint({
+    version: 1,
+    files: Array.from(files, normalizedFileBinding),
+  });
+
   const buildPreflightBatches = (files, nonce, checkpoint) => {
     const encoder = new TextEncoder();
     const context = { selection_nonce: nonce };
@@ -692,34 +768,66 @@
     const capacity = response?.matter_capacity;
     const quota = capacity?.quota_bytes;
     const used = capacity?.used_bytes;
+    const totalReserved = capacity?.total_reserved_bytes;
+    const freshAvailable = capacity?.fresh_available_bytes;
+    const checkpointValidated = capacity?.checkpoint_validated;
+    const checkpointRemaining = capacity?.checkpoint_remaining_bytes;
     const otherReserved = capacity?.other_reserved_bytes;
     const available = capacity?.available_bytes;
     if (
       !capacity
       || typeof capacity !== "object"
       || Array.isArray(capacity)
-      || capacity.version !== 1
+      || capacity.version !== 2
       || !Number.isSafeInteger(quota)
       || quota <= 0
       || !Number.isSafeInteger(used)
       || used < 0
+      || !Number.isSafeInteger(totalReserved)
+      || totalReserved < 0
+      || !Number.isSafeInteger(freshAvailable)
+      || freshAvailable < 0
+      || typeof checkpointValidated !== "boolean"
+      || !Number.isSafeInteger(checkpointRemaining)
+      || checkpointRemaining < 0
+      || checkpointRemaining > totalReserved
       || !Number.isSafeInteger(otherReserved)
       || otherReserved < 0
       || !Number.isSafeInteger(available)
       || available < 0
+      || freshAvailable !== Math.max(quota - used - totalReserved, 0)
+      || (!checkpointValidated && checkpointRemaining !== 0)
+      || otherReserved !== totalReserved - checkpointRemaining
       || available !== Math.max(quota - used - otherReserved, 0)
     ) {
       throw new Error("The selection review returned an incomplete matter-capacity check.");
     }
-    return available;
+    return {
+      available,
+      checkpointRemaining,
+      checkpointValidated,
+      freshAvailable,
+    };
   };
 
-  const consolidatePreflight = (selectedCount, batches, responses, failures) => {
+  const consolidatePreflight = async (files, batches, responses, failures, checkpoint) => {
+    const selectedCount = files.length;
     const items = Array(selectedCount);
     const scannerCapability = scannerSnapshotCapability(responses);
-    const availableCapacity = responses.length
-      ? Math.min(...responses.map(validatedMatterCapacity))
-      : 0;
+    const capacitySnapshots = responses.map(validatedMatterCapacity);
+    const capacity = {
+      available: capacitySnapshots.length
+        ? Math.min(...capacitySnapshots.map((snapshot) => snapshot.available))
+        : 0,
+      checkpointRemaining: capacitySnapshots.length
+        ? Math.max(...capacitySnapshots.map((snapshot) => snapshot.checkpointRemaining))
+        : 0,
+      checkpointValidated: capacitySnapshots.length > 0
+        && capacitySnapshots.every((snapshot) => snapshot.checkpointValidated),
+      freshAvailable: capacitySnapshots.length
+        ? Math.min(...capacitySnapshots.map((snapshot) => snapshot.freshAvailable))
+        : 0,
+    };
     failures.forEach((item, index) => { items[index] = item; });
     batches.forEach((batch, batchIndex) => {
       const responseItems = responses[batchIndex]?.items;
@@ -753,10 +861,9 @@
     if (Array.from(items).some((item) => !item)) {
       throw new Error("The selection review returned an incomplete result.");
     }
-    const counts = Object.fromEntries(Object.keys(preflightStateLabels).map((state) => [state, 0]));
-    const eligibleIndexes = [];
-    const seenTokens = new Set();
-    let remainingCapacity = availableCapacity;
+    const tokens = [];
+    const tokenGroups = new Map();
+    const duplicateGroups = [];
     items.forEach((item, index) => {
       const token = typeof item.duplicate_token === "string"
         && /^[0-9a-f]{64}$/.test(item.duplicate_token)
@@ -765,11 +872,117 @@
       if (["valid", "needs_attention", "duplicate_candidate", "over_limit"].includes(item.state) && !token) {
         throw new Error("The selection review returned an incomplete duplicate check.");
       }
+      tokens[index] = token;
+      if (token && !tokenGroups.has(token)) tokenGroups.set(token, tokenGroups.size);
+      duplicateGroups[index] = token ? tokenGroups.get(token) : -1;
+    });
+    const [rawFingerprint, structureFingerprint] = await Promise.all([
+      rawSelectionFingerprint(files),
+      sha256Fingerprint({
+        version: 1,
+        items: items.map((item, index) => ({
+          index,
+          state: String(item.state || "failed"),
+          eligible: item.eligible === true,
+          size: Number.isSafeInteger(item.size) ? item.size : null,
+          path_safety_validated: item.path_safety_validated === true,
+          scan: {
+            required: item.scan?.required === true,
+            capability: String(item.scan?.capability || ""),
+            result: String(item.scan?.result || ""),
+          },
+          duplicate_group: duplicateGroups[index],
+        })),
+      }),
+    ]);
+    let frozenIndexes = null;
+    const checkpointStructureMatches = Boolean(
+      checkpoint?.version === 4
+      && rawFingerprint
+      && structureFingerprint
+      && checkpoint.raw_selection_fingerprint === rawFingerprint
+      && checkpoint.structure_fingerprint === structureFingerprint
+    );
+    if (checkpointStructureMatches) {
+      const candidateIndexes = checkpoint.eligible_indexes;
+      if (
+        candidateIndexes.some((index) => index >= selectedCount)
+        || candidateIndexes.some((index) => (
+          items[index]?.state !== "valid" || items[index]?.eligible !== true
+        ))
+      ) {
+        throw new Error("The saved reviewed upload plan no longer matches this selection.");
+      }
+      const candidateFiles = candidateIndexes.map((index) => files[index]);
+      const candidateBatches = buildUploadBatches(candidateFiles);
+      const candidatePlanFingerprint = await uploadPlanFingerprint(candidateBatches);
+      if (
+        !candidatePlanFingerprint
+        || candidatePlanFingerprint !== checkpoint.plan_fingerprint
+        || candidateBatches.length !== checkpoint.batch_count
+        || checkpoint.batch_index >= candidateBatches.length
+      ) {
+        throw new Error("The saved reviewed upload plan no longer matches this selection.");
+      }
+      const seenFrozenGroups = new Set();
+      for (const index of candidateIndexes) {
+        const group = duplicateGroups[index];
+        if (group >= 0 && seenFrozenGroups.has(group)) {
+          throw new Error("The saved reviewed upload plan contains a repeated path.");
+        }
+        if (group >= 0) seenFrozenGroups.add(group);
+      }
+      if (capacity.checkpointValidated) {
+        const currentBatchBytes = candidateBatches[checkpoint.batch_index]
+          .reduce((sum, file) => sum + Number(file.size || 0), 0);
+        const laterBatchBytes = candidateBatches
+          .slice(checkpoint.batch_index + 1)
+          .reduce(
+            (sum, batch) => sum + batch.reduce(
+              (batchSum, file) => batchSum + Number(file.size || 0),
+              0,
+            ),
+            0,
+          );
+        const remainingPlanBytes = capacity.checkpointRemaining + laterBatchBytes;
+        if (
+          !Number.isSafeInteger(currentBatchBytes)
+          || !Number.isSafeInteger(laterBatchBytes)
+          || !Number.isSafeInteger(remainingPlanBytes)
+          || capacity.checkpointRemaining > currentBatchBytes
+          || laterBatchBytes > capacity.freshAvailable
+          || remainingPlanBytes > capacity.available
+        ) {
+          throw new Error("The saved reviewed upload plan no longer fits this matter.");
+        }
+        frozenIndexes = candidateIndexes;
+      }
+    }
+    const counts = Object.fromEntries(Object.keys(preflightStateLabels).map((state) => [state, 0]));
+    const eligibleIndexes = [];
+    const seenTokens = new Set();
+    const frozenSet = frozenIndexes ? new Set(frozenIndexes) : null;
+    const frozenGroups = frozenIndexes
+      ? new Set(frozenIndexes.map((index) => duplicateGroups[index]).filter((group) => group >= 0))
+      : null;
+    let remainingCapacity = checkpoint?.version === 4 && !frozenSet
+      ? capacity.freshAvailable
+      : capacity.available;
+    items.forEach((item, index) => {
+      const token = tokens[index];
       if (item.state === "valid" && item.eligible === true) {
         if (!Number.isSafeInteger(item.size) || item.size <= 0) {
           throw new Error("The selection review returned an incomplete matter-capacity check.");
         }
-        if (item.size > remainingCapacity) {
+        if (frozenSet && !frozenSet.has(index)) {
+          item.state = frozenGroups.has(duplicateGroups[index])
+            ? "duplicate_candidate"
+            : "over_limit";
+          item.eligible = false;
+          item.message = item.state === "duplicate_candidate"
+            ? "This relative path appears more than once in the selection. Keep one copy or rename it before upload."
+            : "This file remains outside the saved capacity-limited upload plan. Finish or release that plan before changing its reviewed files.";
+        } else if (!frozenSet && item.size > remainingCapacity) {
           item.state = "over_limit";
           item.eligible = false;
           item.message = `This matter has ${formatBytes(remainingCapacity)} of upload capacity remaining. Remove unneeded sources or choose another matter; smaller later files may still fit.`;
@@ -780,7 +993,7 @@
           item.message = "This relative path appears more than once in the selection. Keep one copy or rename it before upload.";
         } else if (token) {
           seenTokens.add(token);
-          remainingCapacity -= item.size;
+          if (!frozenSet) remainingCapacity -= item.size;
         }
       }
       delete item.duplicate_token;
@@ -789,6 +1002,35 @@
       if (item.state === "valid" && item.eligible === true) eligibleIndexes.push(index);
       else item.eligible = false;
     });
+    if (
+      checkpointStructureMatches
+      && !frozenSet
+      && (
+        eligibleIndexes.length !== checkpoint.eligible_indexes.length
+        || eligibleIndexes.some(
+          (index, offset) => index !== checkpoint.eligible_indexes[offset],
+        )
+      )
+    ) {
+      throw new Error("The saved reviewed upload plan no longer fits this matter.");
+    }
+    const eligibleFiles = eligibleIndexes.map((index) => files[index]);
+    const uploadPlanBatches = buildUploadBatches(eligibleFiles);
+    const planFingerprint = await uploadPlanFingerprint(uploadPlanBatches);
+    const checkpointBinding = (
+      rawFingerprint
+      && structureFingerprint
+      && planFingerprint
+      && eligibleIndexes.length > 0
+      && uploadPlanBatches.length > 0
+    ) ? {
+        raw_selection_fingerprint: rawFingerprint,
+        structure_fingerprint: structureFingerprint,
+        eligible_indexes: eligibleIndexes.slice(),
+        plan_fingerprint: planFingerprint,
+        batch_count: uploadPlanBatches.length,
+      }
+      : null;
     return {
       status: eligibleIndexes.length === 0
         ? "blocked"
@@ -799,6 +1041,7 @@
       counts,
       eligible_indexes: eligibleIndexes,
       items,
+      checkpoint_binding: checkpointBinding,
     };
   };
 
@@ -837,10 +1080,11 @@
       if (preflightFiles.length > maximumUploadItems) {
         throw new Error(`Choose no more than ${maximumUploadItems.toLocaleString()} items in one collection.`);
       }
+      const checkpoint = storedPreflightCheckpoint();
       const { batches, failures } = buildPreflightBatches(
         preflightFiles,
         selectionNonce(),
-        storedPreflightCheckpoint(),
+        checkpoint,
       );
       const responses = [];
       for (const batch of batches) {
@@ -859,7 +1103,14 @@
         responses.push(await readUploadJson(response));
       }
       if (version !== preflightVersion) return;
-      const preview = consolidatePreflight(preflightFiles.length, batches, responses, failures);
+      const preview = await consolidatePreflight(
+        preflightFiles,
+        batches,
+        responses,
+        failures,
+        checkpoint,
+      );
+      if (version !== preflightVersion) return;
       activePreflight = preview;
       renderUploadPreflight(preview);
       const eligible = preview.eligible_indexes.length;
@@ -1164,57 +1415,46 @@
   };
 
   const uploadPlanFingerprint = async (batches) => {
-    if (!window.crypto?.subtle || typeof TextEncoder === "undefined") {
-      return "";
-    }
-    const plan = batches.map((batch) => batch.map((file) => ({
-      name: String(file.name || "").normalize("NFC"),
-      relative_path: String(file.webkitRelativePath || file.name || "").normalize("NFC"),
-      size: Number(file.size),
-      media_type: String(file.type || "").trim().toLowerCase(),
-      last_modified: Number(file.lastModified),
-    })));
-    try {
-      const digest = await window.crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(JSON.stringify({ version: 1, batches: plan })),
-      );
-      return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
-    } catch (_error) {
-      return "";
-    }
+    const plan = batches.map((batch) => batch.map(normalizedFileBinding));
+    return sha256Fingerprint({ version: 1, batches: plan });
   };
 
-  const readUploadResumeState = (planFingerprint, batchCount) => {
-    const empty = { session_id: "", collection_id: "", batch_index: 0, stale: false };
+  const readUploadResumeState = (planFingerprint, batchCount, checkpointBinding) => {
+    const empty = { version: 0, session_id: "", collection_id: "", batch_index: 0, stale: false };
     if (!uploadSessionKey) return empty;
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(uploadSessionKey) || "null");
-      const sessionId = String(parsed?.session_id || "");
-      const collectionId = String(parsed?.collection_id || "");
-      const sessionIdValid = /^upload-session-[0-9a-f]{32}$/.test(sessionId);
-      const collectionIdValid = /^source-collection-[0-9a-f]{32}$/.test(collectionId);
-      if (
-        parsed?.version === 3
-        && /^[0-9a-f]{64}$/.test(String(parsed.plan_fingerprint || ""))
-        && Number.isSafeInteger(parsed.batch_index)
-        && parsed.batch_index >= 0
-        && sessionIdValid
-        && collectionIdValid
-      ) {
-        return {
-          session_id: sessionId,
-          collection_id: collectionId,
-          batch_index: parsed.batch_index,
-          stale: (
-            !planFingerprint
-            || parsed.plan_fingerprint !== planFingerprint
-            || parsed.batch_index >= batchCount
-          ),
-        };
-      }
-    } catch (_error) {
-      // Invalid or unavailable storage cannot authorize a resume.
+    const parsed = storedUploadCheckpoint();
+    if (parsed?.version === 3) {
+      return {
+        ...parsed,
+        stale: (
+          !planFingerprint
+          || parsed.plan_fingerprint !== planFingerprint
+          || parsed.batch_index >= batchCount
+        ),
+      };
+    }
+    if (parsed?.version === 4) {
+      const bindingMatches = (
+        checkpointBinding
+        && parsed.raw_selection_fingerprint === checkpointBinding.raw_selection_fingerprint
+        && parsed.structure_fingerprint === checkpointBinding.structure_fingerprint
+        && parsed.plan_fingerprint === checkpointBinding.plan_fingerprint
+        && parsed.batch_count === checkpointBinding.batch_count
+        && parsed.eligible_indexes.length === checkpointBinding.eligible_indexes.length
+        && parsed.eligible_indexes.every(
+          (index, offset) => index === checkpointBinding.eligible_indexes[offset],
+        )
+      );
+      return {
+        ...parsed,
+        stale: (
+          !bindingMatches
+          || !planFingerprint
+          || parsed.plan_fingerprint !== planFingerprint
+          || parsed.batch_count !== batchCount
+          || parsed.batch_index >= batchCount
+        ),
+      };
     }
     clearUploadResumeState();
     return empty;
@@ -1226,7 +1466,7 @@
     const failureMessage = "The earlier interrupted upload could not be released. Retry this selection before starting new work.";
     if (!sessionRoot) throw new Error(failureMessage);
     const sessionUrl = `${sessionRoot}/${encodeURIComponent(resumeState.session_id)}`;
-    const fresh = { session_id: "", collection_id: "", batch_index: 0, stale: false };
+    const fresh = { version: 0, session_id: "", collection_id: "", batch_index: 0, stale: false };
     try {
       const statusResponse = await fetch(`${sessionUrl}?compact=true`, {
         headers: { Accept: "application/json" },
@@ -1279,7 +1519,14 @@
     return fresh;
   };
 
-  const writeUploadResumeState = (planFingerprint, sessionId, collectionId, batchIndex) => {
+  const writeUploadResumeState = (
+    planFingerprint,
+    sessionId,
+    collectionId,
+    batchIndex,
+    batchCount,
+    checkpointBinding,
+  ) => {
     if (!uploadSessionKey || !planFingerprint) return;
     if (
       !/^upload-session-[0-9a-f]{32}$/.test(sessionId)
@@ -1291,19 +1538,33 @@
       return;
     }
     try {
-      window.localStorage.setItem(uploadSessionKey, JSON.stringify({
-        version: 3,
+      const shared = {
         plan_fingerprint: planFingerprint,
         session_id: sessionId,
         collection_id: collectionId,
         batch_index: batchIndex,
-      }));
+      };
+      const value = (
+        checkpointBinding
+        && checkpointBinding.plan_fingerprint === planFingerprint
+        && checkpointBinding.batch_count === batchCount
+      ) ? {
+          version: 4,
+          raw_selection_fingerprint: checkpointBinding.raw_selection_fingerprint,
+          structure_fingerprint: checkpointBinding.structure_fingerprint,
+          eligible_indexes: checkpointBinding.eligible_indexes.slice(),
+          batch_count: batchCount,
+          ...shared,
+        }
+        : { version: 3, ...shared };
+      window.localStorage.setItem(uploadSessionKey, JSON.stringify(value));
     } catch (_error) { /* no-op */ }
   };
 
   const startResumableUpload = async (files) => {
     if (!uploadForm?.dataset.sessionUrl) return;
     selectedUploadFiles = Array.from(files);
+    const checkpointBinding = activePreflight?.checkpoint_binding || null;
     let totalBytes;
     try {
       totalBytes = validateSelectedFiles(selectedUploadFiles);
@@ -1325,7 +1586,11 @@
     if (uploadProgress) uploadProgress.hidden = false;
     if (uploadTitle) uploadTitle.textContent = "Saving upload collection";
     if (uploadStatus) uploadStatus.textContent = "Creating a durable queue for the selected records.";
-    let resumeState = readUploadResumeState(planFingerprint, uploadBatches.length);
+    let resumeState = readUploadResumeState(
+      planFingerprint,
+      uploadBatches.length,
+      checkpointBinding,
+    );
     try {
       resumeState = await reconcileStaleUploadResumeState(resumeState);
       let retriedFresh = false;
@@ -1366,6 +1631,8 @@
               activeUpload.upload_session_id,
               collectionId,
               activeUploadBatchIndex,
+              uploadBatches.length,
+              checkpointBinding,
             );
             renderUpload(activeUpload);
             await runUploadQueue(selectedUploadFiles);
@@ -1375,10 +1642,16 @@
           if (
             error.code === "upload_resume_mismatch"
             && resumeState.session_id
+            && resumeState.version !== 4
             && !retriedFresh
           ) {
             clearUploadResumeState();
-            resumeState = { session_id: "", collection_id: "", batch_index: 0 };
+            resumeState = {
+              version: 0,
+              session_id: "",
+              collection_id: "",
+              batch_index: 0,
+            };
             activeUpload = null;
             retriedFresh = true;
             continue;

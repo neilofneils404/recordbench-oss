@@ -494,9 +494,13 @@ def main() -> int:
                     delete payload.matter_capacity;
                   } else {
                     payload.matter_capacity = {
-                      version: 1,
+                      version: 2,
                       quota_bytes: 4096,
                       used_bytes: 0,
+                      total_reserved_bytes: 0,
+                      fresh_available_bytes: 4096,
+                      checkpoint_validated: false,
+                      checkpoint_remaining_bytes: 0,
                       other_reserved_bytes: 0,
                       available_bytes: 4095,
                     };
@@ -1533,6 +1537,338 @@ def main() -> int:
                 "exact partial checkpoint was duplicated or did not advance to the next batch",
             )
 
+            capacity_resume_matter = bench.create_matter(
+                "Synthetic capacity-bound resume matter",
+                "Generated completed-batch capacity acceptance",
+                ACTOR,
+            )
+            capacity_resume_key = (
+                f"case-intelligence:upload:{capacity_resume_matter.slug}"
+            )
+            driver.get(
+                f"{base_url}/matters/{capacity_resume_matter.slug}/setup"
+            )
+            capacity_resume_input = wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-file-input]"
+                )
+            )
+            _synthetic_selection(
+                driver,
+                capacity_resume_input,
+                5,
+                long_paths=False,
+                cross_boundary_duplicate=False,
+                file_size=128,
+            )
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 5 ready files"
+            )
+            driver.execute_script(
+                """
+                window.__slice1aCapacityBootstrapOriginalFetch = window.fetch;
+                window.fetch = (...args) => {
+                  if (String(args[1]?.method || '').toUpperCase() === 'PUT') {
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aCapacityBootstrapOriginalFetch(...args);
+                };
+                """
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            capacity_checkpoint_binding = json.loads(
+                WebDriverWait(driver, 30).until(
+                    lambda current: (
+                        value
+                        if (
+                            value
+                            := current.execute_script(
+                                "return window.localStorage.getItem(arguments[0]);",
+                                capacity_resume_key,
+                            )
+                        )
+                        and json.loads(value).get("version") == 4
+                        else None
+                    )
+                )
+            )
+            bench.workspace.cancel_upload_session(
+                capacity_resume_matter.matter_id,
+                ACTOR,
+                capacity_checkpoint_binding["session_id"],
+            )
+            driver.refresh()
+            capacity_resume_input = wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-file-input]"
+                )
+            )
+            first_batch_manifest = [
+                {
+                    "display_name": f"record-{ordinal:05d}.txt",
+                    "relative_path": f"Production/record-{ordinal:05d}.txt",
+                    "media_type": "text/plain",
+                    "expected_size": 128,
+                }
+                for ordinal in range(4)
+            ]
+            completed_batch, completed_items = bench.create_upload_session(
+                capacity_resume_matter,
+                ACTOR,
+                "Synthetic completed capacity batch",
+                first_batch_manifest,
+            )
+            capacity_store = bench.source_store(capacity_resume_matter)
+            for ordinal, item in enumerate(completed_items):
+                body = bytes([65 + ordinal]) * 128
+                received_size = capacity_store.append_resumable_chunk(
+                    item.upload_item_id,
+                    offset=0,
+                    expected_size=item.expected_size,
+                    chunk=body,
+                )
+                uploaded_item = bench.workspace.set_upload_item_offset(
+                    capacity_resume_matter.matter_id,
+                    ACTOR,
+                    completed_batch.upload_session_id,
+                    item.upload_item_id,
+                    0,
+                    received_size,
+                )
+                document = capacity_store.finalize_resumable_upload(
+                    item.upload_item_id,
+                    display_name=uploaded_item.display_name,
+                    relative_path=uploaded_item.relative_path,
+                    content_type=uploaded_item.media_type,
+                    expected_size=uploaded_item.expected_size,
+                )
+                bench.workspace.finish_upload_item(
+                    capacity_resume_matter.matter_id,
+                    ACTOR,
+                    completed_batch.upload_session_id,
+                    item.upload_item_id,
+                    document.document_id,
+                    queue_ingestion=False,
+                )
+                capacity_store.discard_resumable_upload(item.upload_item_id)
+            completed_batch, _ = bench.workspace.upload_session(
+                capacity_resume_matter.matter_id,
+                ACTOR,
+                completed_batch.upload_session_id,
+            )
+            open_batch, _ = bench.create_upload_session(
+                capacity_resume_matter,
+                ACTOR,
+                "Synthetic open capacity batch",
+                [
+                    {
+                        "display_name": "record-00004.txt",
+                        "relative_path": "Production/record-00004.txt",
+                        "media_type": "text/plain",
+                        "expected_size": 128,
+                    }
+                ],
+                collection_id=completed_batch.collection_id,
+            )
+            for filler_batch in range(7):
+                filler_count = 4 if filler_batch < 6 else 3
+                bench.create_upload_session(
+                    capacity_resume_matter,
+                    ACTOR,
+                    f"Synthetic capacity reservation {filler_batch + 1}",
+                    [
+                        {
+                            "display_name": (
+                                f"reserved-{filler_batch:02d}-{ordinal:02d}.txt"
+                            ),
+                            "relative_path": (
+                                "Reserved/"
+                                f"reserved-{filler_batch:02d}-{ordinal:02d}.txt"
+                            ),
+                            "media_type": "text/plain",
+                            "expected_size": 128,
+                        }
+                        for ordinal in range(filler_count)
+                    ],
+                )
+            capacity_sessions_before = bench.workspace.recent_upload_sessions(
+                capacity_resume_matter.matter_id, ACTOR
+            )
+            _require(
+                completed_batch.state == "complete"
+                and open_batch.state == "open"
+                and bench.storage.matter_payload_usage_bytes(
+                    capacity_resume_matter.matter_id
+                )
+                == 512
+                and bench.workspace.pending_upload_bytes(
+                    capacity_resume_matter.matter_id
+                )
+                == 3_584,
+                "capacity-bound resume fixture did not reach its frozen near-quota state",
+            )
+            capacity_checkpoint = {
+                **capacity_checkpoint_binding,
+                "session_id": open_batch.upload_session_id,
+                "collection_id": open_batch.collection_id,
+                "batch_index": 1,
+            }
+            driver.execute_script(
+                "window.localStorage.setItem(arguments[0], arguments[1]);",
+                capacity_resume_key,
+                json.dumps(capacity_checkpoint),
+            )
+            _synthetic_selection(
+                driver,
+                capacity_resume_input,
+                5,
+                long_paths=False,
+                cross_boundary_duplicate=False,
+                file_size=128,
+            )
+            capacity_panel = driver.find_element(
+                By.CSS_SELECTOR, "[data-upload-preflight]"
+            )
+            wait.until(
+                lambda current: capacity_panel.get_attribute("aria-busy") is None
+                and len(
+                    current.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                )
+                == 5
+            )
+            capacity_preview_label = driver.find_element(
+                By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+            ).text
+            driver.execute_script(
+                """
+                window.__slice1aCapacityResumeOriginalFetch = window.fetch;
+                window.__slice1aCapacityResumeEvents = [];
+                window.__slice1aCapacityResumeBodies = [];
+                const checkpointSessionId = arguments[0];
+                window.fetch = (...args) => {
+                  const url = String(args[0]);
+                  const method = String(args[1]?.method || 'GET').toUpperCase();
+                  if (url.includes(`/upload-sessions/${checkpointSessionId}`) && method === 'GET') {
+                    window.__slice1aCapacityResumeEvents.push({ kind: 'status' });
+                  } else if (url.includes(`/upload-sessions/${checkpointSessionId}/cancel`) && method === 'POST') {
+                    window.__slice1aCapacityResumeEvents.push({ kind: 'cancel' });
+                  } else if (url.endsWith('/upload-sessions') && method === 'POST') {
+                    window.__slice1aCapacityResumeEvents.push({ kind: 'session-post' });
+                    window.__slice1aCapacityResumeBodies.push(JSON.parse(String(args[1].body)));
+                  } else if (method === 'PUT') {
+                    window.__slice1aCapacityResumeEvents.push({ kind: 'put' });
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aCapacityResumeOriginalFetch(...args);
+                };
+                """,
+                open_batch.upload_session_id,
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            capacity_resume_events = WebDriverWait(driver, 30).until(
+                lambda current: current.execute_script(
+                    """
+                    const events = window.__slice1aCapacityResumeEvents;
+                    return events.some((event) => event.kind === 'put')
+                      ? events
+                      : null;
+                    """
+                )
+            )
+            capacity_resume_bodies = driver.execute_script(
+                "return window.__slice1aCapacityResumeBodies;"
+            )
+            capacity_saved = json.loads(
+                driver.execute_script(
+                    "return window.localStorage.getItem(arguments[0]);",
+                    capacity_resume_key,
+                )
+            )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aCapacityResumeOriginalFetch;
+                delete window.__slice1aCapacityResumeOriginalFetch;
+                """
+            )
+            capacity_open_after, _ = bench.workspace.upload_session(
+                capacity_resume_matter.matter_id,
+                ACTOR,
+                open_batch.upload_session_id,
+            )
+            capacity_completed_after, _ = bench.workspace.upload_session(
+                capacity_resume_matter.matter_id,
+                ACTOR,
+                completed_batch.upload_session_id,
+            )
+            capacity_sessions_after = bench.workspace.recent_upload_sessions(
+                capacity_resume_matter.matter_id, ACTOR
+            )
+            capacity_documents = tuple(
+                document.relative_path
+                for document in capacity_store.documents.values()
+            )
+            _require(
+                capacity_preview_label == "Upload 5 ready files"
+                and capacity_resume_events
+                == [{"kind": "session-post"}, {"kind": "put"}]
+                and len(capacity_resume_bodies) == 1
+                and capacity_resume_bodies[0]["resume_session_id"]
+                == open_batch.upload_session_id
+                and capacity_resume_bodies[0]["collection_id"]
+                == open_batch.collection_id
+                and [
+                    item["relative_path"]
+                    for item in capacity_resume_bodies[0]["files"]
+                ]
+                == ["Production/record-00004.txt"]
+                and capacity_saved == capacity_checkpoint
+                and capacity_open_after.state == "open"
+                and capacity_completed_after.state == "complete"
+                and len(capacity_sessions_after) == len(capacity_sessions_before)
+                and set(capacity_documents)
+                == {
+                    f"Production/record-{ordinal:05d}.txt"
+                    for ordinal in range(4)
+                },
+                (
+                    "capacity accounting restarted an exact multi-batch resume "
+                    f"(preview={capacity_preview_label!r}, "
+                    f"events={capacity_resume_events!r}, "
+                    f"bodies={capacity_resume_bodies!r}, saved={capacity_saved!r}, "
+                    f"open_state={capacity_open_after.state!r}, "
+                    f"completed_state={capacity_completed_after.state!r}, "
+                    f"sessions={len(capacity_sessions_after)}/"
+                    f"{len(capacity_sessions_before)}, documents={capacity_documents!r})"
+                ),
+            )
+
             driver.get(f"{base_url}/matters/{slug}/setup")
             file_input = wait.until(
                 lambda current: current.find_element(
@@ -2344,10 +2680,15 @@ def main() -> int:
                 )
             )
             saved_resume_state = json.loads(saved_resume)
-            _require(saved_resume_state["version"] == 3, "resume state was not v3")
+            _require(saved_resume_state["version"] == 4, "resume state was not v4")
             _require(
-                len(saved_resume_state["plan_fingerprint"]) == 64,
-                "resume state did not bind the exact upload plan",
+                len(saved_resume_state["raw_selection_fingerprint"]) == 64
+                and len(saved_resume_state["structure_fingerprint"]) == 64
+                and len(saved_resume_state["plan_fingerprint"]) == 64
+                and saved_resume_state["eligible_indexes"] == [0]
+                and saved_resume_state["batch_count"] == 1
+                and saved_resume_state["batch_index"] == 0,
+                "resume state did not bind the exact reviewed upload plan",
             )
             original_resume_session = saved_resume_state["session_id"]
             original_resume_collection = saved_resume_state["collection_id"]
@@ -2474,32 +2815,30 @@ def main() -> int:
                         := current.execute_script(
                             "return window.__slice1aRetryBodies;"
                         )
-                    )
-                    == 2
+                    ) == 1
+                    and current.find_element(
+                        By.CSS_SELECTOR, "[data-upload-form]"
+                    ).get_attribute("aria-busy")
+                    is None
                     else None
                 )
+            )
+            preserved_missing_resume = driver.execute_script(
+                "return window.localStorage.getItem(arguments[0]);", resume_key
             )
             _require(
                 retry_bodies[0]["resume_session_id"]
                 == missing_resume_state["session_id"]
-                and retry_bodies[1]["resume_session_id"] == ""
-                and retry_bodies[1]["collection_id"] == "",
-                "resume mismatch did not clear identifiers and retry fresh exactly once",
-            )
-            WebDriverWait(driver, 30).until(
-                lambda current: (
-                    value
-                    if (
-                        value
-                        := current.execute_script(
-                            "return window.localStorage.getItem(arguments[0]);",
-                            resume_key,
-                        )
+                and retry_bodies[0]["collection_id"]
+                == missing_resume_state["collection_id"]
+                and preserved_missing_resume == json.dumps(missing_resume_state)
+                and len(
+                    bench.workspace.recent_upload_sessions(
+                        resume_matter.matter_id, ACTOR
                     )
-                    and json.loads(value)["session_id"]
-                    != missing_resume_state["session_id"]
-                    else None
                 )
+                == 1,
+                "v4 resume mismatch did not fail closed with its checkpoint preserved",
             )
 
             driver.refresh()
@@ -2610,24 +2949,35 @@ def main() -> int:
                 delete window.__slice1aChangedOriginalFetch;
                 """
             )
+            failed_cancel_state = bench.workspace.upload_session(
+                resume_matter.matter_id, ACTOR, original_resume_session
+            )[0].state
+            failed_cancel_pending = bench.workspace.pending_upload_bytes(
+                resume_matter.matter_id
+            )
+            failed_cancel_session_count = len(
+                bench.workspace.recent_upload_sessions(
+                    resume_matter.matter_id, ACTOR
+                )
+            )
             _require(
                 failed_cancel_events
                 == [{"kind": "status"}, {"kind": "cancel", "body": ""}]
                 and failed_cancel_bodies == []
                 and failed_cancel_checkpoint == saved_resume
-                and bench.workspace.upload_session(
-                    resume_matter.matter_id, ACTOR, original_resume_session
-                )[0].state
-                == "open"
-                and bench.workspace.pending_upload_bytes(resume_matter.matter_id)
-                == stale_pending_before
-                and len(
-                    bench.workspace.recent_upload_sessions(
-                        resume_matter.matter_id, ACTOR
-                    )
-                )
-                == sessions_before_changed_plan,
-                "failed stale-session cancellation cleared recovery state or started new work",
+                and failed_cancel_state == "open"
+                and failed_cancel_pending == stale_pending_before
+                and failed_cancel_session_count == sessions_before_changed_plan,
+                (
+                    "failed stale-session cancellation cleared recovery state or "
+                    f"started new work (events={failed_cancel_events!r}, "
+                    f"bodies={failed_cancel_bodies!r}, "
+                    f"checkpoint_preserved={failed_cancel_checkpoint == saved_resume}, "
+                    f"state={failed_cancel_state!r}, "
+                    f"pending={failed_cancel_pending}/{stale_pending_before}, "
+                    f"sessions={failed_cancel_session_count}/"
+                    f"{sessions_before_changed_plan})"
+                ),
             )
 
             _replace_selection(driver, changed_input, [files[0], files[1]])
@@ -2769,7 +3119,7 @@ def main() -> int:
                 "clearing an in-flight selection clears busy state",
                 "keyboard confirmation uploads only the two eligible files",
                 "retained upload path reports malformed PDF as partial",
-                "exact-plan cross-refresh resume and one-shot mismatch recovery",
+                "exact-plan cross-refresh resume and fail-closed mismatch recovery",
                 "completed stale checkpoint advances through matter-scoped status recovery",
                 "partial, cancelled, and missing stale checkpoints recover from batch zero",
                 "status transport and projection failures preserve recovery state and start no work",
@@ -2778,6 +3128,8 @@ def main() -> int:
                 "collection-only checkpoint cannot skip batch zero or mutate a stale collection",
                 "cancelled later-batch checkpoint retries once from a fresh collection",
                 "exact partial checkpoint advances without duplicating its completed batch",
+                "exact v4 resume excludes completed batches from capacity accounting",
+                "v4 resume mismatch preserves its exact recovery checkpoint",
                 "desktop and 390px mobile views have no horizontal overflow",
                 "no severe browser JavaScript error",
             ]

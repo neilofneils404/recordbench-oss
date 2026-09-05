@@ -495,6 +495,17 @@ def test_selection_preflight_reports_scoped_matter_capacity_without_writes(
         bench.workspace.cancel_upload_session(
             matter.matter_id, ACTOR, cancelled.upload_session_id
         )
+        partial = reserve(matter, "partial", 75)
+        _, partial_items = bench.workspace.upload_session(
+            matter.matter_id, ACTOR, partial.upload_session_id
+        )
+        bench.workspace.fail_upload_item(
+            matter.matter_id,
+            ACTOR,
+            partial.upload_session_id,
+            partial_items[0].upload_item_id,
+            "Synthetic terminal checkpoint",
+        )
         monkeypatch.setattr(
             bench.storage,
             "matter_payload_usage_bytes",
@@ -533,9 +544,13 @@ def test_selection_preflight_reports_scoped_matter_capacity_without_writes(
         ordinary = snapshot()
         assert ordinary.status_code == 200
         assert ordinary.json()["matter_capacity"] == {
-            "version": 1,
+            "version": 2,
             "quota_bytes": 1_024,
             "used_bytes": 111,
+            "total_reserved_bytes": 550,
+            "fresh_available_bytes": 363,
+            "checkpoint_validated": False,
+            "checkpoint_remaining_bytes": 0,
             "other_reserved_bytes": 550,
             "available_bytes": 363,
         }
@@ -546,11 +561,25 @@ def test_selection_preflight_reports_scoped_matter_capacity_without_writes(
         )
         assert credited.status_code == 200
         assert credited.json()["matter_capacity"] == {
-            "version": 1,
+            "version": 2,
             "quota_bytes": 1_024,
             "used_bytes": 111,
+            "total_reserved_bytes": 550,
+            "fresh_available_bytes": 363,
+            "checkpoint_validated": True,
+            "checkpoint_remaining_bytes": 200,
             "other_reserved_bytes": 350,
             "available_bytes": 563,
+        }
+
+        terminal = snapshot(
+            checkpoint_session_id=partial.upload_session_id,
+            checkpoint_collection_id=partial.collection_id,
+        )
+        assert terminal.status_code == 200
+        assert terminal.json()["matter_capacity"] == {
+            **ordinary.json()["matter_capacity"],
+            "checkpoint_validated": True,
         }
 
         for session_id, collection_id in (
