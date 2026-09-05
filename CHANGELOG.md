@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-05: Complete matter bundles now include every saved draft and final
+  Report as editable Markdown and Word with a manifest inventory, including
+  empty Reports and collision-safe filenames. A bounded database snapshot
+  preserves edits and section order during concurrent writes. Existing exact
+  source validation applies; inconsistent, unresolved, or oversized Report
+  work returns no complete bundle. Interrupted-close recovery can export
+  uncited Reports without opening quarantined sources; cited Reports require
+  restored source access. No persistent schema or close-authority change.
 - Keep bundled backups consistent after application restart: freeze managed
   registries and WAL-backed control databases independently, and capture the
   PostgreSQL projection inside the same stopped application boundary. Restore

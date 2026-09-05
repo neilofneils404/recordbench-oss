@@ -199,6 +199,9 @@ DEFAULT_RUNTIME = PROJECT_ROOT / ".tmp/milestone-a-workbench"
 MAX_SEARCH_CHARS = 512
 MAX_QUESTION_CHARS = 2_000
 MAX_FINAL_BUNDLE_LEDGER_ITEMS = 500
+MAX_FINAL_BUNDLE_REPORTS = 500
+MAX_FINAL_BUNDLE_REPORT_ROWS = 10_000
+MAX_FINAL_BUNDLE_REPORT_BYTES = 32 * 1024 * 1024
 MAX_UPLOAD_PREFLIGHT_REQUEST_BYTES = 6 * 1024 * 1024
 _WORD = re.compile(r"[a-z0-9]+")
 _FOLLOWUP_WORDS = {"it", "that", "those", "they", "them", "this", "these", "he", "she", "there"}
@@ -3265,9 +3268,25 @@ class CaseIntelligenceWorkbench:
             tuple[ReportSectionRecord, Sequence[ReportCitationRecord]]
         ],
         format_name: str,
+        *,
+        frozen_source_catalog: Sequence[SourceCatalogRecord] | None = None,
+        exported_at: str | None = None,
     ) -> ExportArtifact:
         """Resolve every report citation under the source mutation boundary."""
 
+        if not any(citations for _section, citations in sections):
+            return export_report(
+                matter, report, sections, format_name, exported_at=exported_at
+            )
+        if frozen_source_catalog is not None:
+            # Saved Report citations do not retain the full verification basis
+            # available in investigation ledgers. Never reopen quarantined
+            # processing state or claim these references have been revalidated.
+            raise ExportProblem(
+                "No complete bundle was created. Saved Report sources cannot be "
+                "verified after closing was interrupted. Contact an administrator "
+                "to restore source access before retrying the export."
+            )
         store = self.source_store(matter)
         with store.mutation_guard():
             for _section, citations in sections:
@@ -3321,9 +3340,13 @@ class CaseIntelligenceWorkbench:
                             raise KeyError(citation.citation_id)
                     except KeyError as exc:
                         raise ExportProblem(
-                            "A report citation no longer resolves to its saved source."
+                            "A report citation no longer resolves to its saved source. "
+                            "Open the Report to repair or remove unavailable source "
+                            "support, then retry the export."
                         ) from exc
-            return export_report(matter, report, sections, format_name)
+            return export_report(
+                matter, report, sections, format_name, exported_at=exported_at
+            )
 
     def export_research_work_product(
         self,
@@ -13133,6 +13156,8 @@ def create_workbench_app(
             )
             additional_work_product: list[dict[str, object]] = []
             additional_work_product_bytes = 0
+            saved_report_files: list[dict[str, object]] = []
+            exported_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
             def add_work_product(
                 *, kind: str, path: str, artifact: ExportArtifact
@@ -13147,6 +13172,37 @@ def create_workbench_app(
                     {"kind": kind, "path": path, "body": artifact.body}
                 )
                 additional_work_product_bytes = projected
+
+            saved_reports = bench.workspace.reports_for_final_bundle(
+                matter.matter_id,
+                read_actor_id,
+                maximum=MAX_FINAL_BUNDLE_REPORTS,
+                maximum_rows=MAX_FINAL_BUNDLE_REPORT_ROWS,
+                maximum_bytes=MAX_FINAL_BUNDLE_REPORT_BYTES,
+                administrator_override=administrator_override,
+            )
+            for report, sections in saved_reports:
+                files: dict[str, object] = {
+                    "matter_id": matter.matter_id,
+                    "title": report.title,
+                    "status": report.status,
+                    "section_count": len(sections),
+                    "updated_at": report.updated_at,
+                }
+                for format_name in ("markdown", "docx"):
+                    report_artifact = bench.export_report_work_product(
+                        matter, report, sections, format_name,
+                        frozen_source_catalog=frozen_source_catalog,
+                        exported_at=exported_at,
+                    )
+                    additional_work_product_bytes += len(report_artifact.body)
+                    if additional_work_product_bytes > MAX_BUNDLE_UNCOMPRESSED_BYTES:
+                        raise ExportProblem(
+                            "No complete bundle was created because it is too large. "
+                            "Download Reports individually before closing this matter."
+                        )
+                    files[format_name] = report_artifact.body
+                saved_report_files.append(files)
 
             research_jobs = bench.workspace.succeeded_research_jobs_for_final_bundle(
                 matter.matter_id,
@@ -13237,10 +13293,12 @@ def create_workbench_app(
                 ),
                 export_media_work_product(matter, source_catalog),
                 additional_work_product,
+                saved_reports=saved_report_files,
+                exported_at=exported_at,
             )
         except KeyError as exc:
             raise HTTPException(404, "Matter not found") from exc
-        except ExportProblem as exc:
+        except (ExportProblem, WorkspaceProblem) as exc:
             return PlainTextResponse(str(exc), status_code=409)
         audit(
             request,

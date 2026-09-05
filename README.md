@@ -32,7 +32,7 @@ workflows use local models for retrieval, answers, and media transcription.
 | **Ask questions with sources in view** | Local AI answers and follow-up conversations with citations and coverage information. |
 | **Screen a collection** | Apply a criterion to a frozen source population, then inspect coverage and human-review status. |
 | **Organize the work** | Shared matters, attributed activity, notes, people, places, dates, and report drafting. |
-| **Take work product with you** | Export conversations, transcripts, summaries, clips, notebooks, and individual reports. |
+| **Take work product with you** | Export conversations, transcripts, summaries, clips, notebooks, and reports. Complete matter bundles include every saved draft and final Report in Word and Markdown. |
 
 AI availability depends on the selected deployment profile. OCR, transcription,
 source screening, and generated answers require human review. A completed task
@@ -174,8 +174,12 @@ for either method.
 The current alpha uses temporary review workspaces. Matter bytes live under the
 operator-selected managed storage path. Closing a matter can permanently
 remove that workspace, so users should export and verify anything they need to
-retain. Export authored reports individually; the current final matter bundle
-does not include their saved contents and is not a reopenable case package.
+retain. The complete matter bundle includes saved Reports, preserving their
+edits, order, draft/final state, and source appendices in Word and Markdown.
+If saved work exceeds export limits or Report sources cannot be verified,
+no complete bundle is returned. [Report export and recovery](docs/REPORT_EXPORTS.md)
+describes limits and interrupted-close recovery. Bundles are ordinary portable
+documents, not a package that can be imported back into RecordBench.
 Deletion refuses active work, requires the exact matter name plus a permanent
 deletion acknowledgement, preserves originals outside RecordBench, and leaves
 only content-minimized attributed audit and closure records.

@@ -6496,6 +6496,98 @@ class WorkspaceStore:
             ).fetchall()
         return tuple(self._report(row) for row in rows)
 
+    def reports_for_final_bundle(
+        self,
+        matter_id: str,
+        actor_id: str,
+        *,
+        maximum: int,
+        maximum_rows: int,
+        maximum_bytes: int,
+        administrator_override: bool = False,
+    ) -> tuple[
+        tuple[
+            ReportRecord,
+            tuple[tuple[ReportSectionRecord, tuple[ReportCitationRecord, ...]], ...],
+        ],
+        ...,
+    ]:
+        """Take one bounded SQLite read snapshot of all saved Report work.
+
+        The savepoint pins the read version across separate SELECTs, including
+        writers using another connection. The lock protects this connection.
+        Rendering and source resolution happen after releasing both.
+        """
+        with self._lock:
+            self.connection.execute("SAVEPOINT reports_final_bundle")
+            try:
+                self._authorize_export_read(
+                    matter_id,
+                    actor_id,
+                    administrator_override=administrator_override,
+                )
+                counts: list[int] = []
+                total_bytes = 0
+                for table, columns in (
+                    ("workbench_report", ("title", "purpose")),
+                    ("workbench_report_section", ("heading", "body")),
+                    ("workbench_report_citation", ("source_name", "location", "excerpt")),
+                ):
+                    # Table/column names are fixed above, never request input.
+                    lengths = "+".join(
+                        f"length(CAST({column} AS BLOB))" for column in columns
+                    )
+                    row = self.connection.execute(
+                        f"SELECT COUNT(*),COALESCE(SUM({lengths}),0) "
+                        f"FROM {table} WHERE matter_id=?",
+                        (matter_id,),
+                    ).fetchone()
+                    counts.append(row[0])
+                    total_bytes += row[1]
+                if (
+                    counts[0] > maximum
+                    or sum(counts) > maximum_rows
+                    or total_bytes > maximum_bytes
+                ):
+                    raise WorkspaceProblem(
+                        "No complete bundle was created because saved Reports exceed "
+                        "the export limit. Download Reports individually before closing this matter."
+                    )
+                reports = self.reports(
+                    matter_id, actor_id, administrator_override=administrator_override
+                )
+                snapshot = tuple(
+                    (
+                        report,
+                        tuple(
+                            (
+                                section,
+                                self.report_citations(
+                                    matter_id, report.report_id, section.section_id
+                                ),
+                            )
+                            for section in self.report_sections(matter_id, report.report_id)
+                        ),
+                    )
+                    for report in reports
+                )
+                # Orphaned/mis-scoped rows must not silently disappear from a
+                # bundle advertised as complete, even after damaged imports.
+                section_count = sum(len(sections) for _, sections in snapshot)
+                citation_count = sum(
+                    len(citations)
+                    for _, sections in snapshot
+                    for _, citations in sections
+                )
+                if section_count != counts[1] or citation_count != counts[2]:
+                    raise WorkspaceProblem(
+                        "No complete bundle was created because saved Report sections "
+                        "are inconsistent. Contact an administrator before closing this matter."
+                    )
+                return snapshot
+            finally:
+                self.connection.execute("RELEASE SAVEPOINT reports_final_bundle")
+
     def report(self, matter_id: str, report_id: str) -> ReportRecord:
         if not _REPORT.fullmatch(report_id or ""):
             raise KeyError(report_id)

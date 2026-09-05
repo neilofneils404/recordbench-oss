@@ -1543,6 +1543,7 @@ def export_matter_bundle(
     media_work_product: Sequence[Mapping[str, object]] = (),
     additional_work_product: Sequence[Mapping[str, object]] = (),
     *,
+    saved_reports: Sequence[Mapping[str, object]] = (),
     exported_at: str | None = None,
 ) -> ExportArtifact:
     created = exported_at or _now()
@@ -1580,6 +1581,8 @@ def export_matter_bundle(
                 "This package contains saved conversations, generated work product, "
                 "and source inventory references. It does not contain original source files.\n"
                 "Matter notebook exports include staff-authored and review-state work product.\n"
+                "Saved draft and final Reports are included as editable Markdown and Word "
+                "documents under reports/ and listed in manifest.json.\n"
                 "Transcript exports, available transcript overviews, and a clip inventory are "
                 "included when media was reviewed; recording and clip bytes are not included.\n"
                 "Transcript overviews are fallible orientation and are not findings about what occurred.\n"
@@ -1758,6 +1761,35 @@ def export_matter_bundle(
                 indent=2,
             ).encode("utf-8"),
         )
+        report_files: list[dict[str, object]] = []
+        for index, item in enumerate(saved_reports, 1):
+            if item.get("matter_id") != matter.matter_id:
+                raise ExportProblem("Report export crossed a matter boundary.")
+            title = _plain(item.get("title"))
+            status = item.get("status")
+            section_count = item.get("section_count")
+            if (
+                not title
+                or status not in {"draft", "final"}
+                or not isinstance(section_count, int)
+                or section_count < 0
+            ):
+                raise ExportProblem("A saved Report could not be packaged safely.")
+            base = f"reports/{index:03d}-{safe_file_stem(title, 'report')}"
+            entry: dict[str, object] = {
+                "title": title,
+                "status": status,
+                "section_count": section_count,
+                "updated_at": _plain(item.get("updated_at")),
+            }
+            for format_name, extension in (("markdown", "md"), ("docx", "docx")):
+                body = item.get(format_name)
+                if not isinstance(body, bytes):
+                    raise ExportProblem("A saved Report could not be packaged safely.")
+                path = f"{base}.{extension}"
+                write_member(path, body)
+                entry[format_name] = path
+            report_files.append(entry)
         additional_manifest: list[dict[str, object]] = []
         seen_additional_paths: set[str] = set()
         for item in additional_work_product:
@@ -1795,6 +1827,8 @@ def export_matter_bundle(
             "transcript_count": len(media_work_product),
             "transcript_overview_count": summary_count,
             "clip_count": len(clip_inventory),
+            "report_count": len(report_files),
+            "reports": report_files,
             "additional_work_product_count": len(additional_manifest),
             "additional_work_product": additional_manifest,
             "conversations": conversation_files,
