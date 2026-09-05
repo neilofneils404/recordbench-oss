@@ -119,6 +119,12 @@ def main():
             assert processor.submissions == 0
             driver.save_screenshot(str(args.output / "no-audio-playback.png"))
             checks.append("Browser upload accepts video without audio; original video plays and no transcription is submitted")
+            click("[data-activity-toggle]")
+            wait.until(lambda d: d.find_elements(By.CSS_SELECTOR, "[data-activity-content]"))
+            assert driver.find_element(By.CSS_SELECTOR, "[data-activity-content]").get_attribute("data-attention-count") == "0"
+            assert not driver.find_element(By.CSS_SELECTOR, "[data-activity-badge]").is_displayed()
+            click("[data-activity-close]")
+            checks.append("Video-only playback is terminal and does not create an unresolved Activity item or attention badge")
 
             failed = inspect_recording(root / "absent.wav", "audio/wav")
             with patch("case_intelligence.media_evidence.inspect_recording", return_value=failed):

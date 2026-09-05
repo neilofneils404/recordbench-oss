@@ -80,7 +80,11 @@ and do not prevent quiet-state backup or deliberate matter closure.
 authorization and CSRF, plus `action=continue|retry` and the current inspection
 identity. A conditional transition admits one decision, so duplicate/stale
 requests return an understandable 409. The inspection identity is a concurrency
-token, not an authorization grant. Retry invalidates the previous result;
+token, not an authorization grant. Stale, missing or inapplicable decisions are
+rejected before digest reads. The complete source-locked verification/transition
+runs in a worker thread; membership and inspection state are checked again at
+the atomic transition without holding the shared database lock during hashing.
+Retry invalidates the previous result;
 source/version or policy changes require a fresh check. Decision audit events
 contain only action/state, without source content or audio findings.
 
@@ -101,7 +105,12 @@ explicit and duplicate decisions, repeated upload admission, source tampering,
 cross-matter denial, restart, interrupted work, stopped-state backup/restore,
 non-searchability, original-time transcript citations/SRT, reserved inspection
 metadata and closure cleanup. Compact upload polling treats every held check as
-terminal review work. Pending decisions remain visible in global Activity after
+terminal work. Playback-only sources have a separate upload count and create no
+unresolved Activity or attention badge, including alongside searchable text.
+Upload status adds `playback_only_count`; these terminal items are neither
+`ready_count` (searchable) nor `attention_count` (action needed).
+Only recordings awaiting a decision create actionable review work. Pending
+decisions remain visible in global Activity after
 switching matters; initial and refreshed recording panels offer Review recording
 with an attention marker, without claiming transcript readiness. It is separate from frozen acceptance packs.
 

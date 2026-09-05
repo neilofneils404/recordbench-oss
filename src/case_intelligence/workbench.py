@@ -5527,7 +5527,7 @@ def create_workbench_app(
                 f"{readiness.recording_review_count:,} awaiting a recording decision"
             )
             guidance = "You can play and review recordings. Search and answers require a transcript."
-            action_label = "Review recordings"
+            action_label = "Review recordings" if readiness.recording_review_count else "Open recordings"
             action_url = f"/matters/{matter.slug}/setup?view=list&status=attention#source-library"
         elif readiness.state == "attention":
             if readiness.can_query:
@@ -5672,6 +5672,7 @@ def create_workbench_app(
         coverage = _source_coverage(readiness)
         return {
             "state": "review" if recording_hold_only else readiness.state,
+            "recording_review_count": readiness.recording_review_count,
             "can_query": readiness.can_query,
             "partial_query": readiness.partial_query,
             "excluded_count": int(coverage["excluded_count"]),
@@ -5863,8 +5864,7 @@ def create_workbench_app(
             if matter.slug == active_slug or readiness["state"] in {
                 "preparing",
                 "attention",
-                "review",
-            }:
+            } or (readiness["state"] == "review" and readiness["recording_review_count"]):
                 readiness_state = str(readiness["state"])
                 append_item(
                     matter=matter,
@@ -5877,6 +5877,8 @@ def create_workbench_app(
                         else "failed"
                         if readiness_state == "attention"
                         else "needs_review"
+                        if readiness_state == "review" and readiness["recording_review_count"]
+                        else "playback_only"
                         if readiness_state == "review"
                         else "ready"
                         if readiness_state == "ready"
@@ -6050,7 +6052,7 @@ def create_workbench_app(
             "preparing",
             "attention",
             "review",
-        }:
+        } and (active_readiness["state"] != "review" or active_readiness["recording_review_count"]):
             initial_activity_count += 1
         if assistant and assistant["active_answer"]:
             initial_activity_count += 1
@@ -6303,6 +6305,10 @@ def create_workbench_app(
                         work_state = "ready"
                         work_stage = document.processing_stage or "Searchable"
                         work_progress = 1.0
+                    elif document.state == "playback_only":
+                        work_state = "playback_only"
+                        work_stage = "Available for playback"
+                        work_progress = 1.0
                     elif document.state in {"failed", "needs_ocr"}:
                         work_state = "attention"
                         work_stage = document.processing_stage or "Needs attention"
@@ -6368,6 +6374,7 @@ def create_workbench_app(
             "processing_count": processing_count,
             "ready_count": ready_count,
             "attention_count": attention_count,
+            "playback_only_count": sum(item["work_state"] == "playback_only" for item in projected_items),
             "work_complete": processing_count == 0 and session.state in {"complete", "partial"},
             "review_ready": review_ready,
             "contains_media": any(item["is_media"] for item in projected_items),
@@ -10257,30 +10264,39 @@ def create_workbench_app(
     async def decide_recording_check(request: Request, slug: str, token: str):
         context = auth_context(request)
         matter = authorized_matter(request, slug)
-        store = bench.source_store(matter)
         form = await request.form()
         action = str(form.get("action") or "")
+        inspection_id = str(form.get("inspection_id") or "")
         if action not in {"retry", "continue"}:
             return PlainTextResponse("Choose a recording action.", status_code=400)
-        try:
+
+        def verify_and_decide() -> None:
+            store = bench.source_store(matter)
             with store.mutation_guard():
                 document = store.get_by_action_token(token)
-                store.source_path(document.document_id, verify_digest=True)
+                decision_args = (
+                    matter.matter_id, document.document_id, document.version_id,
+                    context.principal_id, inspection_id,
+                )
                 try:
+                    bench.workspace.validate_media_preflight_decision(
+                        *decision_args, retry=action == "retry"
+                    )
+                    store.source_path(document.document_id, verify_digest=True)
                     bench.workspace.decide_media_preflight(
-                        matter.matter_id, document.document_id, document.version_id,
-                        context.principal_id, str(form.get("inspection_id") or ""),
-                        retry=action == "retry",
+                        *decision_args, retry=action == "retry"
                     )
-                except KeyError:
-                    return PlainTextResponse(
-                        "This recording check changed. Reload the source to see its current state.",
-                        status_code=409,
-                    )
+                except KeyError as exc:
+                    raise HTTPException(
+                        409, "This recording check changed. Reload the source to see its current state."
+                    ) from exc
                 document.state = "queued"
                 document.message = "Checking recording" if action == "retry" else "Queued for transcription"
                 document.processing_stage = document.message
                 store._save((document.document_id,))
+
+        try:
+            await run_in_threadpool(verify_and_decide)
         except KeyError as exc:
             raise HTTPException(404, "Source not found") from exc
         except UploadProblem as exc:

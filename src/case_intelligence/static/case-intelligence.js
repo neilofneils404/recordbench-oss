@@ -1143,6 +1143,7 @@
     const failed = Number(session.failed_count || 0);
     const processing = Number(session.processing_count || 0);
     const ready = Number(session.ready_count || 0);
+    const playbackOnly = Number(session.playback_only_count || 0);
     const attention = Number(session.attention_count || 0);
     const total = Number(session.item_count || 0);
     const received = Number(session.received_bytes || 0);
@@ -1182,7 +1183,7 @@
         : finalizing
           ? `${total} uploaded · finalizing`
           : terminal
-            ? `${ready} ready · ${processing} processing${attention ? ` · ${attention} need attention` : ""}`
+            ? `${ready} ready · ${processing} processing${playbackOnly ? ` · ${playbackOnly} playback only` : ""}${attention ? ` · ${attention} need attention` : ""}`
             : `${queued} of ${total} queued${failed ? ` · ${failed} need attention` : ""}`;
     }
     if (uploadBytes) {
@@ -1205,6 +1206,8 @@
           ? session.contains_media ? "Transcript ready" : "Sources ready"
           : attention
             ? "Upload collection needs attention"
+            : playbackOnly && ready + playbackOnly === total
+              ? "Sources available for review"
             : session.state === "complete"
               ? "Upload collection queued"
         : session.state === "partial"
@@ -1219,6 +1222,8 @@
           ? `${securityChecking.length.toLocaleString()} ${securityChecking.length === 1 ? "record is" : "records are"} being scanned before entering the matter. Large files may take a moment.`
           : finalizing
           ? "The selected records are saved. Checking them and preparing their processing tasks."
+          : session.work_complete && (playbackOnly || attention)
+            ? "Processing finished. Open sources to review available items and choose any needed next steps."
           : activeWork
           ? `${activeWork.work_stage || "Processing"}${activeWork.work_progress ? ` · ${Math.round(Number(activeWork.work_progress) * 100)}%` : ""}. You may leave this page; the saved work will continue.`
           : ready === total && total

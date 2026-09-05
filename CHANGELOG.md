@@ -7,7 +7,9 @@
   no-speech, uncertain or failed checks for review/retry. Version-bound decisions
   survive restart and reject stale/duplicate submissions. Upload polling finishes
   on held checks, and pending recording decisions stay visible in Activity with
-  an actionable review marker. Bounded CPU VAD,
+  an actionable review marker. Playback-only video is terminal without an
+  unresolved attention badge. Stale decisions do no digest work, and valid
+  verification/transition runs off the shared request loop. Bounded CPU VAD,
   low-volume/clipping findings and explicit unassessed language replace no
   existing transcription model. Synthetic workflow/browser and previous-reader
   checks cover the additive state; no persistent schema or deployment change.

@@ -3935,6 +3935,21 @@ class WorkspaceStore:
             raise KeyError(media_job_id)
         return self._media_job(row)
 
+    def validate_media_preflight_decision(
+        self, matter_id: str, document_id: str, source_version_id: str,
+        actor_id: str, inspection_id: str, *, retry: bool
+    ) -> MediaJobRecord:
+        """Reject stale or inapplicable decisions before reading recording bytes."""
+        with self._lock:
+            self.membership(matter_id, actor_id)
+            job = self.media_job(matter_id, document_id, source_version_id)
+            if (job is None or job.state != "cancelled" or not inspection_id
+                    or job.preflight.get("inspection_id") != inspection_id):
+                raise KeyError(document_id)
+            if not retry and job.preflight.get("outcome") in {"no_audio", "failed"}:
+                raise ValueError("Check the recording again before transcription.")
+            return job
+
     def decide_media_preflight(
         self, matter_id: str, document_id: str, source_version_id: str,
         actor_id: str, inspection_id: str, *, retry: bool
@@ -3943,13 +3958,9 @@ class WorkspaceStore:
         self.membership(matter_id, actor_id)
         now = self._now()
         with self._lock, self.connection:
-            self.membership(matter_id, actor_id)
-            job = self.media_job(matter_id, document_id, source_version_id)
-            if (job is None or job.state != "cancelled" or not inspection_id
-                    or job.preflight.get("inspection_id") != inspection_id):
-                raise KeyError(document_id)
-            if not retry and job.preflight.get("outcome") in {"no_audio", "failed"}:
-                raise ValueError("Check the recording again before transcription.")
+            job = self.validate_media_preflight_decision(
+                matter_id, document_id, source_version_id, actor_id, inspection_id, retry=retry
+            )
             metadata = dict(job.preflight)
             metadata["continued"] = True
             encoded = self._media_metadata_json(
@@ -6190,7 +6201,8 @@ class WorkspaceStore:
                 "WHEN i.state IN ('failed','cancelled') THEN 'attention' "
                 "WHEN i.document_id IS NULL THEN i.state "
                 "WHEN c.source_state='ready' THEN 'ready' "
-                "WHEN c.source_state IN ('failed','needs_ocr','changed','missing','needs_review','playback_only') "
+                "WHEN c.source_state='playback_only' THEN 'playback_only' "
+                "WHEN c.source_state IN ('failed','needs_ocr','changed','missing','needs_review') "
                 "THEN 'attention' "
                 "WHEN mj.state IN ('succeeded','degraded') THEN 'ready' "
                 "WHEN mj.state='failed' THEN 'attention' "
@@ -6212,6 +6224,7 @@ class WorkspaceStore:
                 "COALESCE(SUM(state IN ('failed','cancelled')),0) AS failed_count,"
                 "COALESCE(SUM(work_state='processing'),0) AS processing_count,"
                 "COALESCE(SUM(work_state='ready'),0) AS ready_count,"
+                "COALESCE(SUM(work_state='playback_only'),0) AS playback_only_count,"
                 "COALESCE(SUM(work_state='attention'),0) AS attention_count,"
                 "COALESCE(SUM(media_type LIKE 'audio/%' OR media_type LIKE 'video/%'),0) "
                 "AS media_count,"
@@ -6227,6 +6240,7 @@ class WorkspaceStore:
             "failed_count": int(row["failed_count"]),
             "processing_count": processing_count,
             "ready_count": int(row["ready_count"]),
+            "playback_only_count": int(row["playback_only_count"]),
             "attention_count": int(row["attention_count"]),
             "contains_media": bool(row["media_count"]),
             "review_ready": item_count > 0 and int(row["terminal_count"]) == item_count,

@@ -402,11 +402,13 @@ def test_held_resumable_upload_finishes_processing(tmp_path, monkeypatch, outcom
         compact = client.get(finalized.json()['status_url'] + '?compact=true').json()
         assert compact['work_complete'] is True
         assert compact['processing_count'] == 0
-        assert compact['attention_count'] == 1
+        assert compact['attention_count'] == (0 if outcome == 'no_audio' else 1)
+        assert compact['playback_only_count'] == (1 if outcome == 'no_audio' else 0)
         assert payload['work_complete'] is True
         assert payload['processing_count'] == payload['ready_count'] == 0
-        assert payload['attention_count'] == 1
-        assert payload['items'][0]['work_state'] == 'attention'
+        assert payload['attention_count'] == (0 if outcome == 'no_audio' else 1)
+        assert payload['playback_only_count'] == (1 if outcome == 'no_audio' else 0)
+        assert payload['items'][0]['work_state'] == ('playback_only' if outcome == 'no_audio' else 'attention')
         assert processor.submissions == 0
 
 
@@ -439,3 +441,102 @@ def test_recording_decision_panel_is_actionable_before_javascript(tmp_path):
         assert 'media-activity-marker attention' in panel
         assert '>Review recording</a>' in panel
         assert 'processing-pulse' not in panel
+
+
+@pytest.mark.parametrize('include_text', [False, True])
+def test_playback_only_has_no_unresolved_activity(tmp_path, include_text):
+    source = tmp_path / 'video-only.mp4'
+    subprocess.run(['/usr/bin/ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                    'color=c=blue:s=160x120:d=1', '-an', '-c:v', 'libx264',
+                    '-pix_fmt', 'yuv420p', str(source)], check=True)
+    with TestClient(app_for(tmp_path / 'runtime', ObservedProcessor())) as client:
+        slug = _matter(client, 'Synthetic playback workspace')
+        bench, matter, document, token = upload(client, slug, source, 'video/mp4')
+        wait_job(bench, matter, document)
+        if include_text:
+            response = client.post(f'/matters/{slug}/uploads', files=[
+                ('files', ('synthetic.txt', b'Synthetic meeting notes for review.', 'text/plain'))])
+            assert response.status_code == 200
+        activity = client.get(f'/activity?matter={slug}')
+        assert 'data-attention-count="0"' in activity.text
+        assert 'Playback Only' in activity.text
+        page = client.get(f'/matters/{slug}')
+        assert 'data-activity-badge hidden>0</strong>' in page.text
+        assert 'Open recordings' in page.text
+        other = _matter(client, 'Synthetic alternate workspace')
+        away = client.get(f'/activity?matter={other}')
+        assert 'Synthetic playback workspace' not in away.text
+        assert client.get(f'/matters/{slug}/sources/{token}/content').status_code == 200
+        assert document.state == 'playback_only'
+
+
+def test_stale_recording_decisions_do_not_hash_source(tmp_path, monkeypatch):
+    source = tmp_path / 'quiet.wav'
+    silence(source)
+    with TestClient(app_for(tmp_path / 'runtime', ObservedProcessor())) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        wait_job(bench, matter, document)
+        store = bench.source_store(matter)
+        original = store.source_path
+        digests = []
+
+        def observe(*args, **kwargs):
+            if kwargs.get('verify_digest'):
+                digests.append(True)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(store, 'source_path', observe)
+        for inspection in ('', 'stale-inspection'):
+            response = client.post(f'/matters/{slug}/sources/{token}/recording-check',
+                                   data={'action': 'retry', 'inspection_id': inspection})
+            assert response.status_code == 409
+        assert not digests
+
+
+def test_recording_decision_keeps_request_loop_responsive(tmp_path, monkeypatch):
+    import asyncio
+    from contextlib import contextmanager
+    source = tmp_path / 'quiet.wav'
+    silence(source)
+    app = app_for(tmp_path / 'runtime', ObservedProcessor())
+    loop = None
+    loop_thread = None
+    timed_out = []
+    lock_threads = []
+
+    @app.middleware('http')
+    async def capture_loop(request, call_next):
+        nonlocal loop, loop_thread
+        loop = asyncio.get_running_loop()
+        loop_thread = threading.get_ident()
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        job = wait_job(bench, matter, document)
+        store = bench.source_store(matter)
+        original_path = store.source_path
+        original_guard = store.mutation_guard
+
+        def checked_path(*args, **kwargs):
+            if kwargs.get('verify_digest'):
+                released = threading.Event()
+                loop.call_soon_threadsafe(released.set)
+                timed_out.append(not released.wait(1))
+            return original_path(*args, **kwargs)
+
+        @contextmanager
+        def checked_guard():
+            lock_threads.append(threading.get_ident())
+            with original_guard():
+                yield
+
+        monkeypatch.setattr(store, 'source_path', checked_path)
+        monkeypatch.setattr(store, 'mutation_guard', checked_guard)
+        response = client.post(f'/matters/{slug}/sources/{token}/recording-check', data={
+            'action': 'retry', 'inspection_id': job.preflight['inspection_id']}, follow_redirects=False)
+        assert response.status_code == 303
+        assert timed_out and not any(timed_out)
+        assert lock_threads and loop_thread not in lock_threads
