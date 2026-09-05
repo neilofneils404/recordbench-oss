@@ -463,6 +463,9 @@ def test_playback_only_has_no_unresolved_activity(tmp_path, include_text):
         page = client.get(f'/matters/{slug}')
         assert 'data-activity-badge hidden>0</strong>' in page.text
         assert 'Open recordings' in page.text
+        home = client.get(f'/matters/{slug}/home')
+        assert 'Resolve first' not in home.text
+        assert '1 need attention' not in home.text
         other = _matter(client, 'Synthetic alternate workspace')
         away = client.get(f'/activity?matter={other}')
         assert 'Synthetic playback workspace' not in away.text
@@ -540,3 +543,173 @@ def test_recording_decision_keeps_request_loop_responsive(tmp_path, monkeypatch)
         assert response.status_code == 303
         assert timed_out and not any(timed_out)
         assert lock_threads and loop_thread not in lock_threads
+
+
+def test_duplicate_decisions_cannot_exhaust_staff_request_workers(tmp_path, monkeypatch):
+    import anyio
+    from concurrent.futures import ThreadPoolExecutor
+    source = tmp_path / 'quiet.wav'
+    silence(source)
+    app = app_for(tmp_path / 'runtime', ObservedProcessor())
+    entered = threading.Event()
+    release = threading.Event()
+
+    @app.middleware('http')
+    async def one_shared_worker(request, call_next):
+        # Constrain the ordinary ASGI pool to expose shared-budget starvation.
+        anyio.to_thread.current_default_thread_limiter().total_tokens = 1
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        job = wait_job(bench, matter, document)
+        store = bench.source_store(matter)
+        original = store.source_path
+
+        def slow_digest(*args, **kwargs):
+            if kwargs.get('verify_digest'):
+                entered.set()
+                assert release.wait(10), 'Synthetic digest was not released'
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(store, 'source_path', slow_digest)
+        url = f'/matters/{slug}/sources/{token}/recording-check'
+        data = {'action': 'retry', 'inspection_id': job.preflight['inspection_id']}
+        with ThreadPoolExecutor(max_workers=3) as callers:
+            first = callers.submit(client.post, url, data=data, follow_redirects=False)
+            try:
+                assert entered.wait(3)
+                duplicate = callers.submit(client.post, url, data=data, follow_redirects=False)
+                assert duplicate.result(timeout=2).status_code == 409
+                unrelated = callers.submit(client.get, '/matters/new')
+                assert unrelated.result(timeout=2).status_code == 200
+            finally:
+                release.set()
+            assert first.result(timeout=3).status_code == 303
+
+
+def test_recording_registry_write_failure_cannot_submit(tmp_path, monkeypatch):
+    source = tmp_path / 'quiet.wav'
+    silence(source)
+    processor = ObservedProcessor()
+    with TestClient(app_for(tmp_path / 'runtime', processor), raise_server_exceptions=False) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        job = wait_job(bench, matter, document)
+        store = bench.source_store(matter)
+        original = store._save
+        writes = 0
+
+        def fail_once(*args, **kwargs):
+            nonlocal writes
+            writes += 1
+            if writes == 1:
+                raise OSError('Synthetic registry write failure')
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(store, '_save', fail_once)
+        response = client.post(f'/matters/{slug}/sources/{token}/recording-check', data={
+            'action': 'continue', 'inspection_id': job.preflight['inspection_id']}, follow_redirects=False)
+        finished = wait_job(bench, matter, document, ('failed', 'succeeded', 'degraded'))
+        assert processor.submissions == 0
+        assert response.status_code == 303
+        assert finished.state == 'failed'
+
+
+def test_audit_failure_leaves_recording_decision_unadmitted(tmp_path):
+    source = tmp_path / 'quiet.wav'
+    silence(source)
+    processor = ObservedProcessor()
+    with TestClient(app_for(tmp_path / 'runtime', processor), raise_server_exceptions=False) as client:
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        job = wait_job(bench, matter, document)
+        bench.media.close()
+        bench.workspace.connection.execute("""CREATE TRIGGER synthetic_audit_failure
+            BEFORE INSERT ON workbench_audit_event WHEN NEW.action LIKE 'media.preflight_%'
+            BEGIN SELECT RAISE(ABORT, 'Synthetic audit failure'); END""")
+        response = client.post(f'/matters/{slug}/sources/{token}/recording-check', data={
+            'action': 'continue', 'inspection_id': job.preflight['inspection_id']}, follow_redirects=False)
+        current = bench.workspace.media_job(matter.matter_id, document.document_id, document.version_id)
+        assert current.state == 'cancelled'
+        assert document.state == 'needs_review'
+        assert response.status_code == 503
+        assert processor.submissions == 0
+        bench.workspace.connection.execute('DROP TRIGGER synthetic_audit_failure')
+        retried = client.post(f'/matters/{slug}/sources/{token}/recording-check', data={
+            'action': 'continue', 'inspection_id': job.preflight['inspection_id']}, follow_redirects=False)
+        assert retried.status_code == 303
+        audits = [event for event in bench.workspace.audit_events(matter.matter_id)
+                  if event.action == 'media.preflight_continue']
+        assert len(audits) == 1
+
+
+def test_recovered_legacy_submission_is_reconciled_before_speech_hold(tmp_path):
+    from case_intelligence.media_evidence import processor_owner
+    source = tmp_path / 'quiet.wav'
+    silence(source, 8)
+    processor = ObservedProcessor()
+    runtime = tmp_path / 'runtime'
+    with TestClient(app_for(runtime, processor)) as client:
+        bench = client.app.state.workbench
+        bench.media.close()
+        slug = _matter(client)
+        bench, matter, document, token = upload(client, slug, source)
+        claimed = bench.workspace.claim_media_job('synthetic-legacy-worker')
+        assert claimed is not None
+        # Legacy crash window: processor accepted bytes, local ID was not saved.
+        processor.submit(processor_owner(claimed.media_job_id), source, 'audio/wav', document.digest)
+        assert claimed.external_job_id is None and not claimed.preflight
+    with TestClient(app_for(runtime, processor)) as client:
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        document = bench.source_store(matter).get_by_action_token(token)
+        finished = wait_job(bench, matter, document, ('cancelled', 'failed', 'succeeded', 'degraded'))
+        assert finished.state in {'succeeded', 'degraded'}
+        assert processor.submissions == 1
+        assert len(processor.deleted) == 1 and not processor.jobs
+
+
+def test_recording_decision_budget_is_bounded_across_matters(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    source = tmp_path / 'quiet.wav'
+    silence(source)
+    release = threading.Event()
+    two_entered = threading.Event()
+    lock = threading.Lock()
+    entered = 0
+    with TestClient(app_for(tmp_path / 'runtime', ObservedProcessor())) as client:
+        decisions = []
+        for index in range(3):
+            slug = _matter(client, f'Synthetic budget matter {index}')
+            bench, matter, document, token = upload(client, slug, source)
+            job = wait_job(bench, matter, document)
+            store = bench.source_store(matter)
+            original = store.source_path
+
+            def blocked(*args, _original=original, **kwargs):
+                nonlocal entered
+                if kwargs.get('verify_digest'):
+                    with lock:
+                        entered += 1
+                        if entered == 2:
+                            two_entered.set()
+                    assert release.wait(10)
+                return _original(*args, **kwargs)
+
+            monkeypatch.setattr(store, 'source_path', blocked)
+            decisions.append((f'/matters/{slug}/sources/{token}/recording-check',
+                              {'action': 'retry', 'inspection_id': job.preflight['inspection_id']}))
+        with ThreadPoolExecutor(max_workers=2) as callers:
+            futures = [callers.submit(client.post, url, data=data, follow_redirects=False)
+                       for url, data in decisions[:2]]
+            try:
+                assert two_entered.wait(3)
+                third = client.post(decisions[2][0], data=decisions[2][1], follow_redirects=False)
+                assert third.status_code == 503 and third.headers['Retry-After'] == '3'
+                assert entered == 2
+            finally:
+                release.set()
+            assert all(future.result(timeout=3).status_code == 303 for future in futures)
+        assert client.post(decisions[2][0], data=decisions[2][1], follow_redirects=False).status_code == 303

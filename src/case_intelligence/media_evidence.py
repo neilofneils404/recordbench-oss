@@ -413,6 +413,15 @@ class TranscriptionV2Client:
             return
 
 
+def _matched_external_id(view: Mapping[str, object], job: MediaJobRecord) -> str:
+    if view.get("source_sha256") != job.source_sha256 or view.get("size_bytes") != job.byte_size:
+        raise MediaProcessorError("The transcription service did not preserve the submitted source identity.")
+    external_id = str(view.get("job_id") or view.get("id") or "")
+    if not external_id:
+        raise MediaProcessorError("The transcription service returned an invalid job identity.")
+    return external_id
+
+
 def processor_owner(media_job_id: str) -> str:
     if not re.fullmatch(r"media-job-[0-9a-f]{32}", media_job_id or ""):
         raise ValueError("invalid media job")
@@ -759,6 +768,22 @@ class MediaCoordinator:
         owner = processor_owner(job.media_job_id)
         external_id = job.external_job_id
         try:
+            known_hold = (
+                job.preflight.get("outcome") in {"no_audio", "no_speech", "uncertain", "failed"}
+                and job.preflight.get("continued") is False
+            )
+            if not external_id and job.attempts > 1 and not known_hold:
+                if self.processor is None or not self.processor.available:
+                    raise MediaProcessorError(
+                        "Earlier transcription work could not be checked. Try again when the service is available."
+                    )
+                recovered = self.processor.find_job(owner, job.source_sha256, job.byte_size)
+                if recovered is not None:
+                    external_id = _matched_external_id(recovered, job)
+                    job = self.workspace.update_media_job(
+                        job.media_job_id, stage="Resuming transcription", progress=0.03,
+                        external_job_id=external_id,
+                    )
             if self._matter_cancelled(job.matter_id):
                 raise MediaProcessorError("Transcription cancelled because the matter is closing.")
             matter = self.resolve_matter(job.matter_id)
@@ -848,20 +873,7 @@ class MediaCoordinator:
                     reconciled = self.processor.submit(
                         owner, source, job.media_type, job.source_sha256
                     )
-                if (
-                    reconciled.get("source_sha256") != job.source_sha256
-                    or reconciled.get("size_bytes") != job.byte_size
-                ):
-                    raise MediaProcessorError(
-                        "The transcription service did not preserve the submitted source identity."
-                    )
-                external_id = str(
-                    reconciled.get("job_id") or reconciled.get("id") or ""
-                )
-                if not external_id:
-                    raise MediaProcessorError(
-                        "The transcription service returned an invalid job identity."
-                    )
+                external_id = _matched_external_id(reconciled, job)
                 job = self.workspace.update_media_job(
                     job.media_job_id,
                     stage="Queued for transcription",

@@ -5,7 +5,7 @@ recording-check workflow. It adds no transcription model, translation mode,
 visual analysis, or recording-review report builder.
 
 After upload admission and any configured scan, the durable media worker checks
-the recording before contacting the transcription processor. A likely-speech
+the recording before first submission to the transcription processor. A likely-speech
 result proceeds to transcription. Other results retain the recording and stop
 automatic submission:
 
@@ -82,17 +82,31 @@ identity. A conditional transition admits one decision, so duplicate/stale
 requests return an understandable 409. The inspection identity is a concurrency
 token, not an authorization grant. Stale, missing or inapplicable decisions are
 rejected before digest reads. The complete source-locked verification/transition
-runs in a worker thread; membership and inspection state are checked again at
+runs with a separate two-worker capacity budget. Duplicate decisions for a matter
+are rejected before worker admission; excess concurrent matters receive a clear
+503/Retry-After response without queued worker work. Ordinary staff requests keep
+their own worker capacity. Membership and inspection state are checked again at
 the atomic transition without holding the shared database lock during hashing.
-Retry invalidates the previous result;
-source/version or policy changes require a fresh check. Decision audit events
+The job admission and content-free success audit commit in one control-database
+transaction. Audit failure leaves the job held and returns a retryable error.
+The decision route does not write the source registry: the admitted worker saves
+its processing projection before submitting any bytes. A registry-write failure
+there fails processing without submitting the recording.
+Retry makes the old decision inapplicable immediately via queue state and keeps
+the last held inspection as non-authorizing history until a fresh check replaces
+it; source/version or policy changes require a fresh check. Decision audit events
 contain only action/state, without source content or audio findings.
 
 The source projection is saved before the held queue transition. An interrupted
 inspection remains running and returns to the existing queue on restart. The
 next worker rechecks safely. A completed hold survives restart/restore. Existing
 already-submitted jobs resume their processor job; they are not retrospectively
-intercepted. Finished transcript jobs retain their original inspection. Matter
+intercepted. Recovered attempts with an unknown submission boundary reconcile a
+matching processor job before inspection can hold them, including the legacy
+submit-before-local-ID crash window. The match must preserve owner, digest and
+size; normal completion/failure removes processor scratch. If reconciliation is
+unavailable, processing remains retryable rather than declaring a completed hold.
+A known, unsubmitted hold can be checked again without processor availability. Finished transcript jobs retain their original inspection. Matter
 closure removes the job, inspection, processing copy and derived state through
 the existing purge boundary.
 
@@ -106,7 +120,8 @@ cross-matter denial, restart, interrupted work, stopped-state backup/restore,
 non-searchability, original-time transcript citations/SRT, reserved inspection
 metadata and closure cleanup. Compact upload polling treats every held check as
 terminal work. Playback-only sources have a separate upload count and create no
-unresolved Activity or attention badge, including alongside searchable text.
+unresolved Activity, attention badge or Matter Home resolve item, including
+alongside searchable text. Actionable catalog filtering precedes pagination.
 Upload status adds `playback_only_count`; these terminal items are neither
 `ready_count` (searchable) nor `attention_count` (action needed).
 Only recordings awaiting a decision create actionable review work. Pending

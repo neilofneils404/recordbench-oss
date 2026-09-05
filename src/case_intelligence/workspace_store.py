@@ -2025,6 +2025,27 @@ class WorkspaceStore:
         object_id: str | None = None,
         details: Mapping[str, object] | None = None,
     ) -> AuditEventRecord:
+        with self._lock, self.connection:
+            return self._append_audit_event_locked(
+                actor_principal_id=actor_principal_id, session_id=session_id,
+                matter_id=matter_id, request_id=request_id, action=action,
+                outcome=outcome, object_type=object_type, object_id=object_id,
+                details=details,
+            )
+
+    def _append_audit_event_locked(
+        self,
+        *,
+        actor_principal_id: str | None,
+        session_id: str | None,
+        matter_id: str | None,
+        request_id: str,
+        action: str,
+        outcome: str,
+        object_type: str | None = None,
+        object_id: str | None = None,
+        details: Mapping[str, object] | None = None,
+    ) -> AuditEventRecord:
         request = self._safe_text(request_id, label="Audit request", maximum=96)
         action_value = self._safe_text(action, label="Audit action", maximum=80)
         if not _AUDIT_NAME.fullmatch(action_value):
@@ -2042,32 +2063,31 @@ class WorkspaceStore:
         encoded = self._audit_details(details)
         event_id = f"audit-{uuid.uuid4().hex}"
         occurred_at = self._now()
-        with self._lock, self.connection:
-            self.connection.execute(
-                "INSERT INTO workbench_audit_event("
-                "event_id,occurred_at,actor_principal_id,session_id,matter_id,request_id,"
-                "action,outcome,object_type,object_id,details_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    event_id,
-                    occurred_at,
-                    actor_principal_id,
-                    session_id,
-                    matter_id,
-                    request,
-                    action_value,
-                    outcome,
-                    kind,
-                    identifier,
-                    encoded,
-                ),
-            )
-            row = self.connection.execute(
-                "SELECT event_id,occurred_at,actor_principal_id,session_id,matter_id,"
-                "request_id,action,outcome,object_type,object_id,details_json "
-                "FROM workbench_audit_event WHERE event_id=?",
-                (event_id,),
-            ).fetchone()
+        self.connection.execute(
+            "INSERT INTO workbench_audit_event("
+            "event_id,occurred_at,actor_principal_id,session_id,matter_id,request_id,"
+            "action,outcome,object_type,object_id,details_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                event_id,
+                occurred_at,
+                actor_principal_id,
+                session_id,
+                matter_id,
+                request,
+                action_value,
+                outcome,
+                kind,
+                identifier,
+                encoded,
+            ),
+        )
+        row = self.connection.execute(
+            "SELECT event_id,occurred_at,actor_principal_id,session_id,matter_id,"
+            "request_id,action,outcome,object_type,object_id,details_json "
+            "FROM workbench_audit_event WHERE event_id=?",
+            (event_id,),
+        ).fetchone()
         if row is None:
             raise RuntimeError("audit event did not persist")
         return self._audit_event(row)
@@ -3952,7 +3972,8 @@ class WorkspaceStore:
 
     def decide_media_preflight(
         self, matter_id: str, document_id: str, source_version_id: str,
-        actor_id: str, inspection_id: str, *, retry: bool
+        actor_id: str, inspection_id: str, *, retry: bool, request_id: str,
+        session_id: str | None = None
     ) -> MediaJobRecord:
         """One version-bound review decision, atomic against duplicate requests."""
         self.membership(matter_id, actor_id)
@@ -3962,9 +3983,9 @@ class WorkspaceStore:
                 matter_id, document_id, source_version_id, actor_id, inspection_id, retry=retry
             )
             metadata = dict(job.preflight)
-            metadata["continued"] = True
+            metadata["continued"] = not retry
             encoded = self._media_metadata_json(
-                {} if retry else {"preflight": metadata}, kind="quality"
+                {"preflight": metadata}, kind="quality"
             )
             changed = self.connection.execute(
                 "UPDATE workbench_media_job SET state='queued',stage=?,message='',"
@@ -3976,8 +3997,14 @@ class WorkspaceStore:
             row = self.connection.execute(
                 "SELECT * FROM workbench_media_job WHERE media_job_id=?", (job.media_job_id,)
             ).fetchone()
-        if changed != 1 or row is None:
-            raise KeyError(document_id)
+            if changed != 1 or row is None:
+                raise KeyError(document_id)
+            self._append_audit_event_locked(
+                actor_principal_id=actor_id, session_id=session_id,
+                matter_id=matter_id, request_id=request_id,
+                action="media.preflight_retry" if retry else "media.preflight_continue",
+                outcome="success", details={"state": "queued"},
+            )
         return self._media_job(row)
 
     def finish_media_job(
@@ -5298,6 +5325,7 @@ class WorkspaceStore:
         *,
         query_key: str = "",
         tone: str = "",
+        actionable_only: bool = False,
         kind: str = "",
         review_state: str = "",
         collection_id: str = "",
@@ -5316,6 +5344,8 @@ class WorkspaceStore:
         if tone:
             where.append("c.tone=?")
             parameters.append(tone)
+        if actionable_only:
+            where.append("c.source_state!='playback_only'")
         if kind:
             where.append("c.kind=?")
             parameters.append(kind)

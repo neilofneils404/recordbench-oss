@@ -8,6 +8,7 @@ import math
 import os
 import re
 import stat
+import sqlite3
 import tempfile
 import threading
 import urllib.request
@@ -20,6 +21,7 @@ from typing import Callable, Iterable, Iterator, Mapping, Sequence
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
+import anyio
 import uvicorn
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import (
@@ -5175,6 +5177,10 @@ def create_workbench_app(
         malware_scan_mode=malware_scan_mode,
     )
 
+    recording_decision_limit = 2
+    recording_decision_capacity = anyio.CapacityLimiter(recording_decision_limit)
+    recording_decisions_pending: set[str] = set()
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
@@ -5673,6 +5679,7 @@ def create_workbench_app(
         return {
             "state": "review" if recording_hold_only else readiness.state,
             "recording_review_count": readiness.recording_review_count,
+            "playback_only_count": readiness.playback_only_count,
             "can_query": readiness.can_query,
             "partial_query": readiness.partial_query,
             "excluded_count": int(coverage["excluded_count"]),
@@ -7647,12 +7654,9 @@ def create_workbench_app(
                 sort="oldest",
                 page_size=25,
             )
-            attention = bench.source_library(
-                matter,
-                view="list",
-                status="attention",
-                sort="status",
-                page_size=25,
+            attention = bench.workspace.source_catalog_page(
+                matter.matter_id, tone="attention", actionable_only=True,
+                sort="status", limit=3,
             )
             catalog = bench.workspace.source_catalog_page(
                 matter.matter_id, limit=1
@@ -7701,8 +7705,10 @@ def create_workbench_app(
         total = stats["total"]
         reviewed = stats["reviewed"]
         progress_percent = round((reviewed / total) * 100) if total else 0
+        stats["attention"] = max(0, stats["attention"] - int(readiness["playback_only_count"]))
         status_parts = [
             f"{stats['ready']} searchable",
+            f"{readiness['playback_only_count']} playback only" if readiness["playback_only_count"] else "",
             f"{stats['processing']} processing" if stats["processing"] else "",
             f"{stats['attention']} need attention" if stats["attention"] else "",
         ]
@@ -10284,29 +10290,42 @@ def create_workbench_app(
                     )
                     store.source_path(document.document_id, verify_digest=True)
                     bench.workspace.decide_media_preflight(
-                        *decision_args, retry=action == "retry"
+                        *decision_args, retry=action == "retry",
+                        request_id=getattr(request.state, "request_id", f"request-{uuid.uuid4().hex}"),
+                        session_id=context.session.session_id if context.session is not None else None,
                     )
                 except KeyError as exc:
                     raise HTTPException(
                         409, "This recording check changed. Reload the source to see its current state."
                     ) from exc
-                document.state = "queued"
-                document.message = "Checking recording" if action == "retry" else "Queued for transcription"
-                document.processing_stage = document.message
-                store._save((document.document_id,))
 
+        if matter.matter_id in recording_decisions_pending:
+            return PlainTextResponse(
+                "Another recording decision is being checked in this matter. Try again shortly.",
+                status_code=409,
+            )
+        if len(recording_decisions_pending) >= recording_decision_limit:
+            return PlainTextResponse(
+                "Recording checks are busy. Try again shortly.", status_code=503,
+                headers={"Retry-After": "3"},
+            )
+        recording_decisions_pending.add(matter.matter_id)
         try:
-            await run_in_threadpool(verify_and_decide)
+            await anyio.to_thread.run_sync(
+                verify_and_decide, limiter=recording_decision_capacity
+            )
         except KeyError as exc:
             raise HTTPException(404, "Source not found") from exc
         except UploadProblem as exc:
             return PlainTextResponse(str(exc), status_code=exc.status_code)
         except ValueError:
             return PlainTextResponse("Check the recording again before transcription.", status_code=409)
+        except (sqlite3.Error, OSError):
+            return PlainTextResponse("The recording decision could not be saved. Try again.", status_code=503)
+        finally:
+            recording_decisions_pending.discard(matter.matter_id)
         if bench.media is not None:
             bench.media.notify()
-        audit(request, f"media.preflight_{action}", "success", matter=matter,
-              details={"state": "queued"})
         return RedirectResponse(f"/matters/{slug}/sources/{token}", status_code=303)
 
     @app.post(
