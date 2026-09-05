@@ -559,7 +559,17 @@
 
   const applyScannerSnapshot = (item, capability) => {
     const itemCapability = validatedScannerCapability(item);
-    if (!itemCapability) return item;
+    const wasDuplicateCandidate = item.state === "duplicate_candidate";
+    if (!itemCapability) {
+      if (!wasDuplicateCandidate) return item;
+      return {
+        ...item,
+        state: "valid",
+        eligible: true,
+        duplicate: "not_evaluated",
+        message: "Ready to upload. File contents will be checked after transfer.",
+      };
+    }
     if (!capability) {
       throw new Error("The selection review returned an incomplete security check.");
     }
@@ -567,10 +577,11 @@
       ...item,
       scan: { ...item.scan, capability, result: "not_run" },
     };
-    if (!["valid", "needs_attention"].includes(normalized.state)) return normalized;
+    if (!["valid", "needs_attention", "duplicate_candidate"].includes(normalized.state)) return normalized;
     if (capability === "ready") {
       normalized.state = "valid";
       normalized.eligible = true;
+      normalized.duplicate = "not_evaluated";
       normalized.message = "Ready to upload. File contents will be checked after transfer.";
     } else {
       normalized.state = "needs_attention";
@@ -694,13 +705,16 @@
       if (["valid", "needs_attention", "duplicate_candidate", "over_limit"].includes(item.state) && !token) {
         throw new Error("The selection review returned an incomplete duplicate check.");
       }
-      if (token && seenTokens.has(token)) {
-        item.state = "duplicate_candidate";
-        item.eligible = false;
-        item.duplicate = "selection_collision";
-        item.message = "This relative path appears more than once in the selection. Keep one copy or rename it before upload.";
+      if (item.state === "valid" && item.eligible === true) {
+        if (token && seenTokens.has(token)) {
+          item.state = "duplicate_candidate";
+          item.eligible = false;
+          item.duplicate = "selection_collision";
+          item.message = "This relative path appears more than once in the selection. Keep one copy or rename it before upload.";
+        } else if (token) {
+          seenTokens.add(token);
+        }
       }
-      if (token) seenTokens.add(token);
       delete item.duplicate_token;
       if (!(item.state in counts)) item.state = "failed";
       counts[item.state] += 1;
@@ -1139,9 +1153,35 @@
     const sessionRoot = String(uploadForm?.dataset.sessionUrl || "").replace(/\/+$/, "");
     const failureMessage = "The earlier interrupted upload could not be released. Retry this selection before starting new work.";
     if (!sessionRoot) throw new Error(failureMessage);
+    const sessionUrl = `${sessionRoot}/${encodeURIComponent(resumeState.session_id)}`;
+    const fresh = { session_id: "", collection_id: "", batch_index: 0, stale: false };
     try {
-      const response = await fetch(
-        `${sessionRoot}/${encodeURIComponent(resumeState.session_id)}/cancel`,
+      const statusResponse = await fetch(`${sessionUrl}?compact=true`, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: uploadAbortController.signal,
+      });
+      if (statusResponse.status === 404) {
+        clearUploadResumeState();
+        activeUpload = null;
+        return fresh;
+      }
+      const status = await statusResponse.json().catch(() => ({}));
+      if (
+        !statusResponse.ok
+        || status.upload_session_id !== resumeState.session_id
+        || status.collection_id !== resumeState.collection_id
+        || !["open", "complete", "partial", "cancelled"].includes(status.state)
+      ) {
+        throw new Error(failureMessage);
+      }
+      if (["complete", "partial", "cancelled"].includes(status.state)) {
+        clearUploadResumeState();
+        activeUpload = null;
+        return fresh;
+      }
+      const cancelResponse = await fetch(
+        `${sessionUrl}/cancel`,
         {
           method: "POST",
           headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
@@ -1149,12 +1189,12 @@
           signal: uploadAbortController.signal,
         },
       );
-      const payload = await response.json().catch(() => ({}));
+      const cancelled = await cancelResponse.json().catch(() => ({}));
       if (
-        !response.ok
-        || payload.upload_session_id !== resumeState.session_id
-        || payload.collection_id !== resumeState.collection_id
-        || payload.state !== "cancelled"
+        !cancelResponse.ok
+        || cancelled.upload_session_id !== resumeState.session_id
+        || cancelled.collection_id !== resumeState.collection_id
+        || cancelled.state !== "cancelled"
       ) {
         throw new Error(failureMessage);
       }
@@ -1164,7 +1204,7 @@
     }
     clearUploadResumeState();
     activeUpload = null;
-    return { session_id: "", collection_id: "", batch_index: 0, stale: false };
+    return fresh;
   };
 
   const writeUploadResumeState = (planFingerprint, sessionId, collectionId, batchIndex) => {

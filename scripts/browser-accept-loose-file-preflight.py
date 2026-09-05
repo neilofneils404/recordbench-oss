@@ -140,6 +140,7 @@ def _synthetic_selection(
     file_size: int = 1,
     suffix: str = "txt",
     media_type: str = "text/plain",
+    oversized_first_duplicate: bool = False,
 ) -> dict[str, int]:
     return driver.execute_script(
         """
@@ -150,6 +151,7 @@ def _synthetic_selection(
         const fileSize = arguments[4];
         const suffix = arguments[5];
         const mediaType = arguments[6];
+        const oversizedFirstDuplicate = arguments[7];
         const transfer = new DataTransfer();
         const segments = ["a", "b", "c", "d"].map((value) => value.repeat(180));
         const descriptors = [];
@@ -159,7 +161,10 @@ def _synthetic_selection(
           if (crossBoundaryDuplicate && count > 2000 && index === 2000) name = `STRASSE.${suffix}`;
           const folder = longPaths ? `Production/${segments.join("/")}` : "Production";
           const relativePath = `${folder}/${name}`;
-          const file = new File(["x".repeat(fileSize)], name, {
+          const selectedSize = oversizedFirstDuplicate && index === 1999
+            ? 129
+            : fileSize;
+          const file = new File(["x".repeat(selectedSize)], name, {
             type: mediaType,
             lastModified: 1700000000000 + index,
           });
@@ -188,6 +193,7 @@ def _synthetic_selection(
         file_size,
         suffix,
         media_type,
+        oversized_first_duplicate,
     )
 
 
@@ -870,6 +876,41 @@ def main() -> int:
                 delete window.__slice1aScaleOriginalFetch;
                 delete window.__slice1aScaleRequests;
                 """
+            )
+
+            _synthetic_selection(
+                driver,
+                file_input,
+                2_001,
+                long_paths=False,
+                oversized_first_duplicate=True,
+            )
+            WebDriverWait(driver, 60).until(
+                lambda current: len(
+                    current.find_elements(
+                        By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+                    )
+                )
+                == 2_001
+                and panel.get_attribute("aria-busy") is None
+            )
+            eligible_duplicate_rows = driver.find_elements(
+                By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
+            )
+            _require(
+                eligible_duplicate_rows[1999].get_attribute("data-state")
+                == "over_limit"
+                and eligible_duplicate_rows[2000].get_attribute("data-state")
+                == "valid"
+                and driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 2,000 ready files"
+                and "0 repeated paths"
+                in driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-counts]"
+                ).text,
+                "an oversized earlier batch suppressed its usable canonical successor",
             )
 
             oversized_status_calls = scanner.status_calls
@@ -1703,6 +1744,463 @@ def main() -> int:
             driver.save_screenshot(str(output / "mobile-partial-upload.png"))
 
             driver.set_window_size(1536, 1024)
+            terminal_matter = bench.create_matter(
+                "Synthetic terminal checkpoint matter",
+                "Generated changed-plan terminal recovery acceptance",
+                ACTOR,
+            )
+            terminal_key = f"case-intelligence:upload:{terminal_matter.slug}"
+            driver.get(f"{base_url}/matters/{terminal_matter.slug}/setup")
+            terminal_input = wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-file-input]"
+                )
+            )
+            _select(terminal_input, [files[0]])
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 1 ready file"
+            )
+            terminal_old_fingerprint = _upload_plan_fingerprint(
+                driver, terminal_input
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            terminal_session = _wait_until(
+                lambda: (
+                    candidate
+                    if (
+                        sessions := bench.workspace.recent_upload_sessions(
+                            terminal_matter.matter_id, ACTOR
+                        )
+                    )
+                    and (candidate := sessions[0]).state == "complete"
+                    else None
+                ),
+                "synthetic completed checkpoint session did not finish",
+            )
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-form]"
+                ).get_attribute("aria-busy")
+                is None
+            )
+            _require(
+                bench.workspace.pending_upload_bytes(terminal_matter.matter_id) == 0,
+                "completed checkpoint retained pending bytes",
+            )
+            terminal_checkpoint = json.dumps(
+                {
+                    "version": 3,
+                    "plan_fingerprint": terminal_old_fingerprint,
+                    "session_id": terminal_session.upload_session_id,
+                    "collection_id": terminal_session.collection_id,
+                    "batch_index": 0,
+                }
+            )
+            driver.execute_script(
+                "window.localStorage.setItem(arguments[0], arguments[1]);",
+                terminal_key,
+                terminal_checkpoint,
+            )
+            _replace_selection(driver, terminal_input, [files[0], files[1]])
+            wait.until(
+                lambda current: current.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ).text
+                == "Upload 2 ready files"
+            )
+            terminal_sessions_before = len(
+                bench.workspace.recent_upload_sessions(
+                    terminal_matter.matter_id, ACTOR
+                )
+            )
+            driver.execute_script(
+                """
+                window.__slice1aTerminalOriginalFetch = window.fetch;
+                window.__slice1aTerminalEvents = [];
+                window.__slice1aTerminalBodies = [];
+                const staleSessionId = arguments[0];
+                window.fetch = (...args) => {
+                  const url = String(args[0]);
+                  const method = String(args[1]?.method || 'GET').toUpperCase();
+                  if (url.includes(`/upload-sessions/${staleSessionId}`) && method === 'GET') {
+                    window.__slice1aTerminalEvents.push({ kind: 'status' });
+                  } else if (url.includes(`/upload-sessions/${staleSessionId}/cancel`) && method === 'POST') {
+                    window.__slice1aTerminalEvents.push({ kind: 'cancel' });
+                  } else if (url.endsWith('/upload-sessions') && method === 'POST') {
+                    window.__slice1aTerminalEvents.push({ kind: 'create' });
+                    window.__slice1aTerminalBodies.push(JSON.parse(String(args[1].body)));
+                  }
+                  if (method === 'PUT') {
+                    return new Promise((_resolve, reject) => {
+                      args[1]?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true },
+                      );
+                    });
+                  }
+                  return window.__slice1aTerminalOriginalFetch(...args);
+                };
+                """,
+                terminal_session.upload_session_id,
+            )
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(
+                    By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                ),
+            )
+            terminal_events = WebDriverWait(driver, 30).until(
+                lambda current: (
+                    events
+                    if (
+                        events
+                        := current.execute_script(
+                            "return window.__slice1aTerminalEvents;"
+                        )
+                    )
+                    and (
+                        current.execute_script(
+                            "return window.__slice1aTerminalBodies.length > 0;"
+                        )
+                        or current.find_element(
+                            By.CSS_SELECTOR, "[data-upload-form]"
+                        ).get_attribute("aria-busy")
+                        is None
+                    )
+                    else None
+                )
+            )
+            terminal_bodies = driver.execute_script(
+                "return window.__slice1aTerminalBodies;"
+            )
+            terminal_saved = driver.execute_script(
+                "return window.localStorage.getItem(arguments[0]);", terminal_key
+            )
+            driver.execute_script(
+                """
+                window.fetch = window.__slice1aTerminalOriginalFetch;
+                delete window.__slice1aTerminalOriginalFetch;
+                """
+            )
+            _require(
+                terminal_events == [{"kind": "status"}, {"kind": "create"}]
+                and len(terminal_bodies) == 1
+                and terminal_bodies[0]["resume_session_id"] == ""
+                and terminal_bodies[0]["collection_id"] == ""
+                and terminal_saved is not None
+                and json.loads(terminal_saved)["session_id"]
+                != terminal_session.upload_session_id
+                and bench.workspace.upload_session(
+                    terminal_matter.matter_id,
+                    ACTOR,
+                    terminal_session.upload_session_id,
+                )[0].state
+                == "complete"
+                and len(
+                    bench.workspace.recent_upload_sessions(
+                        terminal_matter.matter_id, ACTOR
+                    )
+                )
+                == terminal_sessions_before + 1
+                and bench.workspace.pending_upload_bytes(terminal_matter.matter_id)
+                == sum(path.stat().st_size for path in files[:2]),
+                "completed stale checkpoint trapped changed-plan recovery",
+            )
+
+            terminal_new_state = json.loads(terminal_saved)
+            driver.refresh()
+            bench.workspace.cancel_upload_session(
+                terminal_matter.matter_id,
+                ACTOR,
+                terminal_new_state["session_id"],
+            )
+            driver.execute_script(
+                "window.localStorage.removeItem(arguments[0]);", terminal_key
+            )
+
+            partial_stale, partial_stale_items = bench.create_upload_session(
+                terminal_matter,
+                ACTOR,
+                "Synthetic terminal partial checkpoint",
+                [
+                    {
+                        "display_name": "partial.txt",
+                        "relative_path": "terminal/partial.txt",
+                        "media_type": "text/plain",
+                        "expected_size": 12,
+                    }
+                ],
+            )
+            bench.workspace.fail_upload_item(
+                terminal_matter.matter_id,
+                ACTOR,
+                partial_stale.upload_session_id,
+                partial_stale_items[0].upload_item_id,
+                "Synthetic terminal partial state",
+            )
+            partial_stale, _ = bench.workspace.upload_session(
+                terminal_matter.matter_id, ACTOR, partial_stale.upload_session_id
+            )
+            cancelled_stale, _ = bench.create_upload_session(
+                terminal_matter,
+                ACTOR,
+                "Synthetic terminal cancelled checkpoint",
+                [
+                    {
+                        "display_name": "cancelled.txt",
+                        "relative_path": "terminal/cancelled.txt",
+                        "media_type": "text/plain",
+                        "expected_size": 12,
+                    }
+                ],
+            )
+            bench.workspace.cancel_upload_session(
+                terminal_matter.matter_id,
+                ACTOR,
+                cancelled_stale.upload_session_id,
+            )
+            cancelled_stale, _ = bench.workspace.upload_session(
+                terminal_matter.matter_id,
+                ACTOR,
+                cancelled_stale.upload_session_id,
+            )
+            _require(
+                partial_stale.state == "partial"
+                and cancelled_stale.state == "cancelled",
+                "terminal status fixtures were not prepared",
+            )
+
+            def exercise_stale_status(
+                label: str,
+                session_id: str,
+                collection_id: str,
+                response_mode: str,
+                *,
+                should_release: bool,
+            ) -> None:
+                driver.get(f"{base_url}/matters/{terminal_matter.slug}/setup")
+                checkpoint = json.dumps(
+                    {
+                        "version": 3,
+                        "plan_fingerprint": terminal_old_fingerprint,
+                        "session_id": session_id,
+                        "collection_id": collection_id,
+                        "batch_index": 0,
+                    }
+                )
+                driver.execute_script(
+                    "window.localStorage.setItem(arguments[0], arguments[1]);",
+                    terminal_key,
+                    checkpoint,
+                )
+                status_input = driver.find_element(
+                    By.CSS_SELECTOR, "[data-file-input]"
+                )
+                _select(status_input, [files[0], files[1]])
+                wait.until(
+                    lambda current: current.find_element(
+                        By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                    ).text
+                    == "Upload 2 ready files"
+                )
+                pending_before = bench.workspace.pending_upload_bytes(
+                    terminal_matter.matter_id
+                )
+                driver.execute_script(
+                    """
+                    window.__slice1aStatusOriginalFetch = window.fetch;
+                    window.__slice1aStatusEvents = [];
+                    window.__slice1aStatusBodies = [];
+                    const staleSessionId = arguments[0];
+                    const staleCollectionId = arguments[1];
+                    const mode = arguments[2];
+                    const jsonResponse = (payload, status = 200) => Promise.resolve(
+                      new Response(JSON.stringify(payload), {
+                        status,
+                        headers: { 'Content-Type': 'application/json' },
+                      })
+                    );
+                    window.fetch = (...args) => {
+                      const url = String(args[0]);
+                      const method = String(args[1]?.method || 'GET').toUpperCase();
+                      if (url.includes(`/upload-sessions/${staleSessionId}`) && method === 'GET') {
+                        window.__slice1aStatusEvents.push({ kind: 'status' });
+                        if (mode === 'network') return Promise.reject(new TypeError('Synthetic status network failure'));
+                        if (mode === 'server') return jsonResponse({ message: 'Synthetic status unavailable.' }, 503);
+                        if (mode === 'malformed') return jsonResponse({ state: 'cancelled' });
+                        if (mode === 'wrong-session') return jsonResponse({
+                          upload_session_id: 'upload-session-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+                          collection_id: staleCollectionId,
+                          state: 'cancelled',
+                        });
+                        if (mode === 'wrong-collection') return jsonResponse({
+                          upload_session_id: staleSessionId,
+                          collection_id: 'source-collection-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+                          state: 'cancelled',
+                        });
+                      } else if (url.includes(`/upload-sessions/${staleSessionId}/cancel`) && method === 'POST') {
+                        window.__slice1aStatusEvents.push({ kind: 'cancel' });
+                      } else if (url.endsWith('/upload-sessions') && method === 'POST') {
+                        window.__slice1aStatusEvents.push({ kind: 'create' });
+                        window.__slice1aStatusBodies.push(JSON.parse(String(args[1].body)));
+                      }
+                      if (method === 'PUT') {
+                        return new Promise((_resolve, reject) => {
+                          args[1]?.signal?.addEventListener(
+                            'abort',
+                            () => reject(new DOMException('Aborted', 'AbortError')),
+                            { once: true },
+                          );
+                        });
+                      }
+                      return window.__slice1aStatusOriginalFetch(...args);
+                    };
+                    """,
+                    session_id,
+                    collection_id,
+                    response_mode,
+                )
+                driver.execute_script(
+                    "arguments[0].click();",
+                    driver.find_element(
+                        By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
+                    ),
+                )
+                if should_release:
+                    WebDriverWait(driver, 30).until(
+                        lambda current: current.execute_script(
+                            """
+                            const saved = window.localStorage.getItem(arguments[0]);
+                            if (!saved || window.__slice1aStatusBodies.length !== 1) return false;
+                            return JSON.parse(saved).session_id !== arguments[1];
+                            """,
+                            terminal_key,
+                            session_id,
+                        )
+                    )
+                else:
+                    WebDriverWait(driver, 30).until(
+                        lambda current: current.find_element(
+                            By.CSS_SELECTOR, "[data-upload-form]"
+                        ).get_attribute("aria-busy")
+                        is None
+                    )
+                events = driver.execute_script(
+                    "return window.__slice1aStatusEvents;"
+                )
+                bodies = driver.execute_script(
+                    "return window.__slice1aStatusBodies;"
+                )
+                checkpoint_after = driver.execute_script(
+                    "return window.localStorage.getItem(arguments[0]);", terminal_key
+                )
+                driver.execute_script(
+                    """
+                    window.fetch = window.__slice1aStatusOriginalFetch;
+                    delete window.__slice1aStatusOriginalFetch;
+                    """
+                )
+                if should_release:
+                    saved_state = json.loads(checkpoint_after or "{}")
+                    try:
+                        created_session, _ = bench.workspace.upload_session(
+                            terminal_matter.matter_id,
+                            ACTOR,
+                            str(saved_state.get("session_id") or ""),
+                        )
+                    except KeyError:
+                        created_session = None
+                    _require(
+                        events == [{"kind": "status"}, {"kind": "create"}]
+                        and len(bodies) == 1
+                        and bodies[0]["resume_session_id"] == ""
+                        and bodies[0]["collection_id"] == ""
+                        and checkpoint_after is not None
+                        and saved_state["session_id"] != session_id
+                        and created_session is not None
+                        and created_session.collection_id
+                        == saved_state["collection_id"]
+                        and created_session.state == "open"
+                        and bench.workspace.pending_upload_bytes(
+                            terminal_matter.matter_id
+                        )
+                        == pending_before
+                        + sum(path.stat().st_size for path in files[:2]),
+                        (
+                            f"{label} stale checkpoint did not recover from batch zero "
+                            f"(events={events!r}, bodies={len(bodies)}, "
+                            f"checkpoint_changed={checkpoint_after != checkpoint}, "
+                            f"created_state={getattr(created_session, 'state', None)!r}, "
+                            f"collection_match={bool(created_session) and created_session.collection_id == saved_state.get('collection_id')}, "
+                            f"fresh_body={bool(bodies) and bodies[0].get('resume_session_id') == '' and bodies[0].get('collection_id') == ''}, "
+                            f"pending={bench.workspace.pending_upload_bytes(terminal_matter.matter_id) - pending_before})"
+                        ),
+                    )
+                    new_session_id = json.loads(checkpoint_after)["session_id"]
+                    driver.refresh()
+                    bench.workspace.cancel_upload_session(
+                        terminal_matter.matter_id, ACTOR, new_session_id
+                    )
+                    driver.execute_script(
+                        "window.localStorage.removeItem(arguments[0]);", terminal_key
+                    )
+                else:
+                    _require(
+                        events == [{"kind": "status"}]
+                        and bodies == []
+                        and checkpoint_after == checkpoint
+                        and bench.workspace.pending_upload_bytes(
+                            terminal_matter.matter_id
+                        )
+                        == pending_before,
+                        f"{label} status failure cleared recovery state or started work",
+                    )
+
+            for terminal_label, terminal_state in (
+                ("partial", partial_stale),
+                ("cancelled", cancelled_stale),
+            ):
+                exercise_stale_status(
+                    terminal_label,
+                    terminal_state.upload_session_id,
+                    terminal_state.collection_id,
+                    "actual",
+                    should_release=True,
+                )
+            exercise_stale_status(
+                "missing",
+                "upload-session-dddddddddddddddddddddddddddddddd",
+                "source-collection-dddddddddddddddddddddddddddddddd",
+                "actual",
+                should_release=True,
+            )
+            for failure_index, failure_mode in enumerate(
+                (
+                    "network",
+                    "server",
+                    "malformed",
+                    "wrong-session",
+                    "wrong-collection",
+                ),
+                start=1,
+            ):
+                exercise_stale_status(
+                    failure_mode,
+                    f"upload-session-{failure_index:032x}",
+                    f"source-collection-{failure_index:032x}",
+                    failure_mode,
+                    should_release=False,
+                )
+
             resume_matter = bench.create_matter(
                 "Synthetic cross-refresh resume matter",
                 "Generated exact-plan resume acceptance",
@@ -1948,7 +2446,9 @@ def main() -> int:
                 window.fetch = (...args) => {
                   const url = String(args[0]);
                   const method = String(args[1]?.method || 'GET').toUpperCase();
-                  if (url.includes(`/upload-sessions/${staleSessionId}/cancel`) && method === 'POST') {
+                  if (url.includes(`/upload-sessions/${staleSessionId}`) && method === 'GET') {
+                    window.__slice1aChangedEvents.push({ kind: 'status' });
+                  } else if (url.includes(`/upload-sessions/${staleSessionId}/cancel`) && method === 'POST') {
                     window.__slice1aChangedEvents.push({
                       kind: 'cancel',
                       body: String(args[1]?.body || ''),
@@ -2016,7 +2516,8 @@ def main() -> int:
                 """
             )
             _require(
-                failed_cancel_events == [{"kind": "cancel", "body": ""}]
+                failed_cancel_events
+                == [{"kind": "status"}, {"kind": "cancel", "body": ""}]
                 and failed_cancel_bodies == []
                 and failed_cancel_checkpoint == saved_resume
                 and bench.workspace.upload_session(
@@ -2053,7 +2554,9 @@ def main() -> int:
                 window.fetch = (...args) => {
                   const url = String(args[0]);
                   const method = String(args[1]?.method || 'GET').toUpperCase();
-                  if (url.includes(`/upload-sessions/${staleSessionId}/cancel`) && method === 'POST') {
+                  if (url.includes(`/upload-sessions/${staleSessionId}`) && method === 'GET') {
+                    window.__slice1aChangedEvents.push({ kind: 'status' });
+                  } else if (url.includes(`/upload-sessions/${staleSessionId}/cancel`) && method === 'POST') {
                     window.__slice1aChangedEvents.push({
                       kind: 'cancel',
                       body: String(args[1]?.body || ''),
@@ -2108,6 +2611,7 @@ def main() -> int:
             _require(
                 changed_events
                 == [
+                    {"kind": "status"},
                     {"kind": "cancel", "body": ""},
                     {"kind": "create"},
                 ]
@@ -2157,6 +2661,7 @@ def main() -> int:
                 "unsafe paths and missing path attestations never reach rendered output",
                 "ten-thousand-row preview uses bounded requests and one consolidated ordered result",
                 "cross-batch canonical duplicate accounting",
+                "blocked rows cannot claim the cross-batch duplicate winner",
                 "oversized single descriptor fails locally without echo or request",
                 "in-flight later batch aborts without exposing partial results",
                 "all five synthetic rows and exact category totals",
@@ -2168,6 +2673,9 @@ def main() -> int:
                 "keyboard confirmation uploads only the two eligible files",
                 "retained upload path reports malformed PDF as partial",
                 "exact-plan cross-refresh resume and one-shot mismatch recovery",
+                "completed stale checkpoint advances through matter-scoped status recovery",
+                "partial, cancelled, and missing stale checkpoints recover from batch zero",
+                "status transport and projection failures preserve recovery state and start no work",
                 "failed stale-session cancellation preserves recovery state and starts no work",
                 "changed plan cancels its live stale reservation before fresh batch-zero recovery",
                 "collection-only checkpoint cannot skip batch zero or mutate a stale collection",

@@ -465,7 +465,7 @@ def test_selection_preflight_keeps_scan_policy_on_duplicate_and_over_limit_rows(
         payload = response.json()
         assert [item["state"] for item in payload["items"]] == [
             "needs_attention",
-            "duplicate_candidate",
+            "needs_attention",
             "over_limit",
         ]
         assert all(
@@ -479,6 +479,59 @@ def test_selection_preflight_keeps_scan_policy_on_duplicate_and_over_limit_rows(
         )
         assert scanner.status_calls == before_status_calls + 1
         assert scanner.scan_calls == 0
+
+
+def test_selection_preflight_chooses_first_otherwise_eligible_duplicate(tmp_path):
+    scanner = ReadyCountingScanner()
+    app = _app(tmp_path, scanner)
+    relative_paths = [
+        "Batch/Record.txt",
+        "batch/record.TXT",
+        "BATCH/RECORD.txt",
+        "batch/Record.txt",
+        "Other/Note.txt",
+        "other/note.TXT",
+    ]
+    sizes = [129, 12, 13, 130, 0, 12]
+    with TestClient(app) as client:
+        slug = _matter(client)
+        response = client.post(
+            f"/matters/{slug}/upload-preflight",
+            json={
+                "selection_nonce": "b" * 32,
+                "files": [
+                    {
+                        "name": path.rsplit("/", 1)[-1],
+                        "relative_path": path,
+                        "size": size,
+                        "media_type": "text/plain",
+                    }
+                    for path, size in zip(relative_paths, sizes, strict=True)
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["state"] for item in payload["items"]] == [
+        "over_limit",
+        "valid",
+        "duplicate_candidate",
+        "over_limit",
+        "failed",
+        "valid",
+    ]
+    assert payload["eligible_indexes"] == [1, 5]
+    assert payload["counts"] == {
+        "valid": 2,
+        "needs_attention": 0,
+        "unsupported": 0,
+        "duplicate_candidate": 1,
+        "over_limit": 2,
+        "failed": 1,
+    }
+    assert all(path not in response.text for path in relative_paths)
+    assert scanner.scan_calls == 0
 
 
 def test_selection_preflight_attests_only_shared_validator_safe_paths(tmp_path):

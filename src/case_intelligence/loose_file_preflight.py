@@ -166,18 +166,6 @@ def evaluate_loose_file_preflight(
                 f"{duplicate_token_scope}\0{path_key}".encode("utf-8")
             ).hexdigest()
 
-        if path_key in seen_paths:
-            result["state"] = "duplicate_candidate"
-            result["duplicate"] = "selection_collision"
-            result["message"] = (
-                "This relative path appears more than once in the selection. "
-                "Keep one copy or rename it before upload."
-            )
-            counts["duplicate_candidate"] += 1
-            items.append(result)
-            continue
-        seen_paths.add(path_key)
-
         maximum = maximum_file_bytes(
             suffix,
             document_limit=document_limit,
@@ -201,6 +189,18 @@ def evaluate_loose_file_preflight(
             counts["needs_attention"] += 1
             items.append(result)
             continue
+
+        if path_key in seen_paths:
+            result["state"] = "duplicate_candidate"
+            result["duplicate"] = "selection_collision"
+            result["message"] = (
+                "This relative path appears more than once in the selection. "
+                "Keep one copy or rename it before upload."
+            )
+            counts["duplicate_candidate"] += 1
+            items.append(result)
+            continue
+        seen_paths.add(path_key)
 
         result["state"] = "valid"
         result["eligible"] = True
