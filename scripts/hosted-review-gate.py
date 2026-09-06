@@ -29,7 +29,7 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
         return "pending", "Review metadata is invalid"
     if metadata.get("headSha") != head or metadata.get("status") != "completed":
         return "pending", "Waiting for security review of the current commit"
-    completed = []
+    completed = {}
     for label in ("Code Review", "Security Review"):
         row = next((line for line in body.splitlines() if f"**{label}**" in line), "")
         time = re.search(r'datetime="([^\"]+)"', row)
@@ -37,16 +37,16 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
         if "**Completed**" not in row or not time or not sha or not head.startswith(sha.group(1)):
             return "pending", "Waiting for both reviews on the current commit"
         try:
-            completed.append(datetime.fromisoformat(time.group(1).replace("Z", "+00:00")))
+            completed[label] = datetime.fromisoformat(time.group(1).replace("Z", "+00:00"))
         except ValueError:
             return "pending", "Review completion time is invalid"
     for c in comments:
         if c.get("author_association") not in {"OWNER", "MEMBER", "COLLABORATOR"}:
             continue
-        if re.search(r"@codex\s+(?:security\s+)?review\b", c.get("body", ""), re.I):
-            requested = datetime.fromisoformat(c["created_at"].replace("Z", "+00:00"))
-            # A new request must finish even if a previous pass used the same SHA.
-            if requested > min(completed):
+        for command in re.finditer(r"@codex\s+(security\s+)?review\b", c.get("body", ""), re.I):
+            requested = datetime.fromisoformat((c.get("updated_at") or c["created_at"]).replace("Z", "+00:00"))
+            label = "Security Review" if command.group(1) else "Code Review"
+            if requested > completed[label]:
                 return "pending", "A newer review request is still awaiting completion"
     if any(not thread.get("isResolved", False) for thread in threads):
         return "failure", "Resolve or explicitly reconcile every review discussion"

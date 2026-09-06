@@ -644,30 +644,66 @@ def scan_history(
                     ),
                 )
             )
+        allowed_span = None
         if commit in public_merge_commits:
-            # Adjudicate only a public username in an exact reviewed merge's
-            # conventional first line. Branch name and remaining prose still scan.
             for name, _ in public_git_identities:
-                pattern = rb"\AMerge pull request #[1-9][0-9]* from " + re.escape(name) + rb"/"
-                message = re.sub(pattern, b"Merge pull request from example/", message, count=1)
-        findings.extend(_scan_bytes(message, location="git-metadata", deny=deny))
+                pattern = rb"\AMerge pull request #[1-9][0-9]* from (" + re.escape(name) + rb")/"
+                match = re.match(pattern, message)
+                if match:
+                    allowed_span = match.span(1)
+                    break
+        # Scan generic rules against the original bytes. Only deny matches wholly
+        # inside the exact reviewed attribution username may be adjudicated.
+        findings.extend(_scan_bytes(message, location="git-metadata", deny=()))
+        lowered = message.lower()
+        for term in deny:
+            offset = 0
+            while term and (start := lowered.find(term.lower(), offset)) >= 0:
+                end = start + len(term)
+                if allowed_span is None or not (allowed_span[0] <= start and end <= allowed_span[1]):
+                    findings.append(Finding("git-metadata", "operator-deny-term"))
+                    break
+                offset = start + 1
     refs = subprocess.run(
-        [
-            "git",
-            "for-each-ref",
-            "--format=%(refname)%00%(if:equals=tag)%(objecttype)%(then)%(taggername)%00%(taggeremail)%00%(contents)%(end)%00",
-            "refs/heads",
-            "refs/tags",
-        ],
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
+        ["git", "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/tags"],
+        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
     )
     if refs.returncode != 0:
         findings.append(Finding("git-refs", "history-scan-failed"))
-    else:
-        findings.extend(_scan_bytes(refs.stdout, location="git-refs", deny=deny))
+        return findings
+    inspected_tags: set[bytes] = set()
+    for ref in refs.stdout.splitlines():
+        name, oid = ref.split(b"\0", 1)
+        findings.extend(_scan_bytes(name, location="git-refs", deny=deny))
+        if not name.startswith(b"refs/tags/"):
+            continue
+        for _ in range(10_000):
+            if oid in inspected_tags:
+                break
+            inspected_tags.add(oid)
+            kind = subprocess.run(["git", "cat-file", "-t", oid], cwd=root,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if kind.returncode:
+                findings.append(Finding("git-refs", "history-scan-failed"))
+                break
+            if kind.stdout.strip() == b"commit":
+                break
+            if kind.stdout.strip() != b"tag":
+                findings.append(Finding("git-refs", "unsupported-tag-target"))
+                break
+            tag = subprocess.run(["git", "cat-file", "tag", oid], cwd=root,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if tag.returncode:
+                findings.append(Finding("git-refs", "history-scan-failed"))
+                break
+            findings.extend(_scan_bytes(tag.stdout, location="git-refs", deny=deny))
+            target = re.match(rb"object ([0-9a-f]{40}|[0-9a-f]{64})\n", tag.stdout)
+            if not target:
+                findings.append(Finding("git-refs", "history-scan-failed"))
+                break
+            oid = target.group(1)
+        else:
+            findings.append(Finding("git-refs", "history-scan-failed"))
     return findings
 
 

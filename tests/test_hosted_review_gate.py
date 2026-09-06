@@ -40,3 +40,17 @@ def test_malformed_summary_never_passes():
     broken = summary()
     broken["body"] = broken["body"].replace('"status":"completed"', '"status":"running"')
     assert GATE.evaluate(HEAD, [broken], [])[0] == "pending"
+
+
+def test_edited_request_invalidates_previous_completion():
+    requested = {"body": "@codex review", "author_association": "OWNER",
+                 "created_at": "2026-01-01T11:00:00Z", "updated_at": "2026-01-01T12:01:00Z"}
+    assert GATE.evaluate(HEAD, [summary(), requested], [])[0] == "pending"
+
+
+def test_single_review_rerun_is_compared_with_its_own_completion():
+    for command, label in (("review", "Code Review"), ("security review", "Security Review")):
+        current = summary()
+        current["body"] = '\n'.join(line.replace('12:00:00Z', '12:02:00Z') if f'**{label}**' in line else line for line in current["body"].splitlines())
+        requested = {"body": "@codex " + command, "author_association": "OWNER", "created_at": "2026-01-01T12:01:00Z"}
+        assert GATE.evaluate(HEAD, [current, requested], [])[0] == "success"

@@ -37,7 +37,8 @@ If the scanner dependencies are in a virtual environment, set
 `git config --local`. The default is `python3`.
 
 The hook scans every outgoing branch/tag and its reachable history in an
-isolated temporary repository before Git transmits objects. Install `pypdf`
+isolated temporary repository before Git transmits objects, including every
+reachable annotated tag object. CI also runs on tag pushes. Install `pypdf`
 and `ffprobe` as described in the publication checklist; missing inspection
 dependencies block publication. A removed file still exists in history and
 still blocks. Keep sensitive work in a separate repository with no public
@@ -78,7 +79,9 @@ reviews on the current head and resolved review discussions. Request renewed
 reviews after corrections; never use a previous commit's review as acceptance.
 If a discussion was reconciled after the last summary update, dispatch the
 Hosted review gate workflow with the PR number to recheck it. A changed Codex
-summary format blocks pending diagnosis rather than silently passing.
+summary format blocks pending diagnosis rather than silently passing. Edited
+requests invalidate earlier completions; each request is compared with its own
+code or security review completion.
 
 The gate reads trusted default-branch code and GitHub metadata only; it never
 executes the PR head with a write token. External contributor workflows require

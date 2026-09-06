@@ -362,6 +362,8 @@ def test_reviewed_merge_identity_exception_is_commit_and_context_bound(tmp_path)
                                         public_merge_commits=commits)
     assert any(f.rule == "operator-deny-term" for f in findings())
     assert not findings(reviewed)
+    assert any(f.rule == "operator-deny-term" for f in publication.scan_history(
+        tmp_path, (name + b"/topic",), public_git_identities=identity, public_merge_commits=(reviewed,)))
     git("commit", "--allow-empty", "-qm", "Merge pull request #2 from fixture-private-name/topic")
     assert any(f.rule == "operator-deny-term" for f in findings(reviewed))
     second = git("rev-parse", "HEAD")

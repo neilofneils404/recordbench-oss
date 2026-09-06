@@ -88,3 +88,12 @@ def test_unrelated_local_history_is_not_exported(tmp_path):
     (root / "private.txt").write_text("host." + "internal")
     commit(root)
     assert inspect(root, clean).returncode == 0
+
+
+def test_nested_tag_metadata_is_checked_even_without_inner_ref(tmp_path):
+    root = repository(tmp_path)
+    command(root, "git", "tag", "-a", "inner", "-m", "host." + "internal")
+    command(root, "git", "tag", "-a", "outer", "inner", "-m", "Synthetic release")
+    command(root, "git", "tag", "-d", "inner")
+    oid = command(root, "git", "rev-parse", "outer").stdout.strip()
+    assert inspect(root, oid, "refs/tags/outer").returncode != 0
