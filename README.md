@@ -25,7 +25,7 @@ workflows use local models for retrieval, answers, and media transcription.
 
 ## RecordBench in 51 seconds
 
-[![Watch a brief glimpse of RecordBench: Review the record. Build the work.](docs/assets/recordbench-teaser-preview.jpg)](docs/assets/recordbench-teaser.mp4)
+https://github.com/user-attachments/assets/d60d5c9e-0942-441e-988e-7109b9de8406
 
 **Ask. Verify. Review. Export.** A quick glimpse of a few workflows—not a
 full walkthrough. See source-linked questions, synchronized media review,

@@ -38,10 +38,15 @@ workflows, not a comprehensive tour or tutorial. Pair it with a short invitation
 to try synthetic material or contribute workflow feedback. Do not imply that
 this preview establishes production readiness or institutional endorsement.
 
-The MP4 includes music but no narration. Keep the on-screen labels visible and
-provide a direct video link alongside the linked preview image; do not rely on
-autoplay or inline-video support in Markdown. The approved edit is 51 seconds
-at 1920 × 1080. Preserve its soundtrack's pitch and tempo when reusing it.
+The MP4 includes music but no narration. Keep the on-screen labels visible.
+For GitHub, upload the video as an attachment and place its stable
+`github.com/user-attachments/assets/` URL alone in a paragraph to render a
+player. A repository-file link is only a download fallback, not an inline
+player. Keep that fallback for other Markdown viewers. GitHub initializes the
+player muted; viewers can unmute it. Never commit the temporary signed media
+URL returned by the renderer. Private attachments require repository access.
+The approved edit is 51 seconds at 1920 × 1080. Preserve its soundtrack's pitch
+and tempo when reusing it.
 
 The maintainer supplied the original soundtrack for this teaser. Inclusion in
 this repository does not relicense that music under Apache-2.0 or grant a
