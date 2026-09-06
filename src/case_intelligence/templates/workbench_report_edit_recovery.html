@@ -1,0 +1,37 @@
+{% extends "workbench_base.html" %}
+{% block title %}Review Report changes · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}reports-page{% endblock %}
+{% block content %}
+<main class="reports-shell report-recovery">
+  <header class="matter-heading reports-heading"><div><p class="eyebrow">Reports</p><h1>Review changes</h1><p>{{ matter.display_name }}</p></div><a class="button button-secondary" href="/matters/{{ matter.slug }}/reports{% if report %}?report={{ report.report_id }}{% endif %}">Return to Reports</a></header>
+  <div class="notice notice-error" role="alert">{{ error }}</div>
+  <div class="report-recovery-columns">
+    {% if report %}
+    <section class="report-recovery-panel" aria-labelledby="saved-report-heading">
+      <h2 id="saved-report-heading">Current saved Report</h2><h3>{{ report.title }}</h3><p>{{ report.status|title }} · Updated <time datetime="{{ report.updated_at }}">{{ report.updated_at[:10] }}</time></p><p class="report-recovery-text">{{ report.purpose }}</p>
+      {% if mode == 'section' and section %}<h3>{{ section.heading }}</h3><p class="report-recovery-text">{{ section.body }}</p>
+      {% if citations %}<div class="report-citations"><strong>Source support</strong>{% for citation in citations %}{% if citation_hrefs[citation.citation_id] %}<a href="{{ citation_hrefs[citation.citation_id] }}" target="_blank" rel="noopener"><span>{{ citation.source_name }}</span><small>{{ citation.location }}</small></a>{% else %}<span>{{ citation.source_name }} · {{ citation.location }} · source unavailable</span>{% endif %}{% endfor %}</div>{% endif %}
+      {% else %}<h3>Current section order</h3><ol>{% for item in sections %}<li>{{ item.heading }}</li>{% else %}<li>No sections yet.</li>{% endfor %}</ol>{% endif %}
+      <a href="/matters/{{ matter.slug }}/reports?report={{ report.report_id }}" target="_blank" rel="noopener">Review full Report in a new tab</a>
+    </section>{% endif %}
+    {% if draft %}<section class="report-recovery-panel" aria-labelledby="unsaved-report-heading"><h2 id="unsaved-report-heading">Your unsaved changes</h2>
+      {% if can_save %}<p>Compare your changes with the saved work. Adjust the fields below, then save when ready.</p>{% if mode == 'header' %}<p>Review the full Report before marking it Final.</p>{% else %}<p>This Report is currently {{ report.status|title }}.</p>{% endif %}{% else %}<p>Copy your unsaved text before leaving this page.</p>{% endif %}
+      <form method="post"{% if can_save %} action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}{% if mode == 'append' %}/sections{% elif mode == 'section' %}/sections/{{ section.section_id }}{% endif %}"{% endif %}>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if mode == 'header' %}
+        <input type="hidden" name="expected_updated_at" value="{{ header_revision }}">
+        <label>Report title<input name="title" value="{{ draft.title }}" maxlength="200" required></label>
+        <label>Purpose<textarea name="purpose" maxlength="2000" rows="5">{{ draft.purpose }}</textarea></label>
+        <label>Status<select name="status"><option value="draft" {% if draft.status == 'draft' %}selected{% endif %}>Draft</option><option value="final" {% if draft.status == 'final' %}selected{% endif %}>Final work product</option></select></label>
+        {% else %}
+        <input type="hidden" name="expected_updated_at" value="{{ section_revision }}">
+        <input type="hidden" name="expected_status" value="{{ report.status if report else '' }}">
+        <label>Heading<input name="heading" value="{{ draft.heading }}" maxlength="200" required></label>
+        <label>Section text<textarea name="body" maxlength="50000" rows="12">{{ draft.body }}</textarea></label>
+        {% endif %}
+        {% if can_save %}<button class="button button-primary" type="submit">{{ 'Save details' if mode == 'header' else ('Add section' if mode == 'append' else 'Save section') }}</button>{% endif %}
+      </form>
+    </section>{% elif report %}<p>Return to Reports to review the current work before trying the action again.</p>{% endif %}
+  </div>
+</main>
+{% endblock %}

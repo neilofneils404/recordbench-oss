@@ -38,6 +38,11 @@ Case-note edits preserve unsaved fields when another team member has changed
 the note. Confirm/Delete actions also require the version just reviewed. See
 [shared note editing and recovery](docs/CASE_NOTE_EDITING.md).
 
+Shared Report editing also preserves unsaved text after a conflicting edit.
+Final status, reordering and deletion require the work just reviewed, while
+teammates can edit different sections independently. See
+[Report editing and recovery](docs/REPORT_EDITING.md).
+
 Matter owners and administrators can rename a matter in **Settings**. Stale edits
 keep the proposed name for review; existing source links and saved work remain
 available. See the [matter settings contract](docs/MATTER_SETTINGS.md).

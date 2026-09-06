@@ -1,7 +1,8 @@
 # Saved Reports and complete matter exports
 
 Current contract, September 5, 2026. This is the source of truth for saved
-Report inclusion in downloaded matter bundles.
+Report inclusion in downloaded matter bundles. Shared edit/conflict behavior
+is defined separately in [Report editing](REPORT_EDITING.md).
 
 Every saved draft and final Report, including an empty Report, appears under
 `reports/` in the complete matter work-product ZIP. Markdown and Word files

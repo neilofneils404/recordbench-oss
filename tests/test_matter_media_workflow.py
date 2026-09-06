@@ -1941,7 +1941,7 @@ def test_report_media_clip_export_re_resolves_exact_timestamped_source(tmp_path)
             matter.matter_id, ACTOR, "Timestamped review"
         )
         bench.add_media_clip_to_report(
-            matter, ACTOR, report.report_id, clip.clip_id
+            matter, ACTOR, report.report_id, clip.clip_id, expected_status=report.status
         )
 
         exported = client.get(

@@ -264,12 +264,13 @@ def test_review_map_and_report_builder_preserve_citations(tmp_path):
         report_id = query["report"][0]
         added = client.post(
             f"/matters/{slug}/reports/{report_id}/from-finding/{finding.finding_id}",
+            data={"expected_status": "draft"},
             follow_redirects=False,
         )
         assert added.status_code == 303
         manual = client.post(
             f"/matters/{slug}/reports/{report_id}/sections",
-            data={"heading": "Reviewer conclusion", "body": "Pending human review."},
+            data={"expected_status": "draft", "heading": "Reviewer conclusion", "body": "Pending human review."},
             follow_redirects=False,
         )
         assert manual.status_code == 303
@@ -320,6 +321,7 @@ def test_report_export_refuses_an_unresolvable_saved_media_clip(tmp_path):
             matter.matter_id,
             report.report_id,
             ACTOR,
+            expected_status=report.status,
             heading="Selected recording moment",
             body="Review the cited segment.",
             origin="media_clip",

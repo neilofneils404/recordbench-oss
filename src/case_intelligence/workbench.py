@@ -174,6 +174,7 @@ from .workspace_store import (
     TranscriptSegmentRecord,
     UploadItemRecord,
     WorkspaceProblem,
+    ReportEditConflict,
     NotebookEditConflict,
     WorkspaceStore,
 )
@@ -3163,6 +3164,7 @@ class CaseIntelligenceWorkbench:
         actor_id: str,
         report_id: str,
         item_id: str,
+        *, expected_status: str,
     ):
         item = self.workspace.notebook_item(matter.matter_id, actor_id, item_id)
         references = self.workspace.notebook_references(
@@ -3181,6 +3183,7 @@ class CaseIntelligenceWorkbench:
             matter.matter_id,
             report_id,
             actor_id,
+            expected_status=expected_status,
             heading=item.title,
             body=details,
             origin="notebook",
@@ -3197,6 +3200,7 @@ class CaseIntelligenceWorkbench:
         actor_id: str,
         report_id: str,
         finding_id: str,
+        *, expected_status: str,
     ):
         finding = next(
             (
@@ -3215,6 +3219,7 @@ class CaseIntelligenceWorkbench:
             matter.matter_id,
             report_id,
             actor_id,
+            expected_status=expected_status,
             heading=finding.title,
             body=(
                 finding.summary
@@ -3236,6 +3241,7 @@ class CaseIntelligenceWorkbench:
         actor_id: str,
         report_id: str,
         clip_id: str,
+        *, expected_status: str,
     ):
         clip = self.workspace.media_clip(matter.matter_id, clip_id)
         document = self.source_store(matter).get(clip.document_id)
@@ -3248,6 +3254,7 @@ class CaseIntelligenceWorkbench:
             matter.matter_id,
             report_id,
             actor_id,
+            expected_status=expected_status,
             heading=clip.title,
             body=(
                 "Selected recording segment. Play the cited timestamp and review the "
@@ -3596,6 +3603,7 @@ class CaseIntelligenceWorkbench:
         report_id: str,
         conversation_id: str,
         message_id: str,
+        *, expected_status: str,
     ):
         conversation = self.workspace.get_conversation(
             matter.matter_id, conversation_id
@@ -3655,6 +3663,7 @@ class CaseIntelligenceWorkbench:
             matter.matter_id,
             report_id,
             actor_id,
+            expected_status=expected_status,
             heading=question[:200] or conversation.title,
             body=answer.content,
             origin="answer",
@@ -8780,6 +8789,7 @@ def create_workbench_app(
                 matter.matter_id,
                 report.report_id,
                 context.principal_id,
+                expected_status=report.status,
                 heading="Verified research synthesis",
                 body=str(job.result.get("summary", "")),
                 origin="finding",
@@ -9322,6 +9332,7 @@ def create_workbench_app(
                 matter.matter_id,
                 report.report_id,
                 context.principal_id,
+                expected_status=report.status,
                 heading="Review scope and result",
                 body=body,
                 origin="finding",
@@ -12176,6 +12187,61 @@ def create_workbench_app(
             status_code=303,
         )
 
+    def report_citation_hrefs(matter: MatterRecord, citations) -> dict[str, str]:
+        hrefs: dict[str, str] = {}
+        store = bench.source_store(matter)
+        for citation in citations:
+            hrefs[citation.citation_id] = ""
+            if citation.kind == "media_clip":
+                try:
+                    document = store.get(citation.document_id)
+                    if document.version_id != citation.source_version_id:
+                        raise KeyError(citation.document_id)
+                    token = store.action_token(document)
+                    hrefs[citation.citation_id] = (
+                        f"/matters/{matter.slug}/sources/{token}?"
+                        f"start_ms={citation.start_ms}#transcript-segments"
+                    )
+                except KeyError:
+                    pass
+            elif citation.support_token:
+                hrefs[citation.citation_id] = (
+                    f"/matters/{matter.slug}?support={citation.support_token}#support-pane"
+                )
+        return hrefs
+
+    def report_edit_recovery(
+        request: Request, slug: str, report_id: str, *, error: str,
+        mode: str = "info", section_id: str = "",
+        draft: Mapping[str, object] | None = None, status_code: int = 409,
+    ):
+        matter = authorized_matter(request, slug)
+        try:
+            current_report = bench.workspace.report(matter.matter_id, report_id)
+            sections = bench.workspace.report_sections(matter.matter_id, report_id)
+        except KeyError:
+            current_report, sections = None, ()
+            error = "This Report was deleted. Your unsaved text is below." if draft else "This Report is no longer available."
+        current_section = next((item for item in sections if item.section_id == section_id), None)
+        if mode == "section" and current_report is not None and current_section is None:
+            error = "This section was deleted. Your unsaved text is below."
+        citations = bench.workspace.report_citations(matter.matter_id, report_id, section_id) if current_section else ()
+        # Recheck access before showing current work or a submitted draft.
+        matter = authorized_matter(request, slug)
+        return templates.TemplateResponse(
+            request=request, name="workbench_report_edit_recovery.html",
+            context={
+                **base_context(request, matter), "matter": matter,
+                "report": current_report, "section": current_section,
+                "sections": sections, "citations": citations,
+                "citation_hrefs": report_citation_hrefs(matter, citations) if citations else {},
+                "mode": mode, "draft": draft, "error": error,
+                "header_revision": current_report.updated_at if current_report else "",
+                "section_revision": current_section.updated_at if current_section else "",
+                "can_save": current_report is not None and (mode != "section" or current_section is not None),
+            }, status_code=status_code, headers={"Cache-Control": "no-store"},
+        )
+
     @app.get("/matters/{slug}/reports", response_class=HTMLResponse)
     def matter_reports(
         request: Request,
@@ -12215,26 +12281,10 @@ def create_workbench_app(
                 )
                 for section in sections
             }
-            citation_hrefs: dict[str, str] = {}
+            citation_hrefs = report_citation_hrefs(
+                matter, (citation for values in citations.values() for citation in values)
+            )
             store = bench.source_store(matter)
-            for section_citations in citations.values():
-                for citation in section_citations:
-                    if citation.kind == "media_clip":
-                        try:
-                            document = store.get(citation.document_id)
-                            if document.version_id != citation.source_version_id:
-                                raise KeyError(citation.document_id)
-                            token = store.action_token(document)
-                            citation_hrefs[citation.citation_id] = (
-                                f"/matters/{matter.slug}/sources/{token}?"
-                                f"start_ms={citation.start_ms}#transcript-segments"
-                            )
-                        except KeyError:
-                            citation_hrefs[citation.citation_id] = ""
-                    elif citation.support_token:
-                        citation_hrefs[citation.citation_id] = (
-                            f"/matters/{matter.slug}?support={citation.support_token}#support-pane"
-                        )
             notebook_items = bench.workspace.all_notebook_items(
                 matter.matter_id,
                 read_actor_id,
@@ -12356,27 +12406,26 @@ def create_workbench_app(
         title: str = Form(..., max_length=200),
         purpose: str = Form("", max_length=2_000),
         status: str = Form("draft", max_length=16),
+        expected_updated_at: str = Form("", max_length=64),
     ):
         context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        draft = dict(title=title, purpose=purpose, status=status)
         try:
-            matter = authorized_matter(request, slug)
             updated = bench.workspace.update_report(
                 matter.matter_id,
                 report_id,
                 context.principal_id,
+                expected_updated_at=expected_updated_at,
                 title=title,
                 purpose=purpose,
                 status=status,
             )
-        except KeyError as exc:
-            raise HTTPException(404, "Report not found") from exc
+        except KeyError:
+            return report_edit_recovery(request, slug, report_id, error="Report unavailable.", mode="header", draft=draft)
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(
-                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
-                ),
-                status_code=303,
-            )
+            return report_edit_recovery(request, slug, report_id, error=str(exc), mode="header", draft=draft,
+                                        status_code=409 if isinstance(exc, ReportEditConflict) else 400)
         audit(
             request,
             "report.update",
@@ -12406,26 +12455,25 @@ def create_workbench_app(
         report_id: str,
         heading: str = Form(..., max_length=200),
         body: str = Form("", max_length=50_000),
+        expected_status: str = Form("", max_length=16),
     ):
         context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        draft = dict(heading=heading, body=body)
         try:
-            matter = authorized_matter(request, slug)
             section = bench.workspace.add_report_section(
                 matter.matter_id,
                 report_id,
                 context.principal_id,
+                expected_status=expected_status,
                 heading=heading,
                 body=body,
             )
-        except KeyError as exc:
-            raise HTTPException(404, "Report not found") from exc
+        except KeyError:
+            return report_edit_recovery(request, slug, report_id, error="Report unavailable.", mode="append", draft=draft)
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(
-                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
-                ),
-                status_code=303,
-            )
+            return report_edit_recovery(request, slug, report_id, error=str(exc), mode="append", draft=draft,
+                                        status_code=409 if isinstance(exc, ReportEditConflict) else 400)
         audit(
             request,
             "report.section_add",
@@ -12451,33 +12499,30 @@ def create_workbench_app(
         report_id: str,
         origin: str,
         origin_id: str,
+        expected_status: str,
     ):
         context = auth_context(request)
         try:
             matter = authorized_matter(request, slug)
             if origin == "notebook":
                 section = bench.add_notebook_item_to_report(
-                    matter, context.principal_id, report_id, origin_id
+                    matter, context.principal_id, report_id, origin_id, expected_status=expected_status
                 )
             elif origin == "finding":
                 section = bench.add_finding_to_report(
-                    matter, context.principal_id, report_id, origin_id
+                    matter, context.principal_id, report_id, origin_id, expected_status=expected_status
                 )
             elif origin == "media_clip":
                 section = bench.add_media_clip_to_report(
-                    matter, context.principal_id, report_id, origin_id
+                    matter, context.principal_id, report_id, origin_id, expected_status=expected_status
                 )
             else:
                 raise KeyError(origin_id)
         except KeyError as exc:
             raise HTTPException(404, "Report material not found") from exc
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(
-                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
-                ),
-                status_code=303,
-            )
+            return report_edit_recovery(request, slug, report_id, error=str(exc),
+                                        status_code=409 if isinstance(exc, ReportEditConflict) else 400)
         audit(
             request,
             "report.material_add",
@@ -12503,27 +12548,30 @@ def create_workbench_app(
         dependencies=[Depends(require_csrf)],
     )
     def add_notebook_report_material(
-        request: Request, slug: str, report_id: str, item_id: str
+        request: Request, slug: str, report_id: str, item_id: str,
+        expected_status: str = Form("", max_length=16),
     ):
-        return add_report_material(request, slug, report_id, "notebook", item_id)
+        return add_report_material(request, slug, report_id, "notebook", item_id, expected_status)
 
     @app.post(
         "/matters/{slug}/reports/{report_id}/from-finding/{finding_id}",
         dependencies=[Depends(require_csrf)],
     )
     def add_finding_report_material(
-        request: Request, slug: str, report_id: str, finding_id: str
+        request: Request, slug: str, report_id: str, finding_id: str,
+        expected_status: str = Form("", max_length=16),
     ):
-        return add_report_material(request, slug, report_id, "finding", finding_id)
+        return add_report_material(request, slug, report_id, "finding", finding_id, expected_status)
 
     @app.post(
         "/matters/{slug}/reports/{report_id}/from-clip/{clip_id}",
         dependencies=[Depends(require_csrf)],
     )
     def add_clip_report_material(
-        request: Request, slug: str, report_id: str, clip_id: str
+        request: Request, slug: str, report_id: str, clip_id: str,
+        expected_status: str = Form("", max_length=16),
     ):
-        return add_report_material(request, slug, report_id, "media_clip", clip_id)
+        return add_report_material(request, slug, report_id, "media_clip", clip_id, expected_status)
 
     @app.post(
         "/matters/{slug}/reports/{report_id}/from-answer/{conversation_id}/{message_id}",
@@ -12535,6 +12583,7 @@ def create_workbench_app(
         report_id: str,
         conversation_id: str,
         message_id: str,
+        expected_status: str = Form("", max_length=16),
     ):
         context = auth_context(request)
         try:
@@ -12545,13 +12594,13 @@ def create_workbench_app(
                 report_id,
                 conversation_id,
                 message_id,
+                expected_status=expected_status,
             )
         except KeyError as exc:
             raise HTTPException(404, "Answer or report not found") from exc
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(f"/matters/{slug}", error=str(exc)), status_code=303
-            )
+            return report_edit_recovery(request, slug, report_id, error=str(exc),
+                                        status_code=409 if isinstance(exc, ReportEditConflict) else 400)
         audit(
             request,
             "report.answer_add",
@@ -12582,27 +12631,28 @@ def create_workbench_app(
         section_id: str,
         heading: str = Form(..., max_length=200),
         body: str = Form("", max_length=50_000),
+        expected_updated_at: str = Form("", max_length=64),
+        expected_status: str = Form("", max_length=16),
     ):
         context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        draft = dict(heading=heading, body=body)
         try:
-            matter = authorized_matter(request, slug)
             section = bench.workspace.update_report_section(
                 matter.matter_id,
                 report_id,
                 section_id,
                 context.principal_id,
+                expected_updated_at=expected_updated_at,
+                expected_status=expected_status,
                 heading=heading,
                 body=body,
             )
-        except KeyError as exc:
-            raise HTTPException(404, "Report section not found") from exc
+        except KeyError:
+            return report_edit_recovery(request, slug, report_id, error="Report unavailable.", mode="section", draft=draft, section_id=section_id)
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(
-                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
-                ),
-                status_code=303,
-            )
+            return report_edit_recovery(request, slug, report_id, error=str(exc), mode="section", draft=draft, section_id=section_id,
+                                        status_code=409 if isinstance(exc, ReportEditConflict) else 400)
         audit(
             request,
             "report.section_update",
@@ -12630,6 +12680,7 @@ def create_workbench_app(
         report_id: str,
         section_id: str,
         direction: str = Form(..., max_length=8),
+        expected_updated_at: str = Form("", max_length=64),
     ):
         context = auth_context(request)
         try:
@@ -12640,16 +12691,14 @@ def create_workbench_app(
                 section_id,
                 context.principal_id,
                 direction,
+                expected_updated_at=expected_updated_at,
             )
         except KeyError as exc:
             raise HTTPException(404, "Report section not found") from exc
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(
-                    f"/matters/{slug}/reports", report=report_id, error=str(exc)
-                ),
-                status_code=303,
-            )
+            return report_edit_recovery(request, slug, report_id, error=str(exc),
+                                        status_code=409 if isinstance(exc, ReportEditConflict) else 400)
+
         return RedirectResponse(
             _query_url(f"/matters/{slug}/reports", report=report_id)
             + f"#{section_id}",
@@ -12661,7 +12710,9 @@ def create_workbench_app(
         dependencies=[Depends(require_csrf)],
     )
     def delete_matter_report_section(
-        request: Request, slug: str, report_id: str, section_id: str
+        request: Request, slug: str, report_id: str, section_id: str,
+        expected_updated_at: str = Form("", max_length=64),
+        expected_status: str = Form("", max_length=16),
     ):
         context = auth_context(request)
         try:
@@ -12671,9 +12722,13 @@ def create_workbench_app(
                 report_id,
                 section_id,
                 context.principal_id,
+                expected_updated_at=expected_updated_at,
+                expected_status=expected_status,
             )
         except KeyError as exc:
             raise HTTPException(404, "Report section not found") from exc
+        except WorkspaceProblem as exc:
+            return report_edit_recovery(request, slug, report_id, error=str(exc))
         audit(
             request,
             "report.section_delete",
@@ -12697,15 +12752,20 @@ def create_workbench_app(
         "/matters/{slug}/reports/{report_id}/delete",
         dependencies=[Depends(require_csrf)],
     )
-    def delete_matter_report(request: Request, slug: str, report_id: str):
+    def delete_matter_report(
+        request: Request, slug: str, report_id: str,
+        expected_updated_at: str = Form("", max_length=64),
+    ):
         context = auth_context(request)
         try:
             matter = authorized_matter(request, slug)
             deleted = bench.workspace.delete_report(
-                matter.matter_id, report_id, context.principal_id
+                matter.matter_id, report_id, context.principal_id, expected_updated_at=expected_updated_at
             )
         except KeyError as exc:
             raise HTTPException(404, "Report not found") from exc
+        except WorkspaceProblem as exc:
+            return report_edit_recovery(request, slug, report_id, error=str(exc))
         audit(
             request,
             "report.delete",

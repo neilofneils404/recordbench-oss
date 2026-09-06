@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-05: Protect shared Report details, section edits, Final decisions,
+  reordering and deletion from stale forms. Recovery retains submitted text
+  alongside current saved work and exact section support. Independent section
+  edits and concurrent additions can both succeed. Required displayed tokens
+  and current status are checked with active membership inside an immediate
+  transaction; timestamps advance even with repeated clocks. Existing editable
+  Final policy, citation/export contracts and schema remain unchanged.
+
 - 2026-09-05: Protect shared case notes from stale edits, review actions and
   deletions. Recovery shows current saved text and retains all unsaved fields;
   repeated conflicts remain safe, and deleted notes are not recreated.

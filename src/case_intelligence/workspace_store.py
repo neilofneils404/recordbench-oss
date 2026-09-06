@@ -99,6 +99,10 @@ class MatterNameConflict(WorkspaceProblem):
     """The name displayed when the edit began is no longer current."""
 
 
+class ReportEditConflict(WorkspaceProblem):
+    """A Report or section changed after its form was displayed."""
+
+
 class NotebookEditConflict(WorkspaceProblem):
     """A case note changed after its form was displayed."""
 
@@ -6802,38 +6806,63 @@ class WorkspaceStore:
             raise KeyError(report_id)
         return self._report(row)
 
+    def _report_for_edit_locked(
+        self, matter_id: str, report_id: str, actor_id: str, *,
+        expected_updated_at: str | None = None, expected_status: str | None = None,
+    ) -> ReportRecord:
+        self.membership(matter_id, actor_id)
+        current = self.report(matter_id, report_id)
+        if expected_updated_at is None and expected_status is None:
+            raise ValueError("a displayed Report version or status is required")
+        if (expected_updated_at is not None and expected_updated_at != current.updated_at) or (
+            expected_status is not None and expected_status != current.status
+        ):
+            raise ReportEditConflict(
+                "This Report changed since the page was opened. Review the saved Report before trying again."
+            )
+        return current
+
+    def _report_section_for_edit_locked(
+        self, matter_id: str, report_id: str, section_id: str, expected_updated_at: str,
+    ) -> ReportSectionRecord:
+        row = self.connection.execute(
+            "SELECT * FROM workbench_report_section WHERE matter_id=? AND report_id=? AND section_id=?",
+            (matter_id, report_id, section_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(section_id)
+        current = self._report_section(row)
+        if not expected_updated_at or expected_updated_at != current.updated_at:
+            raise ReportEditConflict(
+                "This section changed since the page was opened. Review the saved section before trying again."
+            )
+        return current
+
+    def _report_edit_time(self, report: ReportRecord, section: ReportSectionRecord | None = None) -> str:
+        values = [report.updated_at] + ([section.updated_at] if section else [])
+        previous = max(datetime.fromisoformat(value.replace("Z", "+00:00")) for value in values)
+        return self._timestamp(max(self.current_time(), previous + timedelta(microseconds=1)))
+
     def update_report(
-        self,
-        matter_id: str,
-        report_id: str,
-        actor_id: str,
-        *,
-        title: str,
-        purpose: str,
-        status: str,
+        self, matter_id: str, report_id: str, actor_id: str, *,
+        title: str, purpose: str, status: str, expected_updated_at: str,
     ) -> ReportRecord:
         if status not in {"draft", "final"}:
             raise WorkspaceProblem("Choose draft or final report status.")
-        actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
         heading = self._safe_text(title, label="Report title", maximum=200)
-        description = self._safe_text(
-            purpose,
-            label="Report purpose",
-            maximum=2_000,
-            required=False,
-            multiline=True,
-        )
-        now = self._now()
+        description = self._safe_text(purpose, label="Report purpose", maximum=2_000,
+                                      required=False, multiline=True)
         with self._lock, self.connection:
-            self.membership(matter_id, actor)
-            changed = self.connection.execute(
+            self.connection.execute("BEGIN IMMEDIATE")
+            current = self._report_for_edit_locked(matter_id, report_id, actor_id,
+                                                   expected_updated_at=expected_updated_at)
+            now = self._report_edit_time(current)
+            self.connection.execute(
                 "UPDATE workbench_report SET title=?,purpose=?,status=?,updated_by=?,"
                 "updated_at=? WHERE matter_id=? AND report_id=?",
-                (heading, description, status, actor, now, matter_id, report_id),
-            ).rowcount
-            if not changed:
-                raise KeyError(report_id)
-        return self.report(matter_id, report_id)
+                (heading, description, status, actor_id, now, matter_id, report_id),
+            )
+            return self.report(matter_id, report_id)
 
     def _prepare_report_citation(
         self, value: Mapping[str, object]
@@ -6903,6 +6932,7 @@ class WorkspaceStore:
         report_id: str,
         actor_id: str,
         *,
+        expected_status: str,
         heading: str,
         body: str,
         origin: str = "manual",
@@ -6930,10 +6960,11 @@ class WorkspaceStore:
         if len(prepared) > 100:
             raise WorkspaceProblem("A report section can cite up to 100 passages.")
         section_id = f"report-section-{uuid.uuid4().hex}"
-        now = self._now()
         with self._lock, self.connection:
-            self.membership(matter_id, actor)
-            self.report(matter_id, report_id)
+            self.connection.execute("BEGIN IMMEDIATE")
+            current_report = self._report_for_edit_locked(matter_id, report_id, actor,
+                                                          expected_status=expected_status)
+            now = self._report_edit_time(current_report)
             ordinal = int(
                 self.connection.execute(
                     "SELECT COALESCE(MAX(ordinal),0)+1 FROM workbench_report_section "
@@ -7025,6 +7056,8 @@ class WorkspaceStore:
         section_id: str,
         actor_id: str,
         *,
+        expected_updated_at: str,
+        expected_status: str,
         heading: str,
         body: str,
     ) -> ReportSectionRecord:
@@ -7039,9 +7072,13 @@ class WorkspaceStore:
             required=False,
             multiline=True,
         )
-        now = self._now()
         with self._lock, self.connection:
-            self.membership(matter_id, actor)
+            self.connection.execute("BEGIN IMMEDIATE")
+            current_report = self._report_for_edit_locked(matter_id, report_id, actor,
+                                                          expected_status=expected_status)
+            current_section = self._report_section_for_edit_locked(matter_id, report_id, section_id,
+                                                                   expected_updated_at)
+            now = self._report_edit_time(current_report, current_section)
             changed = self.connection.execute(
                 "UPDATE workbench_report_section SET heading=?,body=?,updated_by=?,updated_at=? "
                 "WHERE matter_id=? AND report_id=? AND section_id=?",
@@ -7069,13 +7106,16 @@ class WorkspaceStore:
         section_id: str,
         actor_id: str,
         direction: str,
+        *, expected_updated_at: str,
     ) -> ReportSectionRecord:
         if direction not in {"up", "down"}:
             raise WorkspaceProblem("Choose a valid section movement.")
         actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
-        now = self._now()
         with self._lock, self.connection:
-            self.membership(matter_id, actor)
+            self.connection.execute("BEGIN IMMEDIATE")
+            current_report = self._report_for_edit_locked(matter_id, report_id, actor,
+                                                          expected_updated_at=expected_updated_at)
+            now = self._report_edit_time(current_report)
             current = self.connection.execute(
                 "SELECT ordinal FROM workbench_report_section WHERE matter_id=? "
                 "AND report_id=? AND section_id=?",
@@ -7101,9 +7141,8 @@ class WorkspaceStore:
                     (int(current["ordinal"]), adjacent["section_id"]),
                 )
                 self.connection.execute(
-                    "UPDATE workbench_report_section SET ordinal=?,updated_by=?,updated_at=? "
-                    "WHERE section_id=?",
-                    (int(adjacent["ordinal"]), actor, now, section_id),
+                    "UPDATE workbench_report_section SET ordinal=? WHERE section_id=?",
+                    (int(adjacent["ordinal"]), section_id),
                 )
                 self.connection.execute(
                     "UPDATE workbench_report SET updated_by=?,updated_at=? "
@@ -7119,12 +7158,16 @@ class WorkspaceStore:
         return self._report_section(row)
 
     def delete_report_section(
-        self, matter_id: str, report_id: str, section_id: str, actor_id: str
+        self, matter_id: str, report_id: str, section_id: str, actor_id: str,
+        *, expected_updated_at: str, expected_status: str
     ) -> None:
         actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
-        now = self._now()
         with self._lock, self.connection:
-            self.membership(matter_id, actor)
+            self.connection.execute("BEGIN IMMEDIATE")
+            current_report = self._report_for_edit_locked(matter_id, report_id, actor,
+                                                          expected_status=expected_status)
+            self._report_section_for_edit_locked(matter_id, report_id, section_id, expected_updated_at)
+            now = self._report_edit_time(current_report)
             current = self.connection.execute(
                 "SELECT ordinal FROM workbench_report_section WHERE matter_id=? "
                 "AND report_id=? AND section_id=?",
@@ -7154,12 +7197,13 @@ class WorkspaceStore:
             )
 
     def delete_report(
-        self, matter_id: str, report_id: str, actor_id: str
+        self, matter_id: str, report_id: str, actor_id: str, *, expected_updated_at: str
     ) -> ReportRecord:
         actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
         with self._lock, self.connection:
-            self.membership(matter_id, actor)
-            current = self.report(matter_id, report_id)
+            self.connection.execute("BEGIN IMMEDIATE")
+            current = self._report_for_edit_locked(matter_id, report_id, actor,
+                                                   expected_updated_at=expected_updated_at)
             self.connection.execute(
                 "DELETE FROM workbench_report WHERE matter_id=? AND report_id=?",
                 (matter_id, report_id),

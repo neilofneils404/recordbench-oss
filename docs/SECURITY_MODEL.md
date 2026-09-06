@@ -56,3 +56,12 @@ matter and item identity with the displayed update token inside an immediate
 transaction for edit, review and deletion. Tokens convey no access. Missing or
 stale forms cannot overwrite, approve or delete newer text; recovery preserves
 submitted edits only within the authorized matter. No note text is added to audit.
+
+## Shared Report mutations
+
+[Report editing](REPORT_EDITING.md) rechecks active principal, membership,
+active matter and exact Report/section identity inside the same immediate
+transaction as displayed-version/status checks and mutation. CSRF-protected
+forms cannot bypass guards by omitting tokens. Recovery reauthorizes the matter
+before showing saved work or a submitted draft; deleted work is not recreated.
+Existing success audit contains operation metadata, without old/new Report text.

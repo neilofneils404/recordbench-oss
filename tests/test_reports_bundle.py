@@ -31,8 +31,9 @@ def saved_report(bench, matter, title="Review memo", status="draft"):
     store = bench.workspace
     report = store.create_report(matter.matter_id, ACTOR, title, "Review purpose")
     store.add_report_section(matter.matter_id, report.report_id, ACTOR,
-                             heading="Human edits", body="Preserve these edited words.")
+                             expected_status=report.status, heading="Human edits", body="Preserve these edited words.")
     return store.update_report(matter.matter_id, report.report_id, ACTOR,
+                               expected_updated_at=store.report(matter.matter_id, report.report_id).updated_at,
                                title=title, purpose="Review purpose", status=status)
 
 
@@ -92,7 +93,7 @@ def cited_report(bench, matter):
     unit = document.parsed_units()[0]
     candidate = bench._candidate(matter, document, unit, 1)
     bench.workspace.add_report_section(
-        matter.matter_id, report.report_id, ACTOR, heading="Source support", body="Edited finding.",
+        matter.matter_id, report.report_id, ACTOR, expected_status=report.status, heading="Source support", body="Edited finding.",
         citations=({"kind": "source", "document_id": document.document_id,
                     "source_version_id": document.version_id, "source_name": document.display_name,
                     "location": candidate.citation, "support_token": bench._support_token(candidate),
@@ -291,11 +292,11 @@ def test_timestamped_clip_and_transcript_support_survive_bundle(tmp_path):
             title="Selected moment", start_ms=0, end_ms=2000, actor_id=ACTOR,
         )
         report = saved_report(bench, matter)
-        bench.add_media_clip_to_report(matter, ACTOR, report.report_id, clip.clip_id)
+        bench.add_media_clip_to_report(matter, ACTOR, report.report_id, clip.clip_id, expected_status=report.status)
         unit = document.parsed_units()[0]
         candidate = bench._candidate(matter, document, unit, 1)
         bench.workspace.add_report_section(
-            matter.matter_id, report.report_id, ACTOR, heading="Transcript support", body="Spoken passage.",
+            matter.matter_id, report.report_id, ACTOR, expected_status=report.status, heading="Transcript support", body="Spoken passage.",
             citations=({"kind": "transcript", "document_id": document.document_id,
                         "source_version_id": document.version_id, "source_name": document.display_name,
                         "location": candidate.citation, "support_token": bench._support_token(candidate),
