@@ -73,8 +73,9 @@ does not remove public copies or history. Revoke exposed credentials first.
 
 ## Merge and automation boundary
 
-Protect main with required CI, resolved discussions, and no force pushes or
-deletion. `hosted-review-gate` requires completed GitHub Codex code and security
+Protect the default branch with required CI, `hosted-review-gate`, resolved
+discussions, at least one native PR approval, stale-approval dismissal, approval
+of the most recent push, and no force pushes or deletion. `hosted-review-gate` requires completed GitHub Codex code and security
 reviews on the current head and review discussions reconciled by someone with
 repository write, maintain or admin access. An outside author cannot satisfy the
 gate by resolving their own findings. Request renewed
@@ -85,11 +86,22 @@ summary format blocks pending diagnosis rather than silently passing. Edited
 requests invalidate earlier completions; each request is compared with its own
 code or security review completion.
 
+A passing gate also submits a native approval to the individual PR, bound to
+its full head and recorded base. Both that native approval and the status are
+required: a shared commit status alone cannot authorize another PR with the
+same head. The gate only approves PRs targeting the default branch. It dismisses
+its earlier native approvals before reevaluation and rechecks both head and base
+around approval. A change during approval dismisses the newly issued review.
+Native approvals must not be disabled while relying on this gate. Separate
+branches need their own deliberate protection policy.
+
 The gate reads trusted default-branch code and GitHub metadata only; it never
 executes the PR head with a write token. External contributor workflows require
 maintainer approval. Use hosted runners with synthetic fixtures; do not attach
 private infrastructure or deployment credentials to public Actions. Default
 workflow permissions are read-only and actions are pinned to full commits.
+Enable GitHub Actions PR-review approval capability for this trusted workflow;
+only this gate requests pull-request write permission.
 
 After both hosted reviews finish, a maintainer independently checks the full
 current head and review results, then posts this exact one-line PR comment,

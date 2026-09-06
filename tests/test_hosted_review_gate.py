@@ -90,13 +90,25 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch):
     monkeypatch.setenv("PR_NUMBER", "1")
     for permission, expected in (("read", "pending"), ("write", "success")):
         statuses = []
+        approvals = []
+        dismissals = []
         accepted = approval()
         accepted["user"] = {"login": "fixture-reviewer"}
         accepted["maintainerCanAccept"] = True  # Never trust a supplied flag.
 
-        def request(path, data=None):
+        def request(path, data=None, *, method=None):
             if path.endswith("/pulls/1"):
-                return {"state": "open", "head": {"sha": HEAD}, "html_url": "https://example.test/pr/1"}
+                return {"state": "open", "head": {"sha": HEAD}, "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}}, "html_url": "https://example.test/pr/1"}
+            if path.split("?")[0].endswith("/reviews"):
+                if data is None:
+                    return [{"id": 10, "state": "APPROVED", "user": {"login": "github-actions[bot]"},
+                             "body": "RecordBench hosted review gate: previous acceptance"}]
+                approvals.append((path, data))
+                return {"id": 11}
+            if path.endswith("/reviews/10/dismissals"):
+                assert method == "PUT"
+                dismissals.append(10)
+                return {}
             if "/statuses/" in path:
                 statuses.append(data["state"])
                 return {}
@@ -112,3 +124,89 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch):
         monkeypatch.setattr(GATE, "request", request)
         assert GATE.main() == 0
         assert statuses == ["pending", expected]
+        assert dismissals == [10]
+        assert len(approvals) == (1 if expected == "success" else 0)
+        if approvals:
+            assert approvals[0][0].endswith("/pulls/1/reviews")
+            assert approvals[0][1]["commit_id"] == HEAD
+            assert approvals[0][1]["event"] == "APPROVE"
+            assert "b" * 40 in approvals[0][1]["body"]
+
+
+def test_shared_head_does_not_share_native_approval_or_approve_another_base(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
+    issued = []
+    for number in (1, 2, 3):
+        monkeypatch.setenv("PR_NUMBER", str(number))
+        accepted = approval()
+        accepted["user"] = {"login": "fixture-reviewer"}
+        pr = {"state": "open", "head": {"sha": HEAD}, "base": {"sha": "b" * 40,
+              "ref": "other" if number == 3 else "main", "repo": {"default_branch": "main"}},
+              "html_url": "https://example.test/pr/" + str(number)}
+
+        def request(path, data=None, *, method=None):
+            if path.endswith("/pulls/" + str(number)):
+                return pr
+            if path.split("?")[0].endswith("/reviews"):
+                if data is None:
+                    return []
+                issued.append((number, data["commit_id"]))
+                return {"id": number}
+            if "/statuses/" in path:
+                return {}
+            if "/comments?" in path:
+                return [summary()] + ([accepted] if number != 2 else [])
+            if path == "graphql":
+                return {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+            if path.endswith("/collaborators/fixture-reviewer/permission"):
+                return {"permission": "write"}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(GATE, "request", request)
+        assert GATE.main() == 0
+    assert issued == [(1, HEAD)]
+
+
+def test_base_change_during_approval_dismisses_the_new_review(monkeypatch):
+    import pytest
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
+    monkeypatch.setenv("PR_NUMBER", "1")
+    changed = False
+    dismissed = []
+    statuses = []
+    accepted = approval()
+    accepted["user"] = {"login": "fixture-reviewer"}
+
+    def request(path, data=None, *, method=None):
+        nonlocal changed
+        if path.endswith("/pulls/1"):
+            return {"state": "open", "head": {"sha": HEAD}, "base": {
+                "sha": ("c" if changed else "b") * 40, "ref": "main", "repo": {"default_branch": "main"}},
+                "html_url": "https://example.test/pr/1"}
+        if path.split("?")[0].endswith("/reviews"):
+            if data is None:
+                return []
+            changed = True
+            return {"id": 11}
+        if path.endswith("/reviews/11/dismissals"):
+            assert method == "PUT"
+            dismissed.append(11)
+            return {}
+        if "/statuses/" in path:
+            statuses.append(data["state"])
+            return {}
+        if "/comments?" in path:
+            return [summary(), accepted]
+        if path == "graphql":
+            return {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        if path.endswith("/collaborators/fixture-reviewer/permission"):
+            return {"permission": "write"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(GATE, "request", request)
+    with pytest.raises(RuntimeError, match="changed during approval"):
+        GATE.main()
+    assert dismissed == [11]
+    assert statuses == ["pending"]

@@ -84,8 +84,23 @@ def main() -> int:
             # Fetch only explicitly outgoing refs, never private neighboring histories.
             git(temporary, "fetch", "--quiet", "--no-tags", str(root), f"{oid}:{ref}")
         git(temporary, "checkout", "--quiet", "--detach", outgoing[0][0])
+        reachable = set(git(temporary, "rev-list", "--all").stdout.splitlines())
+        scoped_arguments = []
+        index = 0
+        while index < len(arguments):
+            if arguments[index] == "--allow-public-baseline-git-identity":
+                boundary = arguments[index + 1]
+                kind = git(root, "cat-file", "-t", boundary, check=False)
+                if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", boundary) or kind.returncode or kind.stdout.strip() != "commit":
+                    raise ValueError("Invalid publication baseline boundary.")
+                if boundary in reachable:
+                    scoped_arguments.extend(arguments[index:index + 4])
+                index += 4
+            else:
+                scoped_arguments.append(arguments[index])
+                index += 1
         result = subprocess.run(
-            [sys.executable, str(scanner), "--root", str(temporary), *arguments],
+            [sys.executable, str(scanner), "--root", str(temporary), *scoped_arguments],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
         )

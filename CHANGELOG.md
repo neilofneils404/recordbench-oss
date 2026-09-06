@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 2026-09-05: Pair the commit review status with a native, current-head PR
+  approval bound to the reviewed base; revoke prior gate approvals on recheck.
+  Keep structural tag object IDs out of deny scans and exclude valid baseline
+  exceptions that are outside the outgoing history.
+
 - 2026-09-05: Fail closed on invalid publisher configuration, inspect SHA-256
   repositories using their source object format, and require full-commit
   maintainer acceptance after both hosted reviews to prevent abbreviated-ID

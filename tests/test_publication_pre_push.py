@@ -108,3 +108,34 @@ def test_malformed_required_private_check_setting_blocks(tmp_path):
     root = repository(tmp_path)
     command(root, "git", "config", "recordbench.requirePrivatePublicationCheck", "invalid-setting")
     assert inspect(root).returncode != 0
+
+
+def test_unrelated_baseline_does_not_fetch_or_block_orphan_history(tmp_path):
+    root = repository(tmp_path)
+    (root / "private.txt").write_text("host." + "internal")
+    boundary = commit(root)
+    command(root, "git", "config", "recordbench.publicBaselineIdentity",
+            boundary + "\tSynthetic Author\t12345+fixture@users.noreply.github.com")
+    command(root, "git", "checkout", "--orphan", "public-other")
+    (root / "private.txt").unlink()
+    commit(root)
+    assert inspect(root).returncode == 0
+
+
+def test_tag_target_hash_is_structural_but_tag_message_still_scans(tmp_path):
+    root = repository(tmp_path)
+    oid = command(root, "git", "rev-parse", "HEAD").stdout.strip()
+    metadata = command(root, "git", "show", "-s", "--format=%an %ae %cn %ce %B").stdout
+    command(root, "git", "tag", "-a", "v-test", "-m", "Synthetic release")
+    tag_metadata = "\n".join(command(root, "git", "cat-file", "tag", "v-test").stdout.splitlines()[2:])
+    content = (root / "scripts/publication-check.py").read_text() + metadata + tag_metadata + "refs/tags/v-test"
+    term = next(oid[i:i+3] for i in range(len(oid)-2) if oid[i:i+3] not in content.lower())
+    deny = tmp_path / "deny.txt"
+    deny.write_text(term + "\n")
+    deny.chmod(0o600)
+    command(root, "git", "config", "recordbench.publicationDenyFile", str(deny))
+    tag_oid = command(root, "git", "rev-parse", "v-test").stdout.strip()
+    assert inspect(root, tag_oid, "refs/tags/v-test").returncode == 0
+    command(root, "git", "tag", "-f", "-a", "v-test", "-m", term)
+    tag_oid = command(root, "git", "rev-parse", "v-test").stdout.strip()
+    assert inspect(root, tag_oid, "refs/tags/v-test").returncode != 0

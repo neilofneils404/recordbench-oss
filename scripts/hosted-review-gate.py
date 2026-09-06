@@ -12,6 +12,7 @@ import urllib.request
 BOT = "chatgpt-codex-connector[bot]"
 SUMMARY = "<!-- codex-pull-request-review-summary -->"
 CONTEXT = "hosted-review-gate"
+APPROVAL_PREFIX = "RecordBench hosted review gate:"
 ACCEPTANCE = re.compile(r"RecordBench maintainer acceptance: ([0-9a-f]{40})")
 
 
@@ -83,10 +84,28 @@ def main() -> int:
     pr = request(f"{prefix}/pulls/{number}")
     if pr["state"] != "open":
         return 0
+    if pr["base"]["ref"] != pr["base"]["repo"]["default_branch"]:
+        return 0
     head = pr["head"]["sha"]
+    base = pr["base"]["sha"]
+    review_path = f"{prefix}/pulls/{number}/reviews"
     request(f"{prefix}/statuses/{head}", {"state": "pending", "context": CONTEXT,
         "description": "Rechecking current-commit hosted reviews and discussions",
         "target_url": pr["html_url"]})
+    # Native PR approvals are separate from shared commit statuses. Clear prior
+    # gate approvals before each evaluation so a failure cannot leave one valid.
+    for page in range(1, 101):
+        reviews = request(f"{review_path}?per_page=100&page={page}")
+        for review in reviews:
+            if (review.get("state") == "APPROVED"
+                    and review.get("user", {}).get("login") == "github-actions[bot]"
+                    and review.get("body", "").startswith(APPROVAL_PREFIX)):
+                request(f"{review_path}/{review['id']}/dismissals",
+                        {"message": "Rechecking this PR's current reviews and acceptance."}, method="PUT")
+        if len(reviews) < 100:
+            break
+    else:
+        raise RuntimeError("Review limit exceeded")
     comments = []
     for page in range(1, 101):
         items = request(f"{prefix}/issues/{number}/comments?per_page=100&page={page}")
@@ -136,8 +155,20 @@ def main() -> int:
             continue
         thread["resolverCanReconcile"] = can_reconcile(resolver)
     state, description = evaluate(head, comments, threads)
-    if request(f"{prefix}/pulls/{number}")["head"]["sha"] != head:
-        raise RuntimeError("PR changed during inspection; rerun the gate")
+    def unchanged():
+        current = request(f"{prefix}/pulls/{number}")
+        return (current["state"] == "open" and current["head"]["sha"] == head
+                and current["base"]["sha"] == base and current["base"]["ref"] == pr["base"]["ref"])
+
+    if not unchanged():
+        raise RuntimeError("PR or base changed during inspection; rerun the gate")
+    if state == "success":
+        approval = request(review_path, {"commit_id": head, "event": "APPROVE",
+            "body": f"{APPROVAL_PREFIX} PR #{number}, head {head}, base {base}. Both hosted reviews and maintainer acceptance verified."})
+        if not unchanged():
+            request(f"{review_path}/{approval['id']}/dismissals",
+                    {"message": "PR or base changed during gate approval."}, method="PUT")
+            raise RuntimeError("PR changed during approval; rerun the gate")
     request(f"{prefix}/statuses/{head}", {"state": state, "context": CONTEXT,
         "description": description, "target_url": pr["html_url"]})
     print(json.dumps({"pr": number, "state": state, "head": head}))

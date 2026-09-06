@@ -696,11 +696,11 @@ def scan_history(
             if tag.returncode:
                 findings.append(Finding("git-refs", "history-scan-failed"))
                 break
-            findings.extend(_scan_bytes(tag.stdout, location="git-refs", deny=deny))
-            target = re.match(rb"object ([0-9a-f]{40}|[0-9a-f]{64})\n", tag.stdout)
+            target = re.match(rb"object ([0-9a-f]{40}|[0-9a-f]{64})\ntype (?:commit|tag|tree|blob)\n", tag.stdout)
             if not target:
                 findings.append(Finding("git-refs", "history-scan-failed"))
                 break
+            findings.extend(_scan_bytes(tag.stdout[target.end():], location="git-refs", deny=deny))
             oid = target.group(1)
         else:
             findings.append(Finding("git-refs", "history-scan-failed"))
