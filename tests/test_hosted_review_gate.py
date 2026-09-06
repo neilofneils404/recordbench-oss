@@ -205,3 +205,11 @@ def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):
         GATE.main()
     assert withdrawn == [HEAD]
     assert statuses == ["pending"]
+
+
+def test_acceptance_timestamp_tie_is_ambiguous():
+    accepted = approval()
+    accepted["updated_at"] = "2026-01-01T12:00:00Z"
+    assert GATE.evaluate(HEAD, [summary(), accepted], [])[0] == "pending"
+    accepted["updated_at"] = "2026-01-01T12:00:01Z"
+    assert GATE.evaluate(HEAD, [summary(), accepted], [])[0] == "success"

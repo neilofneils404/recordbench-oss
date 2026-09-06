@@ -14,7 +14,8 @@ def main():
         raise ValueError('Choose a new installation directory outside the checkout.')
     destination = destination.resolve()
     interpreter = Path(sys.executable).absolute()
-    if destination.is_relative_to(root) or interpreter.is_relative_to(root):
+    if (destination.is_relative_to(root) or interpreter.is_relative_to(root)
+            or interpreter.resolve(strict=True).is_relative_to(root)):
         raise ValueError('The installation and Python environment must be outside this checkout.')
     destination.mkdir(parents=True, mode=0o700)
     source = Path(__file__).resolve().parent

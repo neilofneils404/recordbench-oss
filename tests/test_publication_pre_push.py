@@ -157,3 +157,17 @@ def test_installed_hook_does_not_execute_candidate_scanner(tmp_path):
     result = command(root, str(destination / "pre-push"), input=f"refs/heads/main {oid} refs/heads/main {'0' * 40}\n")
     assert result.returncode == 0, result.stderr
     assert not marker.exists()
+
+
+def test_installer_rejects_external_interpreter_link_into_checkout(tmp_path):
+    import sys
+    root = repository(tmp_path)
+    target = root / "candidate-python"
+    shutil.copyfile(sys.executable, target)
+    target.chmod(0o700)
+    interpreter = tmp_path / "external-python"
+    interpreter.symlink_to(target)
+    destination = tmp_path / "trusted-hook"
+    result = command(root, str(interpreter), str(ROOT / "scripts/install-publication-hook.py"), str(destination))
+    assert result.returncode != 0
+    assert not destination.exists()

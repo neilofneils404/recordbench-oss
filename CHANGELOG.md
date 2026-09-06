@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 2026-09-05: Reject installer interpreter symlinks into the publishing
+  checkout and require acceptance timestamps strictly after review completion.
+
 - 2026-09-05: Install reviewed publication checks outside candidate branches
   with a pinned, isolated Python interpreter. Withdraw prior approvals after
   retargeting and accept SHA-256 IDs in publication dispositions.

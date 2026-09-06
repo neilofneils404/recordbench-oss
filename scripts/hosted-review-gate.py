@@ -60,7 +60,7 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
         if not c.get("maintainerCanAccept") or not acceptance or acceptance.group(1) != head:
             continue
         accepted = datetime.fromisoformat((c.get("updated_at") or c["created_at"]).replace("Z", "+00:00"))
-        if accepted >= max(completed.values()):
+        if accepted > max(completed.values()):
             return "success", "Both reviews completed; maintainer accepted the full commit"
     return "pending", "Waiting for maintainer acceptance of the full reviewed commit"
 

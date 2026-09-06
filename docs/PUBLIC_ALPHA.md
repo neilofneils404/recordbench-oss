@@ -34,7 +34,8 @@ python3 scripts/install-publication-hook.py ~/.local/share/recordbench-publicati
 
 Run the installer from a trusted, reviewed checkout with the Python environment
 that contains the scanner dependencies. Both that environment and the new
-installation directory must be outside the publishing checkout. The installer
+installation directory must be outside the publishing checkout. Interpreter
+symlinks must also resolve outside it. The installer
 copies the reviewed scanner and hook, pins the interpreter, and enables isolated
 Python execution. Branch switches cannot replace this installed code. Reinstall
 reviewed updates into a new directory. Do not point `core.hooksPath` at the
@@ -117,7 +118,7 @@ replacing the placeholder with the complete 40-character commit ID:
 RecordBench maintainer acceptance: FULL_COMMIT_ID
 ```
 
-The acceptance must follow both review completions and come from an account
+The acceptance timestamp must be strictly later than both review completions and come from an account
 with current write, maintain or admin permission. This additional full-commit
 acceptance is required because the code-review summary abbreviates its commit
 ID; a matching short prefix alone is not sufficient. A changed head, a newer
