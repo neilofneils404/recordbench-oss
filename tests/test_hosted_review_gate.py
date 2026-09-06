@@ -25,7 +25,7 @@ def test_requires_both_reviews_on_current_head():
 
 def test_unresolved_discussion_blocks_until_reconciled():
     assert GATE.evaluate(HEAD, [summary()], [{"isResolved": False}])[0] == "failure"
-    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": True}])[0] == "success"
+    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
 
 
 def test_forged_summary_and_new_review_request_do_not_pass():
@@ -54,3 +54,9 @@ def test_single_review_rerun_is_compared_with_its_own_completion():
         current["body"] = '\n'.join(line.replace('12:00:00Z', '12:02:00Z') if f'**{label}**' in line else line for line in current["body"].splitlines())
         requested = {"body": "@codex " + command, "author_association": "OWNER", "created_at": "2026-01-01T12:01:00Z"}
         assert GATE.evaluate(HEAD, [current, requested], [])[0] == "success"
+
+
+def test_contributor_cannot_self_reconcile_findings():
+    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": True}])[0] == "failure"
+    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": False}])[0] == "failure"
+    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"

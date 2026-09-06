@@ -75,7 +75,9 @@ does not remove public copies or history. Revoke exposed credentials first.
 
 Protect main with required CI, resolved discussions, and no force pushes or
 deletion. `hosted-review-gate` requires completed GitHub Codex code and security
-reviews on the current head and resolved review discussions. Request renewed
+reviews on the current head and review discussions reconciled by someone with
+repository write, maintain or admin access. An outside author cannot satisfy the
+gate by resolving their own findings. Request renewed
 reviews after corrections; never use a previous commit's review as acceptance.
 If a discussion was reconciled after the last summary update, dispatch the
 Hosted review gate workflow with the PR number to recheck it. A changed Codex

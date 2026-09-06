@@ -48,8 +48,9 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
             label = "Security Review" if command.group(1) else "Code Review"
             if requested > completed[label]:
                 return "pending", "A newer review request is still awaiting completion"
-    if any(not thread.get("isResolved", False) for thread in threads):
-        return "failure", "Resolve or explicitly reconcile every review discussion"
+    if any(not thread.get("isResolved", False) or not thread.get("resolverCanReconcile", False)
+           for thread in threads):
+        return "failure", "A maintainer must reconcile every review discussion"
     return "success", "Current-commit code/security reviews completed; discussions resolved"
 
 
@@ -89,7 +90,7 @@ def main() -> int:
     cursor = None
     query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
       repository(owner:$owner,name:$name) { pullRequest(number:$number) {
-        reviewThreads(first:100,after:$cursor) { nodes { isResolved }
+        reviewThreads(first:100,after:$cursor) { nodes { isResolved resolvedBy { login } }
           pageInfo { hasNextPage endCursor } }
       } }
     }"""
@@ -105,6 +106,16 @@ def main() -> int:
         cursor = connection["pageInfo"]["endCursor"]
     else:
         raise RuntimeError("Discussion limit exceeded")
+    resolver_permissions = {}
+    for thread in threads:
+        resolver = (thread.get("resolvedBy") or {}).get("login", "")
+        thread["resolverCanReconcile"] = False
+        if not thread.get("isResolved") or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", resolver):
+            continue
+        if resolver not in resolver_permissions:
+            permission = request(f"{prefix}/collaborators/{resolver}/permission")
+            resolver_permissions[resolver] = permission.get("permission") in {"admin", "maintain", "write"}
+        thread["resolverCanReconcile"] = resolver_permissions[resolver]
     state, description = evaluate(head, comments, threads)
     if request(f"{prefix}/pulls/{number}")["head"]["sha"] != head:
         raise RuntimeError("PR changed during inspection; rerun the gate")

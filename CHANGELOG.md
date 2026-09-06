@@ -4,7 +4,8 @@
 
 - 2026-09-05: Publication review corrections preserve deny terms spanning public
   merge attribution, inspect nested annotated tags, scan tag pushes, and bind
-  edited and single-type review requests to the matching completion.
+  edited and single-type review requests to the matching completion. Resolved
+  findings require a resolver with repository write/maintain/admin access.
 
 - 2026-09-05: Define the public contributor alpha separately from supported
   production releases. Add contributor starting points and synthetic-only issue
