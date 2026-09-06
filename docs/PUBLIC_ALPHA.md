@@ -37,7 +37,8 @@ that contains the scanner dependencies. Both that environment and the new
 installation directory must be outside the publishing checkout. Interpreter
 symlinks must also resolve outside it. The installer
 copies the reviewed scanner and hook, pins the interpreter, and enables isolated
-Python execution. Branch switches cannot replace this installed code. Reinstall
+Python execution for both hook and scanner, removing inherited Python environment
+variables from the scanner process. Branch switches cannot replace this installed code. Reinstall
 reviewed updates into a new directory. Do not point `core.hooksPath` at the
 branch-owned `.githooks` directory.
 
@@ -90,7 +91,9 @@ If a discussion was reconciled after the last summary update, dispatch the
 Hosted review gate workflow with the PR number to recheck it. A changed Codex
 summary format blocks pending diagnosis rather than silently passing. Edited
 requests invalidate earlier completions; each request is compared with its own
-code or security review completion.
+code or security review completion. A maintainer deleting their own review-request
+comment withdraws that request; any running state already recorded by the bot
+continues to block. Request review again when a withdrawn rerun is still wanted.
 
 A passing gate also submits a native approval to the individual PR, bound to
 its full head and recorded base. Both that native approval and the status are
@@ -100,7 +103,9 @@ its earlier native approval with a review requesting revalidation before
 reevaluation, and rechecks both head and base around approval. A change during
 approval also withdraws the newly issued approval. This uses pull-request write
 permission; the workflow does not need repository-admin review-dismissal rights.
-Native approvals must not be disabled while relying on this gate. Separate
+Require branches to be up to date before merging (strict required status checks),
+so a default-branch advance requires an updated head and fresh reviews. Native
+approvals must not be disabled while relying on this gate. Separate
 branches need their own deliberate protection policy.
 
 The gate reads trusted default-branch code and GitHub metadata only; it never

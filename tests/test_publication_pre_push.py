@@ -171,3 +171,21 @@ def test_installer_rejects_external_interpreter_link_into_checkout(tmp_path):
     result = command(root, str(interpreter), str(ROOT / "scripts/install-publication-hook.py"), str(destination))
     assert result.returncode != 0
     assert not destination.exists()
+
+
+def test_installed_scanner_ignores_candidate_pythonpath(tmp_path):
+    import os
+    import sys
+    root = repository(tmp_path)
+    destination = tmp_path / "trusted-hook"
+    result = command(root, sys.executable, str(ROOT / "scripts/install-publication-hook.py"), str(destination))
+    assert result.returncode == 0, result.stderr
+    marker = tmp_path / "executed"
+    (root / "sitecustomize.py").write_text("import os\nfrom pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\nos._exit(0)\n")
+    (root / "private.txt").write_text("host." + "internal")
+    oid = commit(root)
+    environment = dict(os.environ, PYTHONPATH=str(root))
+    result = command(root, str(destination / "pre-push"), env=environment,
+                     input=f"refs/heads/main {oid} refs/heads/main {'0' * 40}\n")
+    assert not marker.exists()
+    assert result.returncode != 0

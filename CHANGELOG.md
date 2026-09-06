@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 2026-09-05: Isolate scanner subprocesses from candidate Python search paths;
+  document strict branch freshness and maintainer review-request withdrawal.
+
 - 2026-09-05: Recognize the exact public GitHub merge-service email so hosted
   merges pass publication inspection; other addresses and deny terms still block.
 

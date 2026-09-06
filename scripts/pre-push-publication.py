@@ -100,9 +100,9 @@ def main() -> int:
                 scoped_arguments.append(arguments[index])
                 index += 1
         result = subprocess.run(
-            [sys.executable, str(scanner), "--root", str(temporary), *scoped_arguments],
+            [sys.executable, "-I", str(scanner), "--root", str(temporary), *scoped_arguments],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
+            env={key: value for key, value in os.environ.items() if not key.startswith(("GIT_", "PYTHON"))},
         )
         if result.returncode:
             # Keep candidate filenames and matched values out of terminal recordings.
