@@ -91,7 +91,6 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch):
     for permission, expected in (("read", "pending"), ("write", "success")):
         statuses = []
         approvals = []
-        dismissals = []
         accepted = approval()
         accepted["user"] = {"login": "fixture-reviewer"}
         accepted["maintainerCanAccept"] = True  # Never trust a supplied flag.
@@ -105,10 +104,6 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch):
                              "body": "RecordBench hosted review gate: previous acceptance"}]
                 approvals.append((path, data))
                 return {"id": 11}
-            if path.endswith("/reviews/10/dismissals"):
-                assert method == "PUT"
-                dismissals.append(10)
-                return {}
             if "/statuses/" in path:
                 statuses.append(data["state"])
                 return {}
@@ -124,13 +119,11 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch):
         monkeypatch.setattr(GATE, "request", request)
         assert GATE.main() == 0
         assert statuses == ["pending", expected]
-        assert dismissals == [10]
-        assert len(approvals) == (1 if expected == "success" else 0)
-        if approvals:
-            assert approvals[0][0].endswith("/pulls/1/reviews")
-            assert approvals[0][1]["commit_id"] == HEAD
-            assert approvals[0][1]["event"] == "APPROVE"
-            assert "b" * 40 in approvals[0][1]["body"]
+        expected_events = ["REQUEST_CHANGES"] + (["APPROVE"] if expected == "success" else [])
+        assert [data["event"] for path, data in approvals] == expected_events
+        assert all(path.endswith("/pulls/1/reviews") and data["commit_id"] == HEAD for path, data in approvals)
+        if expected == "success":
+            assert "b" * 40 in approvals[-1][1]["body"]
 
 
 def test_shared_head_does_not_share_native_approval_or_approve_another_base(monkeypatch):
@@ -168,12 +161,12 @@ def test_shared_head_does_not_share_native_approval_or_approve_another_base(monk
     assert issued == [(1, HEAD)]
 
 
-def test_base_change_during_approval_dismisses_the_new_review(monkeypatch):
+def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):
     import pytest
     monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
     monkeypatch.setenv("PR_NUMBER", "1")
     changed = False
-    dismissed = []
+    withdrawn = []
     statuses = []
     accepted = approval()
     accepted["user"] = {"login": "fixture-reviewer"}
@@ -187,12 +180,12 @@ def test_base_change_during_approval_dismisses_the_new_review(monkeypatch):
         if path.split("?")[0].endswith("/reviews"):
             if data is None:
                 return []
-            changed = True
+            if data["event"] == "APPROVE":
+                changed = True
+            else:
+                assert data["event"] == "REQUEST_CHANGES"
+                withdrawn.append(data["commit_id"])
             return {"id": 11}
-        if path.endswith("/reviews/11/dismissals"):
-            assert method == "PUT"
-            dismissed.append(11)
-            return {}
         if "/statuses/" in path:
             statuses.append(data["state"])
             return {}
@@ -208,5 +201,5 @@ def test_base_change_during_approval_dismisses_the_new_review(monkeypatch):
     monkeypatch.setattr(GATE, "request", request)
     with pytest.raises(RuntimeError, match="changed during approval"):
         GATE.main()
-    assert dismissed == [11]
+    assert withdrawn == [HEAD]
     assert statuses == ["pending"]

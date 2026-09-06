@@ -89,9 +89,11 @@ code or security review completion.
 A passing gate also submits a native approval to the individual PR, bound to
 its full head and recorded base. Both that native approval and the status are
 required: a shared commit status alone cannot authorize another PR with the
-same head. The gate only approves PRs targeting the default branch. It dismisses
-its earlier native approvals before reevaluation and rechecks both head and base
-around approval. A change during approval dismisses the newly issued review.
+same head. The gate only approves PRs targeting the default branch. It withdraws
+its earlier native approval with a review requesting revalidation before
+reevaluation, and rechecks both head and base around approval. A change during
+approval also withdraws the newly issued approval. This uses pull-request write
+permission; the workflow does not need repository-admin review-dismissal rights.
 Native approvals must not be disabled while relying on this gate. Separate
 branches need their own deliberate protection policy.
 

@@ -92,20 +92,23 @@ def main() -> int:
     request(f"{prefix}/statuses/{head}", {"state": "pending", "context": CONTEXT,
         "description": "Rechecking current-commit hosted reviews and discussions",
         "target_url": pr["html_url"]})
-    # Native PR approvals are separate from shared commit statuses. Clear prior
-    # gate approvals before each evaluation so a failure cannot leave one valid.
+    # Native approvals belong to one PR. Withdraw the prior gate opinion using
+    # a new review; this needs pull-request write permission, not admin dismissal.
+    gate_reviews = []
     for page in range(1, 101):
         reviews = request(f"{review_path}?per_page=100&page={page}")
-        for review in reviews:
-            if (review.get("state") == "APPROVED"
-                    and review.get("user", {}).get("login") == "github-actions[bot]"
-                    and review.get("body", "").startswith(APPROVAL_PREFIX)):
-                request(f"{review_path}/{review['id']}/dismissals",
-                        {"message": "Rechecking this PR's current reviews and acceptance."}, method="PUT")
+        gate_reviews.extend(review for review in reviews
+            if review.get("user", {}).get("login") == "github-actions[bot]"
+            and review.get("body", "").startswith(APPROVAL_PREFIX)
+            and review.get("state") in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
         if len(reviews) < 100:
             break
     else:
         raise RuntimeError("Review limit exceeded")
+    previous = max(gate_reviews, key=lambda review: review["id"], default=None)
+    if previous and previous["state"] == "APPROVED":
+        request(review_path, {"commit_id": head, "event": "REQUEST_CHANGES",
+            "body": f"{APPROVAL_PREFIX} PR #{number} requires gate revalidation before approval."})
     comments = []
     for page in range(1, 101):
         items = request(f"{prefix}/issues/{number}/comments?per_page=100&page={page}")
@@ -163,11 +166,12 @@ def main() -> int:
     if not unchanged():
         raise RuntimeError("PR or base changed during inspection; rerun the gate")
     if state == "success":
-        approval = request(review_path, {"commit_id": head, "event": "APPROVE",
+        request(review_path, {"commit_id": head, "event": "APPROVE",
             "body": f"{APPROVAL_PREFIX} PR #{number}, head {head}, base {base}. Both hosted reviews and maintainer acceptance verified."})
         if not unchanged():
-            request(f"{review_path}/{approval['id']}/dismissals",
-                    {"message": "PR or base changed during gate approval."}, method="PUT")
+            current = request(f"{prefix}/pulls/{number}")
+            request(review_path, {"commit_id": current["head"]["sha"], "event": "REQUEST_CHANGES",
+                "body": f"{APPROVAL_PREFIX} PR #{number} changed during approval; gate revalidation is required."})
             raise RuntimeError("PR changed during approval; rerun the gate")
     request(f"{prefix}/statuses/{head}", {"state": state, "context": CONTEXT,
         "description": description, "target_url": pr["html_url"]})
