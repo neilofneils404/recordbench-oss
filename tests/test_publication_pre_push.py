@@ -10,10 +10,10 @@ def command(root, *args, **kwargs):
     return subprocess.run(args, cwd=root, capture_output=True, text=True, **kwargs)
 
 
-def repository(tmp_path):
+def repository(tmp_path, object_format="sha1"):
     root = tmp_path / "source"
     root.mkdir()
-    for args in [("init", "-q"), ("config", "user.name", "Synthetic Author"),
+    for args in [("init", "-q", "--object-format=" + object_format), ("config", "user.name", "Synthetic Author"),
                  ("config", "user.email", "author@example.test")]:
         assert command(root, "git", *args).returncode == 0
     (root / "scripts").mkdir()
@@ -97,3 +97,14 @@ def test_nested_tag_metadata_is_checked_even_without_inner_ref(tmp_path):
     command(root, "git", "tag", "-d", "inner")
     oid = command(root, "git", "rev-parse", "outer").stdout.strip()
     assert inspect(root, oid, "refs/tags/outer").returncode != 0
+
+
+def test_sha256_repository_uses_matching_inspection_format(tmp_path):
+    root = repository(tmp_path, "sha256")
+    assert inspect(root).returncode == 0
+
+
+def test_malformed_required_private_check_setting_blocks(tmp_path):
+    root = repository(tmp_path)
+    command(root, "git", "config", "recordbench.requirePrivatePublicationCheck", "invalid-setting")
+    assert inspect(root).returncode != 0

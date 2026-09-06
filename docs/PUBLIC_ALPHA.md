@@ -91,5 +91,21 @@ maintainer approval. Use hosted runners with synthetic fixtures; do not attach
 private infrastructure or deployment credentials to public Actions. Default
 workflow permissions are read-only and actions are pinned to full commits.
 
+After both hosted reviews finish, a maintainer independently checks the full
+current head and review results, then posts this exact one-line PR comment,
+replacing the placeholder with the complete 40-character commit ID:
+
+```text
+RecordBench maintainer acceptance: FULL_COMMIT_ID
+```
+
+The acceptance must follow both review completions and come from an account
+with current write, maintain or admin permission. This additional full-commit
+acceptance is required because the code-review summary abbreviates its commit
+ID; a matching short prefix alone is not sufficient. A changed head, a newer
+review completion, or removal of the acceptance requires renewed acceptance.
+Missing acceptance leaves the gate pending. The gate verifies current access
+through GitHub, rather than trusting the comment's displayed association.
+
 The maintainer still reviews disclosure, provenance, and reconciled findings.
 Outside contributors do not need or receive access to a private deployment.

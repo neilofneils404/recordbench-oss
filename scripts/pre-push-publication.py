@@ -23,6 +23,8 @@ def git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
 def settings(root: Path) -> list[str]:
     required = git(root, "config", "--bool", "--get", "recordbench.requirePrivatePublicationCheck", check=False)
     deny = git(root, "config", "--path", "--get", "recordbench.publicationDenyFile", check=False)
+    if required.returncode not in (0, 1) or deny.returncode not in (0, 1):
+        raise ValueError("Publication configuration could not be read.")
     arguments: list[str] = []
     if required.returncode == 0 and required.stdout.strip() == "true" and not deny.stdout.strip():
         raise ValueError("This checkout requires a private publication deny file.")
@@ -41,6 +43,8 @@ def settings(root: Path) -> list[str]:
         ("recordbench.publicMergeCommit", "--allow-public-merge-commit", 1),
     ):
         result = git(root, "config", "--get-all", key, check=False)
+        if result.returncode not in (0, 1):
+            raise ValueError("Publication configuration could not be read.")
         for value in result.stdout.splitlines():
             fields = value.split("\t")
             if len(fields) != width:
@@ -72,7 +76,10 @@ def main() -> int:
         raise ValueError("Publication scanner is unavailable.")
     with tempfile.TemporaryDirectory(prefix="recordbench-push-check-") as directory:
         temporary = Path(directory)
-        git(temporary, "init", "--quiet", "--template=")
+        object_format = git(root, "rev-parse", "--show-object-format").stdout.strip()
+        if object_format not in {"sha1", "sha256"}:
+            raise ValueError("Unsupported source object format.")
+        git(temporary, "init", "--quiet", "--template=", "--object-format=" + object_format)
         for oid, ref in outgoing:
             # Fetch only explicitly outgoing refs, never private neighboring histories.
             git(temporary, "fetch", "--quiet", "--no-tags", str(root), f"{oid}:{ref}")

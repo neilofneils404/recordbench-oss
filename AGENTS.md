@@ -14,7 +14,9 @@ this repository, including in plans and agent handoffs. Read docs/PUBLIC_ALPHA.m
 
 Do not merge until GitHub Codex code and security reviews complete on the final
 commit, all findings are resolved or explicitly reconciled, and required CI
-passes. A local or subagent review is additional evidence, not a substitute.
+passes. A maintainer must also accept the full reviewed commit as described in
+`docs/PUBLIC_ALPHA.md`. A local or subagent review is additional evidence, not a
+substitute.
 
 Before changing deployment behavior, read `docs/ARCHITECTURE.md`,
 `docs/SECURITY_MODEL.md`, and the relevant runbook. Keep services private by

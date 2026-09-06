@@ -12,6 +12,7 @@ import urllib.request
 BOT = "chatgpt-codex-connector[bot]"
 SUMMARY = "<!-- codex-pull-request-review-summary -->"
 CONTEXT = "hosted-review-gate"
+ACCEPTANCE = re.compile(r"RecordBench maintainer acceptance: ([0-9a-f]{40})")
 
 
 def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str, str]:
@@ -51,7 +52,16 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
     if any(not thread.get("isResolved", False) or not thread.get("resolverCanReconcile", False)
            for thread in threads):
         return "failure", "A maintainer must reconcile every review discussion"
-    return "success", "Current-commit code/security reviews completed; discussions resolved"
+    # The bot abbreviates the code-review SHA. A separate privileged acceptance
+    # binds both completed reviews to the full head, including prefix collisions.
+    for c in comments:
+        acceptance = ACCEPTANCE.fullmatch(c.get("body", "").strip())
+        if not c.get("maintainerCanAccept") or not acceptance or acceptance.group(1) != head:
+            continue
+        accepted = datetime.fromisoformat((c.get("updated_at") or c["created_at"]).replace("Z", "+00:00"))
+        if accepted >= max(completed.values()):
+            return "success", "Both reviews completed; maintainer accepted the full commit"
+    return "pending", "Waiting for maintainer acceptance of the full reviewed commit"
 
 
 def request(path: str, data=None, *, method=None):
@@ -107,15 +117,24 @@ def main() -> int:
     else:
         raise RuntimeError("Discussion limit exceeded")
     resolver_permissions = {}
+    def can_reconcile(login):
+        if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
+            return False
+        if login not in resolver_permissions:
+            permission = request(f"{prefix}/collaborators/{login}/permission")
+            resolver_permissions[login] = permission.get("permission") in {"admin", "maintain", "write"}
+        return resolver_permissions[login]
+
+    for comment in comments:
+        comment["maintainerCanAccept"] = False
+        if ACCEPTANCE.fullmatch(comment.get("body", "").strip()):
+            comment["maintainerCanAccept"] = can_reconcile(comment.get("user", {}).get("login", ""))
     for thread in threads:
         resolver = (thread.get("resolvedBy") or {}).get("login", "")
         thread["resolverCanReconcile"] = False
         if not thread.get("isResolved") or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", resolver):
             continue
-        if resolver not in resolver_permissions:
-            permission = request(f"{prefix}/collaborators/{resolver}/permission")
-            resolver_permissions[resolver] = permission.get("permission") in {"admin", "maintain", "write"}
-        thread["resolverCanReconcile"] = resolver_permissions[resolver]
+        thread["resolverCanReconcile"] = can_reconcile(resolver)
     state, description = evaluate(head, comments, threads)
     if request(f"{prefix}/pulls/{number}")["head"]["sha"] != head:
         raise RuntimeError("PR changed during inspection; rerun the gate")

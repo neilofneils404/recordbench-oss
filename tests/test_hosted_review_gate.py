@@ -7,6 +7,15 @@ SPEC.loader.exec_module(GATE)
 HEAD = "a" * 40
 
 
+def approval(head=HEAD, permitted=True):
+    return {"body": "RecordBench maintainer acceptance: " + head,
+            "maintainerCanAccept": permitted, "updated_at": "2026-01-01T13:00:00Z"}
+
+
+def evaluate(head, comments, threads):
+    return GATE.evaluate(head, [*comments, approval()], threads)
+
+
 def summary(head=HEAD):
     return {"user": {"login": GATE.BOT, "type": "Bot"}, "updated_at": "2026-01-01T12:00:00Z",
         "body": GATE.SUMMARY + '\n<!-- codex-security-review:v1 {"headSha":"' + head + '","status":"completed"} -->\n' +
@@ -15,37 +24,37 @@ def summary(head=HEAD):
 
 
 def test_requires_both_reviews_on_current_head():
-    assert GATE.evaluate(HEAD, [], [])[0] == "pending"
-    assert GATE.evaluate(HEAD, [summary("b" * 40)], [])[0] == "pending"
+    assert evaluate(HEAD, [], [])[0] == "pending"
+    assert evaluate(HEAD, [summary("b" * 40)], [])[0] == "pending"
     partial = summary()
     partial["body"] = partial["body"].replace("**Code Review**", "**Other**")
-    assert GATE.evaluate(HEAD, [partial], [])[0] == "pending"
-    assert GATE.evaluate(HEAD, [summary()], [])[0] == "success"
+    assert evaluate(HEAD, [partial], [])[0] == "pending"
+    assert evaluate(HEAD, [summary()], [])[0] == "success"
 
 
 def test_unresolved_discussion_blocks_until_reconciled():
-    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": False}])[0] == "failure"
-    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
+    assert evaluate(HEAD, [summary()], [{"isResolved": False}])[0] == "failure"
+    assert evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
 
 
 def test_forged_summary_and_new_review_request_do_not_pass():
     forged = summary()
     forged["user"] = {"login": "synthetic-user", "type": "User"}
-    assert GATE.evaluate(HEAD, [forged], [])[0] == "pending"
+    assert evaluate(HEAD, [forged], [])[0] == "pending"
     requested = {"body": "@codex review", "author_association": "OWNER", "created_at": "2026-01-01T12:01:00Z"}
-    assert GATE.evaluate(HEAD, [summary(), requested], [])[0] == "pending"
+    assert evaluate(HEAD, [summary(), requested], [])[0] == "pending"
 
 
 def test_malformed_summary_never_passes():
     broken = summary()
     broken["body"] = broken["body"].replace('"status":"completed"', '"status":"running"')
-    assert GATE.evaluate(HEAD, [broken], [])[0] == "pending"
+    assert evaluate(HEAD, [broken], [])[0] == "pending"
 
 
 def test_edited_request_invalidates_previous_completion():
     requested = {"body": "@codex review", "author_association": "OWNER",
                  "created_at": "2026-01-01T11:00:00Z", "updated_at": "2026-01-01T12:01:00Z"}
-    assert GATE.evaluate(HEAD, [summary(), requested], [])[0] == "pending"
+    assert evaluate(HEAD, [summary(), requested], [])[0] == "pending"
 
 
 def test_single_review_rerun_is_compared_with_its_own_completion():
@@ -53,10 +62,53 @@ def test_single_review_rerun_is_compared_with_its_own_completion():
         current = summary()
         current["body"] = '\n'.join(line.replace('12:00:00Z', '12:02:00Z') if f'**{label}**' in line else line for line in current["body"].splitlines())
         requested = {"body": "@codex " + command, "author_association": "OWNER", "created_at": "2026-01-01T12:01:00Z"}
-        assert GATE.evaluate(HEAD, [current, requested], [])[0] == "success"
+        assert evaluate(HEAD, [current, requested], [])[0] == "success"
 
 
 def test_contributor_cannot_self_reconcile_findings():
-    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": True}])[0] == "failure"
-    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": False}])[0] == "failure"
-    assert GATE.evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
+    assert evaluate(HEAD, [summary()], [{"isResolved": True}])[0] == "failure"
+    assert evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": False}])[0] == "failure"
+    assert evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
+
+
+def test_short_hash_collision_requires_independent_full_head_acceptance():
+    collision = HEAD[:7] + "b" * 33
+    assert GATE.evaluate(collision, [summary(collision), approval(HEAD)], [])[0] == "pending"
+    assert GATE.evaluate(collision, [summary(collision), approval(collision, False)], [])[0] == "pending"
+    assert GATE.evaluate(collision, [summary(collision), approval(collision)], [])[0] == "success"
+
+
+def test_acceptance_must_follow_both_completed_reviews():
+    accepted = approval()
+    accepted["updated_at"] = "2026-01-01T11:00:00Z"
+    assert GATE.evaluate(HEAD, [summary(), accepted], [])[0] == "pending"
+    assert GATE.evaluate(HEAD, [summary()], [])[0] == "pending"
+
+
+def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
+    monkeypatch.setenv("PR_NUMBER", "1")
+    for permission, expected in (("read", "pending"), ("write", "success")):
+        statuses = []
+        accepted = approval()
+        accepted["user"] = {"login": "fixture-reviewer"}
+        accepted["maintainerCanAccept"] = True  # Never trust a supplied flag.
+
+        def request(path, data=None):
+            if path.endswith("/pulls/1"):
+                return {"state": "open", "head": {"sha": HEAD}, "html_url": "https://example.test/pr/1"}
+            if "/statuses/" in path:
+                statuses.append(data["state"])
+                return {}
+            if "/comments?" in path:
+                return [summary(), accepted]
+            if path == "graphql":
+                return {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+            if path.endswith("/collaborators/fixture-reviewer/permission"):
+                return {"permission": permission}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(GATE, "request", request)
+        assert GATE.main() == 0
+        assert statuses == ["pending", expected]
