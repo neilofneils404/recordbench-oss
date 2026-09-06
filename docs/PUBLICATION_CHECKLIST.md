@@ -34,6 +34,14 @@ requires an exact commit boundary, display name, and no-reply address. These
 options do not suppress the same deny term in files, commit messages, later
 legacy-identity commits, or near-match URLs.
 
+Compressed media can coincidentally contain a three-byte deny term. Only after
+manual content and metadata review, `--allow-reviewed-media-digest SHA256` may
+adjudicate those short raw-byte matches for that exact media blob. Longer deny
+terms, decoded media metadata, secret patterns, filenames, and other file types
+remain checked. Record the digest and reason privately. Never use this option
+to excuse actual private content. The pre-push hook reads equivalent repeated
+`recordbench.reviewedMediaDigest` local configuration entries.
+
 Run the repository's supported quality commands from a fresh environment:
 
 ```bash

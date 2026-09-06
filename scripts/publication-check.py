@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import ipaddress
 import json
@@ -406,11 +407,18 @@ def _scan_content(
     location: str,
     deny: tuple[bytes, ...],
     allowed_deny_literals: tuple[bytes, ...] = (),
+    reviewed_media_digests: tuple[str, ...] = (),
 ) -> list[Finding]:
+    # Only a manually reviewed, exact media blob may adjudicate accidental
+    # three-byte matches in compressed bytes. Decoded metadata retains all terms.
+    raw_deny = deny
+    if (Path(name).suffix.casefold() in MEDIA_SUFFIXES
+            and hashlib.sha256(data).hexdigest() in reviewed_media_digests):
+        raw_deny = tuple(term for term in deny if len(term) != 3)
     findings = _scan_bytes(
         data,
         location=location,
-        deny=deny,
+        deny=raw_deny,
         allowed_deny_literals=allowed_deny_literals,
     )
     if Path(name).suffix.casefold() == ".pdf":
@@ -429,6 +437,7 @@ def scan_tree(
     deny: tuple[bytes, ...],
     *,
     public_clone_urls: tuple[bytes, ...] = (),
+    reviewed_media_digests: tuple[str, ...] = (),
 ) -> list[Finding]:
     findings: list[Finding] = []
     for index, path in enumerate(_candidate_files(root), start=1):
@@ -467,6 +476,7 @@ def scan_tree(
                 allowed_deny_literals=(
                     public_clone_urls if relative == "README.md" else ()
                 ),
+                reviewed_media_digests=reviewed_media_digests,
             )
         )
     return findings
@@ -479,6 +489,7 @@ def scan_history(
     public_clone_urls: tuple[bytes, ...] = (),
     public_git_identities: tuple[tuple[bytes, bytes], ...] = (),
     baseline_public_git_identities: tuple[tuple[str, bytes, bytes], ...] = (),
+    reviewed_media_digests: tuple[str, ...] = (),
 ) -> list[Finding]:
     if not (root / ".git").exists():
         return [Finding(".git", "git-history-unavailable")]
@@ -594,6 +605,7 @@ def scan_history(
                     allowed_deny_literals=(
                         public_clone_urls if name == "README.md" else ()
                     ),
+                    reviewed_media_digests=reviewed_media_digests,
                 )
             )
     for commit in sorted(revision_ids):
@@ -747,6 +759,7 @@ def main() -> int:
         metavar=("COMMIT", "NAME", "EMAIL"),
     )
     parser.add_argument("--skip-history", action="store_true")
+    parser.add_argument("--allow-reviewed-media-digest", action="append", default=[])
     args = parser.parse_args()
     root = args.root.expanduser().resolve(strict=True)
     deny = _deny_terms(args.deny_file.expanduser()) if args.deny_file else ()
@@ -755,7 +768,10 @@ def main() -> int:
     baseline_identities = _baseline_public_git_identities(
         args.allow_public_baseline_git_identity
     )
-    findings = scan_tree(root, deny, public_clone_urls=clone_urls)
+    media_digests = tuple(args.allow_reviewed_media_digest)
+    if any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in media_digests):
+        raise RuntimeError("Reviewed media digest must be an exact SHA-256")
+    findings = scan_tree(root, deny, public_clone_urls=clone_urls, reviewed_media_digests=media_digests)
     if not args.skip_history:
         findings.extend(
             scan_history(
@@ -764,6 +780,7 @@ def main() -> int:
                 public_clone_urls=clone_urls,
                 public_git_identities=identities,
                 baseline_public_git_identities=baseline_identities,
+                reviewed_media_digests=media_digests,
             )
         )
     unique = sorted(set(findings), key=lambda item: (item.location, item.rule))
