@@ -655,7 +655,7 @@ def scan_history(
         [
             "git",
             "for-each-ref",
-            "--format=%(refname)%00%(taggername)%00%(taggeremail)%00%(contents)%00",
+            "--format=%(refname)%00%(if:equals=tag)%(objecttype)%(then)%(taggername)%00%(taggeremail)%00%(contents)%(end)%00",
             "refs/heads",
             "refs/tags",
         ],

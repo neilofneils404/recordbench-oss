@@ -344,3 +344,27 @@ def test_history_scan_checks_author_and_committer_identity(tmp_path) -> None:
     assert publication.Finding(
         "git-metadata", "non-example-email-address"
     ) in publication.scan_history(tmp_path, ())
+
+
+def test_reviewed_merge_identity_exception_is_commit_and_context_bound(tmp_path) -> None:
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.name", "Synthetic Maintainer")
+    git("config", "user.email", "maintainer@example.com")
+    name = b"fixture-private-name"
+    identity = ((name, b"12345+fixture-private-name@users.noreply.github.com"),)
+    git("commit", "--allow-empty", "-qm", "Merge pull request #1 from fixture-private-name/topic")
+    reviewed = git("rev-parse", "HEAD")
+    def findings(*commits):
+        return publication.scan_history(tmp_path, (name,), public_git_identities=identity,
+                                        public_merge_commits=commits)
+    assert any(f.rule == "operator-deny-term" for f in findings())
+    assert not findings(reviewed)
+    git("commit", "--allow-empty", "-qm", "Merge pull request #2 from fixture-private-name/topic")
+    assert any(f.rule == "operator-deny-term" for f in findings(reviewed))
+    second = git("rev-parse", "HEAD")
+    git("commit", "--allow-empty", "-qm", "Merge pull request #3 from fixture-private-name/fixture-private-name\n\nfixture-private-name")
+    third = git("rev-parse", "HEAD")
+    assert any(f.rule == "operator-deny-term" for f in findings(reviewed, second, third))
