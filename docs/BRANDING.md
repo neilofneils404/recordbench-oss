@@ -23,11 +23,30 @@ with enough contrast. The tagline matches the application's sign-in screen.
 | --- | --- |
 | [Record mark](../src/case_intelligence/static/favicon.svg) | Canonical application icon and standalone mark. |
 | [Repository banner](assets/recordbench-banner.svg) | Wide wordmark and tagline for the README or a project introduction. |
+| [Video teaser](assets/recordbench-teaser.mp4) | Approved 51-second, 1080p glimpse of selected workflows using synthetic records and a maintainer-supplied original soundtrack. Not a full walkthrough. |
+| [Teaser preview](assets/recordbench-teaser-preview.jpg) | Linked preview image for surfaces that do not support inline video. |
 
 Both SVGs are self-contained. They contain no external image or font requests,
 case screenshots, or deployment details. The banner repeats the canonical
 mark's paths at a larger scale; keep them synchronized if the mark changes.
 Use descriptive alternative text when embedding either asset.
+
+## Video teaser
+
+Present the video as **RecordBench in 51 seconds**: a quick glimpse of selected
+workflows, not a comprehensive tour or tutorial. Pair it with a short invitation
+to try synthetic material or contribute workflow feedback. Do not imply that
+this preview establishes production readiness or institutional endorsement.
+
+The MP4 includes music but no narration. Keep the on-screen labels visible and
+provide a direct video link alongside the linked preview image; do not rely on
+autoplay or inline-video support in Markdown. The approved edit is 51 seconds
+at 1920 × 1080. Preserve its soundtrack's pitch and tempo when reusing it.
+
+The maintainer supplied the original soundtrack for this teaser. Inclusion in
+this repository does not relicense that music under Apache-2.0 or grant a
+standalone music license. Obtain the maintainer's permission for other music
+uses. See [media rights](assets/MEDIA_RIGHTS.md).
 
 ## Short description
 

@@ -23,6 +23,22 @@ workflows use local models for retrieval, answers, and media transcription.
 > See [release readiness](docs/RELEASE_READINESS.md) for the validation still
 > ahead.
 
+## RecordBench in 51 seconds
+
+[![Watch a brief glimpse of RecordBench: Review the record. Build the work.](docs/assets/recordbench-teaser-preview.jpg)](docs/assets/recordbench-teaser.mp4)
+
+**Ask. Verify. Review. Export.** A quick glimpse of a few workflows—not a
+full walkthrough. See source-linked questions, synchronized media review,
+and work product coming together in one case workspace.
+
+[Watch or download the teaser](docs/assets/recordbench-teaser.mp4?raw=true)
+· **51 seconds, with music; no narration.** On-screen labels provide context,
+so it also works muted. The demonstration uses synthetic records (Project
+Nightglass). This is a development-alpha preview, not production validation.
+
+Want to help shape it? [Help build RecordBench](#help-build-it)—workflow feedback,
+synthetic test material, and clear bug reports are as useful as code.
+
 ## What you can explore today
 
 | Workflow | Current capabilities |
@@ -261,3 +277,5 @@ in [release readiness](docs/RELEASE_READINESS.md) and the
 RecordBench is licensed under [Apache-2.0](LICENSE). Dependencies, containers,
 and models retain their respective licenses and terms. Their notice inventory
 remains part of the [publication review](docs/PUBLICATION_CHECKLIST.md).
+The teaser's original soundtrack is not covered by the software license;
+see [media rights](docs/assets/MEDIA_RIGHTS.md).
