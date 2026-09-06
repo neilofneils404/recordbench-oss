@@ -38,6 +38,7 @@ def settings(root: Path) -> list[str]:
         ("recordbench.publicGitIdentity", "--allow-public-git-identity", 2),
         ("recordbench.publicBaselineIdentity", "--allow-public-baseline-git-identity", 3),
         ("recordbench.reviewedMediaDigest", "--allow-reviewed-media-digest", 1),
+        ("recordbench.publicMergeCommit", "--allow-public-merge-commit", 1),
     ):
         result = git(root, "config", "--get-all", key, check=False)
         for value in result.stdout.splitlines():

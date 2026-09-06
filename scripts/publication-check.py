@@ -490,6 +490,7 @@ def scan_history(
     public_git_identities: tuple[tuple[bytes, bytes], ...] = (),
     baseline_public_git_identities: tuple[tuple[str, bytes, bytes], ...] = (),
     reviewed_media_digests: tuple[str, ...] = (),
+    public_merge_commits: tuple[str, ...] = (),
 ) -> list[Finding]:
     if not (root / ".git").exists():
         return [Finding(".git", "git-history-unavailable")]
@@ -643,9 +644,13 @@ def scan_history(
                     ),
                 )
             )
-        findings.extend(
-            _scan_bytes(message, location="git-metadata", deny=deny)
-        )
+        if commit in public_merge_commits:
+            # Adjudicate only a public username in an exact reviewed merge's
+            # conventional first line. Branch name and remaining prose still scan.
+            for name, _ in public_git_identities:
+                pattern = rb"\AMerge pull request #[1-9][0-9]* from " + re.escape(name) + rb"/"
+                message = re.sub(pattern, b"Merge pull request from example/", message, count=1)
+        findings.extend(_scan_bytes(message, location="git-metadata", deny=deny))
     refs = subprocess.run(
         [
             "git",
@@ -760,6 +765,7 @@ def main() -> int:
     )
     parser.add_argument("--skip-history", action="store_true")
     parser.add_argument("--allow-reviewed-media-digest", action="append", default=[])
+    parser.add_argument("--allow-public-merge-commit", action="append", default=[])
     args = parser.parse_args()
     root = args.root.expanduser().resolve(strict=True)
     deny = _deny_terms(args.deny_file.expanduser()) if args.deny_file else ()
@@ -769,6 +775,9 @@ def main() -> int:
         args.allow_public_baseline_git_identity
     )
     media_digests = tuple(args.allow_reviewed_media_digest)
+    merge_commits = tuple(args.allow_public_merge_commit)
+    if any(re.fullmatch(r"[0-9a-f]{40}", value) is None for value in merge_commits):
+        raise RuntimeError("Public merge must be an exact commit")
     if any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in media_digests):
         raise RuntimeError("Reviewed media digest must be an exact SHA-256")
     findings = scan_tree(root, deny, public_clone_urls=clone_urls, reviewed_media_digests=media_digests)
@@ -781,6 +790,7 @@ def main() -> int:
                 public_git_identities=identities,
                 baseline_public_git_identities=baseline_identities,
                 reviewed_media_digests=media_digests,
+                public_merge_commits=merge_commits,
             )
         )
     unique = sorted(set(findings), key=lambda item: (item.location, item.rule))
