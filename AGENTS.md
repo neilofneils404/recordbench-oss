@@ -5,6 +5,17 @@ real case material, internal hostnames, private addresses, staff identities,
 credentials, keytabs, certificates, database files, runtime state, or private
 deployment overlays.
 
+Treat this repository and every GitHub interaction as public. Before any push,
+run the installed pre-push publication check; never bypass it. Before posting
+PR text, comments, attachments, or release assets, separately inspect their
+content and metadata for private information. Hosted CI runs after upload and
+cannot prevent the initial disclosure. Private deployment facts belong outside
+this repository, including in plans and agent handoffs. Read docs/PUBLIC_ALPHA.md.
+
+Do not merge until GitHub Codex code and security reviews complete on the final
+commit, all findings are resolved or explicitly reconciled, and required CI
+passes. A local or subagent review is additional evidence, not a substitute.
+
 Before changing deployment behavior, read `docs/ARCHITECTURE.md`,
 `docs/SECURITY_MODEL.md`, and the relevant runbook. Keep services private by
 default, preserve the trusted-proxy identity boundary, and run the publication

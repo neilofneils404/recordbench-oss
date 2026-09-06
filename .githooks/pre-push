@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+root=$(git rev-parse --show-toplevel)
+interpreter=$(git config --path --get recordbench.publicationPython || printf python3)
+exec "$interpreter" "$root/scripts/pre-push-publication.py" "$@"

@@ -6,6 +6,12 @@ with every behavioral change. Model changes require immutable revisions,
 licenses, resource measurements, and representative evaluation—not only vendor
 benchmarks.
 
+Install the [pre-push publication check](docs/PUBLIC_ALPHA.md#prevent-disclosure-before-publishing)
+before your first push. Public issues, PR descriptions, comments, attachments,
+screenshots, and logs are also publication surfaces; the Git hook cannot scan
+uploads made through GitHub's website or API. Never copy private deployment
+history or output into them. Start with the [contributor backlog](docs/CONTRIBUTOR_BACKLOG.md).
+
 Before a commit, run the publication sanitizer, the main test suite, the bundled
 transcription tests, Python compilation, and Compose validation. Never commit a
 real `.env`, key, certificate, keytab, token, database, media file, transcript,
@@ -43,6 +49,12 @@ overlay. They are not acceptable additions to this repository even when the
 downstream is private.
 
 ## Pull requests
+
+Wait for GitHub-hosted Codex code and security reviews on the final commit,
+reconcile every finding, and pass required CI before merge. Corrections require
+renewed review. Local review does not replace those hosted reviews. Maintainers
+must also inspect synthetic-data provenance and disclosure risk. See
+[merge and automation controls](docs/PUBLIC_ALPHA.md#merge-and-automation-boundary).
 
 Each pull request should explain the user problem, the resulting behavior, the
 synthetic evidence, and any security, lifecycle, migration, model, or recovery

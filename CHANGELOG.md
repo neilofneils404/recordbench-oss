@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-05: Define the public contributor alpha separately from supported
+  production releases. Add contributor starting points and synthetic-only issue
+  forms, outgoing-history pre-push inspection, an independent CI secret scan,
+  and a current-commit GitHub Codex code/security review status. Private
+  deployment data and deny lists remain outside the repository; these controls
+  do not change application runtime or claim complete disclosure prevention.
+
 - 2026-09-05: Protect shared every-source human validation from stale choice/note
   overwrites. Recovery retains proposed fields alongside saved reviewer attribution
   and original machine/source support; repeated conflicts remain safe. Required

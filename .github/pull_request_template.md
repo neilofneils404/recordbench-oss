@@ -28,4 +28,8 @@ acceptance performed. Do not include private deployment output.
       documentation.
 - [ ] `make check` passes, or the exact bounded exception is explained.
 - [ ] The publication sanitizer passes.
+- [ ] The complete outgoing history passed the local pre-push check; PR text
+      and attachments were separately inspected before upload.
+- [ ] Before merge: final-commit GitHub Codex code/security reviews completed,
+      all findings were reconciled, and required CI passed.
 - [ ] No existing release tag was moved or rewritten.

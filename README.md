@@ -6,8 +6,8 @@
 
 Discovery arrives in folders. Understanding a case takes more.
 
-RecordBench is a self-hosted workspace being built for the work of federal
-criminal defense. It brings documents, images, email, spreadsheets, audio,
+RecordBench is a self-hosted workspace for legal discovery review.
+It brings documents, images, email, spreadsheets, audio,
 and video into one place to search, review, ask questions, and develop work
 product with the source material close at hand.
 
@@ -38,6 +38,18 @@ Nightglass). This is a development-alpha preview, not production validation.
 
 Want to help shape it? [Help build RecordBench](#help-build-it)—workflow feedback,
 synthetic test material, and clear bug reports are as useful as code.
+
+## Help build RecordBench
+
+This is a maintainer-led contributor alpha. It does not publish any
+organization's private deployment, records, or endorsement. Contributions use
+synthetic examples only, including issue descriptions, screenshots, and logs.
+
+Start with the [contributor backlog](docs/CONTRIBUTOR_BACKLOG.md) and
+[contribution guide](CONTRIBUTING.md). Installation feedback, browser tests,
+accessibility improvements, and focused workflow fixes are welcome. Coordinate
+an issue before starting so contributors do not duplicate in-flight work.
+See the [public-alpha boundary](docs/PUBLIC_ALPHA.md) for scope and limitations.
 
 ## What you can explore today
 

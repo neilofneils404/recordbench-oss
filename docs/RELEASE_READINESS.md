@@ -26,9 +26,18 @@ status; it does not complete third-party license review, sanitization, or
 deployment acceptance. Keep any supporting private approval records outside
 this repository.
 
-## Publication requirements
+## Contributor source publication
 
-The following evidence is required before changing repository visibility:
+The maintainer authorizes an environment-neutral public contributor alpha
+under the [public-alpha requirements](PUBLIC_ALPHA.md). This separates source
+collaboration from a supported binary/container release. Sanitization, private
+data exclusion, ownership, applicable license notices, and review gates remain
+mandatory. No supported-deployment or quality claim follows from public access.
+
+## Supported-release requirements
+
+The following evidence is required before declaring a supported release or
+distributing first-party production images:
 
 1. documented first-party ownership/publication authorization;
 2. complete dependency, container, and model-license review;
@@ -51,7 +60,7 @@ No bundled synthetic-policy benchmark is a production quality or throughput
 claim. Until an executable evaluation artifact exists, the UI reports that
 deployment evaluation is required.
 
-## Release procedure
+## Supported-release procedure
 
 1. Freeze and hash a private rollback bundle.
 2. Run the generic scanner and an external private deny file over the tree and

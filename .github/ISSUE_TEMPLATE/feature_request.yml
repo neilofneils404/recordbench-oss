@@ -1,0 +1,16 @@
+name: Bounded contribution proposal
+description: Coordinate a small feature or improvement before implementation
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: User problem and proposed outcome
+      description: Use a generic scenario; omit private deployment and case information.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Scope, non-goals, and synthetic acceptance checks
+    validations:
+      required: true

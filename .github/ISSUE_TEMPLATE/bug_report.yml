@@ -1,0 +1,29 @@
+name: Synthetic bug report
+description: Report a reproducible product problem without private material
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic examples only. Do not paste real records, production logs,
+        names, paths, credentials, or private deployment details. Report suspected
+        vulnerabilities through the repository's private security reporting form.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected and observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction and version
+      description: Give minimal steps using invented inputs and the commit or release.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Publication check
+      options:
+        - label: I checked this report and attachments contain only synthetic, public-safe material.
+          required: true

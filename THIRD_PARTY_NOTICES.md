@@ -1,8 +1,11 @@
 # Third-party notices
 
-This is a prerelease inventory, not a substitute for the license texts shipped
-by upstream projects. Public release remains blocked until an organization-approved
-software-composition and model-license review confirms this record.
+This is a source-alpha inventory, not a substitute for upstream license texts.
+No model weights or third-party runtime binaries are bundled in this repository.
+Operators installing optional packages or downloading models must retain and
+review their upstream terms. A supported image release still requires a complete
+resolved software-composition and model-license review; source publication does
+not claim that review is complete.
 
 ## Runtime foundations
 
@@ -33,8 +36,8 @@ current declarations are:
 - torchaudio English and Spanish alignment artifacts: BSD-2-Clause as declared
   upstream;
 - pyannote Community-1 diarization: CC-BY-4.0 and gated upstream terms;
-- Community-1 dependency artifacts: publication-blocking upstream-terms review
-  is still required.
+- Community-1 dependency artifacts: upstream-terms review is still required
+  before any redistribution or supported deployment claim.
 
 No model weights are committed to this repository. The installer retrieves
 exact revisions only after the operator reviews applicable terms. A Hugging

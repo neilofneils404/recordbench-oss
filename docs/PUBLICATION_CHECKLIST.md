@@ -1,7 +1,9 @@
 # Public-release checklist
 
-No GitHub publication or public image push is authorized until every item is
-complete.
+Public source collaboration follows [the public-alpha boundary](PUBLIC_ALPHA.md).
+The full checklist below remains the supported-release and public-image gate.
+Source publication still requires complete disclosure inspection and applicable
+license notices; it does not waive those checks.
 
 ## Required local gates
 
