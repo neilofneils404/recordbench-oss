@@ -601,16 +601,16 @@ def test_full_review_freezes_every_source_versions_criteria_and_computes_validat
     excluded = [item for item in sample if item.machine_decision == "excluded"][:2]
     assert len(included) == 2 and len(excluded) == 2
     store.adjudicate_review_decision(
-        matter.matter_id, ACTOR, run.run_id, included[0].document_id, human_decision="agree"
+        matter.matter_id, ACTOR, run.run_id, included[0].document_id, expected_updated_at=included[0].updated_at, human_decision="agree"
     )
     store.adjudicate_review_decision(
-        matter.matter_id, ACTOR, run.run_id, included[1].document_id, human_decision="exclude"
+        matter.matter_id, ACTOR, run.run_id, included[1].document_id, expected_updated_at=included[1].updated_at, human_decision="exclude"
     )
     store.adjudicate_review_decision(
-        matter.matter_id, ACTOR, run.run_id, excluded[0].document_id, human_decision="include"
+        matter.matter_id, ACTOR, run.run_id, excluded[0].document_id, expected_updated_at=excluded[0].updated_at, human_decision="include"
     )
     store.adjudicate_review_decision(
-        matter.matter_id, ACTOR, run.run_id, excluded[1].document_id, human_decision="agree"
+        matter.matter_id, ACTOR, run.run_id, excluded[1].document_id, expected_updated_at=excluded[1].updated_at, human_decision="agree"
     )
     metrics = store.review_validation_metrics(matter.matter_id, ACTOR, run.run_id)
     assert metrics["true_positive"] == metrics["false_positive"] == 1

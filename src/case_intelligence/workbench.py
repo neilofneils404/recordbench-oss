@@ -175,6 +175,7 @@ from .workspace_store import (
     UploadItemRecord,
     WorkspaceProblem,
     ReportEditConflict,
+    ReviewDecisionConflict,
     NotebookEditConflict,
     WorkspaceStore,
 )
@@ -8849,6 +8850,38 @@ def create_workbench_app(
             ),
         }
 
+    def decision_reviewer_name(decision) -> str:
+        if decision is None or not decision.reviewed_by:
+            return ""
+        try:
+            return bench.workspace.get_principal(decision.reviewed_by).display_name
+        except KeyError:
+            return "Case-team member"
+
+    def review_decision_recovery(
+        request: Request, slug: str, run_id: str, document_id: str, *,
+        error: str, draft: Mapping[str, object], status_code: int = 409,
+    ):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        try:
+            run = bench.workspace.review_run(matter.matter_id, context.principal_id, run_id)
+            decision = bench.workspace.review_decision(matter.matter_id, context.principal_id, run_id, document_id)
+        except KeyError:
+            run, decision = None, None
+            error = "This source review is no longer available. Copy your unsaved note before leaving."
+        matter = authorized_matter(request, slug)
+        return templates.TemplateResponse(
+            request=request, name="workbench_review_decision_recovery.html",
+            context={
+                **base_context(request, matter), "matter": matter, "active_run": run,
+                "selected_decision": decision, "draft": draft, "error": error,
+                "reviewer_name": decision_reviewer_name(decision),
+                "expected_updated_at": decision.updated_at if decision else "",
+                "can_save": decision is not None and decision.machine_decision != "pending",
+            }, status_code=status_code, headers={"Cache-Control": "no-store"},
+        )
+
     @app.get("/matters/{slug}/full-review", response_class=HTMLResponse)
     def matter_full_review(
         request: Request,
@@ -8942,6 +8975,7 @@ def create_workbench_app(
                 "active_run": active_run,
                 "decision_page": decision_page,
                 "selected_decision": selected_decision,
+                "reviewer_name": decision_reviewer_name(selected_decision),
                 "validation": metrics,
                 "source_sets": source_sets,
                 "notice": notice,
@@ -9176,10 +9210,12 @@ def create_workbench_app(
         document_id: str,
         human_decision: str = Form(..., max_length=16),
         note: str = Form("", max_length=2_000),
+        expected_updated_at: str = Form("", max_length=64),
     ):
         context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        draft = dict(human_decision=human_decision, human_note=note)
         try:
-            matter = authorized_matter(request, slug)
             run = bench.workspace.review_run(
                 matter.matter_id, context.principal_id, run_id
             )
@@ -9189,19 +9225,16 @@ def create_workbench_app(
                 run_id,
                 document_id,
                 human_decision=human_decision,
+                expected_updated_at=expected_updated_at,
                 note=note,
             )
-        except KeyError as exc:
-            raise HTTPException(404, "Review decision not found") from exc
+        except KeyError:
+            return review_decision_recovery(request, slug, run_id, document_id,
+                                            error="Source review unavailable.", draft=draft)
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(
-                    f"/matters/{slug}/full-review",
-                    run=run_id,
-                    source=document_id,
-                    error=str(exc),
-                ), status_code=303
-            )
+            return review_decision_recovery(request, slug, run_id, document_id,
+                error=str(exc), draft=draft,
+                status_code=409 if isinstance(exc, ReviewDecisionConflict) else 400)
         audit(
             request, "full_review.adjudicate", "success", context=context, matter=matter,
             object_type="review_decision", object_id=decision.document_id,

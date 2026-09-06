@@ -99,6 +99,10 @@ class MatterNameConflict(WorkspaceProblem):
     """The name displayed when the edit began is no longer current."""
 
 
+class ReviewDecisionConflict(WorkspaceProblem):
+    """A shared source-validation decision changed after its form was displayed."""
+
+
 class ReportEditConflict(WorkspaceProblem):
     """A Report or section changed after its form was displayed."""
 
@@ -9955,8 +9959,9 @@ class WorkspaceStore:
             raise ValueError("review citations are too large")
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             frozen = self.connection.execute(
-                "SELECT item.matter_id,item.source_version_id,item.source_basis_digest,"
+                "SELECT item.matter_id,item.source_version_id,item.source_basis_digest,item.updated_at,"
                 "run.actor_id,run.state,catalog.version_id AS current_version,"
                 "catalog.content_basis_digest AS current_basis,catalog.source_state "
                 "FROM workbench_review_decision item "
@@ -9969,6 +9974,7 @@ class WorkspaceStore:
             ).fetchone()
             if frozen is None:
                 raise KeyError(document_id)
+            now = self._review_decision_time(frozen["updated_at"])
             if frozen["state"] == "running":
                 authorized = self.connection.execute(
                     "SELECT 1 FROM workbench_matter_membership membership "
@@ -10128,14 +10134,16 @@ class WorkspaceStore:
 
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute(
-                "SELECT item.machine_decision,run.state FROM workbench_review_decision item "
+                "SELECT item.machine_decision,item.updated_at,run.state FROM workbench_review_decision item "
                 "JOIN workbench_review_run run ON run.run_id=item.run_id "
                 "WHERE item.run_id=? AND item.document_id=?",
                 (run_id, document_id),
             ).fetchone()
             if row is None:
                 raise KeyError(document_id)
+            now = self._review_decision_time(row["updated_at"])
             prior = str(row["machine_decision"])
             if row["state"] != "running" or prior == "pending":
                 raise WorkspaceProblem("This source check is not ready to be finalized.")
@@ -10355,32 +10363,36 @@ class WorkspaceStore:
             ).fetchall()
         return tuple(self._review_decision(row) for row in rows)
 
+    def _review_decision_time(self, previous: str) -> str:
+        earlier = datetime.fromisoformat(previous.replace("Z", "+00:00"))
+        return self._timestamp(max(self.current_time(), earlier + timedelta(microseconds=1)))
+
     def adjudicate_review_decision(
         self, matter_id: str, actor_id: str, run_id: str, document_id: str, *,
-        human_decision: str, note: str = "",
+        human_decision: str, expected_updated_at: str, note: str = "",
     ) -> ReviewDecisionRecord:
-        actor = self.membership(matter_id, actor_id).principal_id
         if human_decision not in {"agree", "include", "exclude", "uncertain"}:
             raise WorkspaceProblem("Choose agree, include, exclude, or uncertain.")
         comment = self._safe_text(
             note, label="Validation note", maximum=2_000, required=False, multiline=True
         )
-        now = self._now()
         with self._lock, self.connection:
-            changed = self.connection.execute(
+            self.connection.execute("BEGIN IMMEDIATE")
+            actor = self.membership(matter_id, actor_id).principal_id
+            current = self.review_decision(matter_id, actor, run_id, document_id)
+            if not expected_updated_at or expected_updated_at != current.updated_at:
+                raise ReviewDecisionConflict(
+                    "This source review changed since the page was opened. Compare the saved review before trying again."
+                )
+            if current.machine_decision == "pending":
+                raise WorkspaceProblem("This source decision is still pending. Wait for it to finish before reviewing it.")
+            now = self._review_decision_time(current.updated_at)
+            self.connection.execute(
                 "UPDATE workbench_review_decision SET human_decision=?,human_note=?,reviewed_by=?,"
-                "reviewed_at=?,updated_at=? WHERE run_id=? AND matter_id=? AND document_id=? "
-                "AND machine_decision<>'pending'",
-                (human_decision, comment, actor, now, now, run_id, matter_id,
-                 self._source_document_id(document_id)),
-            ).rowcount
-            if changed != 1:
-                raise KeyError(document_id)
-            row = self.connection.execute(
-                "SELECT * FROM workbench_review_decision WHERE run_id=? AND document_id=?",
-                (run_id, document_id),
-            ).fetchone()
-        return self._review_decision(row)
+                "reviewed_at=?,updated_at=? WHERE run_id=? AND matter_id=? AND document_id=?",
+                (human_decision, comment, actor, now, now, run_id, matter_id, current.document_id),
+            )
+            return self.review_decision(matter_id, actor, run_id, current.document_id)
 
     def review_validation_metrics(
         self,

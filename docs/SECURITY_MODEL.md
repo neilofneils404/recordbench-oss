@@ -65,3 +65,13 @@ transaction as displayed-version/status checks and mutation. CSRF-protected
 forms cannot bypass guards by omitting tokens. Recovery reauthorizes the matter
 before showing saved work or a submitted draft; deleted work is not recreated.
 Existing success audit contains operation metadata, without old/new Report text.
+
+## Shared source validation
+
+[Team source validation](REVIEW_VALIDATION.md) requires the displayed decision
+revision and checks active principal, membership, matter and exact run/document
+inside one immediate write transaction. Pending decisions cannot be adjudicated.
+Recovery reauthorizes the matter before showing current or proposed human work;
+deleted/unavailable reviews do not become new rows. Machine completion and
+existing source-change invalidation serialize with human edits and advance the
+same revision metadata. Success audit retains operation metadata without notes.

@@ -1,0 +1,7 @@
+<form class="review-decision-form" method="post"{% if can_save %} action="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/decisions/{{ selected_decision.document_id }}"{% endif %}>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="expected_updated_at" value="{{ expected_updated_at }}">
+  {% for value,label in [('agree','Agree'),('include','Override: include'),('exclude','Override: exclude'),('uncertain','Uncertain')] %}<label class="validation-choice"><input type="radio" name="human_decision" value="{{ value }}" {% if draft.human_decision == value %}checked{% endif %} required><span>{{ label }}</span></label>{% endfor %}
+  <label><span>Review note</span><textarea name="note" maxlength="2000" rows="5">{{ draft.human_note }}</textarea></label>
+  {% if can_save %}<button class="button button-primary" type="submit">Save validation</button>{% endif %}
+</form>

@@ -43,6 +43,10 @@ Final status, reordering and deletion require the work just reviewed, while
 teammates can edit different sections independently. See
 [Report editing and recovery](docs/REPORT_EDITING.md).
 
+Every-source validation also protects shared reviewer decisions and notes from
+older forms, shows the current reviewer, and keeps machine results separate.
+See [team source validation](docs/REVIEW_VALIDATION.md).
+
 Matter owners and administrators can rename a matter in **Settings**. Stale edits
 keep the proposed name for review; existing source links and saved work remain
 available. See the [matter settings contract](docs/MATTER_SETTINGS.md).

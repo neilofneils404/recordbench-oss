@@ -163,7 +163,7 @@
       "tests/test_matter_media_workflow.py::test_media_upload_transcript_review_range_citations_exports_and_clips": "141dc1cca74285ae991a9f23bf333cef83451fb049d5d781fe02aa7550458dba",
       "tests/test_matter_media_workflow.py::test_speaker_review_browser_contract_preserves_player_scroll_and_focus": "7955f04e150e91e0fa9549f733efbff67a55372d4e31735d46888df1beeee5e8",
       "tests/test_matter_media_workflow.py::test_speaker_review_save_updates_every_passage_without_navigation": "9cf8e8a142ba1d81d8777be18e67dc91d6c0ee7db74363bf629830b45dc1f2c3",
-      "tests/test_research_and_full_review.py::test_full_review_freezes_every_source_versions_criteria_and_computes_validation": "998db88197c24a79eccc535416f123119a17df9164a5c708f880fcccbed338e0",
+      "tests/test_research_and_full_review.py::test_full_review_freezes_every_source_versions_criteria_and_computes_validation": "473959c1656360c7e180520da382fef398ce26fad701c8df4901f07a9b097a50",
       "tests/test_review_acceptance_pack.py::test_withheld_source_scenario_excludes_prepared_synthesis": "1ddf71e3aab7c63d0942f52c2ebf50cccf66c62cdf7f9a438221db960e848e6e",
       "tests/test_review_conversation_continuity.py::test_research_result_is_appended_once_to_its_conversation_and_survives_restart": "378a0753115f5c890d02eb885af367dd981d6b49939f16777cbac01c9c43b5ee",
       "tests/test_review_conversation_continuity.py::test_review_composer_starts_broader_work_in_the_same_conversation": "9ce32e42416c7b814db7a5d4c90711c0b6a84f7a2af1845b8330a436463f6228",
@@ -189,7 +189,7 @@
       "tests/test_generation.py": "17d7434cd3e1c41b03792a82a146f0fee4fc0c25bad7158d21fe0d00bcbcd2f9",
       "tests/test_matter_management.py": "739a7a7a913d9446daf5e45483df19b354fe504ab1bbd1723ad6428bddccf857",
       "tests/test_matter_media_workflow.py": "d8a40d8e30647d8558725b7d853c29f761ddb218a798faa430e8d3b9a11d9dc0",
-      "tests/test_research_and_full_review.py": "4a3ec979e11577950c35821036e71102e763e411c9b68583bbbc3aa2470a9f4c",
+      "tests/test_research_and_full_review.py": "4ba1acb7e2c077a632e744538214f22ebba492a2633511e63114de5cf7182c47",
       "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
       "tests/test_review_conversation_continuity.py": "7e09fe23984a0acd5c97d6b47ed15467d0437133bb8b76b1a5d348ebc6523eeb",
       "tests/test_review_quality.py": "2c37d4c9af59f79d00df3ed044499343496c7e9ac065b9293f195036a065e8da",
@@ -202,6 +202,6 @@
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "6db5652facb1ceb81d95d4ffd274c173337364b53c2be9b52ae241305dee923c"
+    "content_fingerprint": "5bae681cb6c4a5dc4803c609ca4278cdeb50185f95e5e898fa26bda5fb5b3423"
   }
 }

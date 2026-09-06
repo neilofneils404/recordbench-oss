@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-05: Protect shared every-source human validation from stale choice/note
+  overwrites. Recovery retains proposed fields alongside saved reviewer attribution
+  and original machine/source support; repeated conflicts remain safe. Required
+  displayed revisions and active matter/member checks commit in one transaction.
+  Decision timestamps advance across human edits, machine completion and existing
+  changed-source invalidation even with repeated clocks. The ordinary page labels
+  validation as shared team work and withholds Save for pending decisions. No
+  schema, original machine-result, source, metric or export-format change.
+
 - 2026-09-05: Protect shared Report details, section edits, Final decisions,
   reordering and deletion from stale forms. Recovery retains submitted text
   alongside current saved work and exact section support. Independent section
