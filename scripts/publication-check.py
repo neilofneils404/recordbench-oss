@@ -213,6 +213,8 @@ def _scan_bytes(
             findings.append(Finding(location, "private-network-address"))
             break
     for match in EMAIL.finditer(data):
+        if match.group(0).lower() == b"noreply@" + b"github.com":
+            continue  # Public GitHub merge-service address; deny rules still apply.
         domain = match.group(1).decode("ascii", "ignore").casefold()
         if domain not in {
             "example.com",

@@ -370,3 +370,11 @@ def test_reviewed_merge_identity_exception_is_commit_and_context_bound(tmp_path)
     git("commit", "--allow-empty", "-qm", "Merge pull request #3 from fixture-private-name/fixture-private-name\n\nfixture-private-name")
     third = git("rev-parse", "HEAD")
     assert any(f.rule == "operator-deny-term" for f in findings(reviewed, second, third))
+
+
+def test_github_merge_service_address_is_public_but_other_addresses_still_block():
+    service = b"noreply@" + b"github.com"
+    assert publication._scan_bytes(service, location="git-metadata", deny=()) == []
+    private = b"personal@" + b"github.com"
+    assert publication._scan_bytes(service + b" " + private, location="git-metadata", deny=())
+    assert publication._scan_bytes(service, location="git-metadata", deny=(b"github",))

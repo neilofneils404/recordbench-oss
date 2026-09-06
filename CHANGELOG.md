@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 2026-09-05: Recognize the exact public GitHub merge-service email so hosted
+  merges pass publication inspection; other addresses and deny terms still block.
+
 - 2026-09-05: Reject installer interpreter symlinks into the publishing
   checkout and require acceptance timestamps strictly after review completion.
 

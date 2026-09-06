@@ -45,7 +45,8 @@ The hook scans every outgoing branch/tag and its reachable history in an
 isolated temporary repository before Git transmits objects, including every
 reachable annotated tag object. CI also runs on tag pushes. Install `pypdf`
 and `ffprobe` as described in the publication checklist; missing inspection
-dependencies block publication. A removed file still exists in history and
+dependencies block publication. The exact public GitHub merge-service email is recognized; other non-example
+addresses and configured deny terms still block. A removed file still exists in history and
 still blocks. Keep sensitive work in a separate repository with no public
 remote. Never use mirror pushes or push private deployment histories.
 
