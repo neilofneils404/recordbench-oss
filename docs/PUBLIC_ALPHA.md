@@ -29,12 +29,16 @@ CI runs after content reaches GitHub. It cannot prevent an initial disclosure.
 Install the local pre-push check in every publishing checkout:
 
 ```console
-git config --local core.hooksPath .githooks
+python3 scripts/install-publication-hook.py ~/.local/share/recordbench-publication-guard/reviewed-v1
 ```
 
-If the scanner dependencies are in a virtual environment, set
-`recordbench.publicationPython` to its absolute Python executable path using
-`git config --local`. The default is `python3`.
+Run the installer from a trusted, reviewed checkout with the Python environment
+that contains the scanner dependencies. Both that environment and the new
+installation directory must be outside the publishing checkout. The installer
+copies the reviewed scanner and hook, pins the interpreter, and enables isolated
+Python execution. Branch switches cannot replace this installed code. Reinstall
+reviewed updates into a new directory. Do not point `core.hooksPath` at the
+branch-owned `.githooks` directory.
 
 The hook scans every outgoing branch/tag and its reachable history in an
 isolated temporary repository before Git transmits objects, including every
@@ -123,3 +127,7 @@ through GitHub, rather than trusting the comment's displayed association.
 
 The maintainer still reviews disclosure, provenance, and reconciled findings.
 Outside contributors do not need or receive access to a private deployment.
+
+The gate withdraws its prior native approval when a PR moves away from the
+default branch. Publication identity dispositions support SHA-1 and SHA-256
+repository object IDs.

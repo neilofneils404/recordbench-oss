@@ -101,6 +101,10 @@ def test_nested_tag_metadata_is_checked_even_without_inner_ref(tmp_path):
 
 def test_sha256_repository_uses_matching_inspection_format(tmp_path):
     root = repository(tmp_path, "sha256")
+    boundary = command(root, "git", "rev-parse", "HEAD").stdout.strip()
+    command(root, "git", "config", "recordbench.publicBaselineIdentity",
+            boundary + "\tSynthetic Author\t12345+fixture@users.noreply.github.com")
+    command(root, "git", "config", "recordbench.publicMergeCommit", boundary)
     assert inspect(root).returncode == 0
 
 
@@ -139,3 +143,17 @@ def test_tag_target_hash_is_structural_but_tag_message_still_scans(tmp_path):
     command(root, "git", "tag", "-f", "-a", "v-test", "-m", term)
     tag_oid = command(root, "git", "rev-parse", "v-test").stdout.strip()
     assert inspect(root, tag_oid, "refs/tags/v-test").returncode != 0
+
+
+def test_installed_hook_does_not_execute_candidate_scanner(tmp_path):
+    import sys
+    root = repository(tmp_path)
+    destination = tmp_path / "trusted-hook"
+    result = command(root, sys.executable, str(ROOT / "scripts/install-publication-hook.py"), str(destination))
+    assert result.returncode == 0, result.stderr
+    marker = tmp_path / "executed"
+    (root / "scripts/publication-check.py").write_text("from pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n")
+    oid = commit(root)
+    result = command(root, str(destination / "pre-push"), input=f"refs/heads/main {oid} refs/heads/main {'0' * 40}\n")
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()

@@ -773,7 +773,7 @@ def _baseline_public_git_identities(
 ) -> tuple[tuple[str, bytes, bytes], ...]:
     result: list[tuple[str, bytes, bytes]] = []
     for boundary, name, email in values:
-        if re.fullmatch(r"[0-9a-f]{40}", boundary) is None:
+        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", boundary) is None:
             raise RuntimeError("public baseline boundary must be an exact commit SHA")
         encoded_name, encoded_email = _public_identity(name, email, current=False)
         result.append((boundary, encoded_name, encoded_email))
@@ -812,7 +812,7 @@ def main() -> int:
     )
     media_digests = tuple(args.allow_reviewed_media_digest)
     merge_commits = tuple(args.allow_public_merge_commit)
-    if any(re.fullmatch(r"[0-9a-f]{40}", value) is None for value in merge_commits):
+    if any(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value) is None for value in merge_commits):
         raise RuntimeError("Public merge must be an exact commit")
     if any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in media_digests):
         raise RuntimeError("Reviewed media digest must be an exact SHA-256")

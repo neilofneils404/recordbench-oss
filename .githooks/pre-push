@@ -1,5 +1,3 @@
 #!/bin/sh
-set -eu
-root=$(git rev-parse --show-toplevel)
-interpreter=$(git config --path --get recordbench.publicationPython || printf python3)
-exec "$interpreter" "$root/scripts/pre-push-publication.py" "$@"
+echo "Install the reviewed external publication hook as described in docs/PUBLIC_ALPHA.md." >&2
+exit 1

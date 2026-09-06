@@ -129,12 +129,12 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch):
 def test_shared_head_does_not_share_native_approval_or_approve_another_base(monkeypatch):
     monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
     issued = []
-    for number in (1, 2, 3):
+    for number in (1, 2, 3, 4):
         monkeypatch.setenv("PR_NUMBER", str(number))
         accepted = approval()
         accepted["user"] = {"login": "fixture-reviewer"}
         pr = {"state": "open", "head": {"sha": HEAD}, "base": {"sha": "b" * 40,
-              "ref": "other" if number == 3 else "main", "repo": {"default_branch": "main"}},
+              "ref": "other" if number >= 3 else "main", "repo": {"default_branch": "main"}},
               "html_url": "https://example.test/pr/" + str(number)}
 
         def request(path, data=None, *, method=None):
@@ -142,8 +142,10 @@ def test_shared_head_does_not_share_native_approval_or_approve_another_base(monk
                 return pr
             if path.split("?")[0].endswith("/reviews"):
                 if data is None:
-                    return []
-                issued.append((number, data["commit_id"]))
+                    return ([{"id": 10, "state": "APPROVED", "user": {"login": "github-actions[bot]"},
+                              "body": "RecordBench hosted review gate: prior default-branch approval"}]
+                            if number == 4 else [])
+                issued.append((number, data["event"], data["commit_id"]))
                 return {"id": number}
             if "/statuses/" in path:
                 return {}
@@ -158,7 +160,7 @@ def test_shared_head_does_not_share_native_approval_or_approve_another_base(monk
 
         monkeypatch.setattr(GATE, "request", request)
         assert GATE.main() == 0
-    assert issued == [(1, HEAD)]
+    assert issued == [(1, "APPROVE", HEAD), (4, "REQUEST_CHANGES", HEAD)]
 
 
 def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):

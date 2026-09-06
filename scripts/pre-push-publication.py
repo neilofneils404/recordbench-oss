@@ -71,7 +71,7 @@ def main() -> int:
         outgoing.append((oid, remote_ref))
     if not outgoing:
         return 0
-    scanner = root / "scripts" / "publication-check.py"
+    scanner = Path(__file__).with_name("publication-check.py")
     if scanner.is_symlink() or not scanner.is_file():
         raise ValueError("Publication scanner is unavailable.")
     with tempfile.TemporaryDirectory(prefix="recordbench-push-check-") as directory:

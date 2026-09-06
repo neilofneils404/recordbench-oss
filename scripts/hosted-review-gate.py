@@ -84,8 +84,6 @@ def main() -> int:
     pr = request(f"{prefix}/pulls/{number}")
     if pr["state"] != "open":
         return 0
-    if pr["base"]["ref"] != pr["base"]["repo"]["default_branch"]:
-        return 0
     head = pr["head"]["sha"]
     base = pr["base"]["sha"]
     review_path = f"{prefix}/pulls/{number}/reviews"
@@ -109,6 +107,8 @@ def main() -> int:
     if previous and previous["state"] == "APPROVED":
         request(review_path, {"commit_id": head, "event": "REQUEST_CHANGES",
             "body": f"{APPROVAL_PREFIX} PR #{number} requires gate revalidation before approval."})
+    if pr["base"]["ref"] != pr["base"]["repo"]["default_branch"]:
+        return 0
     comments = []
     for page in range(1, 101):
         items = request(f"{prefix}/issues/{number}/comments?per_page=100&page={page}")

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 2026-09-05: Install reviewed publication checks outside candidate branches
+  with a pinned, isolated Python interpreter. Withdraw prior approvals after
+  retargeting and accept SHA-256 IDs in publication dispositions.
+
 - 2026-09-05: Pair the commit review status with a native, current-head PR
   approval bound to the reviewed base; revoke prior gate approvals on recheck.
   Keep structural tag object IDs out of deny scans and exclude valid baseline
