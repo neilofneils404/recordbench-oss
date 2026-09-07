@@ -17,10 +17,31 @@ transcription tests, Python compilation, and Compose validation. Never commit a
 real `.env`, key, certificate, keytab, token, database, media file, transcript,
 or organization-specific deployment overlay.
 
-With the repository virtual environment at `.venv`, the complete local gate is:
+Bootstrap the repository virtual environment at `.venv`, then run the complete
+local gate:
 
 ```console
+make bootstrap
 make check
+```
+
+`make bootstrap` creates `.venv` with Python 3.12 or newer and installs the
+application, PostgreSQL test adapter, browser-test tools, and bundled
+transcription service in editable mode. It is safe to rerun when dependency
+metadata changes. Set `SYSTEM_PYTHON` to choose the interpreter or run
+`python3 scripts/bootstrap-dev.py --venv PATH` to choose another environment;
+then pass its interpreter to Make as `PYTHON=PATH/bin/python`.
+
+System tools used by the full suite are intentionally not installed by the
+bootstrap script. Install Docker with the Compose plugin plus `ffmpeg`,
+ImageMagick, Poppler, and Tesseract (including English and Spanish language
+data) through the host package manager. Individual tests may report an
+environment-dependent skip when an optional tool or browser is unavailable.
+
+To preview the environment commands without changing the workstation:
+
+```console
+python3 scripts/bootstrap-dev.py --dry-run
 ```
 
 GitHub Actions runs the same application, transcription, sanitizer, compilation,

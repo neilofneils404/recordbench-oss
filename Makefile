@@ -1,6 +1,10 @@
 PYTHON ?= .venv/bin/python
+SYSTEM_PYTHON ?= python3
 
-.PHONY: check compile compose-check publication-check test test-transcription
+.PHONY: bootstrap check compile compose-check publication-check test test-transcription
+
+bootstrap:
+	$(SYSTEM_PYTHON) scripts/bootstrap-dev.py
 
 test:
 	$(PYTHON) -m pytest -q
