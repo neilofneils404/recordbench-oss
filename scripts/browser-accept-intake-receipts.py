@@ -257,6 +257,54 @@ def main():
             confirm()
             until(lambda: len(receipts.recent(cancelled.matter_id, ACTOR)) == 2 and receipts.recent(cancelled.matter_id, ACTOR)[0]['counts']['searchable'] == 1, 'Reselection after cancellation did not finish')
             record_check('Explicit cancellation retains its receipt and permits a later deliberate selection')
+            # A valid filename can still be excluded by matter-wide capacity.
+            # Its original selection observation must survive a later file check.
+            capacity_matter = create_matter('Synthetic capacity receipt')
+            reserved_sessions = []
+            remaining = bench.storage_policy.matter_quota_bytes - 1024
+            while remaining:
+                batch = []
+                batch_size = min(remaining, bench.storage_policy.upload_session_bytes)
+                remaining -= batch_size
+                while batch_size:
+                    size = min(batch_size, bench.storage_policy.document_file_bytes)
+                    batch_size -= size
+                    name = f'earlier-{len(reserved_sessions)}-{len(batch)}.txt'
+                    batch.append({'display_name': name, 'relative_path': 'Earlier/' + name,
+                        'media_type': 'text/plain', 'expected_size': size})
+                session, _ = bench.create_upload_session(capacity_matter, ACTOR, 'Earlier generated upload', batch)
+                reserved_sessions.append(session)
+            capacity_file = root/'capacity-limited.txt'
+            capacity_body = b'Generated capacity fixture.\n' * 100
+            capacity_file.write_bytes(capacity_body)
+            driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(capacity_file))
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Save selection receipt')
+            require('upload capacity remaining' in driver.find_element(By.CSS_SELECTOR, '[data-upload-preflight-items]').text,
+                'Synthetic selection was not excluded by actual matter capacity')
+            confirm()
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-state]').text == 'Selection receipt saved')
+            capacity_receipt = receipts.recent(capacity_matter.matter_id, ACTOR)[0]
+            snapshot = receipts.snapshot(capacity_matter.matter_id, ACTOR, capacity_receipt['receipt_id'])
+            row = snapshot['items'][0]
+            require(row['preflight_state'] == 'valid' and row['reviewed_state'] == 'over_limit'
+                and 'capacity' in row['reviewed_reason'], 'Capacity reason was replaced by the later file check')
+            require(len(bench.workspace.recent_upload_sessions(capacity_matter.matter_id, ACTOR)) == len(reserved_sessions),
+                'Capacity-excluded selection unexpectedly created an upload session')
+            receipt_path = f"/matters/{capacity_matter.slug}/intake/{capacity_receipt['receipt_id']}"
+            driver.get(base + receipt_path)
+            require('capacity-limited upload plan' in driver.find_element(By.TAG_NAME, 'body').text,
+                'Reloaded receipt lost the reviewed capacity reason')
+            before = set(downloads.glob('*.csv'))
+            driver.find_element(By.CSS_SELECTOR, 'a[data-download][href$="format=csv"]').click()
+            exported = until(lambda: next((p for p in downloads.glob('*.csv') if p not in before and p.stat().st_size), None),
+                'Capacity receipt download did not finish')
+            require('capacity-limited upload plan' in exported.read_text(encoding='utf-8-sig'),
+                'CSV lost the reviewed capacity reason')
+            for session in reserved_sessions:
+                bench.workspace.cancel_upload_session(capacity_matter.matter_id, ACTOR, session.upload_session_id)
+            require(capacity_file.read_bytes() == capacity_body, 'Capacity fixture original changed')
+            record_check('Actual capacity exclusions retain their selection reason through reload and download, separately from valid filename checks')
+
             for relative, body in fixtures.items():
                 require((folder/relative).read_bytes() == body, 'Original selected fixture changed')
             record_check('All external originals remain byte-identical')

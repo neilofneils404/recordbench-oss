@@ -24,6 +24,18 @@ _RECEIPT = re.compile(r'intake-[0-9a-f]{32}')
 _KEY = re.compile(r'[0-9a-f]{32}')
 _FINGERPRINT = re.compile(r'[0-9a-f]{64}')
 
+# A browser selection can exclude a metadata-valid file because the whole
+# selection exceeded capacity or repeated a path. Preserve that observation
+# separately; never accept arbitrary client explanation text as verified output.
+_REVIEWED_REASONS = {
+    'valid': 'Not included in the reviewed upload plan. Reselect the file to review it again.',
+    'needs_attention': 'The file needed attention during selection review and was not included. Reselect it to review the current checks.',
+    'unsupported': 'The file was marked unsupported during selection review and was not included.',
+    'duplicate_candidate': 'This relative path repeated another selected file and was not included.',
+    'over_limit': 'This file was outside the reviewed capacity-limited upload plan. Free space or choose another matter before trying again.',
+    'failed': 'Selection review could not validate this file. Reselect it and try again.',
+}
+
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
@@ -174,7 +186,8 @@ class IntakeReceipts:
                 if receipt['state'] != 'recording':
                     raise WorkspaceProblem('This selection receipt has already been recorded.')
                 included = ordinal in eligible
-                if included and (result['state'] != 'valid' or not result['eligible']):
+                reviewed_state = reviewed_states[offset]
+                if included and (reviewed_state != 'valid' or result['state'] != 'valid' or not result['eligible']):
                     raise WorkspaceProblem('A selected file is no longer ready to upload. Review the selection again.')
                 path = ''
                 if result['path_safety_validated']:
@@ -182,13 +195,14 @@ class IntakeReceipts:
                 size = result['size'] if _integer(result['size'], 0, 2**53 - 1) else None
                 name = result['display_name'] if path else f'Selected file {ordinal + 1}'
                 reason = str(result['message'])
-                if not included and result['state'] == 'valid':
-                    reason = 'Not included in the reviewed upload plan. Reselect the file to review it again.'
+                reviewed_reason = reason
+                if not included and (reviewed_state == 'valid' or reviewed_state != result['state']):
+                    reviewed_reason = _REVIEWED_REASONS[reviewed_state]
                 self.connection.execute(
-                    'INSERT INTO workbench_intake_item VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                    'INSERT INTO workbench_intake_item VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                     (receipt_id, matter_id, ordinal, digest, path, name, size,
                      result['expected_type'] or '', result['supplied_type'] or '', result['state'],
-                     int(included), reason),
+                     int(included), reason, reviewed_state, reviewed_reason),
                 )
             self.connection.execute('UPDATE workbench_intake_receipt SET updated_at=? WHERE receipt_id=? AND matter_id=?',
                 (self.workspace._now(), receipt_id, matter_id))
@@ -249,7 +263,7 @@ class IntakeReceipts:
         with self.workspace._lock:
             self._receipt_locked(matter_id, actor_id, receipt_id, administrator_override=administrator_override)
             rows = self.connection.execute(_PROJECTED + '''SELECT ordinal,relative_path,display_name,expected_size,
-                expected_type,supplied_type,preflight_state,reason,selection_state,transfer_state,availability,
+                expected_type,supplied_type,preflight_state,reason,reviewed_state,reviewed_reason,selection_state,transfer_state,availability,
                 COALESCE(received_size,0) AS received_size,document_id,catalog_document_id,version_id,
                 COALESCE(upload_message,'') AS upload_message FROM projected ORDER BY ordinal LIMIT ? OFFSET ?''',
                 (matter_id, receipt_id, limit, offset)).fetchall()
@@ -294,7 +308,7 @@ class IntakeReceipts:
             # Bound materialization before reading a potentially large matter.
             total = self.connection.execute(
                 'SELECT count(*),COALESCE(sum(length(CAST(relative_path AS BLOB)) + '
-                'length(CAST(display_name AS BLOB)) + length(CAST(reason AS BLOB))),0) '
+                'length(CAST(display_name AS BLOB)) + length(CAST(reason AS BLOB)) + length(CAST(reviewed_reason AS BLOB))),0) '
                 'FROM workbench_intake_item WHERE matter_id=?', (matter_id,)).fetchone()
             if total[0] > 100_000 or total[1] > MAX_BUNDLE_UNCOMPRESSED_BYTES:
                 raise WorkspaceProblem('No complete bundle was created: selected-file receipts exceed the export limit. Download receipts individually before closing the matter.')

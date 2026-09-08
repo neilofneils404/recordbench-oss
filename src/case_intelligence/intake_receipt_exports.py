@@ -42,17 +42,18 @@ def export_intake_receipt(receipt: Mapping, format_name: str) -> ExportArtifact:
         stream = io.StringIO(newline='')
         writer = csv.writer(stream)
         writer.writerow(['Selection', 'Selected files', 'Recorded rows', 'Unrecorded rows', 'Row', 'Relative path or name',
-            'Expected bytes', 'Selection disposition', 'Filename check', 'Received bytes', 'Transfer', 'Availability', 'Reason'])
+            'Expected bytes', 'Selection disposition', 'Filename check', 'Received bytes', 'Transfer', 'Availability', 'Reason', 'Selection review', 'Filename check reason', 'Processing message'])
         for row in portable['items']:
             writer.writerow([_csv_safe(str(value)) for value in [portable['collection_name'], portable['selected_count'],
                 portable['recorded_count'], counts['unrecorded'], row['ordinal'] + 1,
                 row['relative_path'] or row['display_name'], row['expected_size'] if row['expected_size'] is not None else '',
                 LABELS[row['selection_state']], LABELS[row['preflight_state']], row['received_size'],
-                LABELS[row['transfer_state']], LABELS[row['availability']], row.get('upload_message') or row['reason']]])
+                LABELS[row['transfer_state']], LABELS[row['availability']], row['reviewed_reason'],
+                LABELS[row['reviewed_state']], row['reason'], row.get('upload_message') or '']])
         if not portable['items']:
             writer.writerow([_csv_safe(str(value)) for value in [portable['collection_name'], portable['selected_count'],
                 portable['recorded_count'], counts['unrecorded'], '', '', '', '', '', '', '', '',
-                'Selection recording is incomplete. No file rows were recorded. Reselect the same files to finish the receipt.']])
+                'Selection recording is incomplete. No file rows were recorded. Reselect the same files to finish the receipt.', '', '', '']])
         body = stream.getvalue().encode('utf-8-sig')
         media_type = 'text/csv; charset=utf-8'
     elif format_name == 'markdown':
@@ -65,8 +66,8 @@ def export_intake_receipt(receipt: Mapping, format_name: str) -> ExportArtifact:
             BOUNDARY, '']
         for row in portable['items']:
             lines.extend([f"## {row['ordinal'] + 1}. {literal(row['relative_path'] or row['display_name'])}", '',
-                f"{LABELS[row['selection_state']]} · {LABELS[row['preflight_state']]} · {LABELS[row['transfer_state']]} · {LABELS[row['availability']]}", '',
-                literal(row.get('upload_message') or row['reason']), ''])
+                f"{LABELS[row['selection_state']]} · Selection review: {LABELS[row['reviewed_state']]} · Filename check: {LABELS[row['preflight_state']]} · {LABELS[row['transfer_state']]} · {LABELS[row['availability']]}", '',
+                literal(row['reviewed_reason']), '', literal(row.get('upload_message') or row['reason']), ''])
         body = '\n'.join(lines).encode('utf-8')
         media_type = 'text/markdown; charset=utf-8'
     else:

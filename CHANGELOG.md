@@ -6,7 +6,8 @@
   retry, reload and export. Add paginated receipts, exact received-source links,
   separate byte/processing counts, legacy upload adoption and complete-bundle
   inclusion. Keep receipt state within the existing temporary matter, activity,
-  deletion and backup boundary; add synthetic HTTP, Chrome and restore evidence.
+  deletion and backup boundary; retain capacity exclusions separately from filename
+  checks and add synthetic HTTP, Chrome and restore evidence.
 
 - 2026-09-08: Record the maintainer-approved exact author attribution on the
   PR #17 merge commit. Keep content, private-deny, other-identity and later-commit

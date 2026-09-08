@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS workbench_intake_item (
     preflight_state TEXT NOT NULL CHECK (preflight_state IN ('valid','needs_attention','unsupported','duplicate_candidate','over_limit','failed')),
     selected_for_upload INTEGER NOT NULL CHECK (selected_for_upload IN (0,1)),
     reason TEXT NOT NULL,
+    reviewed_state TEXT NOT NULL CHECK (reviewed_state IN ('valid','needs_attention','unsupported','duplicate_candidate','over_limit','failed')),
+    reviewed_reason TEXT NOT NULL,
     PRIMARY KEY (receipt_id, ordinal),
     UNIQUE (receipt_id, ordinal, matter_id),
     FOREIGN KEY (receipt_id, matter_id) REFERENCES workbench_intake_receipt(receipt_id, matter_id) ON DELETE CASCADE

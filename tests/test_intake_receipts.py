@@ -103,7 +103,8 @@ def test_unsafe_empty_unsupported_and_capacity_exclusions_remain_separate(tmp_pa
         assert rows[1]['expected_size'] == 0
         assert [r['preflight_state'] for r in rows] == ['failed', 'failed', 'unsupported', 'over_limit', 'valid']
         assert all(r['selection_state'] == 'skipped' for r in rows)
-        assert 'reviewed upload plan' in rows[-1]['reason']
+        assert rows[-1]['reviewed_state'] == 'over_limit'
+        assert 'capacity' in rows[-1]['reviewed_reason']
         summary = receipts.get(m.matter_id, OWNER, receipt['receipt_id'])
         assert summary['counts']['skipped'] == 5 and summary['counts']['received'] == 0
     finally:
@@ -356,7 +357,7 @@ def test_empty_incomplete_receipt_exports_do_not_silently_omit_selected_count(tm
         snapshot = receipts.snapshot(m.matter_id, OWNER, receipt['receipt_id'])
         rows = list(csv.reader(io.StringIO(export_intake_receipt(snapshot, 'csv').body.decode('utf-8-sig'))))
         assert rows[1][1:5] == ['3', '0', '3', '']
-        assert 'No file rows were recorded' in rows[1][-1]
+        assert 'No file rows were recorded' in rows[1][rows[0].index('Reason')]
         assert '3 not yet recorded' in export_intake_receipt(snapshot, 'markdown').body.decode()
     finally:
         w.close()
@@ -394,3 +395,28 @@ def test_metadata_batch_limit_counts_utf8_bytes_for_valid_unicode_paths(tmp_path
         assert rows[-1]['relative_path'] == files[-1]['relative_path']
     finally:
         w.close()
+
+
+def test_capacity_exclusion_survives_recheck_restart_and_all_exports(tmp_path):
+    from case_intelligence.intake_receipt_exports import export_intake_receipt
+    w, m, receipts = seed(tmp_path)
+    try:
+        receipt = create(receipts, m, 2, (0,))
+        append(receipts, m, receipt, [descriptor('Generated/first.txt', 48),
+            descriptor('Generated/later.txt', 48)], states=['valid', 'over_limit'])
+        receipts.seal(m.matter_id, OWNER, receipt['receipt_id'])
+    finally:
+        w.close()
+    reopened = WorkspaceStore(tmp_path / 'workspace.sqlite')
+    try:
+        snapshot = IntakeReceipts(reopened).snapshot(m.matter_id, OWNER, receipt['receipt_id'])
+        skipped = snapshot['items'][1]
+        assert skipped['selection_state'] == 'skipped' and skipped['preflight_state'] == 'valid'
+        assert skipped['reviewed_state'] == 'over_limit'
+        assert 'capacity' in skipped['reviewed_reason']
+        assert snapshot['counts']['included'] == snapshot['counts']['skipped'] == 1
+        for format_name in ('json', 'markdown', 'csv'):
+            exported = export_intake_receipt(snapshot, format_name).body.decode('utf-8-sig')
+            assert 'capacity' in exported and 'later.txt' in exported
+    finally:
+        reopened.close()

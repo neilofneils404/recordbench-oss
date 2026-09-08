@@ -22,7 +22,11 @@ A malformed received file remains received and separately shows a failure.
 **Open source** opens the exact received source version using the normal viewer,
 including its existing integrity and matter checks. A removed or changed version
 is unavailable rather than silently pointing at a replacement. Selection reasons
-are identified as observations at confirmation. Empty folders are absent because
+are identified as observations at confirmation. The reviewed selection state and
+reason remain separate from the server's filename check, so a capacity-excluded
+file still explains the capacity limit even when its filename and size are valid.
+The server uses bounded explanations for selection-level exclusions; it does not
+store arbitrary browser explanation text as verified output. Empty folders are absent because
 the browser supplies files, not a directory inventory.
 
 **Download receipt**, **Text version**, and **Structured version** provide CSV,
@@ -141,8 +145,12 @@ python scripts/verify-intake-receipt-rollback.py --previous-source /path/to/prev
 Browser artifacts contain only generated fixtures. They are additional acceptance
 evidence, not required public attachments or proof of confidential-data readiness.
 
-Validation on September 8, 2026: `make check` passed 897 application tests with
+Validation on September 8, 2026: `make check` passed 898 application tests with
 nine optional skips, all 194 transcription tests, compilation, Compose and
-publication checks. Chrome passed seven dedicated receipt workflows and all
-37 existing loose-file preflight workflows. The previous-reader check passed
-unchanged receipt state and exact seven-byte-offset forward resume.
+publication checks. Chrome passed eight dedicated receipt workflows, including
+an actual capacity-limited selection whose skipped reason survives reload and
+CSV download. All 37 existing loose-file preflight workflows passed before the
+receipt-only review correction. The previous-reader check passed unchanged
+receipt state and exact seven-byte-offset forward resume. The normal synthetic
+backup/restore regression also passed with the separate reviewed selection
+state and reason.
