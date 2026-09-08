@@ -34,12 +34,13 @@ confirmation records the complete selection in the control database before
 sending only the eligible subset through the retained upload route,
 which revalidates metadata and remains authoritative for staging, signature
 checks, configured ClamAV policy, and failure recovery. [Selection receipts](INTAKE_RECEIPTS.md)
-retain skipped reasons separately from byte receipt and source availability,
+retain explicitly browser-reported selection reasons separately from server
+filename checks, byte receipt and source availability,
 use idempotent metadata/session bindings and exact source versions, and provide
 coherent paginated views and complete exports. Their tables stay in the existing
 temporary-matter deletion and backup boundary. Atomic matter/creator/workspace
 receipt, selected-row and metadata-byte limits admit writes before storage grows;
-only owners can discard unfinished receipts without upload bindings.
+only owners can discard receipts without upload bindings.
 
 Accepted documents then enter extraction. Text PDFs use native extraction;
 missing-text pages use bounded CPU OCR. Media enters the durable media queue,

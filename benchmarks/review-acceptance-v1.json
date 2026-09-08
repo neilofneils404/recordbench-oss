@@ -158,7 +158,7 @@
     "test_node_sha256": {
       "tests/test_generation.py::test_empty_evidence_abstains_without_calling_model": "532352d1610eaa0b4c8772f04102a1f4a0c5b5654447dc60ed15db51ebeb6d3e",
       "tests/test_matter_management.py": "739a7a7a913d9446daf5e45483df19b354fe504ab1bbd1723ad6428bddccf857",
-      "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support": "7cb028f88982ef6a75e582e641d4c4c2ee112ddad5f6045992e2f239a3b26f8a",
+      "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support": "431f508ab42aad406e842d86c6366597894e9cb1a0830f1a58ccf876832b0913",
       "tests/test_matter_media_workflow.py::test_failed_optional_overview_explains_cause_retries_and_independence": "1a8292814c817dc696269b3c3fee9f1ee4c7753c95660f8d384d45bd3e7ffe66",
       "tests/test_matter_media_workflow.py::test_media_upload_transcript_review_range_citations_exports_and_clips": "141dc1cca74285ae991a9f23bf333cef83451fb049d5d781fe02aa7550458dba",
       "tests/test_matter_media_workflow.py::test_speaker_review_browser_contract_preserves_player_scroll_and_focus": "7955f04e150e91e0fa9549f733efbff67a55372d4e31735d46888df1beeee5e8",
@@ -188,7 +188,7 @@
     "test_file_sha256": {
       "tests/test_generation.py": "17d7434cd3e1c41b03792a82a146f0fee4fc0c25bad7158d21fe0d00bcbcd2f9",
       "tests/test_matter_management.py": "739a7a7a913d9446daf5e45483df19b354fe504ab1bbd1723ad6428bddccf857",
-      "tests/test_matter_media_workflow.py": "d8a40d8e30647d8558725b7d853c29f761ddb218a798faa430e8d3b9a11d9dc0",
+      "tests/test_matter_media_workflow.py": "ede47c3c5e9c5cdd3fabccb94b79e823663c96b885c9f73f0d50e17498645ff8",
       "tests/test_research_and_full_review.py": "4ba1acb7e2c077a632e744538214f22ebba492a2633511e63114de5cf7182c47",
       "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
       "tests/test_review_conversation_continuity.py": "7e09fe23984a0acd5c97d6b47ed15467d0437133bb8b76b1a5d348ebc6523eeb",
@@ -202,6 +202,6 @@
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "5bae681cb6c4a5dc4803c609ca4278cdeb50185f95e5e898fa26bda5fb5b3423"
+    "content_fingerprint": "f139f94d6241d4dd16ba80965249f7c5e1535f168587154cfcd248c8ece2f695"
   }
 }

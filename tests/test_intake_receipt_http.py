@@ -316,3 +316,38 @@ def test_receipt_idempotency_does_not_override_a_conflicting_explicit_resume(wor
     assert resumed['upload_session_id'] == current['upload_session_id']
     assert resumed['items'][0]['received_size'] == 7
     assert len(bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR)) == 1
+
+
+@pytest.mark.parametrize('invalid', ['bad\ud800', 'bad\udfff'])
+def test_non_utf8_collection_names_have_a_bounded_validation_response(workspace, invalid):
+    client, bench, matter = workspace
+    payload = {'selection_key': 'e' * 32, 'selection_fingerprint': 'f' * 64,
+        'selected_count': 1, 'eligible_indexes': [], 'collection_name': invalid}
+    response = client.post(f'/matters/{matter.slug}/intake-receipts',
+        content=json.dumps(payload, ensure_ascii=True).encode(), headers={'Content-Type': 'application/json'})
+    assert response.status_code == 409 and 'unsupported characters' in response.json()['message']
+    assert IntakeReceipts(bench.workspace).recent(matter.matter_id, ACTOR) == []
+
+
+def test_reported_selection_reason_stays_distinct_from_server_checks_in_every_format(workspace):
+    client, bench, matter = workspace
+    file = descriptor('Generated/valid.txt', 48)
+    preflight = client.post(f'/matters/{matter.slug}/upload-preflight', json={'files': [file]})
+    assert preflight.status_code == 200 and preflight.json()['items'][0]['state'] == 'valid'
+    root = f'/matters/{matter.slug}/intake-receipts'
+    created = client.post(root, json={'selection_key': 'e' * 32, 'selection_fingerprint': 'f' * 64,
+        'selected_count': 1, 'eligible_indexes': [], 'collection_name': 'Generated reported selection'})
+    assert created.status_code == 201
+    receipt = created.json()
+    url = root + '/' + receipt['receipt_id']
+    assert client.post(url + '/items', json={'start': 0, 'files': [file], 'reviewed_states': ['over_limit']}).status_code == 200
+    assert client.post(url + '/seal').status_code == 200
+    row = IntakeReceipts(bench.workspace).snapshot(matter.matter_id, ACTOR, receipt['receipt_id'])['items'][0]
+    assert row['reviewed_basis'] == 'browser_report' and row['preflight_state'] == 'valid'
+    assert row['availability'] == 'not_uploaded' and row['received_size'] == 0
+    assert row['reviewed_reason'].startswith('Browser-reported selection review:')
+    assert 'Browser-reported selection review:' in client.get(receipt['receipt_url']).text
+    for format_name in ('csv', 'json', 'markdown'):
+        exported = client.get(receipt['receipt_url'] + '/export', params={'format': format_name})
+        assert exported.status_code == 200 and 'Browser-reported selection review:' in exported.text
+    assert not bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR)

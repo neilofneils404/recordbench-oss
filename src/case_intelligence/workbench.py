@@ -9739,7 +9739,7 @@ def create_workbench_app(
         return templates.TemplateResponse(request=request, name="workbench_intake_receipt.html",
             context={**base_context(request, matter), "matter": matter, "receipt": receipt,
                 "receipt_items": rows, "intake_labels": INTAKE_LABELS, "page": page,
-                "receipt_error": error, "can_discard_receipt": matter.owner_id == context.principal_id and receipt['state'] == 'recording'},
+                "receipt_error": error, "can_discard_receipt": matter.owner_id == context.principal_id and not receipt['has_upload_bindings']},
             headers={"Cache-Control": "no-store"})
 
     @app.post("/matters/{slug}/intake/{receipt_id}/discard", dependencies=[Depends(require_csrf)])
@@ -9747,15 +9747,15 @@ def create_workbench_app(
         context = auth_context(request)
         matter = authorized_matter(request, slug)
         try:
-            IntakeReceipts(bench.workspace).discard_unfinished(matter.matter_id, context.principal_id,
+            IntakeReceipts(bench.workspace).discard(matter.matter_id, context.principal_id,
                 receipt_id, confirmed=confirm == 'yes')
         except KeyError as exc:
-            raise HTTPException(404, 'Unfinished selection receipt not found') from exc
+            raise HTTPException(404, 'Selection receipt not found') from exc
         except WorkspaceProblem as exc:
             return RedirectResponse(f'/matters/{slug}/intake/{receipt_id}?error=' + quote_plus(str(exc)), status_code=303)
         audit(request, 'source.intake_receipt_discard', 'success', context=context, matter=matter,
             object_type='matter', object_id=matter.matter_id, details={'kind': 'intake_receipt', 'count': 1})
-        return RedirectResponse(f'/matters/{slug}/setup?notice=' + quote_plus('Unfinished receipt discarded.'), status_code=303)
+        return RedirectResponse(f'/matters/{slug}/setup?notice=' + quote_plus('Receipt discarded.'), status_code=303)
 
     @app.get("/matters/{slug}/intake/{receipt_id}/export", dependencies=[Depends(require_matter_response_lease)])
     def download_intake_receipt(request: Request, slug: str, receipt_id: str,

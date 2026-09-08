@@ -6,10 +6,16 @@
   retry, reload and export. Add paginated receipts, exact received-source links,
   separate byte/processing counts, legacy upload adoption and complete-bundle
   inclusion. Enforce atomic matter, creator and workspace metadata limits, permit
-  owner-confirmed cleanup of unfinished receipts, and allow collection-name
-  correction without losing retry identity. Keep receipt state within the existing temporary matter, activity,
+  owner-confirmed cleanup of receipts without uploads, and allow collection-name
+  correction without losing retry identity. Identify reported selection reasons
+  explicitly across UI/API/exports, reject unsupported Unicode names, and clear
+  the earlier receipt link when a new selection starts. Keep receipt state within
+  the existing temporary matter, activity,
   deletion and backup boundary; retain capacity exclusions separately from filename
-  checks and add synthetic HTTP, Chrome and restore evidence.
+  checks and add synthetic HTTP, Chrome and restore evidence. Remove an unrelated
+  media regression's assumption that background overview generation finishes
+  before the requested answer; refresh its recorded acceptance digests without
+  changing cases or fixtures.
 
 - 2026-09-08: Record the maintainer-approved exact author attribution on the
   PR #17 merge commit. Keep content, private-deny, other-identity and later-commit

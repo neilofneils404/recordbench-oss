@@ -1312,12 +1312,13 @@ def test_dual_modal_answer_resolves_page_and_timestamp_support(tmp_path):
         assert {item["evidence_kind"] for item in document_only_citations} == {
             "document"
         }
-        assert generator.calls[-1]["question"].startswith(
+        # A background transcript overview may complete after the requested answer.
+        document_calls = [call for call in generator.calls if call["question"].startswith(
             "Answer from the written report, not the transcript"
-        )
-        assert {item.evidence_kind for item in generator.calls[-1]["evidence"]} == {
-            "document"
-        }
+        )]
+        assert document_calls
+        assert all({item.evidence_kind for item in call["evidence"]} == {"document"}
+            for call in document_calls)
         conversation_page = client.get(
             f"/matters/{slug}?conversation={conversation.conversation_id}"
         )

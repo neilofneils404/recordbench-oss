@@ -1056,6 +1056,9 @@
 
   const previewSelectedFiles = async (files) => {
     if (!uploadForm?.dataset.preflightUrl || !uploadPreflight) return;
+    const priorReceiptLink = document.querySelector('[data-intake-receipt-link]');
+    if (priorReceiptLink) priorReceiptLink.hidden = true;
+    document.querySelector('[data-intake-receipt-open]')?.removeAttribute('href');
     const version = preflightVersion + 1;
     preflightVersion = version;
     preflightAbortController?.abort();
@@ -1589,7 +1592,7 @@
     const normalized = name.normalize("NFC").trim();
     if (!normalized) throw new Error("Enter a collection name.");
     if (Array.from(normalized).length > 160) throw new Error("Use a collection name of 160 characters or fewer.");
-    if (/[\p{Cc}\p{Cf}]/u.test(normalized)) throw new Error("The collection name contains unsupported characters. Edit the name and try again.");
+    if (/[\p{Cc}\p{Cf}\p{Cs}]/u.test(normalized)) throw new Error("The collection name contains unsupported characters. Edit the name and try again.");
     return normalized;
   };
   const recordConfirmedSelection = async (files, preview, version) => {

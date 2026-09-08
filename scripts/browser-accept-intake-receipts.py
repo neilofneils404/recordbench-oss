@@ -324,17 +324,34 @@ def main():
                 corrected = receipts.recent(correction_matter.matter_id, ACTOR)
                 require(len(corrected) == 1 and corrected[0]['collection_name'] == 'Corrected generated collection',
                     'Retry restored a rejected name or created extra receipts')
+                if index == 0:
+                    old_link = driver.find_element(By.CSS_SELECTOR, '[data-intake-receipt-open]').get_attribute('href')
+                    driver.execute_script("document.querySelector('[data-file-input]').value = '';")
+                    driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(folder/'Unsupported/opaque.bin'))
+                    wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Save selection receipt')
+                    require(not driver.find_element(By.CSS_SELECTOR, '[data-intake-receipt-link]').is_displayed(),
+                        'A new unconfirmed selection still opens the prior receipt')
+                    confirm()
+                    wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-state]').text == 'Selection receipt saved')
+                    require(driver.find_element(By.CSS_SELECTOR, '[data-intake-receipt-open]').get_attribute('href') != old_link,
+                        'A newly saved selection still points at its predecessor')
+                    record_check('A new unconfirmed selection hides the prior receipt link and confirmation opens its own receipt')
             record_check('Rejected collection names can be corrected without reselecting files or clearing storage, including storage-denied retries')
 
             full_matter = create_matter('Synthetic receipt capacity recovery')
-            # Exercise the real default limit with generated unfinished headers;
+            # Exercise the real default limit with generated sealed, all-skipped receipts;
             # the browser then attempts one additional actual selection.
             def full_receipt_count():
                 return bench.workspace.connection.execute('SELECT count(*) FROM workbench_intake_receipt WHERE matter_id=?', (full_matter.matter_id,)).fetchone()[0]
             for index in range(1_000):
-                receipts.create(full_matter.matter_id, ACTOR, selection_key=f'{index:032x}',
+                receipt = receipts.create(full_matter.matter_id, ACTOR, selection_key=f'{index:032x}',
                     selection_fingerprint='e' * 64, selected_count=1, eligible_indexes=[],
-                    collection_name='Generated unfinished selection')
+                    collection_name='Generated skipped selection')
+                receipts.append(full_matter.matter_id, ACTOR, receipt['receipt_id'], start=0,
+                    files=[{'name': 'opaque.bin', 'relative_path': 'Generated/opaque.bin', 'size': 4, 'media_type': ''}],
+                    reviewed_states=['unsupported'], document_limit=1024, media_limit=2048,
+                    malware_scan_mode='off', scanner_ready=True)
+                receipts.seal(full_matter.matter_id, ACTOR, receipt['receipt_id'])
             driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(folder/'Unsupported/opaque.bin'))
             wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Save selection receipt')
             confirm()
@@ -342,21 +359,21 @@ def main():
             require('receipt capacity is full' in driver.find_element(By.TAG_NAME, 'body').text,
                 'The real receipt count limit did not give a recovery message')
             require(full_receipt_count() == 1_000, 'Rejected selection exceeded receipt capacity')
-            unfinished = receipts.recent(full_matter.matter_id, ACTOR)[0]
-            driver.get(base + f"/matters/{full_matter.slug}/intake/{unfinished['receipt_id']}")
+            removable = receipts.recent(full_matter.matter_id, ACTOR)[0]
+            driver.get(base + f"/matters/{full_matter.slug}/intake/{removable['receipt_id']}")
             toggle = driver.find_element(By.CSS_SELECTOR, '.intake-receipt-discard summary')
             driver.execute_script('arguments[0].scrollIntoView({block:"center",behavior:"instant"});', toggle)
             toggle.click()
             driver.find_element(By.CSS_SELECTOR, '.intake-receipt-discard input[name=confirm]').click()
             driver.find_element(By.CSS_SELECTOR, '.intake-receipt-discard button').click()
-            wait.until(lambda x: 'Unfinished receipt discarded.' in x.find_element(By.TAG_NAME, 'body').text)
+            wait.until(lambda x: 'Receipt discarded.' in x.find_element(By.TAG_NAME, 'body').text)
             require(full_receipt_count() == 999, 'Owner discard did not release receipt capacity')
             driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(folder/'Unsupported/opaque.bin'))
             wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Save selection receipt')
             confirm()
             wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-state]').text == 'Selection receipt saved')
             require(full_receipt_count() == 1_000, 'Selection could not recover after owner cleanup')
-            record_check('Real receipt capacity refuses excess selections; deliberate owner cleanup permits a new receipt')
+            record_check('Real receipt capacity refuses excess selections; owner cleanup of a sealed all-skipped receipt permits a new receipt')
 
             for relative, body in fixtures.items():
                 require((folder/relative).read_bytes() == body, 'Original selected fixture changed')

@@ -89,3 +89,10 @@ PYTHONPATH=src .venv/bin/python scripts/run-review-acceptance.py \
 The runner invokes each category independently and emits a content-free JSON
 status report. It does not claim that a configured production model passed; the
 model-specific evaluation record described above remains a separate gate.
+
+September 8, 2026 test correction: the cross-modal regression now inspects the
+requested written-only question instead of assuming the last generator call
+cannot be a background transcript overview. The corresponding test-node, helper
+file and aggregate content digests were refreshed together. Case definitions,
+case fingerprint and fixture bytes are unchanged; results from different content
+fingerprints must remain distinguishable.

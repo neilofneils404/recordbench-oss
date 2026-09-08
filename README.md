@@ -62,11 +62,12 @@ See the [public-alpha boundary](docs/PUBLIC_ALPHA.md) for scope and limitations.
 | **Organize the work** | Shared matters with owner/admin renaming, attributed activity, notes, people, places, dates, and report drafting. |
 | **Take work product with you** | Export conversations, transcripts, summaries, clips, notebooks, and reports. Complete matter bundles include every saved draft/final Report and every selected-file receipt. |
 
-Selected-file receipts stay available after reload and distinguish received bytes
+Selected-file receipts identify selection reasons as browser-reported observations,
+stay available after reload, and distinguish received bytes
 from processing or source availability. Retry interrupted uploads without losing
 previous bytes, open exact source support, and download individual receipts or the
 complete matter bundle. Receipt metadata has cumulative capacity limits; owners
-can discard unfinished receipts without uploads to recover space. See
+can discard receipts without uploads to recover space. See
 [selection receipts and recovery](docs/INTAKE_RECEIPTS.md).
 
 Case-note edits preserve unsaved fields when another team member has changed

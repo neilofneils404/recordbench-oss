@@ -75,3 +75,14 @@ Recovery reauthorizes the matter before showing current or proposed human work;
 deleted/unavailable reviews do not become new rows. Machine completion and
 existing source-change invalidation serialize with human edits and advance the
 same revision metadata. Success audit retains operation metadata without notes.
+
+## Selection receipts
+
+[Selected-file receipts](INTAKE_RECEIPTS.md) retain browser-reported inventory
+and selection-level exclusions. They explicitly identify that origin in the UI,
+API and downloads; they do not attest historical capacity or the contents of a
+file chooser. Independent server filename checks, authoritative upload admission,
+received-byte counts and exact source availability remain separate. Browser
+review states never authorize upload. Receipt metadata has atomic cumulative
+matter, creator and workspace limits; only owners may discard receipts
+without upload bindings.

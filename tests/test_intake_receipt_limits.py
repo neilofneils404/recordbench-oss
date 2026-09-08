@@ -1,4 +1,4 @@
-"""Atomic metadata admission and deliberate owner cleanup of unfinished receipts."""
+"""Atomic metadata admission and deliberate owner cleanup of receipts without uploads."""
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -85,21 +85,20 @@ def test_distinct_database_connections_cannot_race_past_creation_limit(tmp_path,
         assert sorted(pool.map(attempt, ['1', '2'])) == ['created', 'full']
 
 
-def test_owner_discard_is_confirmed_unfinished_only_and_releases_capacity(tmp_path, monkeypatch):
+def test_owner_discard_is_confirmed_without_uploads_and_releases_capacity(tmp_path, monkeypatch):
     w, m, receipts = seed(tmp_path)
     try:
         limits(monkeypatch, 'matter', (1, 100, 1024 * 1024))
         receipt = receipts.create(m.matter_id, MEMBER, selection_key='a' * 32,
             selection_fingerprint='b' * 64, selected_count=1, eligible_indexes=[], collection_name='Generated unfinished selection')
         with pytest.raises(WorkspaceProblem, match='Confirm'):
-            receipts.discard_unfinished(m.matter_id, OWNER, receipt['receipt_id'], confirmed=False)
+            receipts.discard(m.matter_id, OWNER, receipt['receipt_id'], confirmed=False)
         with pytest.raises(KeyError):
-            receipts.discard_unfinished(m.matter_id, MEMBER, receipt['receipt_id'], confirmed=True)
-        receipts.discard_unfinished(m.matter_id, OWNER, receipt['receipt_id'], confirmed=True)
+            receipts.discard(m.matter_id, MEMBER, receipt['receipt_id'], confirmed=True)
+        receipts.discard(m.matter_id, OWNER, receipt['receipt_id'], confirmed=True)
         assert receipts.recent(m.matter_id, OWNER) == []
         finished = ready(receipts, m)
-        with pytest.raises(WorkspaceProblem, match='unfinished'):
-            receipts.discard_unfinished(m.matter_id, OWNER, finished['receipt_id'], confirmed=True)
-        assert receipts.get(m.matter_id, OWNER, finished['receipt_id'])['state'] == 'ready'
+        receipts.discard(m.matter_id, OWNER, finished['receipt_id'], confirmed=True)
+        assert receipts.recent(m.matter_id, OWNER) == []
     finally:
         w.close()

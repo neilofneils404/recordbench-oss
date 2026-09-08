@@ -22,9 +22,11 @@ A malformed received file remains received and separately shows a failure.
 **Open source** opens the exact received source version using the normal viewer,
 including its existing integrity and matter checks. A removed or changed version
 is unavailable rather than silently pointing at a replacement. Selection reasons
-are identified as observations at confirmation. The reviewed selection state and
-reason remain separate from the server's filename check, so a capacity-excluded
-file still explains the capacity limit even when its filename and size are valid.
+are explicitly labelled as browser-reported observations from confirmation. They
+are not proof of historical server capacity or an attested preflight decision.
+The reported state and reason remain separate from the server's filename check,
+so a capacity-excluded file retains the reported capacity reason even when its
+filename and size are valid.
 The server uses bounded explanations for selection-level exclusions; it does not
 store arbitrary browser explanation text as verified output. Empty folders are absent because
 the browser supplies files, not a directory inventory.
@@ -45,7 +47,9 @@ or reloading the page; its durable receipt remains discoverable in Sources.
 
 Collection names are checked before saving a browser checkpoint. A rejected name
 can be corrected with the same files still selected, including when browser
-storage is unavailable. Older invalid name checkpoints are ignored.
+storage is unavailable. Older invalid name checkpoints are ignored. Unsupported Unicode characters receive
+a normal validation response. Choosing a new selection hides the earlier receipt
+link until the new selection has its own saved receipt.
 
 Explicitly cancelling an upload retains its receipt and clears the browser
 checkpoint, so a later deliberate selection can start a new attempt.
@@ -78,7 +82,7 @@ unavailable.
 
 All routes require current matter access. Metadata mutations require CSRF and
 the principal who created the receipt; team members can read it. Only the matter
-owner may deliberately discard an unfinished receipt without upload bindings. Existing audited
+owner may deliberately discard a receipt without upload bindings. Existing audited
 administrator review also opens status, pages and downloads without allowing
 receipt mutations or granting an ordinary nonmember access. Export uses the
 normal matter response lease and authorized final-export boundary.
@@ -90,7 +94,7 @@ normal matter response lease and authorized final-export boundary.
 | `POST /matters/{slug}/intake-receipts/{receipt}/seal` | Verify complete contiguous inventory and included-path uniqueness before transfer. |
 | `GET /matters/{slug}/intake-receipts/{receipt}` | Return current selection, transfer and availability counts. |
 | `GET /matters/{slug}/intake/{receipt}` | Show 100 selection rows per page with exact source links. |
-| `POST /matters/{slug}/intake/{receipt}/discard` | Owner-confirmed discard of an unfinished receipt with no upload bindings. |
+| `POST /matters/{slug}/intake/{receipt}/discard` | Owner-confirmed discard of a receipt with no upload bindings. |
 | `GET /matters/{slug}/intake/{receipt}/export?format=csv` | Download CSV, Markdown or JSON. |
 | `GET /matters/{slug}/setup?receipt_page=2` | Discover older selections, ten receipts per page. |
 
@@ -98,7 +102,11 @@ Selections contain at most 10,000 rows. Metadata batches contain at most 2,000
 rows and 6 MiB of UTF-8 JSON; the browser splits batches by both count and encoded
 size. Invalid types, counts, ordinals or nested descriptors fail before writes.
 Paths use the same validated canonical relative path as upload admission; unsafe
-names are minimized. Client metadata is not a byte-derived finding.
+names are minimized. Client metadata is not a byte-derived finding. The selection
+is a browser-reported inventory; the server does not attest which files the user
+selected or the historical selection-level exclusions. Projection includes
+`reviewed_basis: browser_report`, and all rendered/exported review reasons carry
+the same explicit origin. Receipt metadata never authorizes source transfer.
 
 Receipt admission also has cumulative limits:
 
@@ -117,12 +125,13 @@ The earlier rows and unrecorded count remain available. Normal source-upload
 quotas continue to govern source bytes.
 
 At a receipt limit, the product explains how to recover. The matter owner can
-open an unfinished receipt, download it if wanted, and confirm **Discard
-unfinished receipt**. This deletes only a receipt still being recorded with no
-upload bindings, releases its metadata reservation and adds a content-free audit
-event. Completed selections and selections linked to uploads cannot be discarded;
-they remain with the matter. Use another matter for further deliberate intake
-when completed receipts occupy its capacity, or contact the administrator for an
+open a receipt without uploads, download it if wanted, and confirm **Discard
+receipt**. This deletes the selection record, releases its metadata reservation
+and adds a content-free audit event. Both incomplete and completed selections
+without upload bindings can be discarded, including all-skipped receipts saved
+by a member whose access was later revoked. Receipts linked to any upload cannot
+be discarded; they remain with the matter. Use another matter for further deliberate intake
+when receipts linked to uploads occupy its capacity, or contact the administrator for an
 account/workspace limit. The normal owner close/export process remains available.
 
 Mirrored SQLite migration `0025_intake_receipts.sql` adds receipt, item and transfer
@@ -178,12 +187,20 @@ python scripts/verify-intake-receipt-rollback.py --previous-source /path/to/prev
 Browser artifacts contain only generated fixtures. They are additional acceptance
 evidence, not required public attachments or proof of confidential-data readiness.
 
-Validation on September 8, 2026: `make check` passed 909 application tests with
+Validation on September 8, 2026: `make check` passed 914 application tests with
 nine optional skips, all 194 transcription tests, compilation, both Compose
-graphs and publication checks. Ten dedicated Chrome workflows passed, including
+graphs and publication checks. Eleven dedicated Chrome workflows passed, including
 actual capacity exclusions, name correction with denied browser storage and
-recovery at the real 1,000-receipt limit. All 37 existing loose-file preflight
-workflows passed after the name correction and before the metadata-admission
-change. Normal synthetic backup/restore preserves the receipt metadata charge;
+owner recovery from sealed all-skipped receipts at the real 1,000-receipt limit,
+and replacement of the previous receipt
+link after a new selection. All 37 existing loose-file preflight workflows passed
+on this correction. Normal synthetic backup/restore preserves the receipt metadata charge;
 the previous-reader check preserves receipt state and exact seven-byte-offset
 forward resume.
+
+During combined validation, a media regression inspected the last generator call
+while a background overview could run later. Its assertion now selects the
+requested written-only question and checks every matching call's evidence kind;
+answer/citation coverage is unchanged. The frozen acceptance pack records the
+changed test and file digests without changing its cases or fixtures. The full
+gate was rerun after this correction.
