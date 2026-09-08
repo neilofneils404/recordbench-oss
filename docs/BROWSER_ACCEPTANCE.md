@@ -110,7 +110,7 @@ integration execution and final-head review remain required
 before merge.
 
 After combining the current email coverage, export readiness and upload recovery
-changes, local `make check` passes **1,058 application tests** with nine optional
+changes, local `make check` passes **1,079 application tests** with nine optional
 skips, all **194 transcription tests**, compilation, both Compose graphs and
 publication inspection. Fresh hosted quality/browser execution must validate this
 combined revision before merge. No live deployment or release tag is created by
