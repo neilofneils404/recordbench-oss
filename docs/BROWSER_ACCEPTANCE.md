@@ -87,5 +87,12 @@ then passed, **11 intake checks and 11 Report/export-readiness checks**. The run
 also exposed an upload-status race, addressed separately before final combined
 acceptance; see [upload status recovery](UPLOAD_STATUS_RECOVERY.md).
 
-Final combined contributor checks and actual PR execution are recorded before
-merge. No live deployment or release tag is created by this workflow.
+The first hosted branch run passed installation, both journeys (22 checks) and
+artifact retention on Ubuntu 24.04: Actions run 34261111636.
+Its downloaded result confirms the pinned browser/driver and both complete receipts.
+This is branch execution; the actual PR integration job remains required.
+
+The final combined `make check` passes 1,016 application tests with nine optional
+skips, all 194 transcription tests, compilation, both Compose graphs and publication
+inspection. Actual PR integration execution and final-head review remain required
+before merge. No live deployment or release tag is created by this workflow.
