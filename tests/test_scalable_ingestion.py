@@ -241,10 +241,16 @@ def test_background_registered_folder_becomes_searchable_without_modifying_sourc
         store = client.app.state.workbench.source_store(matter)
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
-            states = {item.state for item in store.documents.values()}
-            if states == {"ready"}:
+            # Extraction precedes indexing and staging cleanup. The same
+            # durable readiness contract as the query route must permit search.
+            if client.app.state.workbench.workspace.matter_readiness(
+                matter.matter_id
+            ).state == "ready":
                 break
             time.sleep(0.05)
+        assert client.app.state.workbench.workspace.matter_readiness(
+            matter.matter_id
+        ).state == "ready"
         assert {item.state for item in store.documents.values()} == {"ready"}
         assert source.read_bytes() == original
         result = client.get(f"/matters/{slug}", params={"q": "cobalt notebook"})
@@ -260,7 +266,7 @@ def test_background_registered_folder_becomes_searchable_without_modifying_sourc
         assert source.read_bytes() == original
 
 
-def test_registered_staging_cleanup_remains_active_and_blocks_purge(
+def test_registered_staging_cleanup_blocks_search_readiness_and_purge(
     tmp_path, monkeypatch
 ):
     source_root = tmp_path / "registered"
@@ -311,16 +317,27 @@ def test_registered_staging_cleanup_remains_active_and_blocks_purge(
         assert cleanup_started.wait(timeout=5)
         bench = client.app.state.workbench
         matter = bench.matter(slug, WEB_ACTOR)
-        assert bench.workspace.active_matter_work_counts(matter.matter_id)[
-            "ingestion"
-        ] == 1
-        with pytest.raises(WorkspaceProblem, match="source and media processing"):
-            bench.begin_matter_purge(
-                matter.slug, matter.owner_id, matter.display_name
+        try:
+            assert {item.state for item in bench.source_store(matter).documents.values()} == {
+                "ready"
+            }
+            readiness = bench.workspace.matter_readiness(matter.matter_id)
+            assert readiness.state == "preparing"
+            assert readiness.processing_count == 1 and readiness.searchable_count == 0
+            blocked = client.get(
+                f"/matters/{slug}", params={"q": "Generated registered source"}
             )
-        assert bench.workspace.matter_lifecycle(matter.matter_id).state == "active"
-
-        release_cleanup.set()
+            assert "Preparing your matter" in blocked.text
+            assert bench.workspace.active_matter_work_counts(matter.matter_id)[
+                "ingestion"
+            ] == 1
+            with pytest.raises(WorkspaceProblem, match="source and media processing"):
+                bench.begin_matter_purge(
+                    matter.slug, matter.owner_id, matter.display_name
+                )
+            assert bench.workspace.matter_lifecycle(matter.matter_id).state == "active"
+        finally:
+            release_cleanup.set()
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             if not bench.workspace.active_matter_work_counts(matter.matter_id)[
@@ -332,6 +349,14 @@ def test_registered_staging_cleanup_remains_active_and_blocks_purge(
             "ingestion"
         ]
         assert list(bench.storage.ingestion_staging.iterdir()) == []
+        readiness = bench.workspace.matter_readiness(matter.matter_id)
+        assert readiness.state == "ready" and readiness.searchable_count == 1
+        assert readiness.processing_count == 0
+        result = client.get(
+            f"/matters/{slug}", params={"q": "Generated registered source"}
+        )
+        assert "generated-record.txt" in result.text
+        assert "Generated registered source for the cleanup boundary." in result.text
 
 
 def test_expanded_ocr_processes_more_than_legacy_25_page_cap(tmp_path, monkeypatch):

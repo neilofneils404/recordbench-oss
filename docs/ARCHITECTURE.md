@@ -44,6 +44,14 @@ anonymous speaker clustering, and export generation; the app projects
 transcript segments back into the matter index and generates an automatic
 source summary.
 
+An extracted document can be marked ready before indexing and registered-source
+staging cleanup finish. Matter search readiness therefore uses the durable job
+state as well as the source catalog. Integration tests must wait for that same
+matter readiness before expecting search results, while retaining source and
+result assertions. A paused-cleanup regression proves that extraction alone
+does not permit matter search or closure, and that search becomes available
+after the job finishes. This contract does not delay ordinary source viewing.
+
 Model workers have no published ports and run on an internal Docker network.
 The transcription worker has no network namespace at runtime. The app may need
 egress only for a configured OIDC provider. Companion-service URLs require an

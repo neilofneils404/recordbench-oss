@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-08: Correct the registered-ingestion integration test to wait for
+  durable matter readiness before asserting search results. Extend the
+  deterministic paused-cleanup test to verify that extraction-ready sources
+  still block matter search and closure until the job finishes. Retain all
+  existing result, source-preservation and purge assertions; no runtime change.
+
 - 2026-09-08: Add repeatable Python 3.12 contributor bootstrap, preserve existing
   environments, support custom interpreter paths through the full Make gate,
   and document clean-host prerequisites and recovery. Preserve bare Make's test
