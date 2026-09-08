@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 2026-09-08: Record the maintainer-approved exact author attribution on the
+  PR #17 merge commit. Keep content, private-deny, other-identity and later-commit
+  checks unchanged. Require an explicit public no-reply author for CLI merges.
+
 - 2026-09-08: Correct the registered-ingestion integration test to wait for
   durable matter readiness before asserting search results. Extend the
   deterministic paused-cleanup test to verify that extraction-ready sources

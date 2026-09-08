@@ -31,6 +31,17 @@ acceptance. The full supported-release requirements remain in
 [release readiness](RELEASE_READINESS.md). Optional dependencies and models
 have separate upstream terms; see [third-party notices](../THIRD_PARTY_NOTICES.md).
 
+The maintainer also approved the exact author attribution on merge commit
+`4b8d74be09f41a443abb705bed1c6ab8bb5371c7`. Its disposition follows the same
+commit-and-identity boundary above and grants no exception to later commits.
+
+When using the GitHub CLI to merge, explicitly pass `--author-email` with the
+public no-reply address validated for the reviewed head. The account default may
+use a personal address even when local commits use no-reply attribution. If
+GitHub rejects the public address, use a normal protected fast-forward of the
+reviewed head when possible; do not remove branch protections or silently retry
+with the account default.
+
 ## Prevent disclosure before publishing
 
 CI runs after content reaches GitHub. It cannot prevent an initial disclosure.
