@@ -72,6 +72,10 @@ matter-scoped email count for readiness and query-time coverage without reading
 source files. Email does not block otherwise-ready queries, but `partial_query`
 also identifies incomplete attachment coverage with zero excluded source files.
 The ordinary answer coverage snapshot flows into UI and work-product exports.
+Investigation results combine source/attachment coverage with the focused-search
+caution, retaining both in standalone and complete-bundle exports. Structured
+delivery/read-receipt body parts are not invented attachment entries; explicit
+attachment disposition or filenames still identify real attached report data.
 No schema or source registry shape changes; older passages and indexes are not
 silently rewritten or assigned a new citation basis.
 

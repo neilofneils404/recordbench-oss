@@ -201,6 +201,32 @@ def main():
             assert EMAIL_COVERAGE_NOTICE in markdown.read_text()
             checked("Normal question submission, saved answer reload and answer download retain the attachment coverage snapshot")
 
+            go(prefix + "?" + urlencode({"conversation": conversation.conversation_id}))
+            driver.find_element(By.ID, "matter-question").send_keys("Investigate what ParentBodyCanary recorded.")
+            click(".investigate-button", False)
+            wait.until(lambda _: bench.workspace.research_jobs(matter.matter_id, ACTOR))
+            research_id = bench.workspace.research_jobs(matter.matter_id, ACTOR)[0].job_id
+            wait.until(lambda _: bench.workspace.research_job(matter.matter_id, ACTOR, research_id).state == "succeeded")
+            go(prefix + "/research?" + urlencode({"job": research_id}))
+            caution = driver.find_element(By.CSS_SELECTOR, ".research-result .workflow-caution")
+            assert EMAIL_COVERAGE_NOTICE in caution.text and "did not check every source" in caution.text
+            for width in (1440, 430):
+                driver.set_window_size(width, 1000)
+                if width < 901:
+                    wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
+                driver.execute_script('arguments[0].scrollIntoView({block:"center",behavior:"instant"});', caution)
+                assert caution.is_displayed()
+                assert driver.execute_script("return document.documentElement.scrollWidth <= innerWidth + 2")
+                driver.save_screenshot(str(output / f"synthetic-email-investigation-{width}.png"))
+            driver.set_window_size(1440, 1000)
+            click(".workflow-completion-bar details summary", False)
+            before_research = set(downloads.glob("*.md"))
+            click(f'a[href="{prefix}/research/{research_id}/export?format=markdown"]', False)
+            research_file = wait.until(lambda _: next(iter(set(downloads.glob("*.md")) - before_research), None))
+            assert EMAIL_COVERAGE_NOTICE in research_file.read_text()
+            assert "did not check every source" in research_file.read_text()
+            checked("Normal investigation retains attachment coverage beside its focused-search caution on desktop/narrow results and the downloaded evidence ledger")
+
             foreign_owner = "generated-email-foreign-owner"
             bench.workspace.upsert_principal("test", foreign_owner, "Generated foreign owner", foreign_owner,
                 preferred_principal_id=foreign_owner)
@@ -216,6 +242,8 @@ def main():
             with zipfile.ZipFile(bundle) as archive:
                 conversations = [name for name in archive.namelist() if name.startswith("conversations/") and name.endswith(".md")]
                 assert conversations and any(EMAIL_COVERAGE_NOTICE in archive.read(name).decode() for name in conversations)
+                investigations = [name for name in archive.namelist() if name.startswith("investigations/")]
+                assert investigations and all(EMAIL_COVERAGE_NOTICE in archive.read(name).decode() for name in investigations)
                 assert not any(name.endswith(".eml") for name in archive.namelist())
             driver.find_element(By.ID, "confirmed-name").send_keys(matter.display_name)
             click("input[name=acknowledge]", False)

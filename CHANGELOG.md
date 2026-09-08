@@ -7,6 +7,9 @@
   attachments with an explicit unprocessed-content notice; reject malformed MIME
   containers. Show attachment coverage in review, search, answers and saved
   exports while retaining old passages and citations without automatic reprocessing.
+  Retain attachment and excluded-source coverage in investigations and their
+  exports alongside the focused-search caution. Do not invent unnamed attachments
+  from structured delivery/read-receipt body parts; keep explicit attachments.
   Add generated parser/HTTP contracts, browser acceptance and stopped-reader recovery.
 
 - 2026-09-08: Show counts and comparison links for received sources with identical

@@ -184,15 +184,25 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
         disposition = (part.get_content_disposition() or "").casefold()
         filename = " ".join((part.get_filename() or "").split())[:240]
         media_type = part.get_content_type()
+        report_data = media_type in {
+            "message/delivery-status", "message/disposition-notification",
+            "message/global-delivery-status", "message/global-disposition-notification",
+        }
         attachment = part is not message and (
             disposition == "attachment" or filename or
-            part.get_content_maintype() == "message" or
-            (not part.is_multipart() and media_type not in {"text/plain", "text/html"})
+            media_type in {"message/rfc822", "message/global"} or
+            (not report_data and not part.is_multipart()
+                and media_type not in {"text/plain", "text/html"})
         )
         if attachment:
             attachments.append(
                 f"Attachment: {filename or 'unnamed'} ({media_type})"
             )
+            continue
+        if report_data:
+            # Structured delivery/read-receipt fields are report body metadata,
+            # not an unnamed attachment. Keep the human-readable report body;
+            # machine fields remain outside the current text extraction scope.
             continue
         if part.is_multipart():
             pending.extend(reversed(part.get_payload()))
