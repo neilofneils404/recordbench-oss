@@ -103,6 +103,15 @@ inspection. A hosted unit run then exposed a signal-delivery race: the command
 had exited, but a terminated child could still hold its listener when success
 returned. Delayed-termination regressions reproduce it and now pass; cleanup waits
 for group shutdown or returns a bounded failure. Both actual pinned-browser
-journeys also pass after this correction (22 checks). Updated hosted full checks,
-actual PR integration execution and final-head review remain required
-before merge. No live deployment or release tag is created by this workflow.
+journeys also pass after this correction (22 checks). Hosted Quality run
+34265879394 passes all checks, including 1,018 application tests with nine optional
+skips; hosted Browser run 34265879370 passes both 11-check journeys. Actual PR
+integration execution and final-head review remain required
+before merge.
+
+After combining the current email coverage, export readiness and upload recovery
+changes, local `make check` passes **1,058 application tests** with nine optional
+skips, all **194 transcription tests**, compilation, both Compose graphs and
+publication inspection. Fresh hosted quality/browser execution must validate this
+combined revision before merge. No live deployment or release tag is created by
+this workflow.
