@@ -76,6 +76,10 @@ when another selection uses the same path or bytes; retries keep the original so
 Sources also offers [folder navigation](docs/SOURCE_FOLDER_NAVIGATION.md), with
 child-folder counts, parent navigation and the existing collection, source-set
 and review filters. Folder browsing preserves source identities and originals.
+Sources with [identical received bytes](docs/EXACT_BYTE_MATCHES.md) show a count
+and a link to inspect those files together across collections. A matching-files
+filter and saved source groups help review copies while preserving every source
+and exact reference. Group actions return to the current comparison and filters.
 
 Case-note edits preserve unsaved fields when another team member has changed
 the note. Confirm/Delete actions also require the version just reviewed. See

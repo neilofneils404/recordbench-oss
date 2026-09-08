@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-08: Show counts and comparison links for received sources with identical
+  bytes, plus a matching-files filter. Preserve distinct sources, collections,
+  folder/filter scope and exact references; keep comparison after group actions.
+  Reject stale/foreign comparison references with an empty recoverable view.
+  Add a rebuildable source-version-bound lookup, bounded 10,000-source acceptance,
+  real-upload/browser evidence, normal backup/restore and previous-reader checks.
+
 - 2026-09-08: Keep separate sources for newly confirmed resumable upload items
   with identical paths or bytes, while preserving same-item retry identity across
   restart and copy fallback. Keep finished uploads whose sources were removed

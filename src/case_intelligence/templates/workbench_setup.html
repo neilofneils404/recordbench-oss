@@ -203,7 +203,7 @@
       {% endif %}
       {% endif %}
 
-      {% if source_folders.total or source_library.folder %}
+      {% if source_folders.total or source_library.folder or source_library.same_content or source_library.matching_only %}
       <nav class="source-folder-nav" data-source-folder-nav aria-label="Source folders">
         <div class="source-subheading"><h3>Folders</h3><small>Sources in the current view</small></div>
         {% if source_library.folder %}
@@ -223,9 +223,13 @@
       </nav>
       {% endif %}
 
+      {% if source_library.same_content %}
+      <p data-source-byte-comparison>{% if source_library.comparison_available %}Files with identical bytes to the selected source. Each source keeps its own collection and source references.{% else %}This comparison is unavailable. The source may have been removed or changed.{% endif %} <a href="{{ library_url(1, same_content='') }}">Leave comparison</a></p>
+      {% endif %}
       <form class="source-library-filters" method="get" action="/matters/{{ matter.slug }}/setup">
         <input type="hidden" name="view" value="list">
         <input type="hidden" name="page_size" value="100">
+        <input type="hidden" name="same_content" value="{{ source_library.same_content }}">
         <input type="hidden" name="folder" value="{{ source_library.folder }}">
         <input type="hidden" name="source_set" value="{{ source_library.source_set_id }}">
         <input type="hidden" name="status" value="{{ source_library.status }}">
@@ -233,12 +237,13 @@
         <label><span>Collection</span><select name="collection"><option value="">All collections</option>{% for collection in source_collections %}<option value="{{ collection.collection_id }}" {% if source_library.collection_id == collection.collection_id %}selected{% endif %}>{{ collection.name }} ({{ collection.source_count }})</option>{% endfor %}</select></label>
         <label><span>Type</span><select name="kind"><option value="">All types</option>{% for value, label in [('PDF', 'PDF'), ('DOCX', 'Word'), ('TXT', 'Text'), ('IMAGE', 'Image'), ('EMAIL', 'Email'), ('SPREADSHEET', 'Spreadsheet'), ('AUDIO', 'Audio'), ('VIDEO', 'Video')] %}<option value="{{ value }}" {% if source_library.kind == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         <label><span>Review</span><select name="review"><option value="">Any review state</option><option value="unreviewed" {% if source_library.review == 'unreviewed' %}selected{% endif %}>Unreviewed</option><option value="reviewed" {% if source_library.review == 'reviewed' %}selected{% endif %}>Reviewed</option><option value="flagged" {% if source_library.review == 'flagged' %}selected{% endif %}>Flagged</option></select></label>
+        <label><span>Identical bytes</span><select name="matching_only"><option value="false">All files</option><option value="true" {% if source_library.matching_only %}selected{% endif %}>Has copies</option></select></label>
         <label><span>Sort</span><select name="sort"><option value="newest" {% if source_library.sort == 'newest' %}selected{% endif %}>Newest added</option><option value="oldest" {% if source_library.sort == 'oldest' %}selected{% endif %}>Oldest added</option><option value="name" {% if source_library.sort == 'name' %}selected{% endif %}>Name A–Z</option><option value="name_desc" {% if source_library.sort == 'name_desc' %}selected{% endif %}>Name Z–A</option><option value="status" {% if source_library.sort == 'status' %}selected{% endif %}>Needs attention first</option></select></label>
         <button class="button button-secondary" type="submit">Apply</button>
-        {% if source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id or source_library.folder %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100">Clear</a>{% endif %}
+        {% if source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id or source_library.folder or source_library.same_content or source_library.matching_only %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100">Clear</a>{% endif %}
       </form>
 
-      {% set filtered_view = source_library.view == 'list' or source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id or source_library.folder %}
+      {% set filtered_view = source_library.view == 'list' or source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id or source_library.folder or source_library.same_content or source_library.matching_only %}
       <div class="source-results-heading">
         <div><h3>{{ 'Matching sources' if filtered_view else 'Recently added' }}</h3><span>{% if filtered_view %}{{ source_library.first_item }}–{{ source_library.last_item }} of {{ source_library.total }}{% else %}A short working view, not the complete receipt{% endif %}</span></div>
         {% if not filtered_view and source_library.stats.total > source_library.items|length %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100">Browse all {{ source_library.stats.total }}</a>{% endif %}
@@ -246,6 +251,7 @@
 
       <form id="source-bulk-form" method="post" action="/matters/{{ matter.slug }}/sources/bulk" class="source-bulk-toolbar" data-source-bulk-form>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="return_query" value="{{ source_return_query }}">
         <strong><span data-source-selected-count>0</span> selected</strong>
         <select name="action" required data-source-bulk-action>
           <option value="">Choose action…</option>
@@ -275,7 +281,7 @@
         <div class="source-table-row" role="row">
           <span class="source-select-cell" role="cell"><input type="checkbox" name="selected" value="{{ source.action_token }}" form="source-bulk-form" aria-label="Select {{ source.name }}" data-source-select></span>
           <span class="source-name-cell" role="cell"><span class="file-mark file-{{ source.kind|lower }}">{{ source.kind }}</span><a href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}"><strong>{{ source.name }}</strong>{% if '/' in source.relative_path %}<small>{{ source.relative_path.rsplit('/', 1)[0] }}</small>{% endif %}</a></span>
-          <span class="source-collection-cell" role="cell"><a href="{{ library_url(1, view='list', collection=source.collection_id, source_set='') }}">{{ source.collection_name }}</a><small>{{ source.kind }}</small></span>
+          <span class="source-collection-cell" role="cell"><a href="{{ library_url(1, view='list', collection=source.collection_id, source_set='') }}">{{ source.collection_name }}</a><small>{{ source.kind }}</small>{% if source.byte_match_count > 1 %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;same_content={{ source.action_token }}" data-source-byte-matches>{{ source.byte_match_count }} files with identical bytes</a>{% endif %}</span>
           <span class="source-review-cell" role="cell"><span class="review-badge review-{{ source.review_state }}">{{ source.review_state|replace('_', ' ')|title }}</span><span class="source-state state-{{ source.tone }}"><i aria-hidden="true"></i>{{ source.state }}</span></span>
           <span class="source-count" role="cell">{{ source.count_label }}</span>
           <span class="row-actions" role="cell">

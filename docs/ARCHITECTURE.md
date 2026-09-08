@@ -52,6 +52,14 @@ relative-path prefix restricts source rows; bounded SQL grouping pages immediate
 children and descendant counts under the same filters. It adds no stored state
 and preserves exact source links and existing source-set memberships.
 
+[Identical-byte comparison](EXACT_BYTE_MATCHES.md) uses a derived digest/size
+lookup updated transactionally with source catalog projections. It joins the
+current admitted source version and size, and normal registry reconciliation
+rebuilds it. The existing catalog row and registry JSON shapes stay compatible
+with previous readers. SQL materializes at most 100 display rows before counting
+matching sources; folder and matching-only filters stay database-native.
+Comparison URLs use existing matter-bound source action tokens, never hashes.
+
 Accepted documents then enter extraction. Text PDFs use native extraction;
 missing-text pages use bounded CPU OCR. Media enters the durable media queue,
 which performs a bounded offline recording check before processor submission.

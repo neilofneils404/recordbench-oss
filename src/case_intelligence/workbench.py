@@ -473,6 +473,7 @@ class SourceRow:
     added_at: str = ""
     byte_size: int = 0
     origin: str = "upload"
+    byte_match_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -496,6 +497,9 @@ class SourceLibraryPage:
     source_set_id: str
     sort: str
     folder: str = ""
+    same_content: str = ""
+    matching_only: bool = False
+    comparison_available: bool = True
 
 
 @dataclass(frozen=True)
@@ -1998,6 +2002,7 @@ class CaseIntelligenceWorkbench:
             "page_count": document.page_count,
             "duration_ms": document.duration_ms,
             "byte_size": document.size,
+            "source_sha256": document.digest,
             "origin": document.origin,
             "retryable": document.state in {"failed", "needs_ocr"},
             "removable": document.state not in {"queued", "processing"},
@@ -2114,6 +2119,7 @@ class CaseIntelligenceWorkbench:
             item.added_at,
             item.byte_size,
             item.origin,
+            item.byte_match_count,
         )
 
     def source_library(
@@ -2128,6 +2134,8 @@ class CaseIntelligenceWorkbench:
         collection_id: str = "",
         source_set_id: str = "",
         folder: str = "",
+        same_content: str = "",
+        matching_only: bool = False,
         sort: str = "newest",
         page: int = 1,
         page_size: int = 50,
@@ -2162,7 +2170,7 @@ class CaseIntelligenceWorkbench:
         if collection_value:
             self.workspace.source_collection(matter.matter_id, collection_value)
         if view_value == "overview" and not any(
-            (query_value, status_value, kind_value, review_value, collection_value, source_set_value, folder_value)
+            (query_value, status_value, kind_value, review_value, collection_value, source_set_value, folder_value, same_content, matching_only)
         ):
             page_size_value = 8
         requested_page = max(int(page), 1)
@@ -2175,6 +2183,7 @@ class CaseIntelligenceWorkbench:
             collection_id=collection_value,
             source_set_id=source_set_value,
             folder=folder_value,
+            same_content=same_content, matching_only=matching_only,
             sort=sort_value,
             limit=page_size_value,
             offset=(requested_page - 1) * page_size_value,
@@ -2193,6 +2202,7 @@ class CaseIntelligenceWorkbench:
                 collection_id=collection_value,
                 source_set_id=source_set_value,
                 folder=folder_value,
+                same_content=same_content, matching_only=matching_only,
                 sort=sort_value,
                 limit=page_size_value,
                 offset=start,
@@ -2236,6 +2246,9 @@ class CaseIntelligenceWorkbench:
             source_set_value,
             sort_value,
             folder_value,
+            same_content,
+            matching_only,
+            not same_content or self.workspace.source_byte_comparison_available(matter.matter_id, same_content),
         )
 
     def source_review(
@@ -7876,6 +7889,8 @@ def create_workbench_app(
         collection: str = Query("", max_length=80),
         source_set: str = Query("", max_length=80),
         folder: str = Query("", max_length=2048),
+        same_content: str = Query("", max_length=32),
+        matching_only: bool = Query(False),
         folder_page: int = Query(1, ge=1, le=100_000),
         sort: str = Query("newest", max_length=20),
         page: int = Query(1, ge=1, le=100_000),
@@ -7905,13 +7920,15 @@ def create_workbench_app(
                 collection_id=collection,
                 source_set_id=source_set,
                 folder=folder,
+                same_content=same_content, matching_only=matching_only,
                 sort=sort,
                 page=page,
                 page_size=page_size,
             )
             folder_filters = dict(folder=library.folder, query_key=library.query.casefold(),
                 tone=library.status, kind=library.kind, review_state=library.review,
-                collection_id=library.collection_id, source_set_id=library.source_set_id)
+                collection_id=library.collection_id, source_set_id=library.source_set_id,
+                same_content=library.same_content, matching_only=library.matching_only)
             folders = bench.workspace.source_catalog_folders(matter.matter_id,
                 **folder_filters, limit=50, offset=(folder_page - 1) * 50)
             folder_pages = max(math.ceil(folders.total / 50), 1)
@@ -7944,6 +7961,8 @@ def create_workbench_app(
                 "collection": library.collection_id,
                 "source_set": library.source_set_id,
                 "folder": library.folder,
+                "same_content": library.same_content,
+                "matching_only": "true" if library.matching_only else "",
                 "sort": library.sort,
                 "page_size": str(library.page_size),
                 "page": str(target_page),
@@ -7982,6 +8001,7 @@ def create_workbench_app(
                     ),
                 },
                 "library_url": library_url,
+                "source_return_query": urlparse(library_url(1, view="list")).query,
                 "source_folders": folders,
                 "folder_page": folder_page,
                 "folder_pages": folder_pages,
@@ -10707,8 +10727,18 @@ def create_workbench_app(
         collection_id: str = Form("", max_length=80),
         source_set_id: str = Form("", max_length=80),
         source_set_name: str = Form("", max_length=160),
+        return_query: str = Form("", max_length=8192),
     ):
         context = auth_context(request)
+        # Only listed Sources filters return to this same matter's fixed route.
+        # No caller-selected redirect target or free-form query is forwarded.
+        try:
+            parsed_return = parse_qs(return_query, max_num_fields=16)
+        except ValueError as exc:
+            raise HTTPException(400, "Return to Sources and try again.") from exc
+        return_filters = {key: values[0] for key, values in parsed_return.items()
+            if key in {"q", "status", "kind", "review", "collection", "source_set",
+                "folder", "same_content", "matching_only", "sort", "page_size", "page"}}
         try:
             matter = authorized_matter(request, slug)
             if not 1 <= len(selected) <= 100:
@@ -10758,7 +10788,7 @@ def create_workbench_app(
             raise HTTPException(404, "Source or source group not found") from exc
         except (WorkspaceProblem, UploadProblem) as exc:
             return RedirectResponse(
-                _query_url(f"/matters/{slug}/setup", view="list", error=str(exc)),
+                _query_url(f"/matters/{slug}/setup", view="list", **return_filters, error=str(exc)),
                 status_code=303,
             )
         audit(
@@ -10770,7 +10800,7 @@ def create_workbench_app(
             details={"count": changed, "state": audit_state},
         )
         return RedirectResponse(
-            _query_url(f"/matters/{slug}/setup", view="list", notice=notice),
+            _query_url(f"/matters/{slug}/setup", view="list", **return_filters, notice=notice),
             status_code=303,
         )
 

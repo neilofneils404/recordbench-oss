@@ -518,6 +518,7 @@ class SourceCatalogRecord:
     collection_name: str
     review_state: str
     added_at: str
+    byte_match_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -1002,6 +1003,7 @@ class WorkspaceStore:
             "migrations/sqlite/0023_review_conversation_continuity.sql",
             "migrations/sqlite/0024_review_source_content_basis.sql",
             "migrations/sqlite/0025_intake_receipts.sql",
+            "migrations/sqlite/0026_source_byte_matches.sql",
         ):
             migration = resources.files("case_intelligence").joinpath(name).read_text(encoding="utf-8")
             self.connection.executescript(migration)
@@ -5342,6 +5344,47 @@ class WorkspaceStore:
             prepared,
         )
 
+    def _sync_source_byte_matches_locked(
+        self, matter_id: str, sources: Sequence[Mapping[str, object]]
+    ) -> None:
+        # Only the committed registry projection supplies this digest, never an
+        # intake descriptor. Remove a previous lookup when admission is unknown.
+        self.connection.executemany(
+            "DELETE FROM workbench_source_byte_match WHERE matter_id=? AND document_id=?",
+            [(matter_id, source["document_id"]) for source in sources],
+        )
+        rows = []
+        for source in sources:
+            digest = source.get("source_sha256", "")
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                continue
+            if source["source_state"] not in {
+                "queued", "processing", "ready", "needs_ocr", "failed", "playback_only"
+            }:
+                continue
+            rows.append((matter_id, source["document_id"], source["version_id"],
+                digest, source["byte_size"]))
+        self.connection.executemany(
+            "INSERT INTO workbench_source_byte_match VALUES (?,?,?,?,?)", rows
+        )
+
+    @staticmethod
+    def _source_byte_match_count_sql() -> str:
+        return (
+            "(SELECT COUNT(*) FROM workbench_current_source_bytes own "
+            "JOIN workbench_current_source_bytes peer ON peer.matter_id=own.matter_id "
+            "AND peer.source_sha256=own.source_sha256 AND peer.byte_size=own.byte_size "
+            "WHERE own.matter_id=c.matter_id AND own.document_id=c.document_id)"
+        )
+
+    def source_byte_comparison_available(self, matter_id: str, token: str) -> bool:
+        with self._lock:
+            self._active_matter_locked(matter_id)
+            return self.connection.execute(
+                "SELECT 1 FROM workbench_current_source_bytes "
+                "WHERE matter_id=? AND action_token=? LIMIT 1", (matter_id, token)
+            ).fetchone() is not None
+
     def upsert_source_catalog(
         self, matter_id: str, sources: Sequence[Mapping[str, object]]
     ) -> int:
@@ -5351,6 +5394,7 @@ class WorkspaceStore:
         with self._lock, self.connection:
             self._active_matter_locked(matter_id)
             self._upsert_source_catalog_rows_locked(prepared)
+            self._sync_source_byte_matches_locked(matter_id, sources)
         return len(prepared)
 
     def delete_source_catalog(
@@ -5363,12 +5407,11 @@ class WorkspaceStore:
         )
         with self._lock, self.connection:
             self._active_matter_locked(matter_id)
-            before = self.connection.total_changes
-            self.connection.executemany(
+            removed = self.connection.executemany(
                 "DELETE FROM workbench_source_catalog WHERE matter_id=? AND document_id=?",
                 [(matter_id, document_id) for document_id in prepared],
             )
-            return self.connection.total_changes - before
+            return removed.rowcount
 
     def replace_source_catalog(
         self, matter_id: str, sources: Sequence[Mapping[str, object]]
@@ -5394,6 +5437,7 @@ class WorkspaceStore:
                     [(row[1],) for row in prepared],
                 )
                 self._upsert_source_catalog_rows_locked(prepared)
+                self._sync_source_byte_matches_locked(matter_id, sources)
                 self.connection.execute(
                     "DELETE FROM workbench_source_catalog WHERE matter_id=? AND NOT EXISTS ("
                     "SELECT 1 FROM workbench_source_catalog_sync s "
@@ -5425,6 +5469,7 @@ class WorkspaceStore:
         self, matter_id: str, *, query_key: str = "", tone: str = "",
         actionable_only: bool = False, kind: str = "", review_state: str = "",
         collection_id: str = "", source_set_id: str = "", folder: str = "",
+        same_content: str = "", matching_only: bool = False,
     ) -> tuple[str, tuple[object, ...]]:
         where = ["c.matter_id=?"]
         parameters: list[object] = [matter_id]
@@ -5452,6 +5497,25 @@ class WorkspaceStore:
                 "AND si.source_set_id=?)"
             )
             parameters.append(source_set_id)
+        if same_content:
+            if not re.fullmatch(r"[0-9a-f]{32}", same_content):
+                raise WorkspaceProblem("Choose a listed source comparison.")
+            where.append(
+                "EXISTS (SELECT 1 FROM workbench_current_source_bytes own "
+                "JOIN workbench_current_source_bytes ref ON ref.matter_id=own.matter_id "
+                "AND ref.source_sha256=own.source_sha256 AND ref.byte_size=own.byte_size "
+                "WHERE own.matter_id=c.matter_id AND own.document_id=c.document_id "
+                "AND ref.action_token=?)"
+            )
+            parameters.append(same_content)
+        if matching_only:
+            where.append(
+                "EXISTS (SELECT 1 FROM workbench_current_source_bytes own "
+                "JOIN workbench_current_source_bytes peer ON peer.matter_id=own.matter_id "
+                "AND peer.source_sha256=own.source_sha256 AND peer.byte_size=own.byte_size "
+                "AND peer.document_id!=own.document_id "
+                "WHERE own.matter_id=c.matter_id AND own.document_id=c.document_id)"
+            )
         folder = self.source_folder_path(folder)
         if folder:
             # Literal separator-bound prefix: percent/underscore are not SQL
@@ -5465,12 +5529,14 @@ class WorkspaceStore:
         self, matter_id: str, *, folder: str = "", query_key: str = "", tone: str = "",
         kind: str = "", review_state: str = "", collection_id: str = "",
         source_set_id: str = "", limit: int = 50, offset: int = 0,
+        same_content: str = "", matching_only: bool = False,
     ) -> SourceFolderPageRecord:
         """Page immediate directories; counts include descendants under current filters."""
         folder = self.source_folder_path(folder)
         predicate, parameters = self._source_catalog_filter(
             matter_id, folder=folder, query_key=query_key, tone=tone, kind=kind,
             review_state=review_state, collection_id=collection_id, source_set_id=source_set_id,
+            same_content=same_content, matching_only=matching_only,
         )
         remaining_start = len(folder) + 2 if folder else 1
         cte = (
@@ -5502,6 +5568,8 @@ class WorkspaceStore:
         collection_id: str = "",
         source_set_id: str = "",
         folder: str = "",
+        same_content: str = "",
+        matching_only: bool = False,
         sort: str = "newest",
         limit: int = 50,
         offset: int = 0,
@@ -5512,6 +5580,7 @@ class WorkspaceStore:
             matter_id, query_key=query_key, tone=tone, actionable_only=actionable_only,
             kind=kind, review_state=review_state, collection_id=collection_id,
             source_set_id=source_set_id, folder=folder,
+            same_content=same_content, matching_only=matching_only,
         )
         order = {
             "newest": "COALESCE(o.added_at,c.cataloged_at) DESC,c.document_id DESC",
@@ -5561,7 +5630,7 @@ class WorkspaceStore:
                 tuple(parameters),
             ).fetchone()
             rows = self.connection.execute(
-                "SELECT c.*,COALESCE(o.collection_id,'') AS collection_id,"
+                "WITH selected_page AS MATERIALIZED (SELECT c.*,COALESCE(o.collection_id,'') AS collection_id,"
                 "COALESCE(sc.name,'Unfiled') AS collection_name,"
                 "COALESCE(o.review_state,'unreviewed') AS review_state,"
                 "COALESCE(o.added_at,c.cataloged_at) AS added_at"
@@ -5569,7 +5638,9 @@ class WorkspaceStore:
                 + predicate
                 + " ORDER BY "
                 + order
-                + " LIMIT ? OFFSET ?",
+                + " LIMIT ? OFFSET ?) SELECT c.*,"
+                + self._source_byte_match_count_sql() + " AS byte_match_count FROM selected_page c ORDER BY "
+                + order.replace("COALESCE(o.added_at,c.cataloged_at)", "c.added_at"),
                 (*parameters, limit_value, offset_value),
             ).fetchall()
         stats = {

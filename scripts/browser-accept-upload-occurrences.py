@@ -35,6 +35,7 @@ def main():
     parser.add_argument('--chrome-binary', type=Path, required=True)
     parser.add_argument('--chromedriver', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--verify-byte-matches', action='store_true')
     args = parser.parse_args()
     output = args.output.resolve()
     downloads = output / 'downloads'
@@ -167,6 +168,50 @@ def main():
                 assert body.decode().strip() in driver.find_element(By.TAG_NAME, 'body').text
             checked('Each collection contains its own exact source and each receipt opens the matching received version')
 
+            if args.verify_byte_matches:
+                go(prefix + '/setup?' + urlencode({'view': 'list', 'collection': collections[0].collection_id}))
+                assert len(rows()) == 1
+                click('[data-source-byte-matches]')
+                assert len(rows()) == 2  # Deliberate comparison crosses collections.
+                assert collections[2].name not in driver.find_element(By.CSS_SELECTOR, '.source-library-table').text
+                assert all(d.digest not in driver.page_source for d in documents)
+                comparison_url = driver.current_url
+                old = driver.find_element(By.TAG_NAME, 'html')
+                driver.refresh()
+                wait.until(lambda _: detached(old))
+                ready()
+                assert len(rows()) == 2
+                Select(driver.find_element(By.NAME, 'matching_only')).select_by_value('true')
+                click('.source-library-filters button[type=submit]')
+                assert len(rows()) == 2 and 'same_content=' in driver.current_url
+                click('[data-source-folder-nav] li a')
+                assert len(rows()) == 2 and 'same_content=' in driver.current_url
+                for width in (1440, 430):
+                    driver.set_window_size(width, 1000)
+                    if width < 901:
+                        wait.until(lambda d: d.find_element(By.CSS_SELECTOR, '[data-rail-toggle]').get_attribute('aria-expanded') == 'false')
+                        wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
+                    assert driver.execute_script('return document.documentElement.scrollWidth <= innerWidth + 2')
+                    assert 'identical bytes' in driver.find_element(By.CSS_SELECTOR, '[data-source-byte-comparison]').text
+                    driver.execute_script('arguments[0].scrollIntoView({block:"start",behavior:"instant"});', driver.find_element(By.CSS_SELECTOR, '[data-source-byte-comparison]'))
+                    driver.save_screenshot(str(output / f'synthetic-byte-comparison-{width}.png'))
+                    driver.execute_script('arguments[0].scrollIntoView({block:"start",behavior:"instant"});', driver.find_element(By.CSS_SELECTOR, '.source-library-table'))
+                    assert all('files with identical bytes' in row.text for row in rows())
+                    driver.save_screenshot(str(output / f'synthetic-byte-match-rows-{width}.png'))
+                driver.set_window_size(1440, 1000)
+                click('[data-source-select-all]', False)
+                Select(driver.find_element(By.CSS_SELECTOR, '[data-source-bulk-action]')).select_by_value('create_set')
+                driver.find_element(By.CSS_SELECTOR, '[data-bulk-set-name]').send_keys('Generated identical byte review')
+                click('[data-source-bulk-submit]')
+                byte_group = next(g for g in bench.workspace.source_sets(matter.matter_id) if g.name == 'Generated identical byte review')
+                assert byte_group.source_count == 2
+                assert len(rows()) == 2 and 'same_content=' in driver.current_url
+                go(prefix + '/setup?' + urlencode({'view': 'list', 'source_set': byte_group.source_set_id}))
+                assert len(rows()) == 2
+                click('.source-open-action')
+                assert bodies[0].decode().strip() in driver.find_element(By.TAG_NAME, 'body').text
+                checked('Identical-byte comparison crosses collections and survives reload, filters, folder navigation, source grouping and exact source opening at desktop and narrow widths')
+
             go(prefix + '/setup?' + urlencode({'view': 'list', 'collection': collections[0].collection_id}))
             click('[data-source-select-all]', False)
             Select(driver.find_element(By.CSS_SELECTOR, '[data-source-bulk-action]')).select_by_value('create_set')
@@ -193,6 +238,14 @@ def main():
             assert 'the first vehicle arrived at noon' in driver.find_element(By.ID, 'support-pane').text
             assert len(bench.workspace.all_notebook_items(matter.matter_id, ACTOR)) == 1
             checked('Removing one equal-content occurrence preserves the other source, its review group and saved support')
+            if args.verify_byte_matches:
+                removed_token = bench.source_store(matter).action_token(documents[1])
+                go(prefix + '/setup?' + urlencode({'view': 'list', 'same_content': removed_token}))
+                assert len(rows()) == 0 and 'comparison is unavailable' in driver.find_element(By.TAG_NAME, 'body').text
+                click('[data-source-byte-comparison] a')
+                assert len(rows()) == 2 and not driver.find_elements(By.CSS_SELECTOR, '[data-source-byte-matches]')
+                checked('Removing a comparison reference gives an empty recoverable view and removes obsolete copy counts')
+
 
             other = 'generated-foreign-owner'
             bench.workspace.upsert_principal('test', other, 'Generated foreign owner', other, preferred_principal_id=other)
@@ -204,6 +257,12 @@ def main():
             assert 'Generated foreign source canary.' not in driver.find_element(By.TAG_NAME, 'body').text
             assert len(bench.source_store(matter).documents) == 2
             checked('An equal-basename foreign-matter source stays inaccessible')
+            if args.verify_byte_matches:
+                go(prefix + '/setup?' + urlencode({'view': 'list', 'same_content': foreign_store.action_token(hidden)}))
+                assert len(rows()) == 0 and 'comparison is unavailable' in driver.find_element(By.TAG_NAME, 'body').text
+                assert 'Generated foreign source canary.' not in driver.page_source
+                checked('A foreign-matter comparison token cannot disclose sources or broaden the list')
+
 
             go(prefix + '/close')
             click(f'a[href="{prefix}/export"]', False)
