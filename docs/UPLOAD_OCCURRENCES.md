@@ -96,9 +96,14 @@ python scripts/browser-accept-upload-occurrences.py --chrome-binary /path/to/chr
 python scripts/verify-upload-occurrence-rollback.py --previous-source /path/to/previous-checkout
 ```
 
-Validation on September 8, 2026: `make check` passed 936 application tests
+Validation on September 8, 2026: `make check` passed 942 application tests
 with nine optional skips, all 194 transcription tests, compilation, both Compose
 graphs and publication inspection. Six real Chrome workflows and the stopped
 previous-reader/forward-retry check passed on the combined prerequisite revision.
 The normal synthetic backup/restore coverage is included in the application suite.
 Release acceptance requires final-commit hosted reviews and the normal merge gate.
+
+The browser navigation harness treats the specific ChromeDriver detached-node
+inspector error as stale, matching the folder-navigation harness; other browser
+errors still fail acceptance. The first combined rerun hit that driver error
+after the close action; the completed rerun verified closure and unchanged originals.
