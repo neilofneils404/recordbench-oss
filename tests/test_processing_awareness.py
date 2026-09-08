@@ -261,7 +261,7 @@ def test_http_status_gates_search_and_draft_questions_until_ready(tmp_path):
         assert partial["total_count"] == 2
         assert partial["excluded_count"] == 1
         assert partial["coverage_notice"] == (
-            "Search and answers use 1 of 2 sources. "
+            "Searchable text is available for 1 of 2 sources. "
             "1 source needs attention and is excluded."
         )
         assert failed_name not in json.dumps(partial)

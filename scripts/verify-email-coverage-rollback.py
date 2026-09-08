@@ -103,6 +103,19 @@ print('Previous extractor reproduction contains attached-message text in parent 
             expected["fresh_id"] = fresh.document_id
             expected["fresh_version"] = fresh.version_id
             expected["fresh_units"] = [[u.number, u.location, u.text, u.excerpt_digest] for u in fresh.parsed_units()]
+            # Preserve the optional internal checkpoint field through a stopped
+            # older control-store reader; no old/new workers run concurrently.
+            bench.research.close()
+            job, _ = bench.workspace.queue_research_job(matter.matter_id, ACTOR,
+                "What does the generated parent body say?", "Generated checkpoint compatibility",
+                "research-request-" + "d" * 32)
+            bench.workspace.claim_research_job("generated-checkpoint-worker")
+            expected["checkpoint_job"] = job.job_id
+            expected["source_fingerprint"] = bench.workspace.source_availability_fingerprint(matter.matter_id)
+            bench.workspace.checkpoint_research_job(job.job_id,
+                {"passes": [], "evidence": [], "candidate_count": 0,
+                    "retrieval_source_fingerprint": expected["source_fingerprint"]})
+            expected["matter_id"] = matter.matter_id
             (root / "expected.json").write_text(json.dumps(expected))
         old_reader = '''
 import json,sys
@@ -123,6 +136,27 @@ with TestClient(create_workbench_app(root/'runtime',generator=UnavailableGenerat
     assert exported.status_code==200 and 'Attachment contents are not fully searched' in exported.text
 print('Stopped previous reader preserves both extraction versions and exports saved new coverage.')
 '''
+        checkpoint_reader = '''
+import json,sys
+from pathlib import Path
+sys.path.insert(0,str(Path(sys.argv[1])/'src'))
+from case_intelligence.workspace_store import WorkspaceStore
+root=Path(sys.argv[2]); expected=json.loads((root/'expected.json').read_text())
+store=WorkspaceStore(root/'runtime'/'workbench.sqlite')
+job=store.research_job(expected['matter_id'],'development-taylor-morgan',expected['checkpoint_job'])
+assert job.result['retrieval_source_fingerprint']==expected['source_fingerprint']
+store.close()
+print('Stopped previous reader preserves optional research boundary metadata.')
+'''
+        subprocess.run([sys.executable, "-c", checkpoint_reader, str(previous), str(root)], check=True)
+        # The checkpoint proof above is read-only. Retire the synthetic active
+        # job before either full application starts its normal recovery worker.
+        from case_intelligence.workspace_store import WorkspaceStore
+        workspace = WorkspaceStore(root / "runtime" / "workbench.sqlite")
+        checkpoint_job = workspace.research_job(expected["matter_id"], ACTOR, expected["checkpoint_job"])
+        assert checkpoint_job.result["retrieval_source_fingerprint"] == expected["source_fingerprint"]
+        workspace.fail_research_job(checkpoint_job.job_id, "Generated compatibility drill finished.")
+        workspace.close()
         subprocess.run([sys.executable, "-c", old_reader, str(previous), str(root)], check=True)
         with TestClient(create_workbench_app(root / "runtime", generator=UnavailableGenerator(), auth_mode="test")) as client:
             bench = client.app.state.workbench
