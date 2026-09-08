@@ -56,8 +56,10 @@ and preserves exact source links and existing source-set memberships.
 lookup updated transactionally with source catalog projections. It joins the
 current admitted source version and size, and normal registry reconciliation
 rebuilds it. The existing catalog row and registry JSON shapes stay compatible
-with previous readers. SQL materializes at most 100 display rows before counting
-matching sources; folder and matching-only filters stay database-native.
+with previous readers. SQL materializes at most 100 display rows and aggregates
+the matter's current digest/size groups once before joining their counts. Indexed
+source identities avoid scanning the byte-row intermediate for every display row;
+folder and matching-only filters stay database-native.
 Comparison URLs use existing matter-bound source action tokens, never hashes.
 
 [Email extraction](EMAIL_ATTACHMENT_COVERAGE.md) traverses the parent body tree

@@ -15,6 +15,9 @@
   Reject stale/foreign comparison references with an empty recoverable view.
   Add a rebuildable source-version-bound lookup, bounded 10,000-source acceptance,
   real-upload/browser evidence, normal backup/restore and previous-reader checks.
+  Aggregate each current byte group once and join through indexed source identity
+  to avoid delaying other matters with repeated group counts; enforce a tighter
+  instruction budget on ordinary, matching and comparison pages.
 
 - 2026-09-08: Keep separate sources for newly confirmed resumable upload items
   with identical paths or bytes, while preserving same-item retry identity across
