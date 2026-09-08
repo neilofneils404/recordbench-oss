@@ -54,14 +54,15 @@ pagination at 10,000 cataloged sources, combined collection/source-set/status/
 review filters, unknown/removed folders, malformed requests and foreign-matter
 canaries. Browser acceptance uses generated nested uploads and tests navigation,
 reload, browser back, existing bulk source sets, exact support, final export,
-normal owner closure and unchanged external originals.
+normal owner closure and unchanged external originals. The browser harness
+recognizes ChromeDriver's equivalent detached-node response during navigation.
 
 ```console
 python -m pytest -q tests/test_source_folder_navigation.py tests/test_source_library.py
 python scripts/browser-accept-source-folders.py --chrome-binary /path/to/chrome --chromedriver /path/to/chromedriver --output /tmp/generated-folder-acceptance
 ```
 
-Validation on September 8, 2026: `make check` passed 915 application tests
+Validation on September 8, 2026: `make check` passed 920 application tests
 with nine optional skips, all 194 transcription tests, compilation, both Compose
 graphs and publication inspection. Seven real Chrome workflows passed, including
 desktop/narrow layouts, exact source support, saved-note export and owner closure.

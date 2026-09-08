@@ -28,11 +28,11 @@
   </div>
   {% if can_discard_receipt %}
   <details class="intake-receipt-discard">
-    <summary>Discard unfinished receipt</summary>
-    <p>Download this receipt first if you want to keep it. Discarding removes this unfinished selection record. It does not delete uploaded sources.</p>
+    <summary>Discard receipt</summary>
+    <p>Download this receipt first if you want to keep it. Discarding removes this selection record. It does not delete uploaded sources.</p>
     <form method="post" action="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}/discard">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label><input type="checkbox" name="confirm" value="yes" required> I want to discard this unfinished receipt.</label>
+      <label><input type="checkbox" name="confirm" value="yes" required> I want to discard this receipt.</label>
       <button class="button button-secondary" type="submit">Discard receipt</button>
     </form>
   </details>
@@ -42,9 +42,9 @@
     <li data-intake-row data-disposition="{{ item.selection_state }}" data-transfer="{{ item.transfer_state }}">
       <div class="intake-receipt-file"><strong>{{ item.relative_path or item.display_name }}</strong>{% if item.source_url %}<a href="{{ item.source_url }}">Open source</a>{% endif %}</div>
       <dl><div><dt>Selection</dt><dd>{{ intake_labels[item.selection_state] }}</dd></div><div><dt>Transfer</dt><dd>{{ intake_labels[item.transfer_state] }}</dd></div><div><dt>Availability</dt><dd>{{ intake_labels[item.availability] }}</dd></div></dl>
-      <p>At confirmation: {{ item.reviewed_reason }}</p>
+      <p>{{ item.reviewed_reason }}</p>
       {% if item.upload_message %}<p>{{ item.upload_message }}</p>{% endif %}
-      <small>{{ item.received_size }} bytes received{% if item.expected_size is not none %} of {{ item.expected_size }} selected{% endif %} · Selection review: {{ intake_labels[item.reviewed_state] }} · Filename check: {{ intake_labels[item.preflight_state] }}</small>
+      <small>{{ item.received_size }} bytes received{% if item.expected_size is not none %} of {{ item.expected_size }} selected{% endif %} · Reported selection review: {{ intake_labels[item.reviewed_state] }} · Filename check: {{ intake_labels[item.preflight_state] }}</small>
     </li>
   {% endfor %}
   </ol>

@@ -112,9 +112,9 @@ class IntakeReceipts:
             if any(current + added > maximum for current, added, maximum in zip(used, extra, RECEIPT_LIMITS[scope])):
                 if scope == 'matter':
                     raise WorkspaceProblem('Selected-file receipt capacity is full for this matter. '
-                        'Ask the matter owner to discard unfinished receipts, or export your work and use another matter.')
+                        'Ask the matter owner to discard receipts without uploads, or export your work and use another matter.')
                 raise WorkspaceProblem('Selected-file receipt capacity is full for this account or workspace. '
-                    'Ask the matter owner to discard unfinished receipts, or contact the administrator.')
+                    'Ask the matter owner to discard receipts without uploads, or contact the administrator.')
 
     def _receipt_locked(self, matter_id: str, actor_id: str, receipt_id: str, *,
                         write: bool = False, administrator_override: bool = False):
@@ -146,6 +146,10 @@ class IntakeReceipts:
         if not isinstance(collection_name, str):
             raise WorkspaceProblem('The collection name is invalid.')
         title = self.workspace._safe_text(collection_name, label='Collection name', maximum=160)
+        try:
+            title_bytes = title.encode('utf-8')
+        except UnicodeEncodeError as exc:
+            raise WorkspaceProblem('Collection name contains unsupported characters.') from exc
         indexes = _json(eligible_indexes)
         with self.workspace._lock, self.connection:
             self.connection.execute('BEGIN IMMEDIATE')
@@ -160,7 +164,7 @@ class IntakeReceipts:
                     raise WorkspaceProblem('The saved selection changed. Review the files again.')
                 receipt_id = previous['receipt_id']
             else:
-                charged = 512 + len(title.encode('utf-8')) + len(indexes.encode('utf-8'))
+                charged = 512 + len(title_bytes) + len(indexes.encode('utf-8'))
                 self._admit_locked(matter_id, actor_id, receipts=1, selected_rows=selected_count,
                     metadata_bytes=charged)
                 receipt_id = 'intake-' + uuid.uuid4().hex
@@ -229,6 +233,7 @@ class IntakeReceipts:
                 reviewed_reason = reason
                 if not included and (reviewed_state == 'valid' or reviewed_state != result['state']):
                     reviewed_reason = _REVIEWED_REASONS[reviewed_state]
+                reviewed_reason = 'Browser-reported selection review: ' + reviewed_reason
                 pending.append((receipt_id, matter_id, ordinal, digest, path, name, size,
                      result['expected_type'] or '', result['supplied_type'] or '', result['state'],
                      int(included), reason, reviewed_state, reviewed_reason))
@@ -241,19 +246,18 @@ class IntakeReceipts:
                 'WHERE receipt_id=? AND matter_id=?', (self.workspace._now(), charged, receipt_id, matter_id))
         return self.get(matter_id, actor_id, receipt_id)
 
-    def discard_unfinished(self, matter_id: str, actor_id: str, receipt_id: str, *, confirmed: bool = False) -> None:
+    def discard(self, matter_id: str, actor_id: str, receipt_id: str, *, confirmed: bool = False) -> None:
         with self.workspace._lock, self.connection:
             self.connection.execute('BEGIN IMMEDIATE')
             if self.workspace.membership(matter_id, actor_id).role != 'owner':
                 raise KeyError(receipt_id)
-            receipt = self._receipt_locked(matter_id, actor_id, receipt_id)
+            self._receipt_locked(matter_id, actor_id, receipt_id)
             if confirmed is not True:
-                raise WorkspaceProblem('Confirm that you want to discard this unfinished receipt.')
+                raise WorkspaceProblem('Confirm that you want to discard this receipt.')
             linked = self.connection.execute('SELECT 1 FROM workbench_intake_transfer '
                 'WHERE matter_id=? AND receipt_id=? LIMIT 1', (matter_id, receipt_id)).fetchone()
-            if receipt['state'] != 'recording' or linked is not None:
-                raise WorkspaceProblem('Only unfinished receipts without uploads can be discarded. '
-                    'Completed receipts remain with the matter.')
+            if linked is not None:
+                raise WorkspaceProblem('Receipts linked to uploads remain with the matter and cannot be discarded.')
             self.connection.execute('DELETE FROM workbench_intake_receipt WHERE matter_id=? AND receipt_id=?',
                 (matter_id, receipt_id))
 
@@ -298,11 +302,13 @@ class IntakeReceipts:
                 COALESCE(sum(availability='failed'),0) AS failed,
                 COALESCE(sum(availability='unavailable'),0) AS unavailable,
                 COALESCE(sum(availability='not_started'),0) AS not_started FROM projected''', (matter_id, receipt_id)).fetchone()
+            linked = self.connection.execute('SELECT 1 FROM workbench_intake_transfer '
+                'WHERE matter_id=? AND receipt_id=? LIMIT 1', (matter_id, receipt_id)).fetchone()
             counts = dict(totals)
             counts['selected'] = row['selected_count']
             counts['unrecorded'] = row['selected_count'] - counts['recorded']
             return {k: row[k] for k in ('receipt_id', 'collection_name', 'selected_count', 'state', 'created_at', 'updated_at')} | {
-                'recorded_count': counts['recorded'], 'counts': counts,
+                'recorded_count': counts['recorded'], 'counts': counts, 'has_upload_bindings': linked is not None,
             }
 
     def items(self, matter_id: str, actor_id: str, receipt_id: str, *, offset: int = 0,
@@ -316,7 +322,7 @@ class IntakeReceipts:
                 COALESCE(received_size,0) AS received_size,document_id,catalog_document_id,version_id,
                 COALESCE(upload_message,'') AS upload_message FROM projected ORDER BY ordinal LIMIT ? OFFSET ?''',
                 (matter_id, receipt_id, limit, offset)).fetchall()
-            return [dict(row) for row in rows]
+            return [dict(row) | {'reviewed_basis': 'browser_report'} for row in rows]
 
     @contextmanager
     def _read_snapshot(self):

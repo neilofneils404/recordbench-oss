@@ -19,6 +19,7 @@ LABELS = {
 }
 BOUNDARY = ('This receipt lists files supplied by the browser. Empty folders are not listed. '
             'Received files may still need processing. Original source files are not included in this download. '
+            'Selection review records what the browser reported; server filename checks, received bytes and source availability are separate. '
             'Status reflects the time of export.')
 
 
@@ -42,7 +43,7 @@ def export_intake_receipt(receipt: Mapping, format_name: str) -> ExportArtifact:
         stream = io.StringIO(newline='')
         writer = csv.writer(stream)
         writer.writerow(['Selection', 'Selected files', 'Recorded rows', 'Unrecorded rows', 'Row', 'Relative path or name',
-            'Expected bytes', 'Selection disposition', 'Filename check', 'Received bytes', 'Transfer', 'Availability', 'Reason', 'Selection review', 'Filename check reason', 'Processing message'])
+            'Expected bytes', 'Selection disposition', 'Filename check', 'Received bytes', 'Transfer', 'Availability', 'Reason', 'Reported selection review', 'Filename check reason', 'Processing message'])
         for row in portable['items']:
             writer.writerow([_csv_safe(str(value)) for value in [portable['collection_name'], portable['selected_count'],
                 portable['recorded_count'], counts['unrecorded'], row['ordinal'] + 1,
@@ -66,7 +67,7 @@ def export_intake_receipt(receipt: Mapping, format_name: str) -> ExportArtifact:
             BOUNDARY, '']
         for row in portable['items']:
             lines.extend([f"## {row['ordinal'] + 1}. {literal(row['relative_path'] or row['display_name'])}", '',
-                f"{LABELS[row['selection_state']]} · Selection review: {LABELS[row['reviewed_state']]} · Filename check: {LABELS[row['preflight_state']]} · {LABELS[row['transfer_state']]} · {LABELS[row['availability']]}", '',
+                f"{LABELS[row['selection_state']]} · Reported selection review: {LABELS[row['reviewed_state']]} · Filename check: {LABELS[row['preflight_state']]} · {LABELS[row['transfer_state']]} · {LABELS[row['availability']]}", '',
                 literal(row['reviewed_reason']), '', literal(row.get('upload_message') or row['reason']), ''])
         body = '\n'.join(lines).encode('utf-8')
         media_type = 'text/markdown; charset=utf-8'
