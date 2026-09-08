@@ -37,6 +37,12 @@ def generated_email(kind="message"):
         resource["Content-Disposition"] = "inline"
         outer.attach(root)
         outer.attach(resource)
+    elif kind.startswith("message/"):
+        outer.make_mixed()
+        encapsulated = EmailMessage()
+        encapsulated.set_type(kind)
+        encapsulated.set_payload([inner])
+        outer.attach(encapsulated)
     elif kind == "message":
         outer.add_attachment(inner, filename="forwarded.eml")
     elif kind == "multipart":
@@ -67,6 +73,17 @@ def test_attachment_boundaries_and_explicit_inventory(tmp_path, kind, name):
     assert "AttachmentOnlyCanary" not in text
     assert "HiddenHtmlCanary" not in text
     assert f"Attachment: {name}" in text
+    assert "Attachment contents were not processed or searched" in text
+
+
+@pytest.mark.parametrize("subtype", ["rfc822", "global", "news", "partial", "http", "external-body", "x-generated"])
+def test_unnamed_encapsulated_message_subtypes_stay_out_of_parent(tmp_path, subtype):
+    path = tmp_path / "generated.eml"
+    path.write_bytes(generated_email("message/" + subtype))
+    text = "\n".join(section.text for section in extract_email(path))
+    assert "ParentBodyCanary" in text
+    assert "AttachmentOnlyCanary" not in text
+    assert f"Attachment: unnamed (message/{subtype})" in text
     assert "Attachment contents were not processed or searched" in text
 
 
@@ -120,7 +137,7 @@ class EvidenceEchoGenerator:
         }
 
 
-@pytest.mark.parametrize("email_kind", ["message", "related"])
+@pytest.mark.parametrize("email_kind", ["message", "related", "message/news"])
 def test_uploaded_email_search_answer_export_and_matter_boundaries(tmp_path, email_kind):
     app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(),
         auth_mode="test", malware_scanner=CleanScanner(), malware_scan_mode="extended")

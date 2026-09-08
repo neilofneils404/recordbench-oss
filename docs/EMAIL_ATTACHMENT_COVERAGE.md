@@ -8,6 +8,8 @@ and the normal merge gate remain required. No runtime activation is implied.
 Show attachment names/types with an explicit unprocessed-content notice in
 newly extracted email headers. Treat attached messages and multipart attachments
 as boundaries: their descendant text must not become parent-message body.
+Every non-report `message/*` child is an attachment boundary, including unnamed
+news, partial, HTTP, external-body and extension message types.
 Related email selects its root by the `start` Content-ID or first child, inventories
 other resources without reading them into the body, and rejects missing/ambiguous
 roots. The selected body may have its own filename or inline disposition. See
@@ -78,11 +80,13 @@ make check
 ```
 
 Six initial failing parser cases reproduced attached-text leakage, missing
-inventory/coverage and malformed-container readiness. Twenty-two parser/HTTP tests now
-pass; the combined email, investigation and readiness selection passes 48 tests. New failing
+inventory/coverage and malformed-container readiness. Thirty parser/HTTP tests now
+pass; the combined email, investigation and readiness selection passes 56 tests. New failing
 regressions reproduce lost investigation coverage and invented delivery-report
 attachments before their corrections. Related-resource/root and mixed-navigation
-regressions also fail before correction and pass afterward. Fixtures
+regressions also fail before correction and pass afterward. Unnamed encapsulated
+message cases reproduce leakage for five additional subtypes; corrected HTTP
+upload, search, answer export and isolation checks also cover an attached news message. Fixtures
 cover ordinary, unnamed, inline non-body, attached-message and attached-multipart
 parts, HTML alternatives, MIME/body limits, exact parent passages, attachment-only
 no-match searches, saved coverage and cross-matter access. The stopped-reader
@@ -91,7 +95,7 @@ unit/digest/version on upgrade, checks corrected new extraction, reads both with
 the older application and exports the saved notice, then verifies forward read
 and unchanged original bytes. No new storage contract requires migration.
 
-September 8, 2026 acceptance: `make check` passes 976 application tests with nine
+September 8, 2026 acceptance: `make check` passes 984 application tests with nine
 optional skips, all 194 transcription tests, compilation, both Compose graphs and
 publication inspection. All eight Chrome workflows pass: actual selected-file
 upload/receipt/source inventory, desktop/narrow review, attachment-only no-match

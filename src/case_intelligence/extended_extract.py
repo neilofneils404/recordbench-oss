@@ -190,7 +190,7 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
         }
         attachment = role == "resource" or (part is not message and (
             ((disposition == "attachment" or filename) and role != "related_root") or
-            media_type in {"message/rfc822", "message/global"} or
+            (part.get_content_maintype() == "message" and not report_data) or
             (not report_data and not part.is_multipart()
                 and media_type not in {"text/plain", "text/html"})
         ))

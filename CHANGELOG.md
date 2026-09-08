@@ -18,7 +18,8 @@
   from structured delivery/read-receipt body parts; keep explicit attachments.
   Select related-message roots without reading inline text resources as body,
   reject unresolved roots, and keep ready email reachable through combined
-  coverage links after live status updates.
+  coverage links after live status updates. Apply attachment boundaries to every
+  non-report message subtype, including unnamed encapsulated and extension types.
   Add generated parser/HTTP contracts, browser acceptance and stopped-reader recovery.
 
 - 2026-09-08: Show counts and comparison links for received sources with identical
