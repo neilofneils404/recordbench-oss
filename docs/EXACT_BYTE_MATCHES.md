@@ -51,11 +51,14 @@ source-store opening rebuilds it from the authoritative registry. There is no
 second source inventory, registry JSON field or new catalog column.
 
 Database queries determine matching groups and folder counts. The source page
-materializes no more than 100 rows **before** calculating their match counts;
-otherwise a sorted list could count every source before applying its page limit.
+materializes no more than 100 rows. Current valid byte rows are materialized once
+for the matter and counted once per digest/size group, then the counts are joined
+to the display page. Indexed source identity plus a materialized current-ID set
+avoid rescanning the whole byte-row intermediate for each displayed source.
 The 10,000-source synthetic regression exercises one large identical-byte group,
-late source pages, scoped folders, folder pages and rebuild after an older
-catalog writer. The source registry and source bytes remain outside browse reads.
+late ordinary/matching/comparison pages, scoped folders, folder pages and rebuild
+after an older catalog writer. Each late-page path must stay below five million
+SQLite VM steps. The source registry and source bytes remain outside browse reads.
 
 ## Recovery and compatibility
 
@@ -92,15 +95,22 @@ group-action recovery and 10,000-source bounded paging. Browser acceptance also
 covers desktop/narrow layouts, reload, saved source groups, exact source support,
 normal export and owner closure with unchanged external fixtures.
 
-Validation on September 8, 2026: `make check` passes 952 application tests with
+Validation on September 8, 2026: `make check` passes 954 application tests with
 nine optional skips, all 194 transcription tests, compilation, both Compose
 graphs and publication inspection. Nine Chrome workflows pass. The stopped
 previous Sources/export reader and forward-opening check pass. Normal synthetic
 backup/restore and lookup reconstruction pass in the application suite.
 
-The initial large-group query counted rows before pagination and was corrected
-to materialize the display page first; a SQLite instruction budget guards that
-regression. Browser acceptance exposed the lost comparison after grouping and
+The initial large-group query counted rows before pagination. Materializing the
+display page alone still recounted the same large group for each displayed row;
+hosted security review reproduced delayed unrelated workspace reads. The final
+query aggregates groups once and uses indexed identity joins. A matched generated
+10,000-source HTTP workload fell from 3.43 seconds to 0.38 seconds; an unrelated
+read waiting on the shared workspace lock fell from 3.20 seconds to 0.16 seconds.
+SQLite work fell from about 39.8 million to 4.2 million steps for the full HTTP
+request. These are local synthetic observations, not deployment latency promises.
+The tighter five-million-step contract covers all three late-page paths.
+Browser acceptance exposed the lost comparison after grouping and
 now verifies the fixed return path. Narrow-layout screenshots wait for the
 existing navigation transition to finish; the existing Sources table still uses
 horizontal scrolling. No new confidential-data or live-deployment claim is made.
