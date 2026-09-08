@@ -178,9 +178,9 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
     used = 0
     # Walk the body tree explicitly. A generic MIME walk enters attached
     # messages and multipart attachments, mixing their text into parent evidence.
-    pending = [message]
+    pending = [(message, "body")]
     while pending:
-        part = pending.pop()
+        part, role = pending.pop()
         disposition = (part.get_content_disposition() or "").casefold()
         filename = " ".join((part.get_filename() or "").split())[:240]
         media_type = part.get_content_type()
@@ -188,12 +188,12 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
             "message/delivery-status", "message/disposition-notification",
             "message/global-delivery-status", "message/global-disposition-notification",
         }
-        attachment = part is not message and (
-            disposition == "attachment" or filename or
+        attachment = role == "resource" or (part is not message and (
+            ((disposition == "attachment" or filename) and role != "related_root") or
             media_type in {"message/rfc822", "message/global"} or
             (not report_data and not part.is_multipart()
                 and media_type not in {"text/plain", "text/html"})
-        )
+        ))
         if attachment:
             attachments.append(
                 f"Attachment: {filename or 'unnamed'} ({media_type})"
@@ -205,7 +205,17 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
             # machine fields remain outside the current text extraction scope.
             continue
         if part.is_multipart():
-            pending.extend(reversed(part.get_payload()))
+            children = part.get_payload()
+            if media_type == "multipart/related":
+                start_id = part.get_param("start")
+                roots = [child for child in children
+                    if str(child.get("Content-ID", "")).strip() == str(start_id).strip()] if start_id else children[:1]
+                if len(roots) != 1:
+                    raise ValueError("That email has a missing or ambiguous message body.")
+                pending.extend((child, "related_root" if child is roots[0] else "resource")
+                    for child in reversed(children))
+            else:
+                pending.extend((child, "body") for child in reversed(children))
             continue
         if media_type not in {"text/plain", "text/html"}:
             continue

@@ -84,7 +84,8 @@ and exact reference. Group actions return to the current comparison and filters.
 Email review shows attachment names and types while keeping attachment contents
 outside newly extracted parent-message text. Search, answers, investigations and saved exports
 explain that attachments are not fully searched and need separate review. Older
-saved passages retain their citation basis; see [email attachment coverage and
+saved passages retain their citation basis. Coverage links include ready email
+alongside sources needing attention; see [email attachment coverage and
 recovery](docs/EMAIL_ATTACHMENT_COVERAGE.md).
 
 Case-note edits preserve unsaved fields when another team member has changed

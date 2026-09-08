@@ -2892,7 +2892,7 @@
       const copy = conversationCoverage.querySelector("[data-conversation-coverage-copy]");
       const action = conversationCoverage.querySelector("[data-conversation-coverage-action]");
       if (copy) copy.textContent = payload.coverage_notice || "";
-      if (action && payload.action_url) action.href = payload.action_url;
+      if (action && payload.sources_url) action.href = payload.sources_url;
       conversationCoverage.hidden = !partial;
     }
     window.dispatchEvent(new CustomEvent("recordbench:readiness", { detail: payload }));
@@ -3504,7 +3504,7 @@
       const copy = coverage.querySelector("[data-assistant-coverage-copy]");
       const action = coverage.querySelector("[data-assistant-coverage-action]");
       if (copy) copy.textContent = readiness.coverage_notice || "";
-      if (action && readiness.action_url) action.href = readiness.action_url;
+      if (action && readiness.sources_url) action.href = readiness.sources_url;
       coverage.hidden = readiness.partial_query !== true;
     }
     const allSources = form?.querySelector('select[name="source_set"] option[value=""]');
