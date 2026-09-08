@@ -7943,3 +7943,18 @@ body.activity-open .activity-drawer { transform: translateX(0); }
 .intake-recent ul { padding: 0; list-style: none; }
 .intake-recent li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 0; }
 @media (max-width: 640px) { .intake-receipt { padding: 16px 10px; } .intake-receipt-items { padding-left: 18px; } .intake-receipt-items > li { padding: 12px; } }
+
+/* Catalog folder navigation preserves existing source organization. */
+.source-folder-nav { margin-top: 24px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.source-folder-current { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 12px 0 6px; font-size: 13px; overflow-wrap: anywhere; }
+.source-folder-current strong { min-width: 0; }
+.source-folder-nav a { color: var(--ink); }
+.source-folder-parent, .source-folder-pages { font-size: 12px; }
+.source-folder-list { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 8px; margin: 12px 0 0; padding: 0; }
+.source-folder-list li { min-width: 0; }
+.source-folder-list a { display: flex; justify-content: space-between; gap: 12px; min-height: 42px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; text-decoration: none; }
+.source-folder-list a:hover, .source-folder-list a:focus-visible { border-color: #8291a6; background: var(--paper); }
+.source-folder-list span { min-width: 0; overflow-wrap: anywhere; }
+.source-folder-list small { color: var(--ink-faint); white-space: nowrap; }
+.source-folder-empty { margin: 12px 0 0; color: var(--ink-soft); font-size: 12px; }
+.source-folder-pages { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; }

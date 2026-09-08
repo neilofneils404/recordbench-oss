@@ -203,19 +203,42 @@
       {% endif %}
       {% endif %}
 
+      {% if source_folders.total or source_library.folder %}
+      <nav class="source-folder-nav" data-source-folder-nav aria-label="Source folders">
+        <div class="source-subheading"><h3>Folders</h3><small>Sources in the current view</small></div>
+        {% if source_library.folder %}
+        <p class="source-folder-current"><a href="{{ library_url(1, view='list', folder='') }}">All folders</a><span aria-hidden="true"> / </span><strong>{{ source_library.folder }}</strong></p>
+        <a class="source-folder-parent" href="{{ library_url(1, view='list', folder=folder_parent) }}">Up one folder</a>
+        {% endif %}
+        {% if source_folders.items %}
+        <ul class="source-folder-list">
+          {% for folder in source_folders.items %}
+          <li><a href="{{ library_url(1, view='list', folder=folder.path) }}"><span>{{ folder.name }}</span><small>{{ folder.source_count }} source{{ '' if folder.source_count == 1 else 's' }}</small></a></li>
+          {% endfor %}
+        </ul>
+        {% elif source_library.folder %}<p class="source-folder-empty">No subfolders match this view.</p>{% endif %}
+        {% if folder_pages > 1 %}
+        <div class="source-folder-pages"><span>Folder page {{ folder_page }} of {{ folder_pages }}</span>{% if folder_page > 1 %}<a href="{{ library_url(source_library.page, folder_page=(folder_page - 1)|string) }}">Previous folders</a>{% endif %}{% if folder_page < folder_pages %}<a href="{{ library_url(source_library.page, folder_page=(folder_page + 1)|string) }}">More folders</a>{% endif %}</div>
+        {% endif %}
+      </nav>
+      {% endif %}
+
       <form class="source-library-filters" method="get" action="/matters/{{ matter.slug }}/setup">
         <input type="hidden" name="view" value="list">
         <input type="hidden" name="page_size" value="100">
+        <input type="hidden" name="folder" value="{{ source_library.folder }}">
+        <input type="hidden" name="source_set" value="{{ source_library.source_set_id }}">
+        <input type="hidden" name="status" value="{{ source_library.status }}">
         <label><span>Find a source</span><input type="search" name="q" value="{{ source_library.query }}" maxlength="240" placeholder="Filename or folder…"></label>
         <label><span>Collection</span><select name="collection"><option value="">All collections</option>{% for collection in source_collections %}<option value="{{ collection.collection_id }}" {% if source_library.collection_id == collection.collection_id %}selected{% endif %}>{{ collection.name }} ({{ collection.source_count }})</option>{% endfor %}</select></label>
         <label><span>Type</span><select name="kind"><option value="">All types</option>{% for value, label in [('PDF', 'PDF'), ('DOCX', 'Word'), ('TXT', 'Text'), ('IMAGE', 'Image'), ('EMAIL', 'Email'), ('SPREADSHEET', 'Spreadsheet'), ('AUDIO', 'Audio'), ('VIDEO', 'Video')] %}<option value="{{ value }}" {% if source_library.kind == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         <label><span>Review</span><select name="review"><option value="">Any review state</option><option value="unreviewed" {% if source_library.review == 'unreviewed' %}selected{% endif %}>Unreviewed</option><option value="reviewed" {% if source_library.review == 'reviewed' %}selected{% endif %}>Reviewed</option><option value="flagged" {% if source_library.review == 'flagged' %}selected{% endif %}>Flagged</option></select></label>
         <label><span>Sort</span><select name="sort"><option value="newest" {% if source_library.sort == 'newest' %}selected{% endif %}>Newest added</option><option value="oldest" {% if source_library.sort == 'oldest' %}selected{% endif %}>Oldest added</option><option value="name" {% if source_library.sort == 'name' %}selected{% endif %}>Name A–Z</option><option value="name_desc" {% if source_library.sort == 'name_desc' %}selected{% endif %}>Name Z–A</option><option value="status" {% if source_library.sort == 'status' %}selected{% endif %}>Needs attention first</option></select></label>
         <button class="button button-secondary" type="submit">Apply</button>
-        {% if source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100">Clear</a>{% endif %}
+        {% if source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id or source_library.folder %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100">Clear</a>{% endif %}
       </form>
 
-      {% set filtered_view = source_library.view == 'list' or source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id %}
+      {% set filtered_view = source_library.view == 'list' or source_library.query or source_library.status or source_library.kind or source_library.review or source_library.collection_id or source_library.source_set_id or source_library.folder %}
       <div class="source-results-heading">
         <div><h3>{{ 'Matching sources' if filtered_view else 'Recently added' }}</h3><span>{% if filtered_view %}{{ source_library.first_item }}–{{ source_library.last_item }} of {{ source_library.total }}{% else %}A short working view, not the complete receipt{% endif %}</span></div>
         {% if not filtered_view and source_library.stats.total > source_library.items|length %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100">Browse all {{ source_library.stats.total }}</a>{% endif %}

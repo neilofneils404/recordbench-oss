@@ -15,6 +15,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
+from .contracts import validate_relative_path
 from .source_locations import SourcePreflight, SourceScanItem
 
 _SLUG = re.compile(r"^m-[0-9a-f]{12}$")
@@ -526,6 +527,19 @@ class SourceCatalogPageRecord:
     stats: Mapping[str, int]
     type_counts: Mapping[str, int]
     review_counts: Mapping[str, int]
+
+
+@dataclass(frozen=True)
+class SourceFolderRecord:
+    name: str
+    path: str
+    source_count: int
+
+
+@dataclass(frozen=True)
+class SourceFolderPageRecord:
+    items: tuple[SourceFolderRecord, ...]
+    total: int
 
 
 @dataclass(frozen=True)
@@ -5393,23 +5407,25 @@ class WorkspaceStore:
             self.connection.execute("DELETE FROM workbench_source_catalog_sync")
         return len(prepared)
 
-    def source_catalog_page(
-        self,
-        matter_id: str,
-        *,
-        query_key: str = "",
-        tone: str = "",
-        actionable_only: bool = False,
-        kind: str = "",
-        review_state: str = "",
-        collection_id: str = "",
-        source_set_id: str = "",
-        sort: str = "newest",
-        limit: int = 50,
-        offset: int = 0,
-    ) -> SourceCatalogPageRecord:
-        """Return one bounded source page and database-native library counts."""
+    @staticmethod
+    def source_folder_path(value: str) -> str:
+        if not isinstance(value, str):
+            raise WorkspaceProblem("Choose a listed source folder.")
+        if not value:
+            return ""
+        try:
+            path = unicodedata.normalize("NFC", value)
+            if len(path.encode("utf-8")) > 2048 or any(unicodedata.category(c) in {"Cc", "Cf"} for c in path):
+                raise ValueError("invalid folder")
+            return validate_relative_path(path)
+        except (ValueError, UnicodeError) as exc:
+            raise WorkspaceProblem("Choose a listed source folder.") from exc
 
+    def _source_catalog_filter(
+        self, matter_id: str, *, query_key: str = "", tone: str = "",
+        actionable_only: bool = False, kind: str = "", review_state: str = "",
+        collection_id: str = "", source_set_id: str = "", folder: str = "",
+    ) -> tuple[str, tuple[object, ...]]:
         where = ["c.matter_id=?"]
         parameters: list[object] = [matter_id]
         if query_key:
@@ -5436,6 +5452,67 @@ class WorkspaceStore:
                 "AND si.source_set_id=?)"
             )
             parameters.append(source_set_id)
+        folder = self.source_folder_path(folder)
+        if folder:
+            # Literal separator-bound prefix: percent/underscore are not SQL
+            # wildcards, and a similarly named sibling cannot enter this view.
+            prefix = folder + "/"
+            where.append("substr(c.relative_path,1,?)=? COLLATE BINARY")
+            parameters.extend((len(prefix), prefix))
+        return " WHERE " + " AND ".join(where), tuple(parameters)
+
+    def source_catalog_folders(
+        self, matter_id: str, *, folder: str = "", query_key: str = "", tone: str = "",
+        kind: str = "", review_state: str = "", collection_id: str = "",
+        source_set_id: str = "", limit: int = 50, offset: int = 0,
+    ) -> SourceFolderPageRecord:
+        """Page immediate directories; counts include descendants under current filters."""
+        folder = self.source_folder_path(folder)
+        predicate, parameters = self._source_catalog_filter(
+            matter_id, folder=folder, query_key=query_key, tone=tone, kind=kind,
+            review_state=review_state, collection_id=collection_id, source_set_id=source_set_id,
+        )
+        remaining_start = len(folder) + 2 if folder else 1
+        cte = (
+            "WITH scoped AS (SELECT substr(c.relative_path,?) AS remaining "
+            "FROM workbench_source_catalog c LEFT JOIN workbench_source_organization o "
+            "ON o.matter_id=c.matter_id AND o.document_id=c.document_id" + predicate + "), "
+            "folders AS (SELECT substr(remaining,1,instr(remaining,'/')-1) AS name,"
+            "count(*) AS source_count FROM scoped WHERE instr(remaining,'/')>0 GROUP BY name) "
+        )
+        with self._lock:
+            self._active_matter_locked(matter_id)
+            count = self.connection.execute(cte + "SELECT count(*) FROM folders",
+                (remaining_start, *parameters)).fetchone()[0]
+            rows = self.connection.execute(cte + "SELECT name,source_count FROM folders "
+                "ORDER BY name COLLATE NOCASE,name LIMIT ? OFFSET ?",
+                (remaining_start, *parameters, min(max(int(limit), 1), 50), max(int(offset), 0))).fetchall()
+        return SourceFolderPageRecord(tuple(SourceFolderRecord(row['name'],
+            (folder + '/' if folder else '') + row['name'], row['source_count']) for row in rows), count)
+
+    def source_catalog_page(
+        self,
+        matter_id: str,
+        *,
+        query_key: str = "",
+        tone: str = "",
+        actionable_only: bool = False,
+        kind: str = "",
+        review_state: str = "",
+        collection_id: str = "",
+        source_set_id: str = "",
+        folder: str = "",
+        sort: str = "newest",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> SourceCatalogPageRecord:
+        """Return one bounded source page and database-native library counts."""
+
+        predicate, parameters = self._source_catalog_filter(
+            matter_id, query_key=query_key, tone=tone, actionable_only=actionable_only,
+            kind=kind, review_state=review_state, collection_id=collection_id,
+            source_set_id=source_set_id, folder=folder,
+        )
         order = {
             "newest": "COALESCE(o.added_at,c.cataloged_at) DESC,c.document_id DESC",
             "oldest": "COALESCE(o.added_at,c.cataloged_at),c.document_id",
@@ -5453,7 +5530,6 @@ class WorkspaceStore:
             "LEFT JOIN workbench_source_collection sc "
             "ON sc.matter_id=o.matter_id AND sc.collection_id=o.collection_id "
         )
-        predicate = " WHERE " + " AND ".join(where)
         limit_value = min(max(int(limit), 1), 100)
         offset_value = max(int(offset), 0)
         with self._lock:

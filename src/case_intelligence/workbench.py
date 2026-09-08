@@ -495,6 +495,7 @@ class SourceLibraryPage:
     collection_id: str
     source_set_id: str
     sort: str
+    folder: str = ""
 
 
 @dataclass(frozen=True)
@@ -2126,6 +2127,7 @@ class CaseIntelligenceWorkbench:
         review: str = "",
         collection_id: str = "",
         source_set_id: str = "",
+        folder: str = "",
         sort: str = "newest",
         page: int = 1,
         page_size: int = 50,
@@ -2155,11 +2157,12 @@ class CaseIntelligenceWorkbench:
         source_set_value = source_set_id.strip()
         if source_set_value:
             self.workspace.source_set(matter.matter_id, source_set_value)
+        folder_value = self.workspace.source_folder_path(folder)
         collection_value = collection_id.strip()
         if collection_value:
             self.workspace.source_collection(matter.matter_id, collection_value)
         if view_value == "overview" and not any(
-            (query_value, status_value, kind_value, review_value, collection_value, source_set_value)
+            (query_value, status_value, kind_value, review_value, collection_value, source_set_value, folder_value)
         ):
             page_size_value = 8
         requested_page = max(int(page), 1)
@@ -2171,6 +2174,7 @@ class CaseIntelligenceWorkbench:
             review_state=review_value,
             collection_id=collection_value,
             source_set_id=source_set_value,
+            folder=folder_value,
             sort=sort_value,
             limit=page_size_value,
             offset=(requested_page - 1) * page_size_value,
@@ -2188,6 +2192,7 @@ class CaseIntelligenceWorkbench:
                 review_state=review_value,
                 collection_id=collection_value,
                 source_set_id=source_set_value,
+                folder=folder_value,
                 sort=sort_value,
                 limit=page_size_value,
                 offset=start,
@@ -2230,6 +2235,7 @@ class CaseIntelligenceWorkbench:
             collection_value,
             source_set_value,
             sort_value,
+            folder_value,
         )
 
     def source_review(
@@ -7869,6 +7875,8 @@ def create_workbench_app(
         review: str = Query("", max_length=20),
         collection: str = Query("", max_length=80),
         source_set: str = Query("", max_length=80),
+        folder: str = Query("", max_length=2048),
+        folder_page: int = Query(1, ge=1, le=100_000),
         sort: str = Query("newest", max_length=20),
         page: int = Query(1, ge=1, le=100_000),
         page_size: int = Query(50, ge=1, le=100),
@@ -7896,10 +7904,21 @@ def create_workbench_app(
                 review=review,
                 collection_id=collection,
                 source_set_id=source_set,
+                folder=folder,
                 sort=sort,
                 page=page,
                 page_size=page_size,
             )
+            folder_filters = dict(folder=library.folder, query_key=library.query.casefold(),
+                tone=library.status, kind=library.kind, review_state=library.review,
+                collection_id=library.collection_id, source_set_id=library.source_set_id)
+            folders = bench.workspace.source_catalog_folders(matter.matter_id,
+                **folder_filters, limit=50, offset=(folder_page - 1) * 50)
+            folder_pages = max(math.ceil(folders.total / 50), 1)
+            if folder_page > folder_pages:
+                folder_page = folder_pages
+                folders = bench.workspace.source_catalog_folders(matter.matter_id,
+                    **folder_filters, limit=50, offset=(folder_page - 1) * 50)
             collections = bench.workspace.source_collections(matter.matter_id)
             source_sets = bench.workspace.source_sets(matter.matter_id)
             active_collection = next(
@@ -7912,6 +7931,8 @@ def create_workbench_app(
             )
         except KeyError as exc:
             raise HTTPException(404, "Matter, import plan, or source group not found") from exc
+        except WorkspaceProblem as exc:
+            raise HTTPException(400, str(exc)) from exc
 
         def library_url(target_page: int, **changes: str) -> str:
             values = {
@@ -7922,6 +7943,7 @@ def create_workbench_app(
                 "review": library.review,
                 "collection": library.collection_id,
                 "source_set": library.source_set_id,
+                "folder": library.folder,
                 "sort": library.sort,
                 "page_size": str(library.page_size),
                 "page": str(target_page),
@@ -7960,6 +7982,10 @@ def create_workbench_app(
                     ),
                 },
                 "library_url": library_url,
+                "source_folders": folders,
+                "folder_page": folder_page,
+                "folder_pages": folder_pages,
+                "folder_parent": library.folder.rpartition("/")[0],
                 "recent_upload_sessions": bench.workspace.recent_upload_sessions(
                     matter.matter_id, context.principal_id
                 ),

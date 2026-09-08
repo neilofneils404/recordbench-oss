@@ -39,6 +39,12 @@ use idempotent metadata/session bindings and exact source versions, and provide
 coherent paginated views and complete exports. Their tables stay in the existing
 temporary-matter deletion and backup boundary.
 
+[Source folder navigation](SOURCE_FOLDER_NAVIGATION.md) uses the existing
+matter-scoped source catalog and organization joins. A literal separator-bound
+relative-path prefix restricts source rows; bounded SQL grouping pages immediate
+children and descendant counts under the same filters. It adds no stored state
+and preserves exact source links and existing source-set memberships.
+
 Accepted documents then enter extraction. Text PDFs use native extraction;
 missing-text pages use bounded CPU OCR. Media enters the durable media queue,
 which performs a bounded offline recording check before processor submission.

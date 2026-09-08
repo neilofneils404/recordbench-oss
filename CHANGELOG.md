@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 2026-09-08: Browse exact source folder subtrees with bounded child-folder
+  pages, descendant counts and parent navigation. Retain existing source filters,
+  groups and exact source links; preserve external originals and matter access.
+
 - 2026-09-08: Retain every confirmed selected file and skipped reason across
   retry, reload and export. Add paginated receipts, exact received-source links,
   separate byte/processing counts, legacy upload adoption and complete-bundle

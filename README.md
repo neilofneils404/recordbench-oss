@@ -67,6 +67,10 @@ from processing or source availability. Retry interrupted uploads without losing
 previous bytes, open exact source support, and download individual receipts or the
 complete matter bundle. See [selection receipts and recovery](docs/INTAKE_RECEIPTS.md).
 
+Sources also offers [folder navigation](docs/SOURCE_FOLDER_NAVIGATION.md), with
+child-folder counts, parent navigation and the existing collection, source-set
+and review filters. Folder browsing preserves source identities and originals.
+
 Case-note edits preserve unsaved fields when another team member has changed
 the note. Confirm/Delete actions also require the version just reviewed. See
 [shared note editing and recovery](docs/CASE_NOTE_EDITING.md).
@@ -94,7 +98,7 @@ does not establish that every page was read or every relevant fact was found.
 | --- | --- |
 | **Review** | Ask a focused question, investigate through several searches, and continue with follow-ups in one cited conversation. The composer explains the time and coverage difference. |
 | **Check every source** | Apply the same criterion to every source in a frozen collection and validate the results. This is a specialized source-screening task, not another chat type. |
-| **Review Sources** | Browse up to 100 sources immediately, filter by type or collection, open filenames directly, upload separately, and review media with one-click Playback, Summary, Export, and Clips tabs beside an independently usable transcript. |
+| **Review Sources** | Browse up to 100 sources immediately, navigate exact folder subtrees, filter by type or collection, open filenames directly, upload separately, and review media with one-click Playback, Summary, Export, and Clips tabs beside an independently usable transcript. |
 
 Focused answers and broader investigations share conversational continuity;
 the processing strategy stays behind task language. Checking every source stays
