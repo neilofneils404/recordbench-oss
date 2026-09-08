@@ -8,6 +8,12 @@
   and retain selected generated failure evidence. Add runner/installer failure
   regressions and contributor reproduction/update instructions.
 
+- 2026-09-08: Preserve concurrent chunk progress, completed uploads and cancellation
+  during status reconciliation. Read checkpoints under the upload-byte lock, retain
+  terminal collection states when failure recording is a no-op, and return a
+  recoverable response for unresolved checkpoint errors. Add deterministic HTTP
+  races, exact receipt/source checks and normal browser recovery acceptance.
+
 - 2026-09-08: Add **Check export** to Work product and the final-export step.
   Reuse complete-bundle preparation, show inspection time and links to Reports
   needing attention, and validate again on download. Preserve saved work,
