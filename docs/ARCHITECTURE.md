@@ -82,6 +82,10 @@ Investigation results combine source/attachment coverage with the focused-search
 caution, retaining both in standalone and complete-bundle exports. Structured
 delivery/read-receipt body parts are not invented attachment entries; explicit
 attachment disposition or filenames still identify real attached report data.
+Related MIME containers select their body root and inventory other resources;
+missing/ambiguous root references fail rather than choosing another text part.
+Coverage links use the complete source list in server and live browser rendering,
+so combined processing/email coverage can reach both affected and ready sources.
 No schema or source registry shape changes; older passages and indexes are not
 silently rewritten or assigned a new citation basis.
 

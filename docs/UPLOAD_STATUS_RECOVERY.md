@@ -61,7 +61,7 @@ a navigation between element lookup and text read cannot fail the harness.
 No schema, dependency, registry or export-format change is included. Code rollback
 retains all stored uploads and receipts but restores the earlier polling race;
 prefer a forward correction after use. Never roll stored progress back merely
-to undo source code. `make check` passes 990 application tests with nine optional skips, all 194
+to undo source code. `make check` passes 998 application tests with nine optional skips, all 194
 transcription tests, compilation, both Compose graphs and publication inspection.
 The focused selection passes 33 tests. All 11 intake browser workflows pass with
 no application errors, retaining external originals and exact receipt/source

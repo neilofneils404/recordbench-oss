@@ -28,6 +28,9 @@
   Retain attachment and excluded-source coverage in investigations and their
   exports alongside the focused-search caution. Do not invent unnamed attachments
   from structured delivery/read-receipt body parts; keep explicit attachments.
+  Select related-message roots without reading inline text resources as body,
+  reject unresolved roots, and keep ready email reachable through combined
+  coverage links after live status updates.
   Add generated parser/HTTP contracts, browser acceptance and stopped-reader recovery.
 
 - 2026-09-08: Show counts and comparison links for received sources with identical
