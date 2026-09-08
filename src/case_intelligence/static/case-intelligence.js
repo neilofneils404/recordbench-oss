@@ -1584,6 +1584,14 @@
     if (!intakeResumeKey) return;
     try { window.localStorage.removeItem(intakeResumeKey); } catch (_error) { /* the durable receipt remains available */ }
   };
+  const intakeCollectionName = (name) => {
+    if (typeof name !== "string") throw new Error("Enter a collection name.");
+    const normalized = name.normalize("NFC").trim();
+    if (!normalized) throw new Error("Enter a collection name.");
+    if (Array.from(normalized).length > 160) throw new Error("Use a collection name of 160 characters or fewer.");
+    if (/[\p{Cc}\p{Cf}]/u.test(normalized)) throw new Error("The collection name contains unsupported characters. Edit the name and try again.");
+    return normalized;
+  };
   const recordConfirmedSelection = async (files, preview, version) => {
     const root = uploadForm?.dataset.intakeUrl;
     if (!root) throw new Error("The selected-file receipt is unavailable. Refresh Sources and try again.");
@@ -1593,6 +1601,10 @@
     let checkpoint = null;
     let saved = memoryIntakeCheckpoint;
     try { saved ||= JSON.parse(window.localStorage.getItem(intakeResumeKey) || "null"); } catch (_error) { /* use same-page checkpoint */ }
+    if (saved) {
+      try { saved.collection_name = intakeCollectionName(saved.collection_name); }
+      catch (_error) { saved = null; clearIntakeResumeState(); }
+    }
     {
       if (saved?.version === 1 && /^[0-9a-f]{32}$/.test(saved.selection_key)
         && saved.selection_fingerprint === fingerprint && saved.selected_count === files.length
@@ -1601,7 +1613,7 @@
     }
     checkpoint ||= { version: 1, selection_key: selectionNonce(), selection_fingerprint: fingerprint,
       selected_count: files.length, eligible_indexes: indexes,
-      collection_name: uploadCollectionName?.value || "Uploaded sources" };
+      collection_name: intakeCollectionName(uploadCollectionName?.value || "Uploaded sources") };
     memoryIntakeCheckpoint = checkpoint;
     if (uploadCollectionName) uploadCollectionName.value = checkpoint.collection_name;
     try { window.localStorage.setItem(intakeResumeKey, JSON.stringify(checkpoint)); } catch (_error) { /* same-page retries remain possible */ }

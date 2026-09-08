@@ -61,7 +61,7 @@ python -m pytest -q tests/test_source_folder_navigation.py tests/test_source_lib
 python scripts/browser-accept-source-folders.py --chrome-binary /path/to/chrome --chromedriver /path/to/chromedriver --output /tmp/generated-folder-acceptance
 ```
 
-Validation on September 8, 2026: `make check` passed 904 application tests
+Validation on September 8, 2026: `make check` passed 915 application tests
 with nine optional skips, all 194 transcription tests, compilation, both Compose
 graphs and publication inspection. Seven real Chrome workflows passed, including
 desktop/narrow layouts, exact source support, saved-note export and owner closure.

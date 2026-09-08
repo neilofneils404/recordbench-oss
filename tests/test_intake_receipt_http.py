@@ -188,6 +188,7 @@ def test_receipt_writes_require_real_session_csrf_and_current_membership(tmp_pat
         url = root + '/' + receipt['receipt_id']
         assert client.post(url + '/items', json={}).status_code == 403
         assert client.post(url + '/seal').status_code == 403
+        assert client.post(receipt['receipt_url'] + '/discard', data={'confirm': 'yes'}).status_code == 403
         bench = app.state.workbench
         matter = bench.matter(slug, ACTOR)
         with bench.workspace.connection:

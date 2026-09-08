@@ -9737,7 +9737,8 @@ def create_workbench_app(
         return intake_response(matter, receipt)
 
     @app.get("/matters/{slug}/intake/{receipt_id}")
-    def view_intake_receipt(request: Request, slug: str, receipt_id: str, page: int = Query(1, ge=1, le=100)):
+    def view_intake_receipt(request: Request, slug: str, receipt_id: str,
+                            page: int = Query(1, ge=1, le=100), error: str = Query('', max_length=240)):
         context = auth_context(request)
         matter = authorized_matter(request, slug)
         receipts = IntakeReceipts(bench.workspace)
@@ -9763,8 +9764,24 @@ def create_workbench_app(
             raise HTTPException(404, "Selection receipt not found") from exc
         return templates.TemplateResponse(request=request, name="workbench_intake_receipt.html",
             context={**base_context(request, matter), "matter": matter, "receipt": receipt,
-                "receipt_items": rows, "intake_labels": INTAKE_LABELS, "page": page},
+                "receipt_items": rows, "intake_labels": INTAKE_LABELS, "page": page,
+                "receipt_error": error, "can_discard_receipt": matter.owner_id == context.principal_id and receipt['state'] == 'recording'},
             headers={"Cache-Control": "no-store"})
+
+    @app.post("/matters/{slug}/intake/{receipt_id}/discard", dependencies=[Depends(require_csrf)])
+    def discard_intake_receipt(request: Request, slug: str, receipt_id: str, confirm: str = Form('')):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        try:
+            IntakeReceipts(bench.workspace).discard_unfinished(matter.matter_id, context.principal_id,
+                receipt_id, confirmed=confirm == 'yes')
+        except KeyError as exc:
+            raise HTTPException(404, 'Unfinished selection receipt not found') from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(f'/matters/{slug}/intake/{receipt_id}?error=' + quote_plus(str(exc)), status_code=303)
+        audit(request, 'source.intake_receipt_discard', 'success', context=context, matter=matter,
+            object_type='matter', object_id=matter.matter_id, details={'kind': 'intake_receipt', 'count': 1})
+        return RedirectResponse(f'/matters/{slug}/setup?notice=' + quote_plus('Unfinished receipt discarded.'), status_code=303)
 
     @app.get("/matters/{slug}/intake/{receipt_id}/export", dependencies=[Depends(require_matter_response_lease)])
     def download_intake_receipt(request: Request, slug: str, receipt_id: str,

@@ -9,6 +9,7 @@
     <a class="button button-secondary" href="/matters/{{ matter.slug }}/setup">Return to sources</a>
   </div>
   {% with active='sources' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% if receipt_error %}<div class="notice notice-error" role="alert">{{ receipt_error }}</div>{% endif %}
   <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
   {% if receipt.state == 'recording' %}
   <div class="notice notice-neutral"><strong>{{ receipt.recorded_count }} of {{ receipt.selected_count }} selected files recorded.</strong> Recording this selection was interrupted before uploading began. Reselect the same files in Sources to finish the receipt. Unrecorded files are not included in the rows below.</div>
@@ -25,6 +26,17 @@
     <a href="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}/export?format=json" data-download>Structured version</a>
     <a href="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}?page={{ page }}">Refresh status</a>
   </div>
+  {% if can_discard_receipt %}
+  <details class="intake-receipt-discard">
+    <summary>Discard unfinished receipt</summary>
+    <p>Download this receipt first if you want to keep it. Discarding removes this unfinished selection record. It does not delete uploaded sources.</p>
+    <form method="post" action="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}/discard">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label><input type="checkbox" name="confirm" value="yes" required> I want to discard this unfinished receipt.</label>
+      <button class="button button-secondary" type="submit">Discard receipt</button>
+    </form>
+  </details>
+  {% endif %}
   <ol class="intake-receipt-items" start="{{ (page - 1) * 100 + 1 }}">
   {% for item in receipt_items %}
     <li data-intake-row data-disposition="{{ item.selection_state }}" data-transfer="{{ item.transfer_state }}">

@@ -12,11 +12,14 @@ CREATE TABLE IF NOT EXISTS workbench_intake_receipt (
     state TEXT NOT NULL CHECK (state IN ('recording', 'ready')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    metadata_bytes INTEGER NOT NULL DEFAULT 0 CHECK (metadata_bytes >= 0),
     UNIQUE (matter_id, actor_id, selection_key),
     UNIQUE (receipt_id, matter_id)
 );
 CREATE INDEX IF NOT EXISTS workbench_intake_receipt_matter_idx
     ON workbench_intake_receipt(matter_id, created_at DESC, receipt_id);
+CREATE INDEX IF NOT EXISTS workbench_intake_receipt_actor_idx
+    ON workbench_intake_receipt(actor_id);
 
 CREATE TABLE IF NOT EXISTS workbench_intake_item (
     receipt_id TEXT NOT NULL,

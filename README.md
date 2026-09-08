@@ -65,7 +65,9 @@ See the [public-alpha boundary](docs/PUBLIC_ALPHA.md) for scope and limitations.
 Selected-file receipts stay available after reload and distinguish received bytes
 from processing or source availability. Retry interrupted uploads without losing
 previous bytes, open exact source support, and download individual receipts or the
-complete matter bundle. See [selection receipts and recovery](docs/INTAKE_RECEIPTS.md).
+complete matter bundle. Receipt metadata has cumulative capacity limits; owners
+can discard unfinished receipts without uploads to recover space. See
+[selection receipts and recovery](docs/INTAKE_RECEIPTS.md).
 
 Sources also offers [folder navigation](docs/SOURCE_FOLDER_NAVIGATION.md), with
 child-folder counts, parent navigation and the existing collection, source-set
