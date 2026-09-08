@@ -5548,11 +5548,11 @@ class WorkspaceStore:
         return SourceFolderPageRecord(tuple(SourceFolderRecord(row['name'],
             (folder + '/' if folder else '') + row['name'], row['source_count']) for row in rows), count)
 
-    def source_availability_fingerprint(self, matter_id: str) -> str:
+    def source_availability_fingerprint(self, matter_id: str, source_set_id: str | None = None) -> str:
         """Stream only matter-scoped source identity/version/state metadata."""
         if not _IDENTIFIER.fullmatch(matter_id):
             raise KeyError(matter_id)
-        digest = hashlib.sha256(b"source-availability-v2\0" + matter_id.encode("ascii"))
+        digest = hashlib.sha256(b"source-availability-v3\0" + matter_id.encode("ascii"))
         with self._lock:
             if self.connection.execute(
                 "SELECT 1 FROM workbench_matter WHERE matter_id=?", (matter_id,),
@@ -5582,6 +5582,15 @@ class WorkspaceStore:
             for row in rows:
                 digest.update(json.dumps(tuple(row), ensure_ascii=True, separators=(",", ":")).encode("ascii"))
                 digest.update(b"\n")
+            if source_set_id:
+                self.source_set(matter_id, source_set_id)
+                digest.update(b"selected-source-set\0" + source_set_id.encode("ascii") + b"\0")
+                for row in self.connection.execute(
+                    "SELECT document_id FROM workbench_source_set_item "
+                    "WHERE matter_id=? AND source_set_id=? ORDER BY document_id",
+                    (matter_id, source_set_id),
+                ):
+                    digest.update(row["document_id"].encode("ascii") + b"\n")
         return digest.hexdigest()
 
     def source_catalog_page(

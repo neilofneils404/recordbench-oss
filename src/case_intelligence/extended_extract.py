@@ -239,10 +239,7 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
         supplied_filename = part.get_filename()
         filename = " ".join((supplied_filename or "").split())[:240]
         media_type = part.get_content_type()
-        report_data = media_type in {
-            "message/delivery-status", "message/disposition-notification",
-            "message/global-delivery-status", "message/global-disposition-notification",
-        }
+        report_data = role == "report_data"
         attachment = role == "resource" or (part is not message and (
             ((disposition == "attachment" or supplied_filename is not None) and role != "related_root") or
             (part.get_content_maintype() == "message" and not report_data) or
@@ -255,7 +252,7 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
             )
             continue
         if report_data:
-            # Structured delivery/read-receipt fields are report body metadata,
+            # The matching second multipart/report part is machine metadata,
             # not an unnamed attachment. Keep the human-readable report body;
             # machine fields remain outside the current text extraction scope.
             continue
@@ -272,6 +269,12 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
                     raise ValueError("That email has a missing or ambiguous message body.")
                 pending.extend((child, "related_root" if child is roots[0] else "resource")
                     for child in reversed(children))
+            elif media_type == "multipart/report":
+                report_type = str(part.get_param("report-type") or "").strip().casefold()
+                pending.extend((child, "report_data" if index == 1
+                    and child.get_content_maintype() == "message"
+                    and child.get_content_subtype().casefold() == report_type else "body")
+                    for index, child in reversed(tuple(enumerate(children))))
             else:
                 pending.extend((child, "body") for child in reversed(children))
             continue

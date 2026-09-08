@@ -70,9 +70,14 @@ uploaded sources. The saved result carries that completion-time coverage snapsho
 and the synchronous compatibility path likewise refresh source counts and coverage
 after generation so newly retrieved email cannot retain an earlier complete notice.
 These counts describe current source availability, not a ledger of sources
-searched. Each actual retrieval begins by fingerprinting the matter-scoped catalog
+searched. The first retrieval fingerprints the matter-scoped catalog
 IDs, versions, content-basis digests, states, media types, processing jobs and
-pending uploads not yet bound to a catalog source. This streams metadata
+pending uploads not yet bound to a catalog source. An investigation retains this
+first boundary through every pass, so a later search cannot erase a change that
+earlier queries missed. A selected source set adds its identity and membership
+to the fingerprint, captured under the control lock with the frozen search
+membership before retrieval begins. Edits to other sets do not change that scope
+boundary; foreign sets are refused. This streams metadata
 without reading source bytes or materializing a second source list. If that boundary
 changes during retrieval or generation, saved coverage is partial and explains that
 newly available material may be absent and the question should be run again.
@@ -85,7 +90,9 @@ between generation and persistence cannot escape the notice. Queued work carries
 the boundary only as internal completion metadata; storage strips the transient
 research completion field before saving or exporting a finished result. Focused answers identify their actual cited support without
 claiming to have searched every source in the completion-time count. Sources still
-uploading or processing count as excluded and receive a plain recovery notice. An unchanged
+uploading or processing count as excluded and receive a plain recovery notice.
+Playback/direct-review guidance remains present when recordings and pending
+uploads coexist. An unchanged
 complete availability state likewise does not mean an every-source review.
 Research checkpoints retain one optional internal `retrieval_source_fingerprint`
 field in their existing JSON. On recovery, a missing or changed boundary repeats
@@ -95,12 +102,16 @@ field but do not apply the new recovery rule. No schema migration is needed and
 the fingerprint is absent from staff status and completed/exported results.
 Investigation results combine source/attachment coverage
 with their focused-search caution; Markdown, Word, JSON and complete-bundle
-investigation exports retain both notices. Structured delivery/read-receipt body
-parts are report metadata rather than unnamed attachments, unless a filename or
-attachment disposition explicitly identifies an attachment. Current extraction
+investigation exports retain both notices. The second child of `multipart/report`
+is machine report metadata when it is `message/*` and its subtype matches the
+container’s `report-type`; this includes delivery,
+read-receipt, feedback and extension reports. A filename or attachment disposition
+still identifies an attachment. Returned messages and parts outside that matching
+report context remain attachment boundaries. Current extraction
 uses the human-readable report body and does not extract machine report fields.
-See the [multipart/report definition](https://www.rfc-editor.org/rfc/rfc3462.html)
-and [read-receipt format](https://www.rfc-editor.org/rfc/rfc8098.html).
+See the [multipart/report definition](https://www.rfc-editor.org/rfc/rfc3462.html),
+[read-receipt format](https://www.rfc-editor.org/rfc/rfc8098.html), and
+[feedback report format](https://www.rfc-editor.org/rfc/rfc5965.html).
 This change does not unpack attachments or provide a
 new email application; use the original email to review attachments separately.
 
@@ -114,8 +125,8 @@ make check
 ```
 
 Six initial failing parser cases reproduced attached-text leakage, missing
-inventory/coverage and malformed-container readiness. Seventy parser/HTTP tests now
-pass; the combined email, investigation and readiness selection passes 96 tests; including answer-job contracts passes 108. New failing
+inventory/coverage and malformed-container readiness. Eighty-nine parser/HTTP tests now
+pass; the combined email, investigation and readiness selection passes 117 tests; including answer-job contracts passes 129. New failing
 regressions reproduce lost investigation coverage and invented delivery-report
 attachments before their corrections. Related-resource/root and mixed-navigation
 regressions also fail before correction and pass afterward. Unnamed encapsulated
@@ -140,7 +151,11 @@ correction and now report ordinary processing failure. Recovery after the final 
 repeats searches for both current and legacy checkpoints, resolves new source
 support and preserves it in Markdown, JSON and Word. Empty filenames, commented
 and folded Content-IDs, normalized ambiguity and matter-scoped version changes
-have regressions. Fixtures
+have regressions. Text uploads between investigation passes retain a rerun notice.
+Selected-set additions before search, during generation and before saving preserve
+partial coverage and exact earlier support; recovery repeats stale scoped passes.
+Mixed recording/upload notices retain playback guidance. Matching report data,
+returned original messages and report-context mismatches have parser contracts. Fixtures
 cover ordinary, unnamed, inline non-body, attached-message and attached-multipart
 parts, HTML alternatives, MIME/body limits, exact parent passages, attachment-only
 no-match searches, saved coverage and cross-matter access. The stopped-reader
@@ -150,7 +165,7 @@ the older application and exports the saved notice, then verifies forward read
 and unchanged original bytes. It also checks the optional research checkpoint
 field through a stopped previous reader and current forward reader. No new storage contract requires migration.
 
-September 8, 2026 acceptance: `make check` passes 1024 application tests with nine
+September 8, 2026 acceptance: `make check` passes 1045 application tests with nine
 optional skips, all 194 transcription tests, compilation, both Compose graphs and
 publication inspection. All eight Chrome workflows pass: actual selected-file
 upload/receipt/source inventory, desktop/narrow review, attachment-only no-match

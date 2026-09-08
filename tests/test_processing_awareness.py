@@ -292,3 +292,18 @@ def test_http_status_gates_search_and_draft_questions_until_ready(tmp_path):
         assert 'data-matter-readiness' in home.text
         assert "Review available with exclusions" in home.text
         assert "View processing details" not in home.text
+
+
+@pytest.mark.parametrize('recording_counter', ['playback_only_count', 'recording_review_count'])
+def test_pending_upload_coverage_retains_recording_review_recovery(tmp_path, recording_counter):
+    from dataclasses import replace
+    from case_intelligence.workbench import _source_coverage
+    store, matter = _seed_store(tmp_path)
+    readiness = replace(store.matter_readiness(matter.matter_id), state='preparing',
+        total_count=3, searchable_count=1, attention_count=1, processing_count=1,
+        uploading_count=1, **{recording_counter: 1})
+    coverage = _source_coverage(readiness)
+    assert coverage['mode'] == 'partial' and coverage['excluded_count'] == 2
+    assert 'still uploading or processing' in coverage['notice']
+    assert 'remain available for playback and review' in coverage['notice']
+    store.close()

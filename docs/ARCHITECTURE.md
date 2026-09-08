@@ -89,10 +89,14 @@ evidence validation, investigations refresh coverage from the source catalog to
 include sources admitted during their live retrieval passes. Queued and synchronous
 answers refresh their coverage after generation for the same live-index reason.
 The saved counts describe current availability, not an exhaustive searched-source
-ledger. Each actual retrieval records a streaming fingerprint of matter-scoped
+ledger. The first retrieval records a streaming fingerprint of matter-scoped
 catalog IDs, versions, content-basis digests, source states, media types, processing
 jobs and orphan pending-upload checkpoints. Uploading/processing sources count
-as excluded and retain a plain recovery notice. A
+as excluded and retain a plain recovery notice alongside any recording playback
+guidance. Investigations keep the first boundary across every pass. Selected
+source-set identity and membership are included, atomically captured with the
+frozen search membership before retrieval; other sets do not affect that scope
+checksum and foreign sets are refused. A
 changed boundary during retrieval or generation sets partial coverage with a
 rerun notice retained by exports, including equal-count source swaps. Final
 coverage and ordinary answer scope refresh under the same source mutation guard
@@ -108,8 +112,10 @@ identity or overriding cancellation. No schema migration or source-byte read is
 needed; staff status and completed/exported results omit the fingerprint. Focused-answer wording describes
 current availability and actual cited support without claiming every available
 source was searched. Structured
-delivery/read-receipt body parts are not invented attachment entries; explicit
-attachment disposition or filenames still identify real attached report data.
+report metadata is recognized in the second child of `multipart/report` when its
+`message/*` subtype matches the container’s `report-type`, including feedback and extension
+reports. Explicit attachment disposition or filenames still identify attached
+report data; returned messages and out-of-context parts remain boundaries.
 Related MIME containers select their body root and inventory other resources;
 surrounding Content-ID comments and folding whitespace normalize before root
 matching. Missing, ambiguous or explicitly empty root references fail rather than
