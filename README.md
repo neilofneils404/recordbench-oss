@@ -249,7 +249,11 @@ remove that workspace, so users should export and verify anything they need to
 retain. The complete matter bundle includes saved Reports, preserving their
 edits, order, draft/final state, and source appendices in Word and Markdown.
 If saved work exceeds export limits or Report sources cannot be verified,
-no complete bundle is returned. [Report export and recovery](docs/REPORT_EXPORTS.md)
+no complete bundle is returned. Use **Check export** from Work product or the
+final-export step to inspect current saved work and open Reports that need
+attention. The check does not save an export; downloading validates again.
+[Export readiness](docs/EXPORT_READINESS.md) explains the check, and
+[Report export and recovery](docs/REPORT_EXPORTS.md)
 describes limits and interrupted-close recovery. Bundles are ordinary portable
 documents, not a package that can be imported back into RecordBench.
 Deletion refuses active work, requires the exact matter name plus a permanent

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import uvicorn
 from selenium import webdriver
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -36,6 +37,7 @@ def main():
     parser.add_argument("--chrome-binary", type=Path, required=True)
     parser.add_argument("--chromedriver", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--verify-readiness", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     checks = []
@@ -74,13 +76,21 @@ def main():
             def go(path):
                 driver.get(base + path)
 
+            def detached(element):
+                try:
+                    return EC.staleness_of(element)(driver)
+                except WebDriverException as exc:
+                    if "Node with given id does not belong to the document" not in exc.msg:
+                        raise
+                    return True
+
             def click(selector):
                 element = driver.find_element(By.CSS_SELECTOR, selector)
                 driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", element)
                 submits = element.tag_name == "button" and element.get_attribute("type") == "submit"
                 element.click()
                 if submits:
-                    wait.until(EC.staleness_of(element))
+                    wait.until(lambda _: detached(element))
 
             def fill(selector, value):
                 element = driver.find_element(By.CSS_SELECTOR, selector)
@@ -144,12 +154,13 @@ def main():
             assert "the blue vehicle arrived at noon" in driver.find_element(By.ID, "support-pane").text
             checks.append("Individual Markdown/Word download and Report citation opens exact source")
 
+            source_support_expected = True
             def check_bundle(path):
                 with zipfile.ZipFile(path) as archive:
                     manifest = json.loads(archive.read("manifest.json"))
                     assert manifest["report_count"] == 1
                     item = manifest["reports"][0]
-                    assert item["status"] == "final" and item["section_count"] == 2
+                    assert item["status"] == "final" and item["section_count"] == (2 if source_support_expected else 1)
                     markdown = archive.read(item["markdown"]).decode()
                     normalize = lambda text: [line for line in text.splitlines()
                                              if "work product exported from" not in line]
@@ -157,8 +168,11 @@ def main():
                     with zipfile.ZipFile(io.BytesIO(archive.read(item["docx"]))) as word:
                         xml = word.read("word/document.xml").decode()
                     assert "Edited conclusion retained in both exports." in xml
-                    assert "generated-note.txt" in xml and "Line 1" in xml
-                    assert markdown.index("Human conclusion") < markdown.index("the blue vehicle")
+                    if source_support_expected:
+                        assert "generated-note.txt" in xml and "Line 1" in xml
+                        assert markdown.index("Human conclusion") < markdown.index("the blue vehicle")
+                    else:
+                        assert "generated-note.txt" not in xml
                     assert not manifest["original_source_files_included"]
 
             go(prefix + "/settings")
@@ -192,6 +206,71 @@ def main():
             assert set(downloads.glob("*.zip")) == before
             bench._find_support = original_support
             checks.append("Visible source failure with no misleading complete download")
+
+            if args.verify_readiness:
+                driver.set_window_size(1440, 1000)
+                before = set(downloads.iterdir())
+                report = bench.workspace.reports(matter.matter_id, ACTOR)[0]
+                before_revision = report.updated_at
+                go(prefix + "/work-product")
+                click(f'a[href="{prefix}/export-readiness"]')
+                assert "Ready to download" in driver.find_element(By.TAG_NAME, "body").text
+                assert "Checked at" in driver.find_element(By.TAG_NAME, "body").text
+                assert set(downloads.iterdir()) == before
+                assert bench.workspace.report(matter.matter_id, report.report_id).updated_at == before_revision
+                for width in (1440, 430):
+                    driver.set_window_size(width, 1000)
+                    if width < 901:
+                        wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
+                    assert driver.execute_script("return document.documentElement.scrollWidth <= innerWidth + 2")
+                    driver.save_screenshot(str(args.output / f"export-ready-{width}.png"))
+                checks.append("Deliberate export check shows its inspection time at desktop and narrow widths without a download or Report edit")
+                driver.set_window_size(1440, 1000)
+
+                go(prefix + "/setup?view=list")
+                click(".source-table-row .remove-action")
+                assert document.document_id not in bench.source_store(matter).documents
+                go(prefix + "/work-product")
+                click(f'a[href="{prefix}/export-readiness"]')
+                assert "Export needs attention" in driver.find_element(By.TAG_NAME, "body").text
+                assert "Remaining bundle checks did not finish" in driver.find_element(By.TAG_NAME, "body").text
+                assert "Synthetic review memo" in driver.find_element(By.CSS_SELECTOR, ".close-matter-card li a").text
+                driver.save_screenshot(str(args.output / "export-needs-attention.png"))
+                click(".close-matter-card li a")
+                assert "This Report needs attention before export" in driver.find_element(By.TAG_NAME, "body").text
+                assert report.report_id in driver.current_url
+                Select(driver.find_element(By.CSS_SELECTOR, ".report-settings select")).select_by_value("draft")
+                click(".report-settings form:first-child button")
+                cited_card = driver.find_element(By.CSS_SELECTOR, ".report-citations").find_element(By.XPATH, "ancestor::article")
+                remove = cited_card.find_element(By.CSS_SELECTOR, 'form[action$="/delete"] button')
+                driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", remove)
+                remove.click()
+                wait.until(EC.alert_is_present()).accept()
+                wait.until(lambda _: detached(remove))
+                assert len(driver.find_elements(By.CSS_SELECTOR, ".report-section-card")) == 1
+                assert driver.find_element(By.CSS_SELECTOR, ".report-section-card textarea").get_attribute("value") == "Edited conclusion retained in both exports."
+                Select(driver.find_element(By.CSS_SELECTOR, ".report-settings select")).select_by_value("final")
+                click(".report-settings form:first-child button")
+                source_support_expected = False
+                individual_md = download(".report-export-actions a[href$='markdown']", ".md").read_text()
+                individual_docx = download(".report-export-actions a[href$='docx']", ".docx").read_bytes()
+                checks.append("A newly removed source blocks readiness and the repair link opens the affected Report; deliberate section removal preserves the human conclusion")
+
+                go(prefix + "/work-product")
+                click(f'a[href="{prefix}/export-readiness"]')
+                assert "Ready to download" in driver.find_element(By.TAG_NAME, "body").text
+                checked_bundle = download(f'a[href="{prefix}/export"]', ".zip")
+                check_bundle(checked_bundle)
+                checks.append("Rechecking after repair passes and the actual download contains the current final Report")
+
+                other = "generated-export-foreign-owner"
+                bench.workspace.upsert_principal("test", other, "Generated foreign owner", other, preferred_principal_id=other)
+                foreign = bench.create_matter("Generated foreign preview boundary", "", other)
+                bench.workspace.create_report(foreign.matter_id, other, "Foreign preview Report canary")
+                go(f"/matters/{foreign.slug}/export-readiness")
+                assert "Foreign preview Report canary" not in driver.find_element(By.TAG_NAME, "body").text
+                assert "Matter not found" in driver.find_element(By.TAG_NAME, "body").text
+                checks.append("A foreign owner's export preview remains inaccessible")
 
             go(prefix + "/close")
             final_bundle = download(f"a[href='{prefix}/export']", ".zip")

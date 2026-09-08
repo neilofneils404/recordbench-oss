@@ -102,3 +102,15 @@ Matter storage is configurable and may be a dedicated host-mounted NAS path.
 RecordBench remains a temporary review workspace: exports leave the system,
 matters can be closed and purged, and the independent Transcript Studio queue
 has a short expiry.
+
+[Export readiness](EXPORT_READINESS.md) and complete-matter download share one
+bounded preparation helper, including source verification, saved-work limits,
+Report formatting and ZIP packaging. Explicit inspection discards the prepared
+artifact and returns an uncached result with its inspection time. It collects
+Report validation problems from the same bounded snapshot and links to their
+normal review pages; a blocked Report means later bundle checks remain incomplete.
+Inspection retains the export response lease through response delivery and
+rechecks membership before returning any result. Failed-close inspection keeps
+the existing owner/administrator boundary and frozen catalog rules without
+reopening quarantined source state. Download always prepares anew; a check creates
+no stored snapshot, archive, export receipt or authority for a future download.

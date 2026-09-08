@@ -1,0 +1,32 @@
+{% extends "workbench_base.html" %}
+{% block title %}Check export · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block content %}
+<main class="single-page-main">
+  <section class="close-matter-card" aria-labelledby="export-check-heading">
+    <p class="eyebrow">{{ matter.display_name }} · Work product</p>
+    <h1 id="export-check-heading">{{ 'Ready to download' if check.ready else 'Export needs attention' }}</h1>
+    <p>Checked at <time datetime="{{ check.inspected_at }}">{{ inspected_at_label }}</time></p>
+    {% if check.ready %}
+    <div class="notice notice-success" role="status">The current saved work passed complete-bundle preparation. Download checks again before sending the file.</div>
+    {% else %}
+    <div class="notice notice-error" role="status">{{ check.problem }}</div>
+    {% if check.reports %}
+    <h2>Reports to review</h2>
+    <ul>
+      {% for report in check.reports %}
+      <li><p><a href="{{ report.url }}">Open {{ report.title }}</a><br>{{ report.message }}</p></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <p>Remaining bundle checks did not finish. Review the problem and check again.</p>
+    {% endif %}
+    <p>This check reflects saved work at the time of inspection. Work still running or later edits can change what is ready. Original source files are not included in the bundle.</p>
+    <div class="close-matter-actions">
+      {% if check.ready %}<a class="button button-primary" href="{{ check.download_url }}" data-download>Download matter bundle</a>{% endif %}
+      <a class="button button-secondary" href="/matters/{{ matter.slug }}/export-readiness">Check again</a>
+      <a class="button button-secondary" href="{{ return_url }}">{{ return_label }}</a>
+    </div>
+    <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
+  </section>
+</main>
+{% endblock %}

@@ -7,7 +7,7 @@
 <main class="work-product-shell">
   <header class="work-product-heading">
     <div><p class="eyebrow">Matter work product</p><h1>Turn review into something useful</h1><p>Capture cited observations, orient the record, assemble a report, and export at every stage.</p></div>
-    <a class="button button-secondary" href="/matters/{{ matter.slug }}/export">Export matter bundle</a>
+    <div class="report-export-actions"><a class="button button-secondary" href="/matters/{{ matter.slug }}/export-readiness">Check export</a><a class="button button-secondary" href="/matters/{{ matter.slug }}/export">Export matter bundle</a></div>
   </header>
   {% with active='work_product' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   {% include "workbench_retention_notice.html" %}

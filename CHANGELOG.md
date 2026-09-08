@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-08: Add **Check export** to Work product and the final-export step.
+  Reuse complete-bundle preparation, show inspection time and links to Reports
+  needing attention, and validate again on download. Preserve saved work,
+  response activity, matter access and frozen failed-close recovery. Add generated
+  HTTP regressions and browser repair-to-bundle acceptance at desktop/mobile widths.
+
 - 2026-09-08: Keep attached-message and multipart-attachment contents out of
   newly extracted parent email text. Inventory named, unnamed and inline non-body
   attachments with an explicit unprocessed-content notice; reject malformed MIME

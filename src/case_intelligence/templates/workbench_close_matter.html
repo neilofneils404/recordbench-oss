@@ -52,7 +52,7 @@
         <p>Download the matter report, every saved conversation, the matter notebook, and portable JSON before closing. Original source files are not included.</p>
         {% endif %}
       </div>
-      <a class="button button-secondary" href="/matters/{{ matter.slug }}/export" data-download>Download final bundle</a>
+      <div class="report-export-actions"><a class="button button-secondary" href="/matters/{{ matter.slug }}/export-readiness">Check export</a><a class="button button-secondary" href="/matters/{{ matter.slug }}/export" data-download>Download final bundle</a></div>
     </section>
     <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
     {% endif %}

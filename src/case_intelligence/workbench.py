@@ -13720,11 +13720,9 @@ def create_workbench_app(
         )
         return download_response(request, artifact)
 
-    @app.get(
-        "/matters/{slug}/export",
-        dependencies=[Depends(require_matter_bundle_response_lease)],
-    )
-    def download_matter_work_product(request: Request, slug: str):
+    def prepare_matter_work_product(
+        request: Request, slug: str, *, report_issues: list[dict[str, str]] | None = None,
+    ) -> ExportArtifact:
         context = auth_context(request)
         try:
             matter = response_lease_matter(request, slug)
@@ -13790,11 +13788,22 @@ def create_workbench_app(
                     "updated_at": report.updated_at,
                 }
                 formats = ("markdown", "docx")
-                report_artifacts = bench.export_report_work_products(
-                    matter, report, sections, formats,
-                    frozen_source_catalog=frozen_source_catalog,
-                    exported_at=exported_at,
-                )
+                try:
+                    report_artifacts = bench.export_report_work_products(
+                        matter, report, sections, formats,
+                        frozen_source_catalog=frozen_source_catalog,
+                        exported_at=exported_at,
+                    )
+                except ExportProblem as exc:
+                    if report_issues is None:
+                        raise
+                    report_issues.append({
+                        "title": report.title,
+                        "url": _query_url(f"/matters/{matter.slug}/reports", report=report.report_id,
+                            error="This Report needs attention before export. Review its source support and saved work."),
+                        "message": str(exc),
+                    })
+                    continue
                 for format_name, report_artifact in zip(formats, report_artifacts, strict=True):
                     additional_work_product_bytes += len(report_artifact.body)
                     if additional_work_product_bytes > MAX_BUNDLE_UNCOMPRESSED_BYTES:
@@ -13804,6 +13813,9 @@ def create_workbench_app(
                         )
                     files[format_name] = report_artifact.body
                 saved_report_files.append(files)
+
+            if report_issues:
+                raise ExportProblem("Review the listed Reports, then check the complete bundle again.")
 
             research_jobs = bench.workspace.succeeded_research_jobs_for_final_bundle(
                 matter.matter_id,
@@ -13905,6 +13917,68 @@ def create_workbench_app(
             )
         except KeyError as exc:
             raise HTTPException(404, "Matter not found") from exc
+        return artifact
+
+    @app.get(
+        "/matters/{slug}/export-readiness",
+        dependencies=[Depends(require_matter_bundle_response_lease)],
+    )
+    def check_matter_export(request: Request, slug: str):
+        context = auth_context(request)
+        matter = response_lease_matter(request, slug)
+        inspected_at = datetime.now(timezone.utc)
+        report_issues: list[dict[str, str]] = []
+        ready = False
+        problem = ""
+        try:
+            # Exercise the same bounded formatting and packaging checks. The
+            # temporary in-memory artifact is discarded, never saved or sent.
+            prepare_matter_work_product(request, slug, report_issues=report_issues)
+            ready = True
+        except (ExportProblem, WorkspaceProblem) as exc:
+            problem = str(exc)
+        try:
+            bench.workspace._authorize_export_read(
+                matter.matter_id, context.principal_id,
+                administrator_override=(
+                    getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+                ),
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        result = {
+            "ready": ready,
+            "inspected_at": inspected_at.isoformat().replace("+00:00", "Z"),
+            "problem": problem,
+            "reports": report_issues,
+            "download_url": f"/matters/{matter.slug}/export",
+        }
+        audit(request, "work_product.export_check", "success", context=context, matter=matter,
+            details={"state": "complete" if ready else "attention", "count": len(report_issues)})
+        if "application/json" in request.headers.get("accept", ""):
+            response = JSONResponse(result, headers={"Cache-Control": "no-store"})
+        else:
+            recovering_close = bench.workspace.matter_lifecycle(matter.matter_id).state == "purge_failed"
+            response = templates.TemplateResponse(request=request, name="workbench_export_readiness.html",
+                context={**base_context(request, matter), "matter": matter, "check": result,
+                    "inspected_at_label": inspected_at.strftime("%b %d, %Y at %H:%M UTC"),
+                    "return_url": f"/matters/{matter.slug}/" + ("close" if recovering_close else "work-product"),
+                    "return_label": "Return to close matter" if recovering_close else "Work product"},
+                headers={"Cache-Control": "no-store"})
+        return transfer_matter_response_lease(request, response)
+
+    @app.get(
+        "/matters/{slug}/export",
+        dependencies=[Depends(require_matter_bundle_response_lease)],
+    )
+    def download_matter_work_product(request: Request, slug: str):
+        context = auth_context(request)
+        matter = response_lease_matter(request, slug)
+        administrator_override = (
+            getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+        )
+        try:
+            artifact = prepare_matter_work_product(request, slug)
         except (ExportProblem, WorkspaceProblem) as exc:
             return PlainTextResponse(str(exc), status_code=409)
         audit(
