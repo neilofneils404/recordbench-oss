@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add a very-alpha, loopback-only Mac installation using an ARM64 Linux VM,
+  CPU retrieval/transcription, and an independently pinned native Metal generator.
+  Synthetic evaluation only; model quality and recovery qualification remain open.
+- Preserve the browser's HTTPS origin and external port for shared UI assets.
+- Add offline retrieval warmup, explicit CPU transcription readiness, and
+  isolated Mac launcher configuration, with synthetic regression coverage.
+
 - 2026-09-08: Keep attached-message and multipart-attachment contents out of
   newly extracted parent email text. Inventory named, unnamed and inline non-body
   attachments with an explicit unprocessed-content notice; reject malformed MIME

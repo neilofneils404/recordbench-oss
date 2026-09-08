@@ -27,13 +27,14 @@ import time
 from bisect import bisect_right
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from .profiles import DEFAULT_PROFILE_NAME, TranscriptionProfile, get_profile
+from .model_manifest import ModelReadiness
 
 
 SCHEMA_VERSION = "transcription-v2.1"
@@ -121,6 +122,7 @@ class TranscriptionRequest:
     alignment_model: str | None = None
     device: str = "cuda"
     device_index: int = 0
+    cpu_compute_type: str = "int8"
     local_files_only: bool = True
     job_id: str | None = None
     diarize_speakers: bool = True
@@ -159,6 +161,10 @@ class TranscriptionRequest:
             )
         if self.device_index < 0:
             raise PipelineConfigurationError("device_index cannot be negative")
+        if self.device not in {"cpu", "cuda"}:
+            raise PipelineConfigurationError("device must be 'cpu' or 'cuda'")
+        if self.cpu_compute_type not in {"int8", "float32"}:
+            raise PipelineConfigurationError("cpu_compute_type must be 'int8' or 'float32'")
         if not self.local_files_only:
             raise PipelineConfigurationError(
                 "transcription v2 is offline-only; local_files_only cannot be disabled"
@@ -488,6 +494,7 @@ class LocalWhisperXEngine:
         *,
         model_cache_dir: str | Path | None = None,
         diarization_model_path: str | Path | None = None,
+        model_readiness: ModelReadiness | None = None,
         auth_token_env: str = "HF_TOKEN",
     ) -> None:
         self.model_cache_dir = (
@@ -499,6 +506,7 @@ class LocalWhisperXEngine:
             else None
         )
         self.auth_token_env = auth_token_env
+        self.model_readiness = model_readiness
         self._lock = threading.RLock()
         self._asr_cache: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
         self._align_cache: OrderedDict[
@@ -536,6 +544,42 @@ class LocalWhisperXEngine:
             return f"cuda:{request.device_index}"
         return request.device
 
+    def _resolve_asr_model(self, model_name: str) -> str:
+        """Load the verified snapshot, never the model hub's floating main ref."""
+        if self.model_readiness is None:
+            # Direct adapter tests can inject a runtime without a worker. Real
+            # JobWorker construction always supplies its verified manifest.
+            return model_name
+        model_ids = {
+            "large-v3": "Systran/faster-whisper-large-v3",
+            "turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        }
+        model_id = model_ids.get(model_name)
+        artifacts = [
+            item for item in self.model_readiness.artifacts
+            if item.role == "asr" and item.model_id == model_id
+        ]
+        if len(artifacts) != 1 or not self.model_cache_dir:
+            raise PipelineConfigurationError("the requested ASR model is not uniquely approved")
+        artifact = artifacts[0]
+        if re.fullmatch(r"[0-9a-fA-F]{40}", artifact.revision) is None:
+            raise PipelineConfigurationError("ASR requires an exact approved hub revision")
+        cache = Path(self.model_cache_dir)
+        snapshot = cache / ("models--" + model_id.replace("/", "--")) / "snapshots" / artifact.revision
+        try:
+            snapshot.resolve(strict=True).relative_to(cache.resolve(strict=True))
+        except (OSError, ValueError):
+            raise PipelineConfigurationError("the approved ASR snapshot is unavailable") from None
+        files = list(snapshot.rglob("*"))
+        if not all((snapshot / name).is_file() for name in ("model.bin", "config.json", "tokenizer.json")):
+            raise PipelineConfigurationError("the approved ASR snapshot is incomplete")
+        for path in files:
+            if path.is_dir() and not path.is_symlink():
+                continue
+            if not self.model_readiness.authorizes_file(path, role="asr", model_id=model_id):
+                raise PipelineConfigurationError("ASR snapshot includes an unapproved or changed file")
+        return str(snapshot)
+
     def _base_asr_pipeline(
         self,
         request: TranscriptionRequest,
@@ -559,7 +603,7 @@ class LocalWhisperXEngine:
             cached = self._asr_cache.get(key)
             if cached is None:
                 cached = whisperx.load_model(
-                    model_name,
+                    self._resolve_asr_model(model_name),
                     request.device,
                     device_index=request.device_index,
                     compute_type=profile.compute_type,
@@ -596,7 +640,7 @@ class LocalWhisperXEngine:
         options = profile.asr_options
         options["hotwords"] = ", ".join(request.hotwords)
         return whisperx.load_model(
-            model_name,
+            self._resolve_asr_model(model_name),
             request.device,
             device_index=request.device_index,
             compute_type=profile.compute_type,
@@ -849,6 +893,7 @@ class LocalWhisperXEngine:
             "packages": versions,
             "model_cache_dir_configured": bool(self.model_cache_dir),
             "diarization_model_path_configured": bool(self.diarization_model_path),
+            "approved_models": self.model_readiness.public_dict() if self.model_readiness else None,
         }
 
 
@@ -857,6 +902,7 @@ def create_pipeline_engine(
     *,
     model_cache_dir: str | Path | None = None,
     diarization_model_path: str | Path | None = None,
+    model_readiness: ModelReadiness | None = None,
 ) -> PipelineEngine:
     """Create an explicitly selected engine without importing ML packages.
 
@@ -871,6 +917,7 @@ def create_pipeline_engine(
         return MockPipelineEngine()
     if selected in {"local", "whisperx", "open_local"}:
         return LocalWhisperXEngine(
+            model_readiness=model_readiness,
             model_cache_dir=(
                 model_cache_dir
                 or os.environ.get("TRANSCRIPTION_V2_MODEL_CACHE")
@@ -933,6 +980,11 @@ class TranscriptionPipeline:
         check_cancellation()
         try:
             profile = get_profile(request.profile)
+            if request.device == "cpu":
+                # CTranslate2's Apple ARM CPU path does not support float16.
+                # Preserve the approved weights and decoding search, but bound
+                # batching and record the actual execution precision in exports.
+                profile = replace(profile, compute_type=request.cpu_compute_type, batch_size=1)
         except (KeyError, ValueError) as exc:
             profile = get_profile()
             return self._configuration_failure(request, profile, exc, started_at, pipeline_tick)
@@ -1577,6 +1629,7 @@ def _request_provenance(request: TranscriptionRequest) -> dict[str, Any]:
         "alignment_model": request.alignment_model,
         "device": request.device,
         "device_index": request.device_index,
+        "cpu_compute_type": request.cpu_compute_type,
         "local_files_only": request.local_files_only,
     }
 

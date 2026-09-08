@@ -14,3 +14,6 @@ artifacts are staged with the root installer before the worker starts. The
 Hugging Face token is never placed in the runtime environment.
 
 See the root installation guide and [model policy](../../docs/MODELS.md).
+
+For the experimental Apple Silicon CPU worker, see
+[CPU execution and validation](docs/CPU_EXECUTION.md).

@@ -1,0 +1,5 @@
+# TorchCodec 0.7 has no Linux ARM64 wheel; newer releases require a different
+# Torch ABI. WhisperX 3.8.6 decodes through FFmpeg and supplies waveforms to
+# pyannote 4.0.7, which explicitly supports operation without TorchCodec.
+# This exclusion is CPU-image-only and checked by scripts/check-cpu-runtime.py.
+torchcodec

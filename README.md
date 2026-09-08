@@ -175,6 +175,11 @@ upstream model terms require separate acceptance.
 
 ## Hardware planning targets
 
+Apple Silicon users can try the experimental [standalone Mac setup](docs/MACOS.md),
+which runs the Linux application locally alongside a native Metal generator.
+Its runtime and model-quality qualification are tracked separately from the
+Linux deployment targets below.
+
 These are starting targets for alpha evaluation, not validated minimums or
 collection-size and concurrency guarantees. Larger matters, longer recordings,
 and more simultaneous users need additional storage and capacity. Consult

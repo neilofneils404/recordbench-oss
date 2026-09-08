@@ -1,0 +1,154 @@
+# Standalone Apple Silicon topology. Use this file by itself, not as an overlay.
+# The Linux parser/storage boundary runs in an ARM64 Colima VM; generation uses
+# an operator-staged native Ollama service bound to the Mac's loopback only.
+# Requires Docker Compose 2.24.4+ for explicit inherited-field replacement.
+name: ${RECORDBENCH_COMPOSE_PROJECT:-recordbench-macos}
+
+services:
+  postgres:
+    extends: {file: compose.yaml, service: postgres}
+    platform: linux/arm64
+
+  clamav:
+    extends: {file: compose.yaml, service: clamav}
+    # The Alpine stable image is amd64-only. This is the official Debian
+    # ARM64 manifest, also used by the signature updater below.
+    image: clamav/clamav-debian:stable@sha256:f71ebcc97d0099c869417b7705ebea36b1696afa671d64dfd83422131a54e4bc
+    platform: linux/arm64
+    cpus: "${RECORDBENCH_CLAMAV_CPUS:-2.0}"
+    mem_limit: ${RECORDBENCH_CLAMAV_MEMORY:-3g}
+
+  clamav-updater:
+    extends: {file: compose.yaml, service: clamav-updater}
+    image: clamav/clamav-debian:stable@sha256:f71ebcc97d0099c869417b7705ebea36b1696afa671d64dfd83422131a54e4bc
+    platform: linux/arm64
+
+  retrieval:
+    extends: {file: compose.yaml, service: retrieval}
+    platform: linux/arm64
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/retrieval-cpu:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      target: retrieval-cpu
+    # Probe in the serving process: a separate health-check process cannot warm
+    # its model globals, and the app waits for loaded models before starting.
+    command: ["python", "-m", "case_intelligence.retrieval_worker", "--host", "0.0.0.0", "--port", "8787", "--warm-models"]
+    gpus: !reset null
+    shm_size: 512m
+    cpus: "${RECORDBENCH_RETRIEVAL_CPUS:-2.0}"
+    mem_limit: ${RECORDBENCH_RETRIEVAL_MEMORY:-3g}
+    environment:
+      CASE_REVIEW_MODEL_DEVICE: cpu
+      CUDA_VISIBLE_DEVICES: ""
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+
+  transcription-api:
+    extends: {file: compose.yaml, service: transcription-api}
+    platform: linux/arm64
+    # Admission checks inspect the installed WhisperX/VAD runtime as well as
+    # staged weights, so use the same CPU runtime image as the offline worker.
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/transcription-worker-cpu:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      target: worker-cpu
+    command: ["transcription-v2", "api"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8510/health"]
+      interval: 20s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+    environment:
+      TRANSCRIPTION_V2_DEVICE: cpu
+
+  transcription-worker:
+    extends: {file: compose.yaml, service: transcription-worker}
+    platform: linux/arm64
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/transcription-worker-cpu:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      target: worker-cpu
+    gpus: !reset null
+    shm_size: 512m
+    cpus: "${RECORDBENCH_TRANSCRIPTION_CPUS:-2.0}"
+    mem_limit: ${RECORDBENCH_TRANSCRIPTION_MEMORY:-6g}
+    environment:
+      TRANSCRIPTION_V2_DEVICE: cpu
+      CUDA_VISIBLE_DEVICES: ""
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    tmpfs: !override
+      - /tmp:rw,noexec,nosuid,nodev,size=1g
+      - /tmp/transcription-home:rw,noexec,nosuid,nodev,size=32m
+
+  transcription-cleanup:
+    extends: {file: compose.yaml, service: transcription-cleanup}
+    platform: linux/arm64
+    environment:
+      TRANSCRIPTION_V2_DEVICE: cpu
+
+  transcription-cleanup-daemon:
+    extends: {file: compose.yaml, service: transcription-cleanup-daemon}
+    platform: linux/arm64
+    # This no-network purge loop inherits the API image, but runs no HTTP API.
+    # Its shell exits on purge failure and the inherited restart policy retries.
+    healthcheck:
+      disable: true
+    environment:
+      TRANSCRIPTION_V2_DEVICE: cpu
+
+  app:
+    extends: {file: compose.yaml, service: app}
+    platform: linux/arm64
+    cpus: "${RECORDBENCH_APP_CPUS:-2.0}"
+    mem_limit: ${RECORDBENCH_APP_MEMORY:-3g}
+    environment:
+      # Colima maps this exact hostname to the Mac's loopback. No native model
+      # listener should be exposed to the LAN to make container access work.
+      CASE_INTELLIGENCE_GENERATOR_URL: http://host.docker.internal:11435
+      CASE_INTELLIGENCE_GENERATOR_ALLOWED_HOSTS: host.docker.internal
+      CASE_INTELLIGENCE_GENERATION_CONCURRENCY: "1"
+      CASE_INTELLIGENCE_INGESTION_WORKERS: "1"
+      CASE_INTELLIGENCE_ANSWER_WORKERS: "1"
+      CASE_INTELLIGENCE_FULL_REVIEW_SOURCE_CONCURRENCY: "1"
+    depends_on: !override
+      postgres: {condition: service_healthy}
+      clamav: {condition: service_healthy}
+      retrieval: {condition: service_healthy, required: false}
+      transcription-api: {condition: service_healthy, required: false}
+    tmpfs: !override
+      - /tmp:rw,noexec,nosuid,nodev,size=1g
+      - /tmp/recordbench-home:rw,noexec,nosuid,nodev,size=32m
+
+  gateway:
+    extends: {file: compose.yaml, service: gateway}
+    platform: linux/arm64
+    # The Mac evaluation entry point is always local, including when a shell
+    # happens to contain Linux deployment bind-address variables.
+    ports: !override
+      - "127.0.0.1:${RECORDBENCH_HTTPS_PORT:-8443}:8443"
+
+  model-stager:
+    extends: {file: compose.yaml, service: model-stager}
+    platform: linux/arm64
+    environment:
+      HF_HOME: /models/huggingface
+      HF_XET_CACHE: /tmp/xet
+
+  account-admin:
+    extends: {file: compose.yaml, service: account-admin}
+    platform: linux/arm64
+
+volumes:
+  postgres-data:
+  clamav-signatures:
+
+networks:
+  front:
+  updates:
+  services:
+    internal: true
+  models:
+    internal: true
+
+secrets:
+  postgres_password:
+    file: ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}/postgres-password

@@ -1,5 +1,10 @@
 # Architecture
 
+The experimental [Apple Silicon profile](MACOS.md) keeps the application and
+file-processing boundary in a local ARM64 Linux VM. It replaces NVIDIA service
+placement with CPU retrieval/transcription and a native loopback-only Metal
+generator. It does not connect to a remote deployment.
+
 ```text
 staff browser
     │ HTTPS

@@ -303,8 +303,16 @@ class TranscriptionV2Client:
             payload = self._request("GET", "/ready", owner=owner)
             checks = payload.get("checks")
             return payload.get("status") == "ready" or (
-                isinstance(checks, dict)
-                and bool(checks.get("reserved_gpu_ready"))
+                payload.get("status") == "degraded_ready"
+                and isinstance(checks, dict)
+                and checks.get("degraded_diarization_allowed") is True
+                and (
+                    bool(checks.get("reserved_gpu_ready"))
+                    or (
+                        checks.get("inference_device") == "cpu"
+                        and checks.get("gpu_required") is False
+                    )
+                )
                 and bool(checks.get("offline_runtime"))
             )
         except MediaProcessorError:

@@ -1,5 +1,10 @@
 # Security model
 
+The experimental [Mac profile](MACOS.md) preserves Linux parser and storage
+containment inside a local VM. Its native generation companion has a separate
+macOS sandbox that denies non-loopback outbound connections; it must not be
+treated as equivalent to a Linux network namespace without platform acceptance.
+
 RecordBench assumes confidential case material and a trusted internal operator.
 It does not assume uploaded files, browser headers, model output, or model hubs
 are trustworthy.

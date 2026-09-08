@@ -434,3 +434,16 @@ def test_reviewed_personal_baseline_does_not_cover_ancestors(tmp_path, monkeypat
     exception = publication._baseline_public_git_identities([(reviewed, name, email)])
     assert publication.Finding('git-metadata', 'operator-deny-term') in publication.scan_history(
         tmp_path, (name.encode(),), baseline_public_git_identities=exception)
+
+
+def test_public_runtime_aliases_do_not_allow_private_suffixes():
+    for host in (b'host.docker.internal', b'host.lima.internal'):
+        assert publication._scan_bytes(b'http://' + host + b':11435/api', location='fixture', deny=()) == []
+        for private in (
+            b'private.' + host, b'other.' + host.split(b'.', 1)[1],
+            b'_private.' + host, '\N{LATIN SMALL LETTER E WITH ACUTE}'.encode() + host,
+            host + '\N{LATIN SMALL LETTER E WITH ACUTE}'.encode(),
+        ):
+            assert any(item.rule == 'internal-fqdn' for item in publication._scan_bytes(private, location='fixture', deny=()))
+    assert any(item.rule == 'operator-deny-term' for item in publication._scan_bytes(
+        b'host.docker.internal', location='fixture', deny=(b'host.docker.internal',)))
