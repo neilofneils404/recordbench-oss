@@ -132,7 +132,8 @@ def test_comparison_filters_and_folder_navigation_preserve_scope(workspace):
     assert scoped.total == 0  # newest collection contains the different bytes
 
 
-def test_byte_match_catalog_is_bounded_and_rebuildable_at_ten_thousand_sources(tmp_path):
+@pytest.mark.parametrize("filter_mode", ["all", "matching", "comparison"])
+def test_byte_match_catalog_is_bounded_and_rebuildable_at_ten_thousand_sources(tmp_path, filter_mode):
     from fastapi.testclient import TestClient
     from case_intelligence.generation import UnavailableGenerator
     from case_intelligence.workbench import create_workbench_app
@@ -155,19 +156,24 @@ def test_byte_match_catalog_is_bounded_and_rebuildable_at_ten_thousand_sources(t
             raise AssertionError('Browsing must not read or hash the source inventory')
         store.source_path = forbidden
         bench._source_rows = forbidden
-        # A large all-equal group must not count every source pair before paging.
+        # Count each identical-byte group once, not once per displayed source.
         # Bound VM work, rather than imposing a wall-clock deadline on CI hosts.
         query_steps = 0
         def query_budget():
             nonlocal query_steps
             query_steps += 1000
-            return int(query_steps > 100_000_000)
+            return int(query_steps > 5_000_000)
         bench.workspace.connection.set_progress_handler(query_budget, 1000)
         try:
-            page = bench.source_library(matter, view='list', matching_only=True, page_size=100, page=100)
+            filters = (
+                {"matching_only": True} if filter_mode == "matching" else
+                {"same_content": store.action_token(next(iter(documents.values())))}
+                if filter_mode == "comparison" else {}
+            )
+            page = bench.source_library(matter, view='list', page_size=100, page=100, **filters)
         finally:
             bench.workspace.connection.set_progress_handler(None, 0)
-        assert query_steps <= 100_000_000
+        assert query_steps <= 5_000_000
         assert page.total == 10_000 and len(page.items) == 100
         assert all(row.byte_match_count == 10_000 for row in page.items)
         token = page.items[0].action_token
@@ -179,7 +185,7 @@ def test_byte_match_catalog_is_bounded_and_rebuildable_at_ten_thousand_sources(t
         workspace = bench.workspace
         # Simulate an older writer changing only the catalog. Stale derived rows
         # must fail closed until normal registry reconciliation repairs them.
-        with workspace.connection:
+        with workspace._lock, workspace.connection:
             workspace.connection.execute('UPDATE workbench_source_catalog SET version_id=? WHERE matter_id=? AND action_token=?',
                 ('e' * 32, matter.matter_id, token))
         assert bench.source_library(matter, same_content=token).total == 0

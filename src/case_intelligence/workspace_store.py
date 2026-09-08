@@ -5369,15 +5369,6 @@ class WorkspaceStore:
             "INSERT INTO workbench_source_byte_match VALUES (?,?,?,?,?)", rows
         )
 
-    @staticmethod
-    def _source_byte_match_count_sql() -> str:
-        return (
-            "(SELECT COUNT(*) FROM workbench_current_source_bytes own "
-            "JOIN workbench_current_source_bytes peer ON peer.matter_id=own.matter_id "
-            "AND peer.source_sha256=own.source_sha256 AND peer.byte_size=own.byte_size "
-            "WHERE own.matter_id=c.matter_id AND own.document_id=c.document_id)"
-        )
-
     def source_byte_comparison_available(self, matter_id: str, token: str) -> bool:
         with self._lock:
             self._active_matter_locked(matter_id)
@@ -5639,10 +5630,19 @@ class WorkspaceStore:
                 + predicate
                 + " ORDER BY "
                 + order
-                + " LIMIT ? OFFSET ?) SELECT c.*,"
-                + self._source_byte_match_count_sql() + " AS byte_match_count FROM selected_page c ORDER BY "
+                + " LIMIT ? OFFSET ?),"
+                "current_bytes AS MATERIALIZED (SELECT document_id,source_sha256,byte_size "
+                "FROM workbench_current_source_bytes WHERE matter_id=?),"
+                "byte_counts AS MATERIALIZED (SELECT source_sha256,byte_size,COUNT(*) AS match_count "
+                "FROM current_bytes GROUP BY source_sha256,byte_size) "
+                "SELECT c.*,COALESCE(g.match_count,0) AS byte_match_count FROM selected_page c "
+                "LEFT JOIN workbench_source_byte_match own "
+                "ON own.matter_id=c.matter_id AND own.document_id=c.document_id "
+                "AND own.document_id IN (SELECT document_id FROM current_bytes) "
+                "LEFT JOIN byte_counts g ON g.source_sha256=own.source_sha256 AND g.byte_size=own.byte_size "
+                "ORDER BY "
                 + order.replace("COALESCE(o.added_at,c.cataloged_at)", "c.added_at"),
-                (*parameters, limit_value, offset_value),
+                (*parameters, limit_value, offset_value, matter_id),
             ).fetchall()
         stats = {
             key: int((stats_row[key] if stats_row is not None else 0) or 0)
