@@ -1681,23 +1681,48 @@ class PilotStore:
             finally:
                 os.close(descriptor)
             hexdigest = digest.hexdigest()
+            occurrence_key = f"resumable:{item_id}"
             collision = next(
                 (
                     item
                     for item in self.documents.values()
                     if item.origin == "upload"
-                    and (item.relative_path or item.display_name).casefold()
-                    == upload_path.casefold()
+                    and item.name_key == occurrence_key
                 ),
                 None,
             )
             if collision is not None:
-                if collision.digest == hexdigest:
+                if (collision.digest == hexdigest and collision.relative_path == upload_path
+                    and collision.size == expected_size and collision.media_type == expected_type):
                     return collision
                 raise UploadProblem(
-                    "A different file already uses that name. Rename this file and upload it again.",
+                    "The saved upload does not match this item. Review the selected files and try again.",
                     409,
                 )
+            # An older reader may have persisted the source hard link just
+            # before interruption, without committing its control-store item.
+            # The same inode and bytes prove that exact pending occurrence;
+            # path/content equality alone cannot identify an earlier import.
+            legacy = next((item for item in self.documents.values()
+                if item.origin == "upload" and item.name_key == name_key
+                and item.relative_path == upload_path and item.digest == hexdigest
+                and (item.stable_device, item.stable_inode) == (before.st_dev, before.st_ino)), None)
+            if legacy is not None:
+                try:
+                    linked = (self.files / legacy.stored_name).stat(follow_symlinks=False)
+                except OSError:
+                    legacy = None
+                else:
+                    if not stat.S_ISREG(linked.st_mode) or (linked.st_dev, linked.st_ino) != (before.st_dev, before.st_ino):
+                        legacy = None
+            if legacy is not None:
+                legacy.name_key = occurrence_key
+                try:
+                    self._save((legacy.document_id,))
+                except Exception:
+                    legacy.name_key = name_key
+                    raise
+                return legacy
             self._scan_staged(path, suffix)
             self._validate_file_signature(suffix, first)
             duration_ms = 0
@@ -1724,7 +1749,7 @@ class PilotStore:
                 units=[],
                 digest=hexdigest,
                 version_id=uuid.uuid4().hex,
-                name_key=name_key,
+                name_key=occurrence_key,
                 relative_path=upload_path,
                 processing_stage=("Queued to check recording" if suffix in MEDIA_TYPES else "Queued"),
                 duration_ms=duration_ms,
@@ -1746,20 +1771,7 @@ class PilotStore:
                 except OSError as exc:
                     if exc.errno not in {EXDEV, EPERM, EOPNOTSUPP, ENOSYS}:
                         raise
-                    fallback_descriptor = os.open(
-                        path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
-                    )
-                    with os.fdopen(fallback_descriptor, "rb") as stream:
-                        copied, _ = self.store_stream(
-                            display_name,
-                            content_type,
-                            stream,
-                            relative_path=relative_path,
-                            retain_extraction_failure=True,
-                            defer_processing=True,
-                            request_limit=self.upload_session_limit,
-                        )
-                    return copied
+                    self._copy_resumable_source(path, final, expected_size, hexdigest)
                 self._fsync_directory(self.files)
                 metadata = final.stat(follow_symlinks=False)
                 if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != expected_size:
@@ -1778,6 +1790,30 @@ class PilotStore:
                 final.unlink(missing_ok=True)
                 self._fsync_directory(self.files)
                 raise
+
+    @staticmethod
+    def _copy_resumable_source(source: Path, destination: Path, expected_size: int, expected_digest: str) -> None:
+        """Copy an already checked item without applying legacy path deduplication."""
+        digest = hashlib.sha256()
+        copied = 0
+        with os.fdopen(os.open(source, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as incoming:
+            before = os.fstat(incoming.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size != expected_size:
+                raise UploadProblem('The completed upload changed before it could be saved.', 409)
+            with os.fdopen(os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600), 'wb') as output:
+                while chunk := incoming.read(CHUNK_BYTES):
+                    copied += len(chunk)
+                    if copied > expected_size:
+                        raise UploadProblem('The completed upload changed while it was saved.', 409)
+                    digest.update(chunk)
+                    output.write(chunk)
+                after = os.fstat(incoming.fileno())
+                if (copied != expected_size or digest.hexdigest() != expected_digest
+                    or (before.st_dev, before.st_ino, before.st_mtime_ns, before.st_size)
+                    != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_size)):
+                    raise UploadProblem('The completed upload changed while it was saved.', 409)
+                output.flush()
+                os.fsync(output.fileno())
 
     def discard_resumable_upload(self, item_id: str) -> None:
         name = self._resumable_name(item_id)

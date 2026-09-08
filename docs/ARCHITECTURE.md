@@ -41,6 +41,9 @@ coherent paginated views and complete exports. Their tables stay in the existing
 temporary-matter deletion and backup boundary. Atomic matter/creator/workspace
 receipt, selected-row and metadata-byte limits admit writes before storage grows;
 only owners can discard receipts without upload bindings.
+Each new resumable upload item identifies a separate [received occurrence](UPLOAD_OCCURRENCES.md),
+even with repeated paths or bytes. The existing source-registry key retains
+same-item retry identity across finalization and restart, including copy fallback.
 
 [Source folder navigation](SOURCE_FOLDER_NAVIGATION.md) uses the existing
 matter-scoped source catalog and organization joins. A literal separator-bound

@@ -1,0 +1,104 @@
+# Deliberate upload occurrences
+
+Current contract for repeated paths in confirmed resumable intake. This workspace
+remains temporary; received copies and their derived state are deleted on close.
+
+## Staff outcome
+
+Confirming another file or folder selection creates a separate received source
+for each new upload item, even if an earlier collection contains the same relative
+path or identical bytes. Both collections retain their own source, receipt link
+and exact source version. Retrying the same interrupted upload retains its source
+identity and saved bytes instead of adding another source.
+
+Previously, selecting `Records/report.txt` in two separate collections reused one
+source for equal bytes, leaving a collection empty. Different bytes at the same
+path were rejected. The generated regression covers both cases.
+
+Each occurrence keeps its selected relative path. Staff can browse its collection,
+add it to a source group, open its exact source support and save supported work
+product. Removing one source through the existing supported removal route leaves
+the other occurrence intact. A retained receipt marks a removed source unavailable.
+Removal no longer leaves an already finished upload looking permanently active:
+remaining sources stay searchable when there is no queued or running work.
+
+This does not expand source-removal permissions. The existing small direct-upload
+compatibility route retains its legacy retry/name-conflict behavior; this change
+covers the browser's confirmed resumable intake. Equal bytes are not evidence of
+shared origin or authenticity. No automatic source deletion or duplicate merging
+is introduced.
+
+## Identity and recovery
+
+The existing durable upload item identifies the occurrence. Its existing source
+record stores `resumable:<upload_item_id>` in the internal `name_key` field.
+Neither the staff filename nor the validated relative path changes. No new schema,
+source-registry field, storage boundary, worker, dependency or model is added.
+Source versions, source sets and collection membership retain their current
+contracts.
+
+Finalization finds the same item key before creating a source and checks its path,
+size, media type and byte digest. A source persisted before the control-database
+commit is recovered after restart with the same identity and version. The normal
+hard-link path and bounded copy fallback both preserve this key. The fallback
+verifies regular, non-symlink files, exact size and digest, stable source metadata
+and a flushed destination; it does not use path-based deduplication.
+
+A legacy interrupted hard-link finalization can be adopted only when its canonical
+path, digest and recorded inode match and its stored source file still shares the
+incoming file's inode. Byte equality alone cannot adopt an unrelated source.
+A pre-change interrupted copy without either an occurrence key or a shared inode
+cannot be identified unambiguously by hash alone. Operators should resolve such
+legacy interrupted work before upgrade or preserve its whole backup for recovery.
+
+Upload admission, file checks, authorization, processing and exact source/version
+resolution continue through the existing routes. A missing catalog source with a
+retained completed upload reports attention when no queued/running ingestion or
+media job remains; actual active work still blocks search and closure.
+
+## Backup and rollback
+
+Before upgrading, capture and verify the complete application-owned backup.
+The normal synthetic backup/restore regression uses real SQLite and source files
+with a mocked service/restic runner. It restores two finalized sources interrupted
+before their control commits, then retries to the same two source identities,
+versions, keys and bytes. It does not claim a new encrypted-repository or
+PostgreSQL recovery drill.
+
+A stopped previous source-registry reader can read both occurrences, bytes and
+identities because the JSON record shape is unchanged. Returning to the current
+reader retries the original upload items without adding sources. This proves
+read compatibility, not safe operation of an older writer: older finalizers still
+use path-based deduplication. Prefer a forward correction after occurrence intake
+is used. Rollback requires the complete verified pre-upgrade backup and deliberate
+handling of newer work; do not restore only one database or registry.
+
+## Synthetic acceptance
+
+The focused regressions cover equal/different bytes at equal paths, distinct
+collection and receipt bindings, same-item retries, interrupted control commits,
+restart, hard-link and copy fallback, interrupted copy/restart recovery,
+legacy hard-link adoption, missing sources,
+and readiness with each relevant job state.
+
+The Chrome acceptance confirms three actual folder selections at the same path,
+including two with equal bytes and one with different bytes. It opens each exact
+source from its receipt, groups an occurrence, searches and saves supported work,
+removes the others while preserving the retained source/group/note/search,
+checks a foreign-matter canary, downloads all receipts in the final bundle and
+closes normally with unchanged external originals. The removal step uses the
+existing loopback development route; it does not claim a new shared staff removal
+permission.
+
+```console
+python -m pytest -q tests/test_upload_occurrences.py tests/test_backup_consistency.py
+python scripts/browser-accept-upload-occurrences.py --chrome-binary /path/to/chrome --chromedriver /path/to/chromedriver --output /tmp/generated-occurrence-acceptance
+python scripts/verify-upload-occurrence-rollback.py --previous-source /path/to/previous-checkout
+```
+
+Validation on September 8, 2026: `make check` passed 936 application tests
+with nine optional skips, all 194 transcription tests, compilation, both Compose
+graphs and publication inspection. Six real Chrome workflows and the stopped
+previous-reader/forward-retry check passed on the combined prerequisite revision.
+The normal synthetic backup/restore coverage is included in the application suite.
+Release acceptance requires final-commit hosted reviews and the normal merge gate.

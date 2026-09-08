@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-08: Keep separate sources for newly confirmed resumable upload items
+  with identical paths or bytes, while preserving same-item retry identity across
+  restart and copy fallback. Keep finished uploads whose sources were removed
+  from blocking remaining-source search. Add exact-source, collection, receipt,
+  browser, backup/restore and previous-reader acceptance.
+
 - 2026-09-08: Browse exact source folder subtrees with bounded child-folder
   pages, descendant counts and parent navigation. Retain existing source filters,
   groups and exact source links; preserve external originals and matter access.

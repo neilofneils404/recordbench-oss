@@ -69,6 +69,8 @@ previous bytes, open exact source support, and download individual receipts or t
 complete matter bundle. Receipt metadata has cumulative capacity limits; owners
 can discard receipts without uploads to recover space. See
 [selection receipts and recovery](docs/INTAKE_RECEIPTS.md).
+New confirmed uploads retain separate [source occurrences](docs/UPLOAD_OCCURRENCES.md)
+when another selection uses the same path or bytes; retries keep the original source.
 
 Sources also offers [folder navigation](docs/SOURCE_FOLDER_NAVIGATION.md), with
 child-folder counts, parent navigation and the existing collection, source-set

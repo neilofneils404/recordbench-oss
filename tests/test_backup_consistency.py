@@ -423,3 +423,52 @@ def test_selection_receipts_round_trip_through_normal_backup_restore(node_factor
         assert reopened.connection.execute('PRAGMA foreign_key_check').fetchall() == []
     finally:
         reopened.close()
+
+
+def test_upload_occurrences_and_pending_identity_survive_normal_backup_restore(node_factory):
+    from case_intelligence.pilot_uploads import PilotStore
+    from case_intelligence.workspace_store import WorkspaceStore
+
+    node = node_factory(wal=True)
+    control = WorkspaceStore(node.control)
+    owner = 'generated-occurrence-owner'
+    control.upsert_principal('test', owner, 'Generated owner', owner, preferred_principal_id=owner)
+    matter = control.create_matter('Generated occurrence backup', '', owner)
+    source_root = node.storage / 'matters' / matter.matter_id / 'sources'
+    source_root.parent.mkdir(parents=True)
+    sources = PilotStore(source_root)
+    body = b'Synthetic repeated occurrence for backup.\n'
+    saved = []
+    items = []
+    try:
+        for index in range(2):
+            session, created = control.create_upload_session(matter.matter_id, owner, f'Generated production {index + 1}',
+                [{'display_name': 'report.txt', 'relative_path': 'Records/report.txt', 'media_type': 'text/plain', 'expected_size': len(body)}])
+            item = created[0]
+            items.append(item)
+            sources.append_resumable_chunk(item.upload_item_id, offset=0, expected_size=len(body), chunk=body)
+            control.set_upload_item_offset(matter.matter_id, owner, session.upload_session_id, item.upload_item_id, 0, len(body))
+            document = sources.finalize_resumable_upload(item.upload_item_id, display_name='report.txt',
+                relative_path='Records/report.txt', content_type='text/plain', expected_size=len(body))
+            saved.append((document.document_id, document.version_id, document.name_key))
+        assert saved[0][0] != saved[1][0]
+        # Both sources are durable immediately before their control commit.
+    finally:
+        sources.close()
+        control.close()
+    assert node.backup() == 0 and node.restore() == 0
+    restored = node.root / 'restored'
+    current = PilotStore(restored / 'managed-storage' / source_root.relative_to(node.storage))
+    reopened = WorkspaceStore(restored / 'payload/runtime/workbench.sqlite')
+    try:
+        assert len(current.documents) == 2
+        for item, expected in zip(items, saved):
+            document = current.finalize_resumable_upload(item.upload_item_id, display_name='report.txt',
+                relative_path='Records/report.txt', content_type='text/plain', expected_size=len(body))
+            assert (document.document_id, document.version_id, document.name_key) == expected
+            assert current.source_path(document.document_id).read_bytes() == body
+            assert reopened.upload_item(matter.matter_id, owner, item.upload_session_id, item.upload_item_id).received_size == len(body)
+        assert len(current.documents) == 2
+    finally:
+        current.close()
+        reopened.close()
