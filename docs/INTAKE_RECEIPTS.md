@@ -43,6 +43,10 @@ byte transfer. Same-page retry also works when browser storage is denied. Withou
 browser storage, automatic identification of the selection cannot survive closing
 or reloading the page; its durable receipt remains discoverable in Sources.
 
+Collection names are checked before saving a browser checkpoint. A rejected name
+can be corrected with the same files still selected, including when browser
+storage is unavailable. Older invalid name checkpoints are ignored.
+
 Explicitly cancelling an upload retains its receipt and clears the browser
 checkpoint, so a later deliberate selection can start a new attempt.
 
@@ -62,8 +66,9 @@ checkpoint that conflicts with the receipt binding remains a resume mismatch;
 receipt idempotency does not silently override it.
 
 The upload route still owns capacity admission, signatures, malware checks and
-source processing. A receipt does not authorize a skipped file for upload and
-does not reserve storage before a session is created. Metadata retries retain
+source processing. A receipt does not authorize a skipped file for upload.
+Source-byte storage is reserved when an upload session is created. Receipt
+metadata has the separate admission limits below. Metadata retries retain
 original row identities and descriptor digests; the uploaded source version is
 captured when finalization commits. During adoption, an existing immutable uploaded
 source can supply its version from the matter catalog; absent support remains
@@ -72,7 +77,8 @@ unavailable.
 ## API and storage contract
 
 All routes require current matter access. Metadata mutations require CSRF and
-the principal who created the receipt; team members can read it. Existing audited
+the principal who created the receipt; team members can read it. Only the matter
+owner may deliberately discard an unfinished receipt without upload bindings. Existing audited
 administrator review also opens status, pages and downloads without allowing
 receipt mutations or granting an ordinary nonmember access. Export uses the
 normal matter response lease and authorized final-export boundary.
@@ -84,6 +90,7 @@ normal matter response lease and authorized final-export boundary.
 | `POST /matters/{slug}/intake-receipts/{receipt}/seal` | Verify complete contiguous inventory and included-path uniqueness before transfer. |
 | `GET /matters/{slug}/intake-receipts/{receipt}` | Return current selection, transfer and availability counts. |
 | `GET /matters/{slug}/intake/{receipt}` | Show 100 selection rows per page with exact source links. |
+| `POST /matters/{slug}/intake/{receipt}/discard` | Owner-confirmed discard of an unfinished receipt with no upload bindings. |
 | `GET /matters/{slug}/intake/{receipt}/export?format=csv` | Download CSV, Markdown or JSON. |
 | `GET /matters/{slug}/setup?receipt_page=2` | Discover older selections, ten receipts per page. |
 
@@ -92,6 +99,31 @@ rows and 6 MiB of UTF-8 JSON; the browser splits batches by both count and encod
 size. Invalid types, counts, ordinals or nested descriptors fail before writes.
 Paths use the same validated canonical relative path as upload admission; unsafe
 names are minimized. Client metadata is not a byte-derived finding.
+
+Receipt admission also has cumulative limits:
+
+| Scope | Receipts | Reserved selected rows | Charged metadata |
+| --- | ---: | ---: | ---: |
+| One matter | 1,000 | 100,000 | 32 MiB |
+| One creator across matters | 2,000 | 200,000 | 64 MiB |
+| Whole workspace | 10,000 | 1,000,000 | 128 MiB |
+
+Creation reserves the complete selected-row count before item batches arrive.
+The stored metadata charge includes UTF-8 field sizes and a conservative fixed
+allowance per receipt and row; it is not a physical database-file measurement.
+Count/row/byte admission and insertion share a SQLite write transaction across
+connections. Exact retries add no charge, and a rejected batch inserts no rows.
+The earlier rows and unrecorded count remain available. Normal source-upload
+quotas continue to govern source bytes.
+
+At a receipt limit, the product explains how to recover. The matter owner can
+open an unfinished receipt, download it if wanted, and confirm **Discard
+unfinished receipt**. This deletes only a receipt still being recorded with no
+upload bindings, releases its metadata reservation and adds a content-free audit
+event. Completed selections and selections linked to uploads cannot be discarded;
+they remain with the matter. Use another matter for further deliberate intake
+when completed receipts occupy its capacity, or contact the administrator for an
+account/workspace limit. The normal owner close/export process remains available.
 
 Mirrored SQLite migration `0025_intake_receipts.sql` adds receipt, item and transfer
 tables to the existing control database. It creates no new storage boundary or
@@ -112,7 +144,8 @@ all other work-product sections and total output size.
 Back up and verify restoration of the complete application-owned boundary before
 an upgrade. The normal backup already includes the SQLite control database and
 managed partial uploads. The synthetic normal backup/restore regression verifies
-receipt rows, skipped reasons, transfer bindings and seven saved partial bytes.
+receipt rows, skipped reasons, metadata charges, transfer bindings and seven
+saved partial bytes.
 The test uses real SQLite databases and partial files with a mocked service/restic
 runner; it does not claim a new encrypted-repository or PostgreSQL integration
 drill. No source originals are added to the backup boundary by this feature.
@@ -145,12 +178,12 @@ python scripts/verify-intake-receipt-rollback.py --previous-source /path/to/prev
 Browser artifacts contain only generated fixtures. They are additional acceptance
 evidence, not required public attachments or proof of confidential-data readiness.
 
-Validation on September 8, 2026: `make check` passed 898 application tests with
-nine optional skips, all 194 transcription tests, compilation, Compose and
-publication checks. Chrome passed eight dedicated receipt workflows, including
-an actual capacity-limited selection whose skipped reason survives reload and
-CSV download. All 37 existing loose-file preflight workflows passed before the
-receipt-only review correction. The previous-reader check passed unchanged
-receipt state and exact seven-byte-offset forward resume. The normal synthetic
-backup/restore regression also passed with the separate reviewed selection
-state and reason.
+Validation on September 8, 2026: `make check` passed 909 application tests with
+nine optional skips, all 194 transcription tests, compilation, both Compose
+graphs and publication checks. Ten dedicated Chrome workflows passed, including
+actual capacity exclusions, name correction with denied browser storage and
+recovery at the real 1,000-receipt limit. All 37 existing loose-file preflight
+workflows passed after the name correction and before the metadata-admission
+change. Normal synthetic backup/restore preserves the receipt metadata charge;
+the previous-reader check preserves receipt state and exact seven-byte-offset
+forward resume.

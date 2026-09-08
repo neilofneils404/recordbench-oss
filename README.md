@@ -65,7 +65,9 @@ See the [public-alpha boundary](docs/PUBLIC_ALPHA.md) for scope and limitations.
 Selected-file receipts stay available after reload and distinguish received bytes
 from processing or source availability. Retry interrupted uploads without losing
 previous bytes, open exact source support, and download individual receipts or the
-complete matter bundle. See [selection receipts and recovery](docs/INTAKE_RECEIPTS.md).
+complete matter bundle. Receipt metadata has cumulative capacity limits; owners
+can discard unfinished receipts without uploads to recover space. See
+[selection receipts and recovery](docs/INTAKE_RECEIPTS.md).
 
 Case-note edits preserve unsaved fields when another team member has changed
 the note. Confirm/Delete actions also require the version just reviewed. See

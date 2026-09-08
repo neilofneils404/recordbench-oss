@@ -20,6 +20,13 @@ from .workspace_store import WorkspaceProblem, WorkspaceStore
 MAX_SELECTION_ITEMS = 10_000
 MAX_METADATA_BATCH_ITEMS = 2_000
 MAX_METADATA_BATCH_BYTES = 6 * 1024 * 1024
+# Receipts, reserved selection rows, and charged metadata bytes. Reservations
+# count unfinished selections too; actual row text is charged before insertion.
+RECEIPT_LIMITS = {
+    'matter': (1_000, 100_000, 32 * 1024 * 1024),
+    'actor': (2_000, 200_000, 64 * 1024 * 1024),
+    'workspace': (10_000, 1_000_000, 128 * 1024 * 1024),
+}
 _RECEIPT = re.compile(r'intake-[0-9a-f]{32}')
 _KEY = re.compile(r'[0-9a-f]{32}')
 _FINGERPRINT = re.compile(r'[0-9a-f]{64}')
@@ -89,6 +96,26 @@ class IntakeReceipts:
         self.workspace = workspace
         self.connection = workspace.connection
 
+    def _admit_locked(self, matter_id: str, actor_id: str, *, receipts: int = 0,
+                      selected_rows: int = 0, metadata_bytes: int = 0) -> None:
+        # Call inside the same BEGIN IMMEDIATE transaction as the write. Other
+        # connections cannot consume the remaining budget between these steps.
+        for scope, predicate, parameters in (
+            ('matter', ' WHERE matter_id=?', (matter_id,)),
+            ('actor', ' WHERE actor_id=?', (actor_id,)),
+            ('workspace', '', ()),
+        ):
+            used = self.connection.execute(
+                'SELECT count(*),COALESCE(sum(selected_count),0),COALESCE(sum(metadata_bytes),0) '
+                'FROM workbench_intake_receipt' + predicate, parameters).fetchone()
+            extra = (receipts, selected_rows, metadata_bytes)
+            if any(current + added > maximum for current, added, maximum in zip(used, extra, RECEIPT_LIMITS[scope])):
+                if scope == 'matter':
+                    raise WorkspaceProblem('Selected-file receipt capacity is full for this matter. '
+                        'Ask the matter owner to discard unfinished receipts, or export your work and use another matter.')
+                raise WorkspaceProblem('Selected-file receipt capacity is full for this account or workspace. '
+                    'Ask the matter owner to discard unfinished receipts, or contact the administrator.')
+
     def _receipt_locked(self, matter_id: str, actor_id: str, receipt_id: str, *,
                         write: bool = False, administrator_override: bool = False):
         if write:
@@ -133,12 +160,15 @@ class IntakeReceipts:
                     raise WorkspaceProblem('The saved selection changed. Review the files again.')
                 receipt_id = previous['receipt_id']
             else:
+                charged = 512 + len(title.encode('utf-8')) + len(indexes.encode('utf-8'))
+                self._admit_locked(matter_id, actor_id, receipts=1, selected_rows=selected_count,
+                    metadata_bytes=charged)
                 receipt_id = 'intake-' + uuid.uuid4().hex
                 now = self.workspace._now()
                 self.connection.execute(
-                    'INSERT INTO workbench_intake_receipt VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                    'INSERT INTO workbench_intake_receipt VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                     (receipt_id, matter_id, actor_id, selection_key, selection_fingerprint, title,
-                     selected_count, indexes, 'recording', now, now),
+                     selected_count, indexes, 'recording', now, now, charged),
                 )
         return self.get(matter_id, actor_id, receipt_id)
 
@@ -173,6 +203,7 @@ class IntakeReceipts:
             if start + len(files) > receipt['selected_count']:
                 raise WorkspaceProblem('This receipt batch exceeds the confirmed selection.')
             eligible = set(json.loads(receipt['eligible_indexes_json']))
+            pending = []
             for offset, (raw, result, digest) in enumerate(zip(files, evaluated['items'], digests)):
                 ordinal = start + offset
                 existing = self.connection.execute(
@@ -198,15 +229,33 @@ class IntakeReceipts:
                 reviewed_reason = reason
                 if not included and (reviewed_state == 'valid' or reviewed_state != result['state']):
                     reviewed_reason = _REVIEWED_REASONS[reviewed_state]
-                self.connection.execute(
-                    'INSERT INTO workbench_intake_item VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                    (receipt_id, matter_id, ordinal, digest, path, name, size,
+                pending.append((receipt_id, matter_id, ordinal, digest, path, name, size,
                      result['expected_type'] or '', result['supplied_type'] or '', result['state'],
-                     int(included), reason, reviewed_state, reviewed_reason),
-                )
-            self.connection.execute('UPDATE workbench_intake_receipt SET updated_at=? WHERE receipt_id=? AND matter_id=?',
-                (self.workspace._now(), receipt_id, matter_id))
+                     int(included), reason, reviewed_state, reviewed_reason))
+            charged = sum(256 + sum(len(str(value).encode('utf-8')) for value in row if value is not None)
+                for row in pending)
+            if pending:
+                self._admit_locked(matter_id, actor_id, metadata_bytes=charged)
+                self.connection.executemany('INSERT INTO workbench_intake_item VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', pending)
+            self.connection.execute('UPDATE workbench_intake_receipt SET updated_at=?,metadata_bytes=metadata_bytes+? '
+                'WHERE receipt_id=? AND matter_id=?', (self.workspace._now(), charged, receipt_id, matter_id))
         return self.get(matter_id, actor_id, receipt_id)
+
+    def discard_unfinished(self, matter_id: str, actor_id: str, receipt_id: str, *, confirmed: bool = False) -> None:
+        with self.workspace._lock, self.connection:
+            self.connection.execute('BEGIN IMMEDIATE')
+            if self.workspace.membership(matter_id, actor_id).role != 'owner':
+                raise KeyError(receipt_id)
+            receipt = self._receipt_locked(matter_id, actor_id, receipt_id)
+            if confirmed is not True:
+                raise WorkspaceProblem('Confirm that you want to discard this unfinished receipt.')
+            linked = self.connection.execute('SELECT 1 FROM workbench_intake_transfer '
+                'WHERE matter_id=? AND receipt_id=? LIMIT 1', (matter_id, receipt_id)).fetchone()
+            if receipt['state'] != 'recording' or linked is not None:
+                raise WorkspaceProblem('Only unfinished receipts without uploads can be discarded. '
+                    'Completed receipts remain with the matter.')
+            self.connection.execute('DELETE FROM workbench_intake_receipt WHERE matter_id=? AND receipt_id=?',
+                (matter_id, receipt_id))
 
     def seal(self, matter_id: str, actor_id: str, receipt_id: str) -> dict:
         with self.workspace._lock, self.connection:

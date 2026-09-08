@@ -5,7 +5,9 @@
 - 2026-09-08: Retain every confirmed selected file and skipped reason across
   retry, reload and export. Add paginated receipts, exact received-source links,
   separate byte/processing counts, legacy upload adoption and complete-bundle
-  inclusion. Keep receipt state within the existing temporary matter, activity,
+  inclusion. Enforce atomic matter, creator and workspace metadata limits, permit
+  owner-confirmed cleanup of unfinished receipts, and allow collection-name
+  correction without losing retry identity. Keep receipt state within the existing temporary matter, activity,
   deletion and backup boundary; retain capacity exclusions separately from filename
   checks and add synthetic HTTP, Chrome and restore evidence.
 

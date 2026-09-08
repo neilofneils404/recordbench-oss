@@ -403,6 +403,9 @@ def test_selection_receipts_round_trip_through_normal_backup_restore(node_factor
             intake_receipt_id=receipt['receipt_id'], intake_ordinals=[0])
         with_store.set_upload_item_offset(matter.matter_id, owner, session.upload_session_id, items[0].upload_item_id, 0, 7)
         selected_before = receipts.snapshot(matter.matter_id, owner, receipt['receipt_id'])
+        charged_before = with_store.connection.execute('SELECT metadata_bytes FROM workbench_intake_receipt '
+            'WHERE receipt_id=?', (receipt['receipt_id'],)).fetchone()[0]
+        assert charged_before > 0
         partial = node.storage / 'matters' / matter.matter_id / 'sources' / 'incoming' / items[0].upload_item_id
         partial.parent.mkdir(parents=True)
         partial.write_bytes(b'Partial')
@@ -414,6 +417,8 @@ def test_selection_receipts_round_trip_through_normal_backup_restore(node_factor
     reopened = WorkspaceStore(restored / 'payload/runtime/workbench.sqlite')
     try:
         assert IntakeReceipts(reopened).snapshot(matter.matter_id, owner, receipt['receipt_id']) == selected_before
+        assert reopened.connection.execute('SELECT metadata_bytes FROM workbench_intake_receipt '
+            'WHERE receipt_id=?', (receipt['receipt_id'],)).fetchone()[0] == charged_before
         assert (restored / 'managed-storage' / partial.relative_to(node.storage)).read_bytes() == b'Partial'
         assert reopened.connection.execute('PRAGMA foreign_key_check').fetchall() == []
     finally:

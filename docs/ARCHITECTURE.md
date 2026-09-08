@@ -37,7 +37,9 @@ checks, configured ClamAV policy, and failure recovery. [Selection receipts](INT
 retain skipped reasons separately from byte receipt and source availability,
 use idempotent metadata/session bindings and exact source versions, and provide
 coherent paginated views and complete exports. Their tables stay in the existing
-temporary-matter deletion and backup boundary.
+temporary-matter deletion and backup boundary. Atomic matter/creator/workspace
+receipt, selected-row and metadata-byte limits admit writes before storage grows;
+only owners can discard unfinished receipts without upload bindings.
 
 Accepted documents then enter extraction. Text PDFs use native extraction;
 missing-text pages use bounded CPU OCR. Media enters the durable media queue,
