@@ -15,10 +15,14 @@
   coverage links after live status updates. Apply attachment boundaries to every
   non-report message subtype, including unnamed encapsulated and extension types.
   Refresh investigation and ordinary-answer coverage after live retrieval; reject empty related roots
-  and MIME defects discovered during body decoding or lazy header parsing.
+  and MIME defects discovered during body decoding or lazy header parsing, including
+  duplicate singleton classification headers.
   Keep completion-time availability distinct from evidence actually used and retain
   a rerun notice when source identities, versions or availability change during
-  retrieval or generation, including equal-count swaps. Persist the retrieval
+  retrieval, generation or final saving, including equal-count swaps. Keep the
+  final coverage/scope check inside the source and control mutation boundaries.
+  Include pending uploads and processing jobs in availability changes and count
+  uploading/processing sources as excluded. Persist the retrieval
   boundary in research checkpoints and repeat stale/legacy searches on recovery.
   Treat empty filename parameters as unnamed attachments and normalize surrounding
   Content-ID comments/folding whitespace before root matching and ambiguity checks.

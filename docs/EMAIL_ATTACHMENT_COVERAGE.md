@@ -58,7 +58,7 @@ content; new header units list each attachment boundary, with unknown names
 shown as **unnamed**. Descendants of attached messages are not separately listed.
 
 Parser-reported MIME defects, including malformed containers and body-transfer
-decoding defects and defects on lazily parsed MIME classification headers, fail
+decoding defects and defects or duplicate singleton MIME classification headers, fail
 as a source-processing error with existing
 **Try again** and removal recovery. Correct a damaged original before a fresh
 upload. Earlier saved answers keep their historical snapshot; new answers,
@@ -71,12 +71,21 @@ and the synchronous compatibility path likewise refresh source counts and covera
 after generation so newly retrieved email cannot retain an earlier complete notice.
 These counts describe current source availability, not a ledger of sources
 searched. Each actual retrieval begins by fingerprinting the matter-scoped catalog
-IDs, versions, content-basis digests, states and media types. This streams metadata
+IDs, versions, content-basis digests, states, media types, processing jobs and
+pending uploads not yet bound to a catalog source. This streams metadata
 without reading source bytes or materializing a second source list. If that boundary
 changes during retrieval or generation, saved coverage is partial and explains that
 newly available material may be absent and the question should be run again.
-Equal-count source swaps and uncited version changes are detectable too. Focused answers identify their actual cited support without
-claiming to have searched every source in the completion-time count. An unchanged
+Equal-count source swaps and uncited version changes are detectable too. Final
+counts, coverage and ordinary answer scope are refreshed under the existing source
+mutation guard used for citation validation and durable result saving, with the
+workspace control lock held from the coverage read through saving. This also
+serializes pending-upload changes that do not yet have a catalog source, so a change
+between generation and persistence cannot escape the notice. Queued work carries
+the boundary only as internal completion metadata; storage strips the transient
+research completion field before saving or exporting a finished result. Focused answers identify their actual cited support without
+claiming to have searched every source in the completion-time count. Sources still
+uploading or processing count as excluded and receive a plain recovery notice. An unchanged
 complete availability state likewise does not mean an every-source review.
 Research checkpoints retain one optional internal `retrieval_source_fingerprint`
 field in their existing JSON. On recovery, a missing or changed boundary repeats
@@ -105,8 +114,8 @@ make check
 ```
 
 Six initial failing parser cases reproduced attached-text leakage, missing
-inventory/coverage and malformed-container readiness. Fifty-seven parser/HTTP tests now
-pass; the combined email, investigation and readiness selection passes 83 tests; including answer-job contracts passes 95. New failing
+inventory/coverage and malformed-container readiness. Seventy parser/HTTP tests now
+pass; the combined email, investigation and readiness selection passes 96 tests; including answer-job contracts passes 108. New failing
 regressions reproduce lost investigation coverage and invented delivery-report
 attachments before their corrections. Related-resource/root and mixed-navigation
 regressions also fail before correction and pass afterward. Unnamed encapsulated
@@ -121,7 +130,13 @@ regressions reject malformed MIME type, disposition and transfer-encoding header
 and upload a normal text source during final generation in both answer paths and
 investigations. The latter retain exact earlier support and a late-availability
 notice in saved Markdown and Word exports. Equal-count swaps reproduce the
-same missing notice before fingerprinting. Recovery after the final checkpoint
+same missing notice before fingerprinting. Queued answer and investigation
+regressions also pause immediately before saving and reproduce both a new upload
+and an equal-count swap; the saved availability, scope and exports now agree.
+Pending-upload regressions create a real resumable upload before bytes arrive,
+during generation and final saving; all five paths preserve partial coverage and
+exact earlier support. Four duplicate-singleton MIME header cases fail before
+correction and now report ordinary processing failure. Recovery after the final checkpoint
 repeats searches for both current and legacy checkpoints, resolves new source
 support and preserves it in Markdown, JSON and Word. Empty filenames, commented
 and folded Content-IDs, normalized ambiguity and matter-scoped version changes
@@ -135,7 +150,7 @@ the older application and exports the saved notice, then verifies forward read
 and unchanged original bytes. It also checks the optional research checkpoint
 field through a stopped previous reader and current forward reader. No new storage contract requires migration.
 
-September 8, 2026 acceptance: `make check` passes 1011 application tests with nine
+September 8, 2026 acceptance: `make check` passes 1024 application tests with nine
 optional skips, all 194 transcription tests, compilation, both Compose graphs and
 publication inspection. All eight Chrome workflows pass: actual selected-file
 upload/receipt/source inventory, desktop/narrow review, attachment-only no-match

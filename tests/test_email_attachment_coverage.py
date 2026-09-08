@@ -507,11 +507,12 @@ def test_malformed_mime_classification_header_uses_processing_recovery(tmp_path,
         extract_email(path)
 
 
-@pytest.mark.parametrize('answer_mode', ['queued', 'synchronous', 'research'])
-@pytest.mark.parametrize('source_change', ['add', 'swap'])
-def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path, monkeypatch, answer_mode, source_change):
+@pytest.mark.parametrize('answer_mode,pause_stage', [('queued', 'generation'), ('synchronous', 'generation'), ('research', 'generation'), ('queued', 'finishing'), ('research', 'finishing')])
+@pytest.mark.parametrize('source_change', ['add', 'swap', 'pending'])
+def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path, monkeypatch, answer_mode, source_change, pause_stage):
     app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
-        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
+        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended',
+        background_ingestion=source_change == 'pending', ingestion_workers=1)
     generating = threading.Event()
     continue_generation = threading.Event()
     with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as executor:
@@ -521,6 +522,11 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
         assert client.post(f'/matters/{slug}/uploads', files=[
             ('files', ('initial.txt', b'ParentBodyCanary describes a generated meeting.', 'text/plain')),
         ]).status_code == 200
+        if source_change == 'pending':
+            deadline = time.monotonic() + 10
+            while not bench.workspace.matter_readiness(matter.matter_id).can_query:
+                assert time.monotonic() < deadline
+                time.sleep(.02)
         if source_change == 'swap':
             assert client.post(f'/matters/{slug}/uploads', files=[
                 ('files', ('unused.txt', b'Unrelated housekeeping instructions only.', 'text/plain')),
@@ -530,12 +536,20 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
         original_answer = bench.generator.answer
 
         def pause_final_generation(question, *args, **kwargs):
-            if answer_mode != 'research' or question.startswith('Answer the original research objective'):
+            if pause_stage == 'generation' and (answer_mode != 'research' or question.startswith('Answer the original research objective')):
                 generating.set()
                 assert continue_generation.wait(10), 'Concurrent upload did not finish'
             return original_answer(question, *args, **kwargs)
 
         monkeypatch.setattr(bench.generator, 'answer', pause_final_generation)
+        if pause_stage == 'finishing':
+            coordinator = bench.answers if answer_mode == 'queued' else bench.research
+            original_finish = coordinator.finish
+            def pause_before_save(*args, **kwargs):
+                generating.set()
+                assert continue_generation.wait(10), 'Concurrent upload did not finish'
+                return original_finish(*args, **kwargs)
+            monkeypatch.setattr(coordinator, 'finish', pause_before_save)
         conversation = bench.workspace.get_conversation(matter.matter_id)
         question = 'What does ParentBodyCanary describe?'
         if answer_mode == 'synchronous':
@@ -552,9 +566,18 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
             assert generating.wait(10)
             if source_change == 'swap':
                 assert client.post(f'/matters/{slug}/sources/{store.action_token(unused)}/remove').status_code == 200
-            assert client.post(f'/matters/{slug}/uploads', files=[
-                ('files', ('late.txt', b'LateSourceCanary describes a different meeting.', 'text/plain')),
-            ]).status_code == 200
+            if source_change == 'pending':
+                from tests.test_intake_receipt_http import descriptor, selection, upload
+                files = [descriptor('Pending/late.txt', 128)]
+                receipt = selection(client, slug, files, [0])
+                upload(client, slug, receipt, files, [0])
+                assert len(bench.source_store(matter).documents) == 1
+                readiness = bench.workspace.matter_readiness(matter.matter_id)
+                assert readiness.total_count == 2 and readiness.processing_count == 1
+            else:
+                assert client.post(f'/matters/{slug}/uploads', files=[
+                    ('files', ('late.txt', b'LateSourceCanary describes a different meeting.', 'text/plain')),
+                ]).status_code == 200
         finally:
             continue_generation.set()
         if answer_mode == 'synchronous':
@@ -576,27 +599,31 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
                 answer = bench.workspace.messages(matter.matter_id, conversation.conversation_id)[-1]
         if answer_mode == 'research':
             coverage = job.result['coverage']
+            assert '_retrieval_source_fingerprint' not in job.result
             citations = job.result['evidence']
             route = f'/matters/{slug}/research/{job.job_id}/export'
         else:
             coverage = answer.payload['source_coverage']
             citations = [item for claim in answer.payload['claims'] for item in claim['citations']]
             assert 'searched 2' not in answer.payload['review_scope']['notice']
+            assert answer.payload['review_scope']['searchable_source_count'] == (1 if source_change == 'pending' else 2)
             route = f'/matters/{slug}/conversations/{conversation.conversation_id}/messages/{answer.message_id}/export'
         assert citations and all(item['source_name'] == 'initial.txt' for item in citations)
         for item in citations:
             assert bench.support(matter, item['support_token']).source_name == 'initial.txt'
         assert coverage['mode'] == 'partial'
-        assert coverage['searchable_count'] == coverage['total_count'] == 2
-        assert 'changed after retrieval' in coverage['notice']
+        assert coverage['total_count'] == 2
+        assert coverage['searchable_count'] == (1 if source_change == 'pending' else 2)
+        assert coverage['excluded_count'] == (1 if source_change == 'pending' else 0)
+        assert 'changed after the search started' in coverage['notice']
         for format_name in ('markdown', 'docx'):
             exported = client.get(route, params={'format': format_name})
             assert exported.status_code == 200
             if format_name == 'docx':
                 with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
-                    assert 'changed after retrieval' in archive.read('word/document.xml').decode()
+                    assert 'changed after the search started' in archive.read('word/document.xml').decode()
             else:
-                assert 'changed after retrieval' in exported.text
+                assert 'changed after the search started' in exported.text
 
 
 @pytest.mark.parametrize('parameter', ['filename', 'name'])
@@ -739,3 +766,18 @@ def test_source_availability_boundary_is_matter_scoped_and_version_sensitive(tmp
             document.version_id = 'f' * 32
             store._save((document.document_id,))
         assert fingerprint() != uploaded
+
+
+@pytest.mark.parametrize('headers', [
+    b'Content-Type: text/plain\r\nContent-Type: message/rfc822',
+    b'Content-Disposition: inline\r\nContent-Disposition: attachment; filename="generated.txt"',
+    b'Content-Transfer-Encoding: 7bit\r\nContent-Transfer-Encoding: quoted-printable',
+    b'Content-ID: <first@example.test>\r\nContent-ID: <second@example.test>',
+])
+def test_duplicate_mime_classification_headers_use_processing_recovery(tmp_path, headers):
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(b'Content-Type: multipart/mixed; boundary="generated"\r\n\r\n'
+        b'--generated\r\nContent-Type: text/plain\r\n\r\nParentBodyCanary\r\n'
+        b'--generated\r\n' + headers + b'\r\n\r\nAttachmentOnlyCanary\r\n--generated--\r\n')
+    with pytest.raises(ValueError, match='malformed'):
+        extract_email(path)

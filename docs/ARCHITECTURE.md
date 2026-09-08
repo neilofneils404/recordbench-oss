@@ -70,7 +70,7 @@ unnamed attachments, and state that attachment contents were not
 processed or searched. All parsed parts still count toward the MIME limit,
 including descendants of attachment boundaries; malformed MIME containers fail
 with ordinary retry/remove recovery. Lazily parsed MIME classification headers
-are checked for their own defects before fallback types can mix attached text
+reject duplicate singleton fields and are checked for their own defects before fallback types can mix attached text
 into parent evidence. Body decoding rechecks MIME defects so
 reported transfer-encoding defects cannot leave best-effort text searchable. The existing catalog supplies a
 matter-scoped email count for readiness and query-time coverage without reading
@@ -84,9 +84,17 @@ include sources admitted during their live retrieval passes. Queued and synchron
 answers refresh their coverage after generation for the same live-index reason.
 The saved counts describe current availability, not an exhaustive searched-source
 ledger. Each actual retrieval records a streaming fingerprint of matter-scoped
-catalog IDs, versions, content-basis digests, source states and media types. A
+catalog IDs, versions, content-basis digests, source states, media types, processing
+jobs and orphan pending-upload checkpoints. Uploading/processing sources count
+as excluded and retain a plain recovery notice. A
 changed boundary during retrieval or generation sets partial coverage with a
-rerun notice retained by exports, including equal-count source swaps. One optional
+rerun notice retained by exports, including equal-count source swaps. Final
+coverage and ordinary answer scope refresh under the same source mutation guard
+as citation validation and durable saving, with the workspace control lock held
+from the coverage read through saving to include control-only upload changes.
+Worker completion metadata retains the
+retrieval boundary until that save, and storage strips transient research
+completion metadata before storing a finished result. One optional
 fingerprint field in existing research checkpoint JSON allows recovery to repeat
 a bounded search plan when source state changed or an older checkpoint lacks the
 boundary. The stale checkpoint and progress reset atomically without changing job

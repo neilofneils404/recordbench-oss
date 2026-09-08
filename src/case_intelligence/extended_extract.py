@@ -216,7 +216,8 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
         # A malformed Content-Type can otherwise fall back to text/plain and
         # turn an attached message into apparent parent body text.
         for name in ("Content-Type", "Content-Disposition", "Content-Transfer-Encoding", "Content-ID"):
-            if any(header.defects for header in part.get_all(name, [])):
+            headers = part.get_all(name, [])
+            if len(headers) > 1 or any(header.defects for header in headers):
                 raise ValueError("That email is damaged or malformed.")
         if part.is_multipart():
             pending.extend(part.get_payload())

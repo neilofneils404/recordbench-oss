@@ -86,7 +86,8 @@ outside newly extracted parent-message text. Search, answers, investigations and
 explain that attachments are not fully searched and need separate review. Older
 saved passages retain their citation basis. If sources change while a question
 retrieves evidence or prepares an answer, its saved result explains that newly
-available material may be absent and the question should be run again. Recovered
+available material may be absent and the question should be run again. Sources
+still uploading or processing are identified as excluded. Recovered
 investigations repeat their searches when the saved source boundary has changed. Coverage links include ready email
 alongside sources needing attention; see [email attachment coverage and
 recovery](docs/EMAIL_ATTACHMENT_COVERAGE.md).
