@@ -14,8 +14,13 @@ an independent secret scanner, and a private operator deny list kept outside
 the repository; reviews synthetic media and third-party notices; and inspects
 GitHub descriptions, discussions, logs, artifacts, releases, and settings.
 False positives require a narrow, recorded disposition rather than removal of
-the underlying check. Public author identities are deliberate and use GitHub
-no-reply email addresses. Keep the private audit and its deny terms outside Git.
+the underlying check. New public author identities are deliberate and should use GitHub
+no-reply email addresses. The maintainer explicitly accepted the existing
+author/committer email on commit `d2f1e779e70063b94fece1291169f547c7c44d83`.
+The scanner records that reviewed attribution by exact commit and identity
+digest, suppressing only the non-example-email finding for those metadata
+fields. It does not permit the address in file content, commit messages, other
+commits, or unrelated identities; operator deny terms still apply. Keep the private audit and its deny terms outside Git.
 
 Source publication does not ship a production image or promise installation,
 hardware, recovery, legal accuracy, completeness, or confidential-workload

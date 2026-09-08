@@ -258,16 +258,17 @@ Useful contributions include synthetic discovery examples, clear descriptions
 of review tasks, reproducible bugs, accessibility feedback, documentation,
 and clean-host installation results. A small, well-described problem is a good
 place to start. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development
-workflow, and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+workflow (`make bootstrap` with Python 3.12, then `make check`), and
+[SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 Use invented examples. Keep case material, private logs, and deployment
 details out of issues, pull requests, and screenshots.
 
 ## Project status
 
-RecordBench is a prerelease project in active alpha development. The repository
-remains private while publication review and release requirements are completed. Sharing the
-source and supporting confidential casework each require the evidence described
+RecordBench is a prerelease project in active alpha development. The source is
+public as a contributor alpha; supported production-release requirements remain
+open. Sharing the source and supporting confidential casework each require the evidence described
 in [release readiness](docs/RELEASE_READINESS.md) and the
 [publication checklist](docs/PUBLICATION_CHECKLIST.md).
 

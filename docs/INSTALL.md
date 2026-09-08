@@ -1,5 +1,10 @@
 # Installation playbook
 
+For a source checkout used to write code and run tests, start with
+[contributor setup](../CONTRIBUTING.md#set-up-a-development-checkout). The playbook
+below installs an application node; `make bootstrap` prepares a development
+environment and does not deploy the application.
+
 ## Hardware and capability profiles
 
 RecordBench targets a modern x86-64 Linux host with Docker Engine and Docker

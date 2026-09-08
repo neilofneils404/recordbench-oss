@@ -17,32 +17,82 @@ transcription tests, Python compilation, and Compose validation. Never commit a
 real `.env`, key, certificate, keytab, token, database, media file, transcript,
 or organization-specific deployment overlay.
 
-Bootstrap the repository virtual environment at `.venv`, then run the complete
-local gate:
+## Set up a development checkout
+
+The complete development gate is exercised on Ubuntu 24.04 with **Python 3.12**.
+The application requires 3.12 or newer, but the bundled transcription package
+requires a version below 3.13, so their shared environment currently needs 3.12.
+The contributor tests do not require a GPU or downloaded model weights.
+To run the deployed application, use the separate [installation playbook](docs/INSTALL.md).
+
+Clone your fork and enter the repository. Before committing, configure Git
+with your public GitHub username and the no-reply address shown in your GitHub
+email settings (`git config user.name` and `git config user.email`). Ordinary
+personal addresses are rejected by the publication check unless explicitly
+reviewed by a maintainer. Then install the host tools. On a fresh
+Ubuntu 24.04 development machine:
+
+```console
+sudo apt-get update
+sudo apt-get install --yes git make python3.12 python3.12-venv \
+  ffmpeg imagemagick poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa
+```
+
+Install Docker Engine with the Compose v2 plugin using Docker's instructions
+for your distribution. Verify `docker compose version` before running the full
+gate. These are development-machine prerequisites; the bootstrap never installs
+system packages, starts services, or downloads model weights.
+
+From the repository root:
 
 ```console
 make bootstrap
 make check
 ```
 
-`make bootstrap` creates `.venv` with Python 3.12 or newer and installs the
-application, PostgreSQL test adapter, browser-test tools, and bundled
-transcription service in editable mode. It is safe to rerun when dependency
-metadata changes. Set `SYSTEM_PYTHON` to choose the interpreter or run
-`python3 scripts/bootstrap-dev.py --venv PATH` to choose another environment;
-then pass its interpreter to Make as `PYTHON=PATH/bin/python`.
+Bootstrap creates `.venv`, installs the application and bundled transcription
+service together in editable mode (including test, PostgreSQL, and browser
+client dependencies), then runs `pip check`. Package installation requires access
+to a Python package index. A browser and matching driver must be available
+separately for browser acceptance; installing Selenium alone does not install
+Chrome. Optional integration tests can skip when their prerequisites are absent.
+`make check` runs compilation, Compose validation, publication inspection,
+application tests, and transcription tests. Bare `make` still runs application
+tests; it does not install anything.
 
-System tools used by the full suite are intentionally not installed by the
-bootstrap script. Install Docker with the Compose plugin plus `ffmpeg`,
-ImageMagick, Poppler, and Tesseract (including English and Spanish language
-data) through the host package manager. Individual tests may report an
-environment-dependent skip when an optional tool or browser is unavailable.
+It is safe to rerun bootstrap with the same interpreter after dependency metadata
+changes. An existing incompatible or broken environment is left untouched:
+choose a new `--venv` directory. The script never deletes an environment or
+silently replaces its interpreter. If a download or install fails, correct the
+reported problem and rerun the same command; readiness is printed only after
+all installation and dependency checks succeed.
 
-To preview the environment commands without changing the workstation:
+`SYSTEM_PYTHON` chooses the interpreter for `make bootstrap`:
 
 ```console
-python3 scripts/bootstrap-dev.py --dry-run
+make bootstrap SYSTEM_PYTHON=/usr/bin/python3.12
 ```
+
+Alternatively, the script can be launched by an older Python while selecting
+Python 3.12 explicitly. Custom environment paths, including absolute paths and
+paths containing spaces, work with all Make test targets:
+
+```console
+python3 scripts/bootstrap-dev.py --python python3.12 --venv "/tmp/recordbench dev"
+make check PYTHON="/tmp/recordbench dev/bin/python"
+```
+
+Use `--dry-run` to inspect the selected/existing interpreters and preview commands
+without creating or modifying an environment or installing packages:
+
+```console
+python3 scripts/bootstrap-dev.py --python python3.12 --dry-run
+```
+
+The printed commands are for the repository root. Windows contributors should
+use a Linux development environment such as WSL2 for the complete gate; native
+Windows setup and the full native Windows suite have not been validated.
+The bootstrap's Windows interpreter-path support alone is not that validation.
 
 GitHub Actions runs the same application, transcription, sanitizer, compilation,
 standard Compose, Kerberos overlay, and non-interactive installer contracts. The

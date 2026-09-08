@@ -378,3 +378,30 @@ def test_github_merge_service_address_is_public_but_other_addresses_still_block(
     private = b"personal@" + b"github.com"
     assert publication._scan_bytes(service + b" " + private, location="git-metadata", deny=())
     assert publication._scan_bytes(service, location="git-metadata", deny=(b"github",))
+
+
+def test_reviewed_email_disposition_is_exact_and_metadata_only(tmp_path, monkeypatch):
+    import hashlib
+    name = 'Synthetic Maintainer'
+    email = 'contributor@' + 'synthetic.invalid'
+    def git(*args):
+        return subprocess.check_output(['git', *args], cwd=tmp_path, text=True).strip()
+    git('init', '-q')
+    git('config', 'user.name', name)
+    git('config', 'user.email', email)
+    git('commit', '--allow-empty', '-qm', 'synthetic approved attribution')
+    commit = git('rev-parse', 'HEAD')
+    digest = hashlib.sha256((name + '\0' + email).encode()).hexdigest()
+    expected = publication.Finding('git-metadata', 'non-example-email-address')
+    assert expected in publication.scan_history(tmp_path, ())
+    monkeypatch.setattr(publication, 'REVIEWED_COMMIT_EMAIL_IDENTITIES', {commit: {digest}})
+    assert publication.scan_history(tmp_path, ()) == []
+    assert publication.Finding('git-metadata', 'operator-deny-term') in publication.scan_history(
+        tmp_path, (name.encode(),))
+    assert publication.Finding('fixture', 'non-example-email-address') in publication._scan_bytes(
+        email.encode(), location='fixture', deny=())
+    monkeypatch.setattr(publication, 'REVIEWED_COMMIT_EMAIL_IDENTITIES', {commit: {'0' * 64}})
+    assert expected in publication.scan_history(tmp_path, ())
+    monkeypatch.setattr(publication, 'REVIEWED_COMMIT_EMAIL_IDENTITIES', {commit: {digest}})
+    git('commit', '--allow-empty', '-qm', 'synthetic later attribution')
+    assert expected in publication.scan_history(tmp_path, ())

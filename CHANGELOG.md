@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-08: Add repeatable Python 3.12 contributor bootstrap, preserve existing
+  environments, support custom interpreter paths through the full Make gate,
+  and document clean-host prerequisites and recovery. Preserve bare Make's test
+  default. Record one owner-approved existing commit attribution without
+  relaxing content, deny-term, or other-commit publication checks.
+
 - 2026-09-05: Isolate scanner subprocesses from candidate Python search paths;
   document strict branch freshness and maintainer review-request withdrawal.
 

@@ -21,6 +21,13 @@ from typing import Iterable
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# Owner-reviewed public attribution; exact commit and name/email digest only.
+# This suppresses only the email rule, never deny terms or content checks.
+REVIEWED_COMMIT_EMAIL_IDENTITIES = {
+    "d2f1e779e70063b94fece1291169f547c7c44d83": {
+        "33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b",
+    },
+}
 IGNORED_DIRECTORIES = {".git", ".venv", ".pytest_cache", "__pycache__", "node_modules"}
 FORBIDDEN_SUFFIXES = {
     ".db",
@@ -636,16 +643,21 @@ def scan_history(
             (author_name, author_email),
             (committer_name, committer_email),
         ):
-            findings.extend(
-                _scan_bytes(
-                    name + b"\0" + email,
-                    location="git-metadata",
-                    deny=deny,
-                    allowed_deny_literals=(
-                        (name, email) if (name, email) in allowed_identities else ()
-                    ),
-                )
+            identity_findings = _scan_bytes(
+                name + b"\0" + email,
+                location="git-metadata",
+                deny=deny,
+                allowed_deny_literals=(
+                    (name, email) if (name, email) in allowed_identities else ()
+                ),
             )
+            identity_digest = hashlib.sha256(name + b"\0" + email).hexdigest()
+            if identity_digest in REVIEWED_COMMIT_EMAIL_IDENTITIES.get(commit, ()):
+                identity_findings = [
+                    item for item in identity_findings
+                    if item.rule != "non-example-email-address"
+                ]
+            findings.extend(identity_findings)
         allowed_span = None
         if commit in public_merge_commits:
             for name, _ in public_git_identities:
