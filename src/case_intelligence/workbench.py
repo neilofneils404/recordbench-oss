@@ -258,33 +258,56 @@ ANSWER_STAGE_MESSAGES = {
 }
 
 
-def _source_coverage(readiness: MatterReadinessRecord) -> dict[str, object]:
+RESEARCH_COVERAGE_NOTICE = (
+    "This investigation used multiple focused retrieval passes. It is broader than one answer, "
+    "but it did not check every source. Use Check every source for a document-by-document task."
+)
+
+
+def _source_coverage(
+    readiness: MatterReadinessRecord,
+    *, changed_since_retrieval: bool = False,
+) -> dict[str, object]:
     """Describe query-time coverage without exposing source identity or content."""
 
-    partial = readiness.can_query and readiness.attention_count > 0
-    excluded = readiness.attention_count if partial else 0
+    excluded = max(0, readiness.total_count - readiness.searchable_count)
+    partial = excluded > 0
     notice = ""
     if partial:
         source_word = "source" if excluded == 1 else "sources"
         need_word = "needs" if excluded == 1 else "need"
         excluded_word = "is" if excluded == 1 else "are"
         notice = (
-            f"Search and answers use {readiness.searchable_count:,} of "
+            f"Searchable text is available for {readiness.searchable_count:,} of "
             f"{readiness.total_count:,} sources. {excluded:,} {source_word} "
             f"{need_word} attention and {excluded_word} excluded."
         )
     if partial and (readiness.playback_only_count or readiness.recording_review_count):
         notice = (
-            f"Search and answers use {readiness.searchable_count:,} of {readiness.total_count:,} sources. "
+            f"Searchable text is available for {readiness.searchable_count:,} of {readiness.total_count:,} sources. "
             f"{excluded:,} sources are not searchable and are excluded. "
             "Recordings without a transcript remain available for playback and review."
         )
+    if partial and readiness.processing_count:
+        processing = readiness.processing_count
+        notice = (
+            f"Searchable text is available for {readiness.searchable_count:,} of {readiness.total_count:,} sources. "
+            f"{processing:,} source{' is' if processing == 1 else 's are'} still uploading or processing and excluded."
+        )
+        if readiness.attention_count:
+            attention = readiness.attention_count
+            notice += f" {attention:,} other source{' needs' if attention == 1 else 's need'} attention and cannot be searched."
     if readiness.email_count:
         from .extended_extract import EMAIL_COVERAGE_NOTICE
 
         notice = " ".join(part for part in (notice, EMAIL_COVERAGE_NOTICE) if part)
+    if changed_since_retrieval:
+        notice = " ".join(part for part in (notice,
+            "Sources changed after the search started. This result may not include newly added or changed material. "
+            "Run the question again when the sources you need are searchable.",
+        ) if part)
     return {
-        "mode": "partial" if partial or readiness.email_count else "complete",
+        "mode": "partial" if partial or readiness.email_count or changed_since_retrieval else "complete",
         "searchable_count": readiness.searchable_count,
         "total_count": readiness.total_count,
         "excluded_count": excluded,
@@ -343,9 +366,9 @@ def _focused_answer_scope(
         searchable_word = "source" if readiness.searchable_count == 1 else "sources"
         cited_word = "source" if cited_sources == 1 else "sources"
         notice = (
-            f"RecordBench searched {readiness.searchable_count:,} "
-            f"searchable {searchable_word}, compared the strongest matching passages, and "
-            f"grounded this answer in {cited_sources:,} cited {cited_word}."
+            f"At completion, {readiness.searchable_count:,} {searchable_word} had searchable text. "
+            f"This focused answer compared the strongest matching passages and used "
+            f"{cited_sources:,} cited {cited_word}; it did not review every source."
         )
         mode = "focused"
     scope = {
@@ -2567,9 +2590,13 @@ class CaseIntelligenceWorkbench:
         document_ids: frozenset[str] | None = None,
         expand_broad_summary: bool = True,
         primary_limit: int = 20,
+        retrieval_boundary: dict[str, str] | None = None,
     ) -> tuple[WorkbenchCitation, ...]:
         """Run bounded answer retrieval with explicit scope and modality policy."""
 
+        if retrieval_boundary is not None:
+            self.source_store(matter)
+            retrieval_boundary["source_fingerprint"] = self.workspace.source_availability_fingerprint(matter.matter_id)
         intent = classify_question(question)
         queries = (
             broad_summary_queries(retrieval_query, maximum_chars=MAX_SEARCH_CHARS)
@@ -2634,6 +2661,17 @@ class CaseIntelligenceWorkbench:
         if intent.broad_summary:
             rows = filter_broad_summary_evidence(rows)
         return rows
+
+    def _completion_source_coverage(
+        self, matter: MatterRecord, retrieval_boundary: Mapping[str, str],
+    ) -> tuple[MatterReadinessRecord, dict[str, object]]:
+        # Read counts and the identity boundary under the same control-store
+        # lock, without holding source mutations across retrieval/generation.
+        with self.workspace._lock:
+            readiness = self.workspace.matter_readiness(matter.matter_id)
+            current = self.workspace.source_availability_fingerprint(matter.matter_id)
+        return readiness, _source_coverage(readiness,
+            changed_since_retrieval=retrieval_boundary.get("source_fingerprint") != current)
 
     def _answer_evidence_citations(
         self,
@@ -4063,15 +4101,15 @@ class CaseIntelligenceWorkbench:
         if not value or len(value) > MAX_QUESTION_CHARS:
             raise WorkspaceProblem("Question must be between 1 and 2,000 characters.")
         prior = self.workspace.messages(matter.matter_id, conversation.conversation_id)
-        readiness = self.workspace.matter_readiness(matter.matter_id)
         self.workspace.append_message(
             matter.matter_id, conversation.conversation_id, "user", value
         )
         retrieval_query = self._retrieval_question(value, prior)
         intent = classify_question(value)
+        retrieval_boundary: dict[str, str] = {}
         citations = self._answer_evidence_citations(
             matter,
-            self._answer_search(matter, value, retrieval_query),
+            self._answer_search(matter, value, retrieval_query, retrieval_boundary=retrieval_boundary),
             required_kinds=intent.required_evidence_kinds,
         )
         evidence = {
@@ -4095,16 +4133,6 @@ class CaseIntelligenceWorkbench:
         except GenerationGroundingRejected:
             answer = self._verification_abstention()
         payload = self._answer_payload(answer, evidence)
-        payload["source_coverage"] = _source_coverage(readiness)
-        evidence_shape = modality_coverage(value, evidence, answer.used_evidence_ids)
-        if evidence_shape:
-            payload["modality_coverage"] = evidence_shape
-        payload["review_scope"] = _focused_answer_scope(
-            value,
-            readiness,
-            answer,
-            evidence,
-        )
         with self.source_store(matter).mutation_guard():
             if any(
                 self._current_workflow_citation(matter, citation) is None
@@ -4122,13 +4150,24 @@ class CaseIntelligenceWorkbench:
                     "Ask the question again to use the current source."
                 ),
             )
-            return self.workspace.append_message(
-                matter.matter_id,
-                conversation.conversation_id,
-                "assistant",
-                answer.text,
-                payload,
-            )
+            with self.workspace._lock:
+                readiness, payload["source_coverage"] = self._completion_source_coverage(matter, retrieval_boundary)
+                evidence_shape = modality_coverage(value, evidence, answer.used_evidence_ids)
+                if evidence_shape:
+                    payload["modality_coverage"] = evidence_shape
+                payload["review_scope"] = _focused_answer_scope(
+                    value,
+                    readiness,
+                    answer,
+                    evidence,
+                )
+                return self.workspace.append_message(
+                    matter.matter_id,
+                    conversation.conversation_id,
+                    "assistant",
+                    answer.text,
+                    payload,
+                )
 
     def queue_answer(
         self,
@@ -4176,7 +4215,6 @@ class CaseIntelligenceWorkbench:
                     "active processing to finish, or resolve an attention item if no "
                     "source is searchable, then try again."
                 )
-            source_coverage = _source_coverage(readiness)
             conversation = self.workspace.get_conversation(
                 matter.matter_id, job.conversation_id
             )
@@ -4242,6 +4280,7 @@ class CaseIntelligenceWorkbench:
                 report_stage(stage_key, ANSWER_STAGE_MESSAGES[stage_key])
 
             intent = classify_question(job.question)
+            retrieval_boundary: dict[str, str] = {}
             citations = self._answer_evidence_citations(
                 matter,
                 self._answer_search(
@@ -4250,6 +4289,7 @@ class CaseIntelligenceWorkbench:
                     retrieval_query,
                     stage_callback=retrieval_stage,
                     document_ids=scoped_document_ids,
+                    retrieval_boundary=retrieval_boundary,
                 ),
                 required_kinds=intent.required_evidence_kinds,
             )
@@ -4302,7 +4342,7 @@ class CaseIntelligenceWorkbench:
             )
             if evidence_shape:
                 payload["modality_coverage"] = evidence_shape
-            payload["source_coverage"] = source_coverage
+            readiness, payload["source_coverage"] = self._completion_source_coverage(matter, retrieval_boundary)
             payload["review_scope"] = _focused_answer_scope(
                 job.question,
                 readiness,
@@ -4327,7 +4367,9 @@ class CaseIntelligenceWorkbench:
                         for item in notebook_items
                     ],
                 }
-            return AnswerResult(answer.text, payload, tuple(citations))
+            return AnswerResult(answer.text, payload, tuple(citations),
+                retrieval_source_fingerprint=retrieval_boundary.get("source_fingerprint", ""),
+                verified_answer=answer)
         except AnswerJobFailure:
             raise
         except RetrievalUnavailable as exc:
@@ -4401,11 +4443,20 @@ class CaseIntelligenceWorkbench:
                     "Try again to use the current source."
                 ),
             )
-            return self.workspace.finish_answer_job(
-                job.job_id,
-                content=result.content,
-                payload=result.payload,
-            )
+            with self.workspace._lock:
+                payload = dict(result.payload)
+                if result.retrieval_source_fingerprint is not None:
+                    readiness, payload["source_coverage"] = self._completion_source_coverage(matter,
+                        {"source_fingerprint": result.retrieval_source_fingerprint})
+                    if result.verified_answer is not None:
+                        payload["review_scope"] = _focused_answer_scope(job.question, readiness,
+                            result.verified_answer,
+                            {f"S{index}": citation for index, citation in enumerate(result.citations, 1)})
+                return self.workspace.finish_answer_job(
+                    job.job_id,
+                    content=result.content,
+                    payload=payload,
+                )
 
     @staticmethod
     def _workflow_citation_payload(citation: WorkbenchCitation) -> dict[str, object]:
@@ -4540,7 +4591,17 @@ class CaseIntelligenceWorkbench:
                     "Retry it to use the current source."
                 ),
             )
-            return self.workspace.finish_research_job(job.job_id, result)
+            with self.workspace._lock:
+                prepared = dict(result)
+                fingerprint = prepared.pop("_retrieval_source_fingerprint", None)
+                if isinstance(fingerprint, str):
+                    _, coverage = self._completion_source_coverage(matter,
+                        {"source_fingerprint": fingerprint})
+                    coverage["notice"] = " ".join(part for part in (
+                        str(coverage["notice"]), RESEARCH_COVERAGE_NOTICE,
+                    ) if part)
+                    prepared["coverage"] = {**dict(prepared.get("coverage", {})), **coverage}
+                return self.workspace.finish_research_job(job.job_id, prepared)
 
     @staticmethod
     def _research_plan(question: str, title: str) -> dict[str, object]:
@@ -4629,7 +4690,14 @@ class CaseIntelligenceWorkbench:
             citations.append(citation)
             seen_tokens.add(citation.support_token)
         candidate_count = int(checkpoint.get("candidate_count", 0) or 0)
+        saved_fingerprint = checkpoint.get("retrieval_source_fingerprint")
+        current_fingerprint = self.workspace.source_availability_fingerprint(matter.matter_id)
+        if passes and saved_fingerprint != current_fingerprint:
+            checkpoint_stale = True
+        retrieval_boundary = {"source_fingerprint": str(saved_fingerprint or "")}
         if checkpoint_stale:
+            if not self.workspace.restart_research_checkpoint(job.job_id):
+                raise WorkflowFailure("Research cancelled.")
             # A changed source invalidates both its citation and any saved
             # finding derived from that checkpoint. Restart the bounded search
             # plan rather than synthesizing or displaying stale source text.
@@ -4650,6 +4718,7 @@ class CaseIntelligenceWorkbench:
                     document_ids=scoped_document_ids,
                     expand_broad_summary=False,
                     primary_limit=30,
+                    retrieval_boundary=retrieval_boundary,
                 )
             except RetrievalUnavailable:
                 found = ()
@@ -4719,6 +4788,7 @@ class CaseIntelligenceWorkbench:
                 "passes": passes,
                 "evidence": [self._workflow_citation_payload(item) for item in citations],
                 "candidate_count": candidate_count,
+                "retrieval_source_fingerprint": retrieval_boundary.get("source_fingerprint", ""),
             }
             self.workspace.checkpoint_research_job(job.job_id, checkpoint)
             if not self.workspace.update_research_progress(
@@ -4803,13 +4873,16 @@ class CaseIntelligenceWorkbench:
         )
         if evidence_shape:
             final_answer_payload["modality_coverage"] = evidence_shape
-        coverage = _source_coverage(readiness)
+        # Retrieval passes use the live index, which can gain sources while
+        # an investigation runs. Describe current availability and disclose
+        # availability changes since the last retrieval pass separately.
+        readiness, coverage = self._completion_source_coverage(matter, retrieval_boundary)
         coverage["notice"] = " ".join(part for part in (
             str(coverage["notice"]),
-            "This investigation used multiple focused retrieval passes. It is broader than one answer, "
-            "but it did not check every source. Use Check every source for a document-by-document task.",
+            RESEARCH_COVERAGE_NOTICE,
         ) if part)
         return {
+            "_retrieval_source_fingerprint": retrieval_boundary.get("source_fingerprint", ""),
             "summary": final_answer.text,
             "answer": final_answer_payload,
             "passes": passes,

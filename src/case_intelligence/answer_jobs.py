@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
 from .workspace_store import AnswerJobRecord, WorkspaceStore
+from .generation import VerifiedAnswer
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,8 @@ class AnswerResult:
     content: str
     payload: Mapping[str, object]
     citations: Sequence[object] = ()
+    retrieval_source_fingerprint: str | None = None
+    verified_answer: VerifiedAnswer | None = None
 
 
 class AnswerJobFailure(RuntimeError):
