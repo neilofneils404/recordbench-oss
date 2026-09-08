@@ -321,3 +321,7 @@ and models retain their respective licenses and terms. Their notice inventory
 remains part of the [publication review](docs/PUBLICATION_CHECKLIST.md).
 The teaser's original soundtrack is not covered by the software license;
 see [media rights](docs/assets/MEDIA_RIGHTS.md).
+
+Contributor CI also runs [generated browser acceptance](docs/BROWSER_ACCEPTANCE.md)
+for intake receipts and Report export/recovery with a pinned browser and driver.
+See the contributor guide for local commands and failure evidence.

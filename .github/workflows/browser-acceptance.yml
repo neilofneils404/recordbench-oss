@@ -1,0 +1,70 @@
+name: Browser acceptance
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CASE_INTELLIGENCE_STORAGE_RESERVE_GIB: "0"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - name: Check out integration candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify integration checkout
+        env:
+          EXPECTED_INTEGRATION_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"
+      - name: Select Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install browser and document prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            curl unzip ffmpeg fonts-liberation libasound2t64 libatk-bridge2.0-0 \
+            libatk1.0-0 libatspi2.0-0 libcups2 libgbm1 libgtk-3-0 libnspr4 libnss3 \
+            libxcomposite1 libxdamage1 libxfixes3 libxkbcommon0 libxrandr2
+      - name: Bootstrap contributor environment
+        run: make bootstrap SYSTEM_PYTHON=python
+      - name: Install checksum-verified browser and driver
+        run: ./scripts/install-test-browser.sh "$RUNNER_TEMP/recordbench-browser"
+      - name: Run generated intake and Report journeys
+        run: |
+          .venv/bin/python scripts/browser-acceptance.py \
+            --chrome-binary "$RUNNER_TEMP/recordbench-browser/chrome-linux64/chrome" \
+            --chromedriver "$RUNNER_TEMP/recordbench-browser/chromedriver-linux64/chromedriver" \
+            --output "$RUNNER_TEMP/recordbench-browser-results"
+      - name: Keep generated acceptance and failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: synthetic-browser-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/recordbench-browser-results/browser-result.json
+            ${{ runner.temp }}/recordbench-browser-results/*/runner-result.json
+            ${{ runner.temp }}/recordbench-browser-results/*/runner.log
+            ${{ runner.temp }}/recordbench-browser-results/intake/receipt-browser-result.json
+            ${{ runner.temp }}/recordbench-browser-results/reports/receipt.json
+            ${{ runner.temp }}/recordbench-browser-results/*/*.png
+            ${{ runner.temp }}/recordbench-browser-results/*/failure.html
+            ${{ runner.temp }}/recordbench-browser-results/*/browser-errors.json

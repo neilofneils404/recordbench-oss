@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-08: Run standalone generated intake and Report/export-readiness browser
+  journeys in contributor CI with a checksum-verified browser/driver pair.
+  Require fresh complete receipts, bound each journey, clean process descendants
+  and retain selected generated failure evidence. Add runner/installer failure
+  regressions and contributor reproduction/update instructions.
+
 - 2026-09-08: Add **Check export** to Work product and the final-export step.
   Reuse complete-bundle preparation, show inspection time and links to Reports
   needing attention, and validate again on download. Preserve saved work,

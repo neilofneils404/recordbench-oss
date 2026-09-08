@@ -133,3 +133,12 @@ synthetic evidence, and any security, lifecycle, migration, model, or recovery
 impact. Use the repository pull-request template and keep release tags
 immutable. A correction after a release is a new commit and, when appropriate,
 a new release.
+
+## Real browser acceptance
+
+[Standalone browser acceptance](docs/BROWSER_ACCEPTANCE.md) pins the browser and
+driver and runs the generated intake and Report/export journeys on a loopback
+application. Use its contributor commands and fresh output directory when a change
+affects those workflows. The hosted `browser-acceptance` job runs the same command
+on branch pushes and pull requests and retains generated failure evidence for
+seven days. Runtime state and downloaded bundles are excluded from its artifacts.
