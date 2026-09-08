@@ -15,6 +15,7 @@ from urllib.parse import urlencode, urlparse
 
 import uvicorn
 from selenium import webdriver
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -87,10 +88,20 @@ def main():
             def ready():
                 wait.until(lambda d: d.execute_script('return document.readyState') == 'complete')
 
+            def detached(element):
+                try:
+                    return EC.staleness_of(element)(driver)
+                except WebDriverException as exc:
+                    # Some ChromeDriver versions report detached navigation nodes
+                    # as an inspector error instead of StaleElementReferenceException.
+                    if 'Node with given id does not belong to the document' not in exc.msg:
+                        raise
+                    return True
+
             def go(path):
                 old = driver.find_element(By.TAG_NAME, 'html')
                 driver.get(base + path)
-                wait.until(EC.staleness_of(old))
+                wait.until(lambda _: detached(old))
                 ready()
 
             def click_element(element, navigation=True):
@@ -98,7 +109,7 @@ def main():
                 wait.until(lambda d: d.execute_script('const r=arguments[0].getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight;', element))
                 element.click()
                 if navigation:
-                    wait.until(EC.staleness_of(element))
+                    wait.until(lambda _: detached(element))
                     ready()
 
             def click(selector, navigation=True):
