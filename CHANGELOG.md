@@ -5,7 +5,8 @@
 - 2026-09-08: Add **Check export** to Work product and the final-export step.
   Reuse complete-bundle preparation, show inspection time and links to Reports
   needing attention, and validate again on download. Preserve saved work,
-  response activity, matter access and frozen failed-close recovery. Add generated
+  response activity, matter access and frozen failed-close recovery. Hide unavailable
+  Report edit links after a failed close and keep working recovery navigation. Add generated
   HTTP regressions and browser repair-to-bundle acceptance at desktop/mobile widths.
 
 - 2026-09-08: Keep attached-message and multipart-attachment contents out of

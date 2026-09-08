@@ -256,7 +256,9 @@ edits, order, draft/final state, and source appendices in Word and Markdown.
 If saved work exceeds export limits or Report sources cannot be verified,
 no complete bundle is returned. Use **Check export** from Work product or the
 final-export step to inspect current saved work and open Reports that need
-attention. The check does not save an export; downloading validates again.
+attention while the matter is open. After a failed close, it retains Report details
+and returns to Close matter recovery. The check does not save an export; downloading
+validates again.
 [Export readiness](docs/EXPORT_READINESS.md) explains the check, and
 [Report export and recovery](docs/REPORT_EXPORTS.md)
 describes limits and interrupted-close recovery. Bundles are ordinary portable

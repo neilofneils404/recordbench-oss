@@ -17,7 +17,9 @@ export. Later edits, source removal or work still running can change readiness;
 final download always validates again. Original source bytes remain excluded.
 The page shows that remaining checks did not finish after an error, rather than
 claiming that unexamined work is ready. Other failures retain the normal bundle
-error and recovery text. The failed-close page returns to Close matter.
+error and recovery text. After a failed close, affected Report titles and messages
+remain visible without edit links: ordinary Report editing is unavailable once
+closing has begun. The page directs staff back to Close matter for recovery.
 
 ## Shared validation and limits
 
@@ -35,6 +37,7 @@ It stops before later packaging if Reports fail; download retains its original
 first-error behavior. A successful preview provides no cached download authority.
 The result is `Cache-Control: no-store`, with HTML or explicit JSON response
 containing readiness, inspection time, problem, Report links and download URL.
+A Report’s `url` is empty when repair navigation is unavailable after failed close.
 
 The existing matter-response export lease blocks closure during inspection and
 remains held through response delivery, with cleanup on success and failure.
@@ -52,17 +55,21 @@ new cases cover ready and blocked results, multiple Report repair links,
 preserving written sections through normal repair and final export, late source
 removal, four capacity limits, packaging failures, refusal of concurrent closure,
 Report revision preservation, failed-close recovery with and without citations,
-foreign-owner canaries, and access revoked after packaging. The new and existing
+foreign-owner canaries, and access revoked after packaging. The failed-close
+regression follows rendered actions, reproducing the former Report-link 404 and
+verifying that Close matter recovery opens while quarantined sources stay closed. The new and existing
 Report-bundle tests pass together: **34 passed**.
 
 Real Chrome acceptance (`scripts/browser-accept-reports-bundle.py
---verify-readiness`) passes all **11 workflows**. It uploads generated material,
+--verify-readiness`) passes all **12 workflows**. It uploads generated material,
 opens exact cited support, edits and finalizes a Report, checks readiness without
 a download, removes its source, follows the blocked Report link, retains the
 written conclusion while removing the unsupported section, checks again and
 verifies the current Report in the final ZIP. It also covers foreign-owner denial,
 ordinary download failure and final owner closure with external originals intact.
-Ready and blocked pages were visually checked at 1440 and 430 pixels without
+A generated closure failure also verifies the blocked result without Report edit
+links, opens Close matter recovery and completes a deliberate deletion retry.
+Ready, blocked and failed-close pages were visually checked at 1440 and 430 pixels without
 page overflow. The ordinary seven-flow mode remains available.
 
 No schema, source-registry, dependency or stored export-format change is included.

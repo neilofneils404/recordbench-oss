@@ -1,6 +1,8 @@
 """Final-bundle preview reuses authoritative export checks and offers repair."""
+import html
 import io
 import json
+import re
 import zipfile
 
 import pytest
@@ -155,6 +157,15 @@ def test_failed_close_preview_never_reopens_quarantined_sources(workspace, monke
     assert response.status_code == 200
     assert ("Export needs attention" if cited else "Ready to download") in response.text
     assert f'href="/matters/{matter.slug}/close">Return to close matter</a>' in response.text
+    report_links = re.findall(r'<a href="([^"]+)">Open ', response.text)
+    for link in report_links:
+        assert client.get(html.unescape(link)).status_code == 200
+    if cited:
+        assert not report_links
+        result = client.get(f"/matters/{matter.slug}/export-readiness", headers={"Accept": "application/json"}).json()
+        assert result["reports"] and all(not item["url"] for item in result["reports"])
+        assert "Reports cannot be edited" in response.text
+    assert client.get(f"/matters/{matter.slug}/close").status_code == 200
     assert bench.workspace.matter_lifecycle(matter.matter_id).state == "purge_failed"
     assert bench.matter_active_work_counts(matter.matter_id)["exports"] == 0
 

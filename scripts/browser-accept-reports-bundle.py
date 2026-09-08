@@ -142,7 +142,7 @@ def main():
             click(f"#{cards[1].get_attribute('id')} .report-section-content form:first-child button")
             move = driver.find_element(By.CSS_SELECTOR, "button[aria-label='Move Human conclusion up']")
             move.send_keys(Keys.ENTER)
-            wait.until(EC.staleness_of(move))
+            wait.until(lambda _: detached(move))
             assert driver.find_elements(By.CSS_SELECTOR, ".report-section-card input[name=heading]")[0].get_attribute("value") == "Human conclusion"
             Select(driver.find_element(By.CSS_SELECTOR, ".report-settings select")).select_by_value("final")
             click(".report-settings form:first-child button")
@@ -271,6 +271,52 @@ def main():
                 assert "Foreign preview Report canary" not in driver.find_element(By.TAG_NAME, "body").text
                 assert "Matter not found" in driver.find_element(By.TAG_NAME, "body").text
                 checks.append("A foreign owner's export preview remains inaccessible")
+
+                # Generated recovery fixture: valid cited work, then an injected
+                # unavailable derived-store condition during ordinary UI closure.
+                recovery = bench.create_matter("Generated interrupted close", "", ACTOR)
+                recovery_prefix = f"/matters/{recovery.slug}"
+                recovery_document, _ = bench.source_store(recovery).store_stream(
+                    "generated-recovery.txt", "text/plain", io.BytesIO(b"Generated recovery source passage."))
+                recovery_unit = recovery_document.parsed_units()[0]
+                recovery_candidate = bench._candidate(recovery, recovery_document, recovery_unit, 1)
+                recovery_report = bench.workspace.create_report(recovery.matter_id, ACTOR, "Generated recovery Report")
+                bench.workspace.add_report_section(recovery.matter_id, recovery_report.report_id, ACTOR,
+                    expected_status="draft", heading="Generated supported finding", body="Preserve generated review work.",
+                    citations=({"kind": "source", "document_id": recovery_document.document_id,
+                        "source_version_id": recovery_document.version_id, "source_name": recovery_document.display_name,
+                        "location": recovery_candidate.citation, "support_token": bench._support_token(recovery_candidate),
+                        "excerpt": recovery_unit.text},))
+                go(recovery_prefix + "/close")
+                prior_projection = bench._postgres_projection_configured, bench.postgres_connection, bench.postgres_ready
+                try:
+                    bench._postgres_projection_configured, bench.postgres_connection, bench.postgres_ready = True, None, False
+                    fill("#confirmed-name", recovery.display_name)
+                    click("input[name=acknowledge]")
+                    click(".close-matter-form button[type=submit]")
+                    wait.until(lambda _: bench.workspace.matter_lifecycle(recovery.matter_id).state == "purge_failed")
+                finally:
+                    bench._postgres_projection_configured, bench.postgres_connection, bench.postgres_ready = prior_projection
+                go(recovery_prefix + "/export-readiness")
+                body = driver.find_element(By.TAG_NAME, "body").text
+                assert "Export needs attention" in body and recovery_report.title in body
+                assert "Reports cannot be edited" in body
+                assert not driver.find_elements(By.CSS_SELECTOR, f'a[href^="{recovery_prefix}/reports"]')
+                for width in (1440, 430):
+                    driver.set_window_size(width, 1000)
+                    if width < 901:
+                        wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
+                    wait.until(lambda d: d.execute_script("const box = document.querySelector('.close-matter-card').getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth + 1 && document.documentElement.scrollWidth <= innerWidth + 1"))
+                    driver.execute_async_script("const done = arguments[arguments.length - 1]; requestAnimationFrame(() => requestAnimationFrame(done));")
+                    driver.save_screenshot(str(args.output / f"readiness-failed-close-{width}.png"))
+                click(f'a[href="{recovery_prefix}/close"]')
+                assert driver.find_element(By.ID, "close-matter-heading").is_displayed()
+                assert "Try deletion again" in driver.find_element(By.TAG_NAME, "body").text
+                fill("#confirmed-name", recovery.display_name)
+                click("input[name=acknowledge]")
+                click(".close-matter-form button[type=submit]")
+                wait.until(lambda _: bench.workspace.matter_lifecycle(recovery.matter_id).state == "deleted")
+                checks.append("Failed-close readiness retains Report details without unavailable edit links; Close matter recovery opens and deliberate retry completes")
 
             go(prefix + "/close")
             final_bundle = download(f"a[href='{prefix}/export']", ".zip")

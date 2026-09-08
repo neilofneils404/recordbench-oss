@@ -156,5 +156,7 @@ normal review pages; a blocked Report means later bundle checks remain incomplet
 Inspection retains the export response lease through response delivery and
 rechecks membership before returning any result. Failed-close inspection keeps
 the existing owner/administrator boundary and frozen catalog rules without
-reopening quarantined source state. Download always prepares anew; a check creates
+reopening quarantined source state. Failed-close Report problems have no edit URL
+and render as plain details with Close matter recovery guidance, because ordinary
+Report routes require an active matter. Download always prepares anew; a check creates
 no stored snapshot, archive, export receipt or authority for a future download.

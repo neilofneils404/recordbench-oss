@@ -11,14 +11,18 @@
     {% else %}
     <div class="notice notice-error" role="status">{{ check.problem }}</div>
     {% if check.reports %}
-    <h2>Reports to review</h2>
+    <h2>Reports needing attention</h2>
     <ul>
       {% for report in check.reports %}
-      <li><p><a href="{{ report.url }}">Open {{ report.title }}</a><br>{{ report.message }}</p></li>
+      <li><p>{% if report.url %}<a href="{{ report.url }}">Open {{ report.title }}</a>{% else %}<strong>{{ report.title }}</strong>{% endif %}<br>{{ report.message }}</p></li>
       {% endfor %}
     </ul>
     {% endif %}
+    {% if recovering_close %}
+    <p>Remaining bundle checks did not finish. Reports cannot be edited after closing has begun. Return to Close matter for recovery options.</p>
+    {% else %}
     <p>Remaining bundle checks did not finish. Review the problem and check again.</p>
+    {% endif %}
     {% endif %}
     <p>This check reflects saved work at the time of inspection. Work still running or later edits can change what is ready. Original source files are not included in the bundle.</p>
     <div class="close-matter-actions">

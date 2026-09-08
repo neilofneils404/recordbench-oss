@@ -13880,7 +13880,8 @@ def create_workbench_app(
                         raise
                     report_issues.append({
                         "title": report.title,
-                        "url": _query_url(f"/matters/{matter.slug}/reports", report=report.report_id,
+                        "url": "" if frozen_source_catalog is not None else _query_url(
+                            f"/matters/{matter.slug}/reports", report=report.report_id,
                             error="This Report needs attention before export. Review its source support and saved work."),
                         "message": str(exc),
                     })
@@ -14043,6 +14044,7 @@ def create_workbench_app(
             response = templates.TemplateResponse(request=request, name="workbench_export_readiness.html",
                 context={**base_context(request, matter), "matter": matter, "check": result,
                     "inspected_at_label": inspected_at.strftime("%b %d, %Y at %H:%M UTC"),
+                    "recovering_close": recovering_close,
                     "return_url": f"/matters/{matter.slug}/" + ("close" if recovering_close else "work-product"),
                     "return_label": "Return to close matter" if recovering_close else "Work product"},
                 headers={"Cache-Control": "no-store"})
