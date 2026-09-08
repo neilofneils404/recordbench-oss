@@ -82,7 +82,7 @@ unavailable.
 
 All routes require current matter access. Metadata mutations require CSRF and
 the principal who created the receipt; team members can read it. Only the matter
-owner may deliberately discard a receipt without upload bindings. Existing audited
+owner may deliberately cancel an empty upload attempt and discard its receipt. Existing audited
 administrator review also opens status, pages and downloads without allowing
 receipt mutations or granting an ordinary nonmember access. Export uses the
 normal matter response lease and authorized final-export boundary.
@@ -94,7 +94,7 @@ normal matter response lease and authorized final-export boundary.
 | `POST /matters/{slug}/intake-receipts/{receipt}/seal` | Verify complete contiguous inventory and included-path uniqueness before transfer. |
 | `GET /matters/{slug}/intake-receipts/{receipt}` | Return current selection, transfer and availability counts. |
 | `GET /matters/{slug}/intake/{receipt}` | Show 100 selection rows per page with exact source links. |
-| `POST /matters/{slug}/intake/{receipt}/discard` | Owner-confirmed discard of a receipt with no upload bindings. |
+| `POST /matters/{slug}/intake/{receipt}/discard` | Owner-confirmed discard before data is received; cancels bound empty upload attempts. |
 | `GET /matters/{slug}/intake/{receipt}/export?format=csv` | Download CSV, Markdown or JSON. |
 | `GET /matters/{slug}/setup?receipt_page=2` | Discover older selections, ten receipts per page. |
 
@@ -125,14 +125,25 @@ The earlier rows and unrecorded count remain available. Normal source-upload
 quotas continue to govern source bytes.
 
 At a receipt limit, the product explains how to recover. The matter owner can
-open a receipt without uploads, download it if wanted, and confirm **Discard
-receipt**. This deletes the selection record, releases its metadata reservation
-and adds a content-free audit event. Both incomplete and completed selections
-without upload bindings can be discarded, including all-skipped receipts saved
-by a member whose access was later revoked. Receipts linked to any upload cannot
-be discarded; they remain with the matter. Use another matter for further deliberate intake
-when receipts linked to uploads occupy its capacity, or contact the administrator for an
-account/workspace limit. The normal owner close/export process remains available.
+open a receipt with no received data, download it if wanted, and confirm
+**Discard receipt**. Both incomplete and completed all-skipped selections can be
+discarded. If empty uploads were already started, the confirmation explicitly
+cancels those attempts before removing the receipt. This also works for selections
+saved by a member whose access was later revoked. Metadata reservations are
+released and the existing content-free audit records the action.
+
+Receipts with partial or complete received data remain with the matter. Cleanup
+checks every item in the associated upload sessions, source/version bindings and
+saved partial files, including bytes whose earlier offset commit failed. A shared
+source mutation lock serializes cleanup with chunk writes and offset commits;
+an upload request rechecks its state after its body arrives and it acquires that
+lock. Cancellation and receipt deletion share an immediate SQLite transaction.
+Unexpected sessions shared with another receipt fail closed. No received sources
+or saved partial bytes are deleted by receipt cleanup.
+
+Use another matter for further deliberate intake when receipts with received data
+occupy its capacity, or contact the administrator for an account/workspace limit.
+The normal owner close/export process remains available.
 
 Mirrored SQLite migration `0025_intake_receipts.sql` adds receipt, item and transfer
 tables to the existing control database. It creates no new storage boundary or
@@ -187,11 +198,11 @@ python scripts/verify-intake-receipt-rollback.py --previous-source /path/to/prev
 Browser artifacts contain only generated fixtures. They are additional acceptance
 evidence, not required public attachments or proof of confidential-data readiness.
 
-Validation on September 8, 2026: `make check` passed 914 application tests with
+Validation on September 8, 2026: `make check` passed 920 application tests with
 nine optional skips, all 194 transcription tests, compilation, both Compose
 graphs and publication checks. Eleven dedicated Chrome workflows passed, including
 actual capacity exclusions, name correction with denied browser storage and
-owner recovery from sealed all-skipped receipts at the real 1,000-receipt limit,
+owner recovery from sealed skips and bound empty uploads at the real 1,000-receipt limit,
 and replacement of the previous receipt
 link after a new selection. All 37 existing loose-file preflight workflows passed
 on this correction. Normal synthetic backup/restore preserves the receipt metadata charge;

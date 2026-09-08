@@ -67,7 +67,8 @@ stay available after reload, and distinguish received bytes
 from processing or source availability. Retry interrupted uploads without losing
 previous bytes, open exact source support, and download individual receipts or the
 complete matter bundle. Receipt metadata has cumulative capacity limits; owners
-can discard receipts without uploads to recover space. See
+can discard receipts with no received data to recover space, cancelling any
+pending uploads for that selection. See
 [selection receipts and recovery](docs/INTAKE_RECEIPTS.md).
 
 Sources also offers [folder navigation](docs/SOURCE_FOLDER_NAVIGATION.md), with

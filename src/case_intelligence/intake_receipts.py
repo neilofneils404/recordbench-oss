@@ -10,7 +10,7 @@ import json
 import re
 import unicodedata
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import PurePosixPath
 
@@ -112,9 +112,9 @@ class IntakeReceipts:
             if any(current + added > maximum for current, added, maximum in zip(used, extra, RECEIPT_LIMITS[scope])):
                 if scope == 'matter':
                     raise WorkspaceProblem('Selected-file receipt capacity is full for this matter. '
-                        'Ask the matter owner to discard receipts without uploads, or export your work and use another matter.')
+                        'Ask the matter owner to discard receipts without received data, or export your work and use another matter.')
                 raise WorkspaceProblem('Selected-file receipt capacity is full for this account or workspace. '
-                    'Ask the matter owner to discard receipts without uploads, or contact the administrator.')
+                    'Ask the matter owner to discard receipts without received data, or contact the administrator.')
 
     def _receipt_locked(self, matter_id: str, actor_id: str, receipt_id: str, *,
                         write: bool = False, administrator_override: bool = False):
@@ -246,7 +246,27 @@ class IntakeReceipts:
                 'WHERE receipt_id=? AND matter_id=?', (self.workspace._now(), charged, receipt_id, matter_id))
         return self.get(matter_id, actor_id, receipt_id)
 
-    def discard(self, matter_id: str, actor_id: str, receipt_id: str, *, confirmed: bool = False) -> None:
+    def _has_received_data_locked(self, matter_id: str, receipt_id: str) -> bool:
+        # Check complete bound sessions, including an unexpected row associated
+        # with another receipt. Do not cancel work outside this selection.
+        row = self.connection.execute('''SELECT
+            EXISTS (SELECT 1 FROM workbench_intake_transfer t
+                LEFT JOIN workbench_upload_item u ON u.matter_id=t.matter_id AND u.upload_item_id=t.upload_item_id
+                WHERE t.matter_id=:matter_id AND t.receipt_id=:receipt_id AND u.upload_item_id IS NULL)
+            OR EXISTS (SELECT 1 FROM workbench_upload_item u
+                LEFT JOIN workbench_intake_transfer t ON t.matter_id=u.matter_id AND t.upload_item_id=u.upload_item_id
+                WHERE u.matter_id=:matter_id AND u.upload_session_id IN (
+                    SELECT i.upload_session_id FROM workbench_intake_transfer r
+                    JOIN workbench_upload_item i ON i.matter_id=r.matter_id AND i.upload_item_id=r.upload_item_id
+                    WHERE r.matter_id=:matter_id AND r.receipt_id=:receipt_id)
+                AND (u.received_size<>0 OR u.document_id IS NOT NULL OR u.state IN ('uploaded','queued')
+                    OR t.receipt_id IS NULL OR t.receipt_id<>:receipt_id OR t.source_version_id<>''))''',
+            {'matter_id': matter_id, 'receipt_id': receipt_id}).fetchone()
+        return bool(row[0])
+
+    def discard(self, matter_id: str, actor_id: str, receipt_id: str, *, confirmed: bool = False,
+                upload_is_empty: Callable[[str, int], bool] | None = None) -> tuple[str, ...]:
+        """Owner cleanup; the caller holds the source mutation lock for bound uploads."""
         with self.workspace._lock, self.connection:
             self.connection.execute('BEGIN IMMEDIATE')
             if self.workspace.membership(matter_id, actor_id).role != 'owner':
@@ -254,12 +274,27 @@ class IntakeReceipts:
             self._receipt_locked(matter_id, actor_id, receipt_id)
             if confirmed is not True:
                 raise WorkspaceProblem('Confirm that you want to discard this receipt.')
-            linked = self.connection.execute('SELECT 1 FROM workbench_intake_transfer '
-                'WHERE matter_id=? AND receipt_id=? LIMIT 1', (matter_id, receipt_id)).fetchone()
-            if linked is not None:
-                raise WorkspaceProblem('Receipts linked to uploads remain with the matter and cannot be discarded.')
+            if self._has_received_data_locked(matter_id, receipt_id):
+                raise WorkspaceProblem('Receipts with received data remain with the matter and cannot be discarded.')
+            linked = self.connection.execute('''SELECT u.upload_item_id,u.upload_session_id,u.expected_size
+                FROM workbench_intake_transfer t JOIN workbench_upload_item u
+                ON u.matter_id=t.matter_id AND u.upload_item_id=t.upload_item_id
+                WHERE t.matter_id=? AND t.receipt_id=?''', (matter_id, receipt_id)).fetchall()
+            if linked and upload_is_empty is None:
+                raise WorkspaceProblem('Open the receipt page to cancel these pending uploads before discarding the receipt.')
+            for item in linked:
+                if upload_is_empty(item['upload_item_id'], item['expected_size']) is not True:
+                    raise WorkspaceProblem('This upload has received data. Keep its receipt and resume the upload.')
+            now = self.workspace._now()
+            for session_id in sorted({item['upload_session_id'] for item in linked}):
+                self.connection.execute("UPDATE workbench_upload_item SET state='cancelled',"
+                    "message='Upload cancelled by the matter owner',updated_at=? "
+                    "WHERE matter_id=? AND upload_session_id=?", (now, matter_id, session_id))
+                self.connection.execute("UPDATE workbench_upload_session SET state='cancelled',updated_at=? "
+                    "WHERE matter_id=? AND upload_session_id=?", (now, matter_id, session_id))
             self.connection.execute('DELETE FROM workbench_intake_receipt WHERE matter_id=? AND receipt_id=?',
                 (matter_id, receipt_id))
+            return tuple(item['upload_item_id'] for item in linked)
 
     def seal(self, matter_id: str, actor_id: str, receipt_id: str) -> dict:
         with self.workspace._lock, self.connection:
@@ -309,6 +344,7 @@ class IntakeReceipts:
             counts['unrecorded'] = row['selected_count'] - counts['recorded']
             return {k: row[k] for k in ('receipt_id', 'collection_name', 'selected_count', 'state', 'created_at', 'updated_at')} | {
                 'recorded_count': counts['recorded'], 'counts': counts, 'has_upload_bindings': linked is not None,
+                'has_received_data': self._has_received_data_locked(matter_id, receipt_id),
             }
 
     def items(self, matter_id: str, actor_id: str, receipt_id: str, *, offset: int = 0,

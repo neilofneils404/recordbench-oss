@@ -9765,7 +9765,7 @@ def create_workbench_app(
         return templates.TemplateResponse(request=request, name="workbench_intake_receipt.html",
             context={**base_context(request, matter), "matter": matter, "receipt": receipt,
                 "receipt_items": rows, "intake_labels": INTAKE_LABELS, "page": page,
-                "receipt_error": error, "can_discard_receipt": matter.owner_id == context.principal_id and not receipt['has_upload_bindings']},
+                "receipt_error": error, "can_discard_receipt": matter.owner_id == context.principal_id and not receipt['has_received_data']},
             headers={"Cache-Control": "no-store"})
 
     @app.post("/matters/{slug}/intake/{receipt_id}/discard", dependencies=[Depends(require_csrf)])
@@ -9773,11 +9773,18 @@ def create_workbench_app(
         context = auth_context(request)
         matter = authorized_matter(request, slug)
         try:
-            IntakeReceipts(bench.workspace).discard(matter.matter_id, context.principal_id,
-                receipt_id, confirmed=confirm == 'yes')
+            store = bench.source_store(matter)
+            # The same source lock covers upload writes plus offset commits.
+            # Saved partial bytes are checked even if their earlier commit failed.
+            with store._lock:
+                cancelled = IntakeReceipts(bench.workspace).discard(matter.matter_id, context.principal_id,
+                    receipt_id, confirmed=confirm == 'yes',
+                    upload_is_empty=lambda item_id, size: store.resumable_size(item_id, expected_size=size) == 0)
+                for item_id in cancelled:
+                    store.discard_resumable_upload(item_id)
         except KeyError as exc:
             raise HTTPException(404, 'Selection receipt not found') from exc
-        except WorkspaceProblem as exc:
+        except (WorkspaceProblem, UploadProblem) as exc:
             return RedirectResponse(f'/matters/{slug}/intake/{receipt_id}?error=' + quote_plus(str(exc)), status_code=303)
         audit(request, 'source.intake_receipt_discard', 'success', context=context, matter=matter,
             object_type='matter', object_id=matter.matter_id, details={'kind': 'intake_receipt', 'count': 1})
@@ -10234,44 +10241,51 @@ def create_workbench_app(
                 )
         store = bench.source_store(matter)
         try:
-            bench.ensure_upload_write_capacity()
-            actual = store.resumable_size(
-                item.upload_item_id, expected_size=item.expected_size
-            )
-            if actual > item.received_size:
+            with store._lock:
+                item = bench.workspace.upload_item(matter.matter_id, context.principal_id, session_id, item_id)
+                if item.state == 'queued':
+                    session = bench.workspace.upload_session_record(matter.matter_id, context.principal_id, session_id)
+                    return upload_delta_projection(matter, session, item)
+                if item.state not in {'pending', 'uploading'}:
+                    raise UploadProblem('This upload item is not accepting more data.', 409)
+                bench.ensure_upload_write_capacity()
+                actual = store.resumable_size(
+                    item.upload_item_id, expected_size=item.expected_size
+                )
+                if actual > item.received_size:
+                    item = bench.workspace.set_upload_item_offset(
+                        matter.matter_id,
+                        context.principal_id,
+                        session_id,
+                        item_id,
+                        item.received_size,
+                        actual,
+                    )
+                elif actual < item.received_size:
+                    raise UploadProblem(
+                        "The saved upload is incomplete. Start a new upload collection.", 409
+                    )
+                if offset != item.received_size:
+                    raise UploadProblem(
+                        f"Resume this source at byte {item.received_size}.", 409
+                    )
+                new_size = store.append_resumable_chunk(
+                    item.upload_item_id,
+                    offset=offset,
+                    expected_size=item.expected_size,
+                    chunk=bytes(body),
+                )
                 item = bench.workspace.set_upload_item_offset(
                     matter.matter_id,
                     context.principal_id,
                     session_id,
                     item_id,
                     item.received_size,
-                    actual,
+                    new_size,
                 )
-            elif actual < item.received_size:
-                raise UploadProblem(
-                    "The saved upload is incomplete. Start a new upload collection.", 409
+                session = bench.workspace.upload_session_record(
+                    matter.matter_id, context.principal_id, session_id
                 )
-            if offset != item.received_size:
-                raise UploadProblem(
-                    f"Resume this source at byte {item.received_size}.", 409
-                )
-            new_size = store.append_resumable_chunk(
-                item.upload_item_id,
-                offset=offset,
-                expected_size=item.expected_size,
-                chunk=bytes(body),
-            )
-            item = bench.workspace.set_upload_item_offset(
-                matter.matter_id,
-                context.principal_id,
-                session_id,
-                item_id,
-                item.received_size,
-                new_size,
-            )
-            session = bench.workspace.upload_session_record(
-                matter.matter_id, context.principal_id, session_id
-            )
         except (UploadProblem, WorkspaceProblem) as exc:
             return JSONResponse(
                 {"message": str(exc)},
