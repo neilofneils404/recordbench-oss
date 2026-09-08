@@ -14,6 +14,8 @@
   reject unresolved roots, and keep ready email reachable through combined
   coverage links after live status updates. Apply attachment boundaries to every
   non-report message subtype, including unnamed encapsulated and extension types.
+  Refresh investigation coverage after live retrieval; reject empty related roots
+  and MIME defects discovered during body decoding.
   Add generated parser/HTTP contracts, browser acceptance and stopped-reader recovery.
 
 - 2026-09-08: Show counts and comparison links for received sources with identical

@@ -140,6 +140,8 @@ def extract_image(path: Path, media_type: str) -> tuple[tuple[ExtractedSection, 
 
 def _decoded_email_part(part) -> str:
     raw = part.get_payload(decode=True) or b""
+    if part.defects:
+        raise ValueError("That email is damaged or malformed.")
     if len(raw) > MAX_EMAIL_BODY_BYTES:
         raise ValueError("The email body exceeds the supported review limit.")
     charset = (part.get_content_charset() or "utf-8").casefold()
@@ -208,8 +210,10 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
             children = part.get_payload()
             if media_type == "multipart/related":
                 start_id = part.get_param("start")
+                if start_id is not None and not str(start_id).strip():
+                    raise ValueError("That email has a missing or ambiguous message body.")
                 roots = [child for child in children
-                    if str(child.get("Content-ID", "")).strip() == str(start_id).strip()] if start_id else children[:1]
+                    if str(child.get("Content-ID", "")).strip() == str(start_id).strip()] if start_id is not None else children[:1]
                 if len(roots) != 1:
                     raise ValueError("That email has a missing or ambiguous message body.")
                 pending.extend((child, "related_root" if child is roots[0] else "resource")

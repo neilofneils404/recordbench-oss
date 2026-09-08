@@ -4803,6 +4803,9 @@ class CaseIntelligenceWorkbench:
         )
         if evidence_shape:
             final_answer_payload["modality_coverage"] = evidence_shape
+        # Retrieval passes use the live index, which can gain sources while
+        # an investigation runs. Save coverage from the final source state.
+        readiness = self.workspace.matter_readiness(matter.matter_id)
         coverage = _source_coverage(readiness)
         coverage["notice"] = " ".join(part for part in (
             str(coverage["notice"]),

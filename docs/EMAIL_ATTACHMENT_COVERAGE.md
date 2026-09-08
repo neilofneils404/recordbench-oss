@@ -12,7 +12,7 @@ Every non-report `message/*` child is an attachment boundary, including unnamed
 news, partial, HTTP, external-body and extension message types.
 Related email selects its root by the `start` Content-ID or first child, inventories
 other resources without reading them into the body, and rejects missing/ambiguous
-roots. The selected body may have its own filename or inline disposition. See
+roots, including explicitly empty root references. The selected body may have its own filename or inline disposition. See
 [related MIME root semantics](https://www.rfc-editor.org/rfc/rfc2387.html).
 Inventory unnamed non-body parts too. Keep container, MIME-part and decoded-body
 limits. Attachment child sources, archive expansion and PST support remain
@@ -54,12 +54,15 @@ their existing destinations. Source review also shows the notice before searchab
 content; new header units list each attachment boundary, with unknown names
 shown as **unnamed**. Descendants of attached messages are not separately listed.
 
-Malformed MIME containers fail as a source-processing error with existing
+Parser-reported MIME defects, including malformed containers and body-transfer
+decoding defects, fail as a source-processing error with existing
 **Try again** and removal recovery. Correct a damaged original before a fresh
 upload. Earlier saved answers keep their historical snapshot; new answers,
 including the legacy synchronous path, save current attachment coverage.
 Coverage is retained in answer/conversation Markdown and Word exports and the
-ordinary matter bundle. Investigation results combine source/attachment coverage
+ordinary matter bundle. Investigations refresh coverage from the source catalog
+after final evidence validation because later retrieval passes can include newly
+uploaded sources. The saved result carries that completion-time coverage snapshot. Investigation results combine source/attachment coverage
 with their focused-search caution; Markdown, Word, JSON and complete-bundle
 investigation exports retain both notices. Structured delivery/read-receipt body
 parts are report metadata rather than unnamed attachments, unless a filename or
@@ -80,13 +83,16 @@ make check
 ```
 
 Six initial failing parser cases reproduced attached-text leakage, missing
-inventory/coverage and malformed-container readiness. Thirty parser/HTTP tests now
-pass; the combined email, investigation and readiness selection passes 56 tests. New failing
+inventory/coverage and malformed-container readiness. Thirty-five parser/HTTP tests now
+pass; the combined email, investigation and readiness selection passes 61 tests. New failing
 regressions reproduce lost investigation coverage and invented delivery-report
 attachments before their corrections. Related-resource/root and mixed-navigation
 regressions also fail before correction and pass afterward. Unnamed encapsulated
 message cases reproduce leakage for five additional subtypes; corrected HTTP
-upload, search, answer export and isolation checks also cover an attached news message. Fixtures
+upload, search, answer export and isolation checks also cover an attached news message.
+Further regressions reproduce empty root references, decoding-time base64 defects
+and an email indexed between live investigation passes; the corrected result
+retains exact new-source support and updated coverage through every export. Fixtures
 cover ordinary, unnamed, inline non-body, attached-message and attached-multipart
 parts, HTML alternatives, MIME/body limits, exact parent passages, attachment-only
 no-match searches, saved coverage and cross-matter access. The stopped-reader
@@ -95,7 +101,7 @@ unit/digest/version on upgrade, checks corrected new extraction, reads both with
 the older application and exports the saved notice, then verifies forward read
 and unchanged original bytes. No new storage contract requires migration.
 
-September 8, 2026 acceptance: `make check` passes 984 application tests with nine
+September 8, 2026 acceptance: `make check` passes 989 application tests with nine
 optional skips, all 194 transcription tests, compilation, both Compose graphs and
 publication inspection. All eight Chrome workflows pass: actual selected-file
 upload/receipt/source inventory, desktop/narrow review, attachment-only no-match

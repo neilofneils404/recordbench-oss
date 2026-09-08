@@ -68,17 +68,21 @@ without entering attached messages or multipart attachments. All non-report
 inventory attachment names/types and state that attachment contents were not
 processed or searched. All parsed parts still count toward the MIME limit,
 including descendants of attachment boundaries; malformed MIME containers fail
-with ordinary retry/remove recovery. The existing catalog supplies a
+with ordinary retry/remove recovery. Body decoding rechecks MIME defects so
+reported transfer-encoding defects cannot leave best-effort text searchable. The existing catalog supplies a
 matter-scoped email count for readiness and query-time coverage without reading
 source files. Email does not block otherwise-ready queries, but `partial_query`
 also identifies incomplete attachment coverage with zero excluded source files.
 The ordinary answer coverage snapshot flows into UI and work-product exports.
 Investigation results combine source/attachment coverage with the focused-search
-caution, retaining both in standalone and complete-bundle exports. Structured
+caution, retaining both in standalone and complete-bundle exports. After final
+evidence validation, investigations refresh coverage from the source catalog to
+include sources admitted during their live retrieval passes. Structured
 delivery/read-receipt body parts are not invented attachment entries; explicit
 attachment disposition or filenames still identify real attached report data.
 Related MIME containers select their body root and inventory other resources;
-missing/ambiguous root references fail rather than choosing another text part.
+missing, ambiguous or explicitly empty root references fail rather than choosing
+another text part.
 Coverage links use the complete source list in server and live browser rendering,
 so combined processing/email coverage can reach both affected and ready sources.
 No schema or source registry shape changes; older passages and indexes are not
