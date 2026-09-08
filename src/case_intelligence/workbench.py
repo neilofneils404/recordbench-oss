@@ -260,7 +260,7 @@ ANSWER_STAGE_MESSAGES = {
 
 def _source_coverage(
     readiness: MatterReadinessRecord,
-    retrieval_readiness: MatterReadinessRecord | None = None,
+    *, changed_since_retrieval: bool = False,
 ) -> dict[str, object]:
     """Describe query-time coverage without exposing source identity or content."""
 
@@ -286,17 +286,13 @@ def _source_coverage(
         from .extended_extract import EMAIL_COVERAGE_NOTICE
 
         notice = " ".join(part for part in (notice, EMAIL_COVERAGE_NOTICE) if part)
-    changed = retrieval_readiness is not None and any(
-        getattr(readiness, field) != getattr(retrieval_readiness, field)
-        for field in ("total_count", "searchable_count", "attention_count", "processing_count", "email_count")
-    )
-    if changed:
+    if changed_since_retrieval:
         notice = " ".join(part for part in (notice,
-            "Source availability changed after retrieval. Counts show current availability; "
+            "Source availability changed after retrieval began. Counts show current availability; "
             "newly available material may not be included. Run the question again to include it.",
         ) if part)
     return {
-        "mode": "partial" if partial or readiness.email_count or changed else "complete",
+        "mode": "partial" if partial or readiness.email_count or changed_since_retrieval else "complete",
         "searchable_count": readiness.searchable_count,
         "total_count": readiness.total_count,
         "excluded_count": excluded,
@@ -2579,9 +2575,13 @@ class CaseIntelligenceWorkbench:
         document_ids: frozenset[str] | None = None,
         expand_broad_summary: bool = True,
         primary_limit: int = 20,
+        retrieval_boundary: dict[str, str] | None = None,
     ) -> tuple[WorkbenchCitation, ...]:
         """Run bounded answer retrieval with explicit scope and modality policy."""
 
+        if retrieval_boundary is not None:
+            self.source_store(matter)
+            retrieval_boundary["source_fingerprint"] = self.workspace.source_availability_fingerprint(matter.matter_id)
         intent = classify_question(question)
         queries = (
             broad_summary_queries(retrieval_query, maximum_chars=MAX_SEARCH_CHARS)
@@ -2646,6 +2646,17 @@ class CaseIntelligenceWorkbench:
         if intent.broad_summary:
             rows = filter_broad_summary_evidence(rows)
         return rows
+
+    def _completion_source_coverage(
+        self, matter: MatterRecord, retrieval_boundary: Mapping[str, str],
+    ) -> tuple[MatterReadinessRecord, dict[str, object]]:
+        # Read counts and the identity boundary under the same control-store
+        # lock, without holding source mutations across retrieval/generation.
+        with self.workspace._lock:
+            readiness = self.workspace.matter_readiness(matter.matter_id)
+            current = self.workspace.source_availability_fingerprint(matter.matter_id)
+        return readiness, _source_coverage(readiness,
+            changed_since_retrieval=retrieval_boundary.get("source_fingerprint") != current)
 
     def _answer_evidence_citations(
         self,
@@ -4080,9 +4091,10 @@ class CaseIntelligenceWorkbench:
         )
         retrieval_query = self._retrieval_question(value, prior)
         intent = classify_question(value)
+        retrieval_boundary: dict[str, str] = {}
         citations = self._answer_evidence_citations(
             matter,
-            self._answer_search(matter, value, retrieval_query),
+            self._answer_search(matter, value, retrieval_query, retrieval_boundary=retrieval_boundary),
             required_kinds=intent.required_evidence_kinds,
         )
         evidence = {
@@ -4101,14 +4113,12 @@ class CaseIntelligenceWorkbench:
             for identifier, citation in evidence.items()
         )
         history = tuple((message.role, message.content) for message in prior[-6:])
-        retrieval_readiness = self.workspace.matter_readiness(matter.matter_id)
         try:
             answer = self.generator.answer(value, packet, history=history)
         except GenerationGroundingRejected:
             answer = self._verification_abstention()
         payload = self._answer_payload(answer, evidence)
-        readiness = self.workspace.matter_readiness(matter.matter_id)
-        payload["source_coverage"] = _source_coverage(readiness, retrieval_readiness)
+        readiness, payload["source_coverage"] = self._completion_source_coverage(matter, retrieval_boundary)
         evidence_shape = modality_coverage(value, evidence, answer.used_evidence_ids)
         if evidence_shape:
             payload["modality_coverage"] = evidence_shape
@@ -4254,6 +4264,7 @@ class CaseIntelligenceWorkbench:
                 report_stage(stage_key, ANSWER_STAGE_MESSAGES[stage_key])
 
             intent = classify_question(job.question)
+            retrieval_boundary: dict[str, str] = {}
             citations = self._answer_evidence_citations(
                 matter,
                 self._answer_search(
@@ -4262,10 +4273,10 @@ class CaseIntelligenceWorkbench:
                     retrieval_query,
                     stage_callback=retrieval_stage,
                     document_ids=scoped_document_ids,
+                    retrieval_boundary=retrieval_boundary,
                 ),
                 required_kinds=intent.required_evidence_kinds,
             )
-            retrieval_readiness = self.workspace.matter_readiness(matter.matter_id)
             if cancelled():
                 raise AnswerJobFailure("Answer cancelled.")
             evidence = {
@@ -4315,8 +4326,7 @@ class CaseIntelligenceWorkbench:
             )
             if evidence_shape:
                 payload["modality_coverage"] = evidence_shape
-            readiness = self.workspace.matter_readiness(matter.matter_id)
-            payload["source_coverage"] = _source_coverage(readiness, retrieval_readiness)
+            readiness, payload["source_coverage"] = self._completion_source_coverage(matter, retrieval_boundary)
             payload["review_scope"] = _focused_answer_scope(
                 job.question,
                 readiness,
@@ -4643,7 +4653,14 @@ class CaseIntelligenceWorkbench:
             citations.append(citation)
             seen_tokens.add(citation.support_token)
         candidate_count = int(checkpoint.get("candidate_count", 0) or 0)
+        saved_fingerprint = checkpoint.get("retrieval_source_fingerprint")
+        current_fingerprint = self.workspace.source_availability_fingerprint(matter.matter_id)
+        if passes and saved_fingerprint != current_fingerprint:
+            checkpoint_stale = True
+        retrieval_boundary = {"source_fingerprint": str(saved_fingerprint or "")}
         if checkpoint_stale:
+            if not self.workspace.restart_research_checkpoint(job.job_id):
+                raise WorkflowFailure("Research cancelled.")
             # A changed source invalidates both its citation and any saved
             # finding derived from that checkpoint. Restart the bounded search
             # plan rather than synthesizing or displaying stale source text.
@@ -4653,7 +4670,6 @@ class CaseIntelligenceWorkbench:
             candidate_count = 0
         intent = classify_question(job.question)
 
-        retrieval_readiness = self.workspace.matter_readiness(matter.matter_id)
         for index, query in enumerate(queries[len(passes):], len(passes) + 1):
             if cancelled():
                 raise WorkflowFailure("Research cancelled.")
@@ -4665,10 +4681,10 @@ class CaseIntelligenceWorkbench:
                     document_ids=scoped_document_ids,
                     expand_broad_summary=False,
                     primary_limit=30,
+                    retrieval_boundary=retrieval_boundary,
                 )
             except RetrievalUnavailable:
                 found = ()
-            retrieval_readiness = self.workspace.matter_readiness(matter.matter_id)
             candidate_count += len(found)
             selected = self._answer_evidence_citations(
                 matter,
@@ -4735,6 +4751,7 @@ class CaseIntelligenceWorkbench:
                 "passes": passes,
                 "evidence": [self._workflow_citation_payload(item) for item in citations],
                 "candidate_count": candidate_count,
+                "retrieval_source_fingerprint": retrieval_boundary.get("source_fingerprint", ""),
             }
             self.workspace.checkpoint_research_job(job.job_id, checkpoint)
             if not self.workspace.update_research_progress(
@@ -4822,8 +4839,7 @@ class CaseIntelligenceWorkbench:
         # Retrieval passes use the live index, which can gain sources while
         # an investigation runs. Describe current availability and disclose
         # availability changes since the last retrieval pass separately.
-        readiness = self.workspace.matter_readiness(matter.matter_id)
-        coverage = _source_coverage(readiness, retrieval_readiness)
+        readiness, coverage = self._completion_source_coverage(matter, retrieval_boundary)
         coverage["notice"] = " ".join(part for part in (
             str(coverage["notice"]),
             "This investigation used multiple focused retrieval passes. It is broader than one answer, "

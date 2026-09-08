@@ -5548,6 +5548,26 @@ class WorkspaceStore:
         return SourceFolderPageRecord(tuple(SourceFolderRecord(row['name'],
             (folder + '/' if folder else '') + row['name'], row['source_count']) for row in rows), count)
 
+    def source_availability_fingerprint(self, matter_id: str) -> str:
+        """Stream only matter-scoped source identity/version/state metadata."""
+        if not _IDENTIFIER.fullmatch(matter_id):
+            raise KeyError(matter_id)
+        digest = hashlib.sha256(b"source-availability-v1\0" + matter_id.encode("ascii"))
+        with self._lock:
+            if self.connection.execute(
+                "SELECT 1 FROM workbench_matter WHERE matter_id=?", (matter_id,),
+            ).fetchone() is None:
+                raise KeyError(matter_id)
+            rows = self.connection.execute(
+                "SELECT document_id,version_id,content_basis_digest,source_state,media_type "
+                "FROM workbench_source_catalog WHERE matter_id=? ORDER BY document_id",
+                (matter_id,),
+            )
+            for row in rows:
+                digest.update(json.dumps(tuple(row), ensure_ascii=True, separators=(",", ":")).encode("ascii"))
+                digest.update(b"\n")
+        return digest.hexdigest()
+
     def source_catalog_page(
         self,
         matter_id: str,
@@ -9427,6 +9447,30 @@ class WorkspaceStore:
                 job_id, state="running", stage=stage, message=value,
                 completed_steps=int(completed_steps), total_steps=int(row["total_steps"]),
                 created_at=now,
+            )
+        return True
+
+    def restart_research_checkpoint(self, job_id: str) -> bool:
+        """Discard a stale search checkpoint while preserving the job and plan."""
+        if not _RESEARCH_JOB.fullmatch(job_id or ""):
+            raise KeyError(job_id)
+        now = self._now()
+        message = "Source coverage changed or was not recorded. Repeating the evidence searches."
+        with self._lock, self.connection:
+            changed = self.connection.execute(
+                "UPDATE workbench_research_job SET result_json='{}',completed_steps=0,"
+                "candidate_count=0,evidence_count=0,stage='searching',message=?,updated_at=? "
+                "WHERE job_id=? AND state='running' AND cancellation_requested=0",
+                (message, now, job_id),
+            ).rowcount
+            if changed != 1:
+                return False
+            row = self.connection.execute(
+                "SELECT total_steps FROM workbench_research_job WHERE job_id=?", (job_id,),
+            ).fetchone()
+            self._append_research_event_locked(
+                job_id, state="running", stage="searching", message=message,
+                completed_steps=0, total_steps=int(row["total_steps"]), created_at=now,
             )
         return True
 

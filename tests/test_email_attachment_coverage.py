@@ -508,7 +508,8 @@ def test_malformed_mime_classification_header_uses_processing_recovery(tmp_path,
 
 
 @pytest.mark.parametrize('answer_mode', ['queued', 'synchronous', 'research'])
-def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path, monkeypatch, answer_mode):
+@pytest.mark.parametrize('source_change', ['add', 'swap'])
+def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path, monkeypatch, answer_mode, source_change):
     app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
         auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
     generating = threading.Event()
@@ -520,6 +521,12 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
         assert client.post(f'/matters/{slug}/uploads', files=[
             ('files', ('initial.txt', b'ParentBodyCanary describes a generated meeting.', 'text/plain')),
         ]).status_code == 200
+        if source_change == 'swap':
+            assert client.post(f'/matters/{slug}/uploads', files=[
+                ('files', ('unused.txt', b'Unrelated housekeeping instructions only.', 'text/plain')),
+            ]).status_code == 200
+            store = bench.source_store(matter)
+            unused = next(item for item in store.documents.values() if item.display_name == 'unused.txt')
         original_answer = bench.generator.answer
 
         def pause_final_generation(question, *args, **kwargs):
@@ -543,6 +550,8 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
             assert started.status_code == 202
         try:
             assert generating.wait(10)
+            if source_change == 'swap':
+                assert client.post(f'/matters/{slug}/sources/{store.action_token(unused)}/remove').status_code == 200
             assert client.post(f'/matters/{slug}/uploads', files=[
                 ('files', ('late.txt', b'LateSourceCanary describes a different meeting.', 'text/plain')),
             ]).status_code == 200
@@ -588,3 +597,145 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
                     assert 'changed after retrieval' in archive.read('word/document.xml').decode()
             else:
                 assert 'changed after retrieval' in exported.text
+
+
+@pytest.mark.parametrize('parameter', ['filename', 'name'])
+@pytest.mark.parametrize('filename', ['', '   '])
+def test_explicit_empty_filename_is_an_unnamed_attachment(tmp_path, parameter, filename):
+    header = (f'Content-Disposition: inline; filename="{filename}"' if parameter == 'filename'
+        else f'Content-Type: text/plain; name="{filename}"')
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(('Content-Type: multipart/mixed; boundary="generated"\r\n\r\n'
+        '--generated\r\nContent-Type: text/plain\r\n\r\nParentBodyCanary\r\n'
+        '--generated\r\n' + header + '\r\n\r\nAttachmentOnlyCanary\r\n--generated--\r\n').encode())
+    text = '\n'.join(section.text for section in extract_email(path))
+    assert 'ParentBodyCanary' in text and 'AttachmentOnlyCanary' not in text
+    assert 'Attachment: unnamed (text/plain)' in text
+    assert 'Attachment contents were not processed or searched' in text
+
+
+@pytest.mark.parametrize('content_id', [
+    b'(generated) <body@example.test>',
+    b'(before <not-the-root@example.test>) <body@example.test> (after)',
+    b'(outer (inner))\n\t<body@example.test>',
+])
+def test_related_root_accepts_content_id_comments_and_folding(tmp_path, content_id):
+    from email import policy
+    from email.parser import BytesParser
+    message = BytesParser(policy=policy.default).parsebytes(generated_email('related'))
+    message.set_param('start', '<body@example.test>')
+    raw = message.as_bytes().replace(b'Content-ID: <body@example.test>', b'Content-ID: ' + content_id)
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(raw)
+    text = '\n'.join(section.text for section in extract_email(path))
+    assert 'ParentBodyCanary' in text and 'AttachmentOnlyCanary' not in text
+    assert 'Attachment: unnamed (text/plain)' in text
+
+
+def test_related_root_ambiguity_is_checked_after_content_id_normalization(tmp_path):
+    from email import policy
+    from email.parser import BytesParser
+    message = BytesParser(policy=policy.default).parsebytes(generated_email('related'))
+    message.set_param('start', '<body@example.test>')
+    message.get_payload()[1].replace_header('Content-ID', '(same root) <body@example.test>')
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(message.as_bytes())
+    with pytest.raises(ValueError, match='ambiguous'):
+        extract_email(path)
+
+
+@pytest.mark.parametrize('checkpoint_kind', ['current', 'legacy'])
+def test_recovered_final_research_checkpoint_retrieves_new_sources(tmp_path, monkeypatch, checkpoint_kind):
+    app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
+        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
+    with TestClient(app) as client:
+        slug = _matter(client, 'Generated final-pass recovery')
+        bench = app.state.workbench
+        bench.research.close()
+        matter = bench.matter(slug, ACTOR)
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('initial.txt', b'ParentBodyCanary describes a generated meeting.', 'text/plain')),
+        ]).status_code == 200
+        job, created = bench.workspace.queue_research_job(matter.matter_id, ACTOR,
+            'What does ParentBodyCanary describe?', 'Generated recovery', 'research-request-' + 'b' * 32)
+        assert created
+        claimed = bench.workspace.claim_research_job('generated-first-worker')
+        assert claimed.job_id == job.job_id
+        original_checkpoint = bench.workspace.checkpoint_research_job
+        original_answer = bench.generator.answer
+
+        class StoppedAfterPasses(Exception):
+            pass
+
+        def stop_before_final_generation(question, *args, **kwargs):
+            if question.startswith('Answer the original research objective'):
+                raise StoppedAfterPasses()
+            return original_answer(question, *args, **kwargs)
+
+        if checkpoint_kind == 'legacy':
+            def legacy_checkpoint(job_id, result):
+                result = dict(result)
+                result.pop('retrieval_source_fingerprint', None)
+                return original_checkpoint(job_id, result)
+            monkeypatch.setattr(bench.workspace, 'checkpoint_research_job', legacy_checkpoint)
+        monkeypatch.setattr(bench.generator, 'answer', stop_before_final_generation)
+        with pytest.raises(StoppedAfterPasses):
+            bench._process_research_job(claimed, lambda: False)
+        stopped = bench.workspace.research_job(matter.matter_id, ACTOR, job.job_id)
+        assert len(stopped.result['passes']) == len(stopped.plan['queries'])
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('late.txt', b'ParentBodyCanary also describes a later generated meeting.', 'text/plain')),
+        ]).status_code == 200
+        assert bench.workspace.recover_running_research_jobs() == 1
+        resumed = bench.workspace.claim_research_job('generated-resumed-worker')
+        monkeypatch.setattr(bench.generator, 'answer', original_answer)
+        monkeypatch.setattr(bench.workspace, 'checkpoint_research_job', original_checkpoint)
+        searches = []
+        original_search = bench._answer_search
+        def tracked_search(*args, **kwargs):
+            searches.append(args[2])
+            return original_search(*args, **kwargs)
+        monkeypatch.setattr(bench, '_answer_search', tracked_search)
+        result = bench._process_research_job(resumed, lambda: False)
+        finished = bench.workspace.finish_research_job(job.job_id, result)
+        assert finished.state == 'succeeded'
+        assert searches == list(stopped.plan['queries'])
+        assert any(item['source_name'] == 'late.txt' for item in result['evidence'])
+        for item in result['evidence']:
+            assert bench.support(matter, item['support_token']).source_name == item['source_name']
+        assert result['coverage']['searchable_count'] == result['coverage']['total_count'] == 2
+        for format_name in ('markdown', 'json', 'docx'):
+            exported = client.get(f'/matters/{slug}/research/{job.job_id}/export', params={'format': format_name})
+            assert exported.status_code == 200
+            if format_name == 'docx':
+                with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                    assert 'late.txt' in archive.read('word/document.xml').decode()
+            else:
+                assert 'late.txt' in exported.text
+
+
+def test_source_availability_boundary_is_matter_scoped_and_version_sensitive(tmp_path):
+    app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
+        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
+    with TestClient(app) as client:
+        slug = _matter(client, 'Generated boundary owner')
+        other_slug = _matter(client, 'Generated foreign boundary')
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        fingerprint = lambda: bench.workspace.source_availability_fingerprint(matter.matter_id)
+        initial = fingerprint()
+        assert client.post(f'/matters/{other_slug}/uploads', files=[
+            ('files', ('foreign.txt', b'ForeignBoundaryCanary', 'text/plain')),
+        ]).status_code == 200
+        assert fingerprint() == initial
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('own.txt', b'OwnBoundaryCanary', 'text/plain')),
+        ]).status_code == 200
+        uploaded = fingerprint()
+        assert uploaded != initial
+        store = bench.source_store(matter)
+        document = next(iter(store.documents.values()))
+        with store.mutation_guard():
+            document.version_id = 'f' * 32
+            store._save((document.document_id,))
+        assert fingerprint() != uploaded

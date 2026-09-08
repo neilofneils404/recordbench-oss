@@ -17,7 +17,11 @@
   Refresh investigation and ordinary-answer coverage after live retrieval; reject empty related roots
   and MIME defects discovered during body decoding or lazy header parsing.
   Keep completion-time availability distinct from evidence actually used and retain
-  a rerun notice when availability changes after retrieval during generation.
+  a rerun notice when source identities, versions or availability change during
+  retrieval or generation, including equal-count swaps. Persist the retrieval
+  boundary in research checkpoints and repeat stale/legacy searches on recovery.
+  Treat empty filename parameters as unnamed attachments and normalize surrounding
+  Content-ID comments/folding whitespace before root matching and ambiguity checks.
   Add generated parser/HTTP contracts, browser acceptance and stopped-reader recovery.
 
 - 2026-09-08: Show counts and comparison links for received sources with identical

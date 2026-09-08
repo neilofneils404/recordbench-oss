@@ -12,9 +12,12 @@ Every non-report `message/*` child is an attachment boundary, including unnamed
 news, partial, HTTP, external-body and extension message types.
 Related email selects its root by the `start` Content-ID or first child, inventories
 other resources without reading them into the body, and rejects missing/ambiguous
-roots, including explicitly empty root references. The selected body may have its own filename or inline disposition. See
+roots, including explicitly empty root references. Surrounding Content-ID comments
+and folding whitespace are normalized before matching and ambiguity checks.
+The selected body may have its own filename or inline disposition. See
 [related MIME root semantics](https://www.rfc-editor.org/rfc/rfc2387.html).
-Inventory unnamed non-body parts too. Keep container, MIME-part and decoded-body
+Inventory unnamed non-body parts too, including explicitly empty or whitespace-only
+filename parameters. Keep container, MIME-part and decoded-body
 limits. Attachment child sources, archive expansion and PST support remain
 separate work.
 
@@ -67,11 +70,20 @@ uploaded sources. The saved result carries that completion-time coverage snapsho
 and the synchronous compatibility path likewise refresh source counts and coverage
 after generation so newly retrieved email cannot retain an earlier complete notice.
 These counts describe current source availability, not a ledger of sources
-searched. If availability changes after the last retrieval, saved coverage is
-partial and explains that newly available material may be absent and the question
-should be run again. Focused answers identify their actual cited support without
+searched. Each actual retrieval begins by fingerprinting the matter-scoped catalog
+IDs, versions, content-basis digests, states and media types. This streams metadata
+without reading source bytes or materializing a second source list. If that boundary
+changes during retrieval or generation, saved coverage is partial and explains that
+newly available material may be absent and the question should be run again.
+Equal-count source swaps and uncited version changes are detectable too. Focused answers identify their actual cited support without
 claiming to have searched every source in the completion-time count. An unchanged
 complete availability state likewise does not mean an every-source review.
+Research checkpoints retain one optional internal `retrieval_source_fingerprint`
+field in their existing JSON. On recovery, a missing or changed boundary repeats
+the bounded search plan and resets stale checkpoint/progress atomically while
+retaining the job and plan; cancellation still wins. Older readers preserve the
+field but do not apply the new recovery rule. No schema migration is needed and
+the fingerprint is absent from staff status and completed/exported results.
 Investigation results combine source/attachment coverage
 with their focused-search caution; Markdown, Word, JSON and complete-bundle
 investigation exports retain both notices. Structured delivery/read-receipt body
@@ -93,8 +105,8 @@ make check
 ```
 
 Six initial failing parser cases reproduced attached-text leakage, missing
-inventory/coverage and malformed-container readiness. Forty-three parser/HTTP tests now
-pass; the combined email, investigation and readiness selection passes 69 tests; including answer-job contracts passes 81. New failing
+inventory/coverage and malformed-container readiness. Fifty-seven parser/HTTP tests now
+pass; the combined email, investigation and readiness selection passes 83 tests; including answer-job contracts passes 95. New failing
 regressions reproduce lost investigation coverage and invented delivery-report
 attachments before their corrections. Related-resource/root and mixed-navigation
 regressions also fail before correction and pass afterward. Unnamed encapsulated
@@ -108,16 +120,22 @@ retrieval, with exact support and answer/conversation exports checked. Additiona
 regressions reject malformed MIME type, disposition and transfer-encoding headers
 and upload a normal text source during final generation in both answer paths and
 investigations. The latter retain exact earlier support and a late-availability
-notice in saved Markdown and Word exports. Fixtures
+notice in saved Markdown and Word exports. Equal-count swaps reproduce the
+same missing notice before fingerprinting. Recovery after the final checkpoint
+repeats searches for both current and legacy checkpoints, resolves new source
+support and preserves it in Markdown, JSON and Word. Empty filenames, commented
+and folded Content-IDs, normalized ambiguity and matter-scoped version changes
+have regressions. Fixtures
 cover ordinary, unnamed, inline non-body, attached-message and attached-multipart
 parts, HTML alternatives, MIME/body limits, exact parent passages, attachment-only
 no-match searches, saved coverage and cross-matter access. The stopped-reader
 script reproduces the old attached-message extraction, preserves every old
 unit/digest/version on upgrade, checks corrected new extraction, reads both with
 the older application and exports the saved notice, then verifies forward read
-and unchanged original bytes. No new storage contract requires migration.
+and unchanged original bytes. It also checks the optional research checkpoint
+field through a stopped previous reader and current forward reader. No new storage contract requires migration.
 
-September 8, 2026 acceptance: `make check` passes 997 application tests with nine
+September 8, 2026 acceptance: `make check` passes 1011 application tests with nine
 optional skips, all 194 transcription tests, compilation, both Compose graphs and
 publication inspection. All eight Chrome workflows pass: actual selected-file
 upload/receipt/source inventory, desktop/narrow review, attachment-only no-match

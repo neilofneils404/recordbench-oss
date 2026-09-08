@@ -150,6 +150,51 @@ def _decoded_email_part(part) -> str:
     return raw.decode(charset, errors="replace")
 
 
+def _email_content_id(value: object) -> str:
+    """Remove surrounding RFC comment/folding whitespace without changing an ID."""
+    output: list[str] = []
+    depth = 0
+    escaped = False
+    inside = quoted = literal = False
+    for char in str(value):
+        if depth:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            continue
+        if not inside:
+            if char.isspace():
+                continue
+            if char == "(":
+                depth = 1
+                continue
+            if char == "<":
+                inside = True
+            output.append(char)
+            continue
+        output.append(char)
+        if escaped:
+            escaped = False
+        elif char == "\\" and (quoted or literal):
+            escaped = True
+        elif char == '"' and not literal:
+            quoted = not quoted
+        elif char == "[" and not quoted:
+            literal = True
+        elif char == "]" and not quoted:
+            literal = False
+        elif char == ">" and not quoted and not literal:
+            inside = False
+    if depth or inside:
+        raise ValueError("That email has a missing or ambiguous message body.")
+    return "".join(output)
+
+
 def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
     if path.stat().st_size > MAX_TEXT_CONTAINER_BYTES:
         raise ValueError("The email exceeds the supported review limit.")
@@ -190,14 +235,15 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
     while pending:
         part, role = pending.pop()
         disposition = (part.get_content_disposition() or "").casefold()
-        filename = " ".join((part.get_filename() or "").split())[:240]
+        supplied_filename = part.get_filename()
+        filename = " ".join((supplied_filename or "").split())[:240]
         media_type = part.get_content_type()
         report_data = media_type in {
             "message/delivery-status", "message/disposition-notification",
             "message/global-delivery-status", "message/global-disposition-notification",
         }
         attachment = role == "resource" or (part is not message and (
-            ((disposition == "attachment" or filename) and role != "related_root") or
+            ((disposition == "attachment" or supplied_filename is not None) and role != "related_root") or
             (part.get_content_maintype() == "message" and not report_data) or
             (not report_data and not part.is_multipart()
                 and media_type not in {"text/plain", "text/html"})
@@ -216,10 +262,11 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
             children = part.get_payload()
             if media_type == "multipart/related":
                 start_id = part.get_param("start")
-                if start_id is not None and not str(start_id).strip():
+                normalized_start = _email_content_id(start_id) if start_id is not None else None
+                if normalized_start is not None and not normalized_start:
                     raise ValueError("That email has a missing or ambiguous message body.")
                 roots = [child for child in children
-                    if str(child.get("Content-ID", "")).strip() == str(start_id).strip()] if start_id is not None else children[:1]
+                    if _email_content_id(child.get("Content-ID", "")) == normalized_start] if normalized_start is not None else children[:1]
                 if len(roots) != 1:
                     raise ValueError("That email has a missing or ambiguous message body.")
                 pending.extend((child, "related_root" if child is roots[0] else "resource")

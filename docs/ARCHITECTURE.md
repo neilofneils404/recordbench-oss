@@ -65,7 +65,8 @@ Comparison URLs use existing matter-bound source action tokens, never hashes.
 [Email extraction](EMAIL_ATTACHMENT_COVERAGE.md) traverses the parent body tree
 without entering attached messages or multipart attachments. All non-report
 `message/*` children are boundaries even without filenames or attachment disposition. Header sections
-inventory attachment names/types and state that attachment contents were not
+inventory attachment names/types, including explicit empty filename markers as
+unnamed attachments, and state that attachment contents were not
 processed or searched. All parsed parts still count toward the MIME limit,
 including descendants of attachment boundaries; malformed MIME containers fail
 with ordinary retry/remove recovery. Lazily parsed MIME classification headers
@@ -82,15 +83,23 @@ evidence validation, investigations refresh coverage from the source catalog to
 include sources admitted during their live retrieval passes. Queued and synchronous
 answers refresh their coverage after generation for the same live-index reason.
 The saved counts describe current availability, not an exhaustive searched-source
-ledger. A changed availability snapshot after the last retrieval sets partial
-coverage with a rerun notice retained by exports. Focused-answer wording describes
+ledger. Each actual retrieval records a streaming fingerprint of matter-scoped
+catalog IDs, versions, content-basis digests, source states and media types. A
+changed boundary during retrieval or generation sets partial coverage with a
+rerun notice retained by exports, including equal-count source swaps. One optional
+fingerprint field in existing research checkpoint JSON allows recovery to repeat
+a bounded search plan when source state changed or an older checkpoint lacks the
+boundary. The stale checkpoint and progress reset atomically without changing job
+identity or overriding cancellation. No schema migration or source-byte read is
+needed; staff status and completed/exported results omit the fingerprint. Focused-answer wording describes
 current availability and actual cited support without claiming every available
 source was searched. Structured
 delivery/read-receipt body parts are not invented attachment entries; explicit
 attachment disposition or filenames still identify real attached report data.
 Related MIME containers select their body root and inventory other resources;
-missing, ambiguous or explicitly empty root references fail rather than choosing
-another text part.
+surrounding Content-ID comments and folding whitespace normalize before root
+matching. Missing, ambiguous or explicitly empty root references fail rather than
+choosing another text part.
 Coverage links use the complete source list in server and live browser rendering,
 so combined processing/email coverage can reach both affected and ready sources.
 No schema or source registry shape changes; older passages and indexes are not
