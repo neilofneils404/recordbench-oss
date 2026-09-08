@@ -45,6 +45,12 @@ source data and saved partial bytes prevent discard.
 Each new resumable upload item identifies a separate [received occurrence](UPLOAD_OCCURRENCES.md),
 even with repeated paths or bytes. The existing source-registry key retains
 same-item retry identity across finalization and restart, including copy fallback.
+[Upload status reconciliation](UPLOAD_STATUS_RECOVERY.md) acquires the existing
+matter source-store lock before reading control checkpoints, matching chunk-write
+lock order. It reconciles saved bytes and returns the current authorized session
+and item snapshot. A competing cancellation may finish its control update first;
+expected offset conflicts use the changed current state. Failure recording that
+cannot change a queued/cancelled item leaves its collection state untouched.
 
 [Source folder navigation](SOURCE_FOLDER_NAVIGATION.md) uses the existing
 matter-scoped source catalog and organization joins. A literal separator-bound

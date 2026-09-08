@@ -6801,12 +6801,14 @@ class WorkspaceStore:
         )
         now = self._now()
         with self._lock, self.connection:
-            self.connection.execute(
+            changed = self.connection.execute(
                 "UPDATE workbench_upload_item SET state='failed',message=?,updated_at=? "
                 "WHERE upload_item_id=? AND upload_session_id=? AND matter_id=? "
                 "AND state NOT IN ('queued','cancelled')",
                 (value, now, item_id, session_id, matter_id),
-            )
+            ).rowcount
+            if not changed:
+                return self.upload_item(matter_id, actor_id, session_id, item_id)
             remaining = int(
                 self.connection.execute(
                     "SELECT COUNT(*) FROM workbench_upload_item WHERE upload_session_id=? "

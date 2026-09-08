@@ -379,7 +379,7 @@ def main():
                 toggle.click()
                 driver.find_element(By.CSS_SELECTOR, '.intake-receipt-discard input[name=confirm]').click()
                 driver.find_element(By.CSS_SELECTOR, '.intake-receipt-discard button').click()
-                wait.until(lambda x: 'Receipt discarded.' in x.find_element(By.TAG_NAME, 'body').text)
+                wait.until(lambda x: x.execute_script("return document.body?.innerText.includes('Receipt discarded.') || false"))
             discard_from_browser(removable['receipt_id'])
             require(bench.workspace.upload_session_record(full_matter.matter_id, ACTOR,
                 latest_session.upload_session_id).state == 'cancelled', 'Empty upload remained active after owner cleanup')

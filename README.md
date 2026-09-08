@@ -66,7 +66,9 @@ Selected-file receipts identify selection reasons as browser-reported observatio
 stay available after reload, and distinguish received bytes
 from processing or source availability. Retry interrupted uploads without losing
 previous bytes, open exact source support, and download individual receipts or the
-complete matter bundle. Receipt metadata has cumulative capacity limits; owners
+complete matter bundle. Status checks preserve newer upload progress, completed
+collections and cancellations; actual missing bytes still require recovery. See
+[upload status recovery](docs/UPLOAD_STATUS_RECOVERY.md). Receipt metadata has cumulative capacity limits; owners
 can discard receipts with no received data to recover space, cancelling any
 pending uploads for that selection. See
 [selection receipts and recovery](docs/INTAKE_RECEIPTS.md).

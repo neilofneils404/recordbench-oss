@@ -8054,57 +8054,47 @@ def create_workbench_app(
     def reconcile_upload_session(
         matter: MatterRecord, actor_id: str, session_id: str
     ):
-        session, items = bench.workspace.upload_session(
-            matter.matter_id, actor_id, session_id
-        )
         store = bench.source_store(matter)
-        refreshed: list[UploadItemRecord] = []
-        for item in items:
-            if item.state not in {"pending", "uploading", "uploaded"}:
-                refreshed.append(item)
-                continue
-            try:
-                actual = store.resumable_size(
-                    item.upload_item_id, expected_size=item.expected_size
-                )
-            except UploadProblem as exc:
-                refreshed.append(
-                    bench.workspace.fail_upload_item(
-                        matter.matter_id,
-                        actor_id,
-                        session_id,
-                        item.upload_item_id,
-                        str(exc),
+        # Use the same lock order as chunk writes: source bytes, then control
+        # state. Read the checkpoint only after acquiring the source lock.
+        with store._lock:
+            _, items = bench.workspace.upload_session(
+                matter.matter_id, actor_id, session_id
+            )
+            for item in items:
+                if item.state not in {"pending", "uploading", "uploaded"}:
+                    continue
+                try:
+                    actual = store.resumable_size(
+                        item.upload_item_id, expected_size=item.expected_size
                     )
-                )
-                continue
-            if actual < item.received_size:
-                refreshed.append(
+                except UploadProblem as exc:
                     bench.workspace.fail_upload_item(
-                        matter.matter_id,
-                        actor_id,
-                        session_id,
+                        matter.matter_id, actor_id, session_id,
+                        item.upload_item_id, str(exc),
+                    )
+                    continue
+                if actual < item.received_size:
+                    bench.workspace.fail_upload_item(
+                        matter.matter_id, actor_id, session_id,
                         item.upload_item_id,
                         "The saved upload is incomplete. Select this source in a new upload collection.",
                     )
-                )
-            elif actual > item.received_size:
-                refreshed.append(
-                    bench.workspace.set_upload_item_offset(
-                        matter.matter_id,
-                        actor_id,
-                        session_id,
-                        item.upload_item_id,
-                        item.received_size,
-                        actual,
-                    )
-                )
-            else:
-                refreshed.append(item)
-        session, _ = bench.workspace.upload_session(
-            matter.matter_id, actor_id, session_id
-        )
-        return session, tuple(refreshed)
+                elif actual > item.received_size:
+                    try:
+                        bench.workspace.set_upload_item_offset(
+                            matter.matter_id, actor_id, session_id,
+                            item.upload_item_id, item.received_size, actual,
+                        )
+                    except WorkspaceProblem:
+                        # Cancellation can record terminal control state before
+                        # acquiring the source lock to remove staged bytes.
+                        current = bench.workspace.upload_item(
+                            matter.matter_id, actor_id, session_id, item.upload_item_id
+                        )
+                        if (current.state, current.received_size) == (item.state, item.received_size):
+                            raise
+            return bench.workspace.upload_session(matter.matter_id, actor_id, session_id)
 
     @app.get("/matters/{slug}/close", response_class=HTMLResponse)
     def close_matter_page(
@@ -10217,6 +10207,8 @@ def create_workbench_app(
             )
         except KeyError as exc:
             raise HTTPException(404, "Upload collection not found") from exc
+        except WorkspaceProblem as exc:
+            return JSONResponse({"message": str(exc)}, status_code=409)
         return upload_projection(matter, session, items)
 
     @app.put(
