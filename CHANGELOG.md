@@ -36,6 +36,10 @@
   Include pending uploads and processing jobs in availability changes and count
   uploading/processing sources as excluded. Persist the retrieval
   boundary in research checkpoints and repeat stale/legacy searches on recovery.
+  Retain the first boundary across investigation passes and include selected-set
+  membership changes. Preserve recording playback guidance beside pending uploads.
+  Recognize feedback and extension report metadata from matching MIME report context,
+  while retaining returned-message and explicit attachment boundaries.
   Treat empty filename parameters as unnamed attachments and normalize surrounding
   Content-ID comments/folding whitespace before root matching and ambiguity checks.
   Add generated parser/HTTP contracts, browser acceptance and stopped-reader recovery.

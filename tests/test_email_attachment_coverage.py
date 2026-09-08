@@ -203,7 +203,7 @@ def test_uploaded_email_search_answer_export_and_matter_boundaries(tmp_path, ema
         assert (document.document_id, document.version_id) == identity
 
 
-@pytest.mark.parametrize("report_type", ["delivery-status", "disposition-notification"])
+@pytest.mark.parametrize("report_type", ["delivery-status", "disposition-notification", "feedback-report", "x-generated-report"])
 @pytest.mark.parametrize("explicit_attachment", [False, True])
 def test_structured_delivery_report_is_not_an_invented_attachment(tmp_path, report_type, explicit_attachment):
     headers = 'Content-Disposition: attachment; filename="status.dat"\r\n' if explicit_attachment else ''
@@ -344,7 +344,8 @@ def test_invalid_base64_body_uses_processing_recovery(tmp_path, encoded_body):
         extract_email(path)
 
 
-def test_investigation_refreshes_coverage_after_upload_between_live_passes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("late_kind", ["email", "text"])
+def test_investigation_refreshes_coverage_after_upload_between_live_passes(tmp_path, monkeypatch, late_kind):
     app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(),
         auth_mode="test", malware_scanner=CleanScanner(), malware_scan_mode="extended")
     first_pass = threading.Event()
@@ -378,7 +379,8 @@ def test_investigation_refreshes_coverage_after_upload_between_live_passes(tmp_p
         try:
             assert first_pass.wait(10)
             added = client.post(f"/matters/{slug}/uploads", files=[
-                ("files", ("generated.eml", generated_email(), "message/rfc822")),
+                ("files", ("generated.eml", generated_email(), "message/rfc822") if late_kind == "email" else
+                    ("late.txt", b"ParentBodyCanary describes a later generated meeting.", "text/plain")),
             ])
             assert added.status_code == 200
         finally:
@@ -393,33 +395,35 @@ def test_investigation_refreshes_coverage_after_upload_between_live_passes(tmp_p
             time.sleep(.02)
         assert job.state == "succeeded"
         store = bench.source_store(matter)
-        email = next(document for document in store.documents.values() if document.media_type == "message/rfc822")
+        email = next(document for document in store.documents.values() if document.display_name == ("generated.eml" if late_kind == "email" else "late.txt"))
         email_evidence = [item for item in job.result["evidence"] if item["document_id"] == email.document_id]
         assert email_evidence
         for item in email_evidence:
             assert item["source_version_id"] == email.version_id
             support = bench.support(matter, item["support_token"])
-            assert support.source_name == "generated.eml"
+            assert support.source_name == email.display_name
         coverage = job.result["coverage"]
         assert coverage["mode"] == "partial"
         assert coverage["searchable_count"] == 2 and coverage["total_count"] == 2
         assert coverage["excluded_count"] == 0
-        assert EMAIL_COVERAGE_NOTICE in coverage["notice"]
+        assert "changed after the search started" in coverage["notice"]
+        notice = EMAIL_COVERAGE_NOTICE if late_kind == "email" else "changed after the search started"
+        assert notice in coverage["notice"]
         page = client.get(f"/matters/{slug}/research", params={"job": job_id})
-        assert EMAIL_COVERAGE_NOTICE in page.text
+        assert notice in page.text
         for format_name in ("markdown", "json", "docx"):
             exported = client.get(f"/matters/{slug}/research/{job_id}/export", params={"format": format_name})
             assert exported.status_code == 200
             if format_name == "docx":
                 with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
-                    assert EMAIL_COVERAGE_NOTICE in archive.read("word/document.xml").decode()
+                    assert notice in archive.read("word/document.xml").decode()
             else:
-                assert EMAIL_COVERAGE_NOTICE in exported.text
+                assert notice in exported.text
         bundle = client.get(f"/matters/{slug}/export")
         assert bundle.status_code == 200
         with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
             entries = [name for name in archive.namelist() if name.startswith("investigations/")]
-            assert entries and all(EMAIL_COVERAGE_NOTICE in archive.read(name).decode() for name in entries)
+            assert entries and all(notice in archive.read(name).decode() for name in entries)
 
 
 @pytest.mark.parametrize("answer_mode", ["queued", "synchronous"])
@@ -507,8 +511,12 @@ def test_malformed_mime_classification_header_uses_processing_recovery(tmp_path,
         extract_email(path)
 
 
-@pytest.mark.parametrize('answer_mode,pause_stage', [('queued', 'generation'), ('synchronous', 'generation'), ('research', 'generation'), ('queued', 'finishing'), ('research', 'finishing')])
-@pytest.mark.parametrize('source_change', ['add', 'swap', 'pending'])
+@pytest.mark.parametrize('source_change,answer_mode,pause_stage', [
+    (change, mode, stage)
+    for change in ('add', 'swap', 'pending', 'scope')
+    for mode, stage in (('queued', 'generation'), ('synchronous', 'generation'), ('research', 'generation'), ('queued', 'finishing'), ('research', 'finishing'))
+    if change != 'scope' or mode != 'synchronous'
+] + [('scope', 'queued', 'before_search'), ('scope', 'research', 'before_search')])
 def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path, monkeypatch, answer_mode, source_change, pause_stage):
     app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
         auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended',
@@ -533,6 +541,26 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
             ]).status_code == 200
             store = bench.source_store(matter)
             unused = next(item for item in store.documents.values() if item.display_name == 'unused.txt')
+        store = bench.source_store(matter)
+        source_set = None
+        if source_change == 'scope':
+            assert client.post(f'/matters/{slug}/uploads', files=[
+                ('files', ('late.txt', b'ParentBodyCanary describes a later generated meeting.', 'text/plain')),
+            ]).status_code == 200
+            initial = next(item for item in store.documents.values() if item.display_name == 'initial.txt')
+            late = next(item for item in store.documents.values() if item.display_name == 'late.txt')
+            assert client.post(f'/matters/{slug}/sources/bulk', data={'action': 'create_set',
+                'source_set_name': 'Generated selected scope', 'selected': store.action_token(initial)},
+                follow_redirects=False).status_code == 303
+            source_set = bench.workspace.source_sets(matter.matter_id)[0]
+        if pause_stage == 'before_search':
+            original_search = bench._answer_search
+            def pause_before_search(*args, **kwargs):
+                if not generating.is_set():
+                    generating.set()
+                    assert continue_generation.wait(10)
+                return original_search(*args, **kwargs)
+            monkeypatch.setattr(bench, '_answer_search', pause_before_search)
         original_answer = bench.generator.answer
 
         def pause_final_generation(question, *args, **kwargs):
@@ -556,7 +584,8 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
             future = executor.submit(bench.ask, matter, conversation, question)
         else:
             data = {'conversation': conversation.conversation_id, 'question': question,
-                'request_key': 'answer-request-' + 'd' * 32}
+                'request_key': 'answer-request-' + 'd' * 32,
+                **({'source_set': source_set.source_set_id} if source_set else {})}
             if answer_mode == 'research':
                 data['review_task'] = 'research'
             started = client.post(f'/matters/{slug}/ask', data=data,
@@ -566,7 +595,14 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
             assert generating.wait(10)
             if source_change == 'swap':
                 assert client.post(f'/matters/{slug}/sources/{store.action_token(unused)}/remove').status_code == 200
-            if source_change == 'pending':
+            if source_change == 'scope':
+                before = bench.workspace.source_availability_fingerprint(matter.matter_id)
+                assert client.post(f'/matters/{slug}/sources/bulk', data={'action': 'add_to_set',
+                    'source_set_id': source_set.source_set_id, 'selected': store.action_token(late)},
+                    follow_redirects=False).status_code == 303
+                assert bench.workspace.source_availability_fingerprint(matter.matter_id) == before
+                assert bench.workspace.source_set(matter.matter_id, source_set.source_set_id).source_count == 2
+            elif source_change == 'pending':
                 from tests.test_intake_receipt_http import descriptor, selection, upload
                 files = [descriptor('Pending/late.txt', 128)]
                 receipt = selection(client, slug, files, [0])
@@ -672,7 +708,8 @@ def test_related_root_ambiguity_is_checked_after_content_id_normalization(tmp_pa
 
 
 @pytest.mark.parametrize('checkpoint_kind', ['current', 'legacy'])
-def test_recovered_final_research_checkpoint_retrieves_new_sources(tmp_path, monkeypatch, checkpoint_kind):
+@pytest.mark.parametrize('source_change', ['upload', 'scope'])
+def test_recovered_final_research_checkpoint_retrieves_new_sources(tmp_path, monkeypatch, checkpoint_kind, source_change):
     app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
         auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
     with TestClient(app) as client:
@@ -683,8 +720,18 @@ def test_recovered_final_research_checkpoint_retrieves_new_sources(tmp_path, mon
         assert client.post(f'/matters/{slug}/uploads', files=[
             ('files', ('initial.txt', b'ParentBodyCanary describes a generated meeting.', 'text/plain')),
         ]).status_code == 200
+        source_set = None
+        if source_change == 'scope':
+            assert client.post(f'/matters/{slug}/uploads', files=[
+                ('files', ('late.txt', b'ParentBodyCanary also describes a later generated meeting.', 'text/plain')),
+            ]).status_code == 200
+            store = bench.source_store(matter)
+            initial = next(item for item in store.documents.values() if item.display_name == 'initial.txt')
+            late = next(item for item in store.documents.values() if item.display_name == 'late.txt')
+            source_set = bench.workspace.create_source_set(matter.matter_id, 'Generated recovery scope', (initial.document_id,), ACTOR)
         job, created = bench.workspace.queue_research_job(matter.matter_id, ACTOR,
-            'What does ParentBodyCanary describe?', 'Generated recovery', 'research-request-' + 'b' * 32)
+            'What does ParentBodyCanary describe?', 'Generated recovery', 'research-request-' + 'b' * 32,
+            source_set_id=source_set.source_set_id if source_set else None)
         assert created
         claimed = bench.workspace.claim_research_job('generated-first-worker')
         assert claimed.job_id == job.job_id
@@ -710,9 +757,14 @@ def test_recovered_final_research_checkpoint_retrieves_new_sources(tmp_path, mon
             bench._process_research_job(claimed, lambda: False)
         stopped = bench.workspace.research_job(matter.matter_id, ACTOR, job.job_id)
         assert len(stopped.result['passes']) == len(stopped.plan['queries'])
-        assert client.post(f'/matters/{slug}/uploads', files=[
-            ('files', ('late.txt', b'ParentBodyCanary also describes a later generated meeting.', 'text/plain')),
-        ]).status_code == 200
+        if source_set:
+            assert client.post(f'/matters/{slug}/sources/bulk', data={'action': 'add_to_set',
+                'source_set_id': source_set.source_set_id, 'selected': store.action_token(late)},
+                follow_redirects=False).status_code == 303
+        else:
+            assert client.post(f'/matters/{slug}/uploads', files=[
+                ('files', ('late.txt', b'ParentBodyCanary also describes a later generated meeting.', 'text/plain')),
+            ]).status_code == 200
         assert bench.workspace.recover_running_research_jobs() == 1
         resumed = bench.workspace.claim_research_job('generated-resumed-worker')
         monkeypatch.setattr(bench.generator, 'answer', original_answer)
@@ -781,3 +833,55 @@ def test_duplicate_mime_classification_headers_use_processing_recovery(tmp_path,
         b'--generated\r\n' + headers + b'\r\n\r\nAttachmentOnlyCanary\r\n--generated--\r\n')
     with pytest.raises(ValueError, match='malformed'):
         extract_email(path)
+
+
+@pytest.mark.parametrize('container,report_type', [('mixed', ''), ('report', 'x-other-report')])
+@pytest.mark.parametrize('subtype', ['feedback-report', 'delivery-status'])
+def test_feedback_part_outside_matching_report_context_is_an_attachment(tmp_path, container, report_type, subtype):
+    path = tmp_path / 'generated.eml'
+    path.write_bytes((f'Content-Type: multipart/{container}; report-type="{report_type}"; boundary="generated"\r\n\r\n'
+        '--generated\r\nContent-Type: text/plain\r\n\r\nParentBodyCanary\r\n'
+        f'--generated\r\nContent-Type: message/{subtype}\r\n\r\nFeedback-Type: abuse\r\n\r\n'
+        '--generated--\r\n').encode())
+    text = '\n'.join(section.text for section in extract_email(path))
+    assert f'Attachment: unnamed (message/{subtype})' in text
+    assert 'Feedback-Type' not in text
+
+
+def test_feedback_report_inventories_returned_message_but_not_report_metadata(tmp_path):
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(b'Content-Type: multipart/report; report-type=feedback-report; boundary="generated"\r\n\r\n'
+        b'--generated\r\nContent-Type: text/plain\r\n\r\nParentBodyCanary\r\n'
+        b'--generated\r\nContent-Type: message/feedback-report\r\n\r\nFeedback-Type: abuse\r\nUser-Agent: Generated\r\nVersion: 1\r\n'
+        b'--generated\r\nContent-Type: message/rfc822\r\n\r\nSubject: Generated returned email\r\n\r\nAttachmentOnlyCanary\r\n'
+        b'--generated--\r\n')
+    text = '\n'.join(section.text for section in extract_email(path))
+    assert 'Attachment: unnamed (message/feedback-report)' not in text
+    assert 'Attachment: unnamed (message/rfc822)' in text
+    assert 'ParentBodyCanary' in text and 'AttachmentOnlyCanary' not in text
+
+
+def test_selected_scope_fingerprint_ignores_other_sets_and_denies_foreign_scope(tmp_path):
+    app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
+        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
+    with TestClient(app) as client:
+        slug = _matter(client, 'Generated scope boundary')
+        foreign_slug = _matter(client, 'Generated foreign scope boundary')
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('initial.txt', b'Generated first scope source.', 'text/plain')),
+            ('files', ('second.txt', b'Generated second scope source.', 'text/plain')),
+        ]).status_code == 200
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        foreign = bench.matter(foreign_slug, ACTOR)
+        documents = tuple(bench.source_store(matter).documents.values())
+        selected = bench.workspace.create_source_set(matter.matter_id, 'Generated selected', (documents[0].document_id,), ACTOR)
+        other = bench.workspace.create_source_set(matter.matter_id, 'Generated other', (documents[0].document_id,), ACTOR)
+        fingerprint = lambda: bench.workspace.source_availability_fingerprint(matter.matter_id, selected.source_set_id)
+        before = fingerprint()
+        bench.workspace.add_sources_to_set(matter.matter_id, other.source_set_id, (documents[1].document_id,), ACTOR)
+        assert fingerprint() == before
+        bench.workspace.add_sources_to_set(matter.matter_id, selected.source_set_id, (documents[1].document_id,), ACTOR)
+        assert fingerprint() != before
+        with pytest.raises(KeyError):
+            bench.workspace.source_availability_fingerprint(foreign.matter_id, selected.source_set_id)

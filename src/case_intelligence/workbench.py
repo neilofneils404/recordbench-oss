@@ -285,8 +285,7 @@ def _source_coverage(
     if partial and (readiness.playback_only_count or readiness.recording_review_count):
         notice = (
             f"Searchable text is available for {readiness.searchable_count:,} of {readiness.total_count:,} sources. "
-            f"{excluded:,} sources are not searchable and are excluded. "
-            "Recordings without a transcript remain available for playback and review."
+            f"{excluded:,} sources are not searchable and are excluded."
         )
     if partial and readiness.processing_count:
         processing = readiness.processing_count
@@ -297,6 +296,8 @@ def _source_coverage(
         if readiness.attention_count:
             attention = readiness.attention_count
             notice += f" {attention:,} other source{' needs' if attention == 1 else 's need'} attention and cannot be searched."
+    if partial and (readiness.playback_only_count or readiness.recording_review_count):
+        notice += " Recordings without a transcript remain available for playback and review."
     if readiness.email_count:
         from .extended_extract import EMAIL_COVERAGE_NOTICE
 
@@ -2580,6 +2581,17 @@ class CaseIntelligenceWorkbench:
             raise RetrievalUnavailable("matter search returned invalid support")
         return tuple(self._citation(matter, item) for item in candidates)
 
+    def _answer_source_boundary(
+        self, matter: MatterRecord, source_set_id: str | None,
+    ) -> tuple[frozenset[str] | None, dict[str, str]]:
+        if not source_set_id:
+            return None, {}
+        self.source_store(matter)
+        with self.workspace._lock:
+            document_ids = self.workspace.source_set_document_ids(matter.matter_id, source_set_id)
+            fingerprint = self.workspace.source_availability_fingerprint(matter.matter_id, source_set_id)
+        return document_ids, {"source_set_id": source_set_id, "source_fingerprint": fingerprint}
+
     def _answer_search(
         self,
         matter: MatterRecord,
@@ -2594,9 +2606,10 @@ class CaseIntelligenceWorkbench:
     ) -> tuple[WorkbenchCitation, ...]:
         """Run bounded answer retrieval with explicit scope and modality policy."""
 
-        if retrieval_boundary is not None:
+        if retrieval_boundary is not None and not retrieval_boundary.get("source_fingerprint"):
             self.source_store(matter)
-            retrieval_boundary["source_fingerprint"] = self.workspace.source_availability_fingerprint(matter.matter_id)
+            retrieval_boundary["source_fingerprint"] = self.workspace.source_availability_fingerprint(
+                matter.matter_id, retrieval_boundary.get("source_set_id"))
         intent = classify_question(question)
         queries = (
             broad_summary_queries(retrieval_query, maximum_chars=MAX_SEARCH_CHARS)
@@ -2669,7 +2682,8 @@ class CaseIntelligenceWorkbench:
         # lock, without holding source mutations across retrieval/generation.
         with self.workspace._lock:
             readiness = self.workspace.matter_readiness(matter.matter_id)
-            current = self.workspace.source_availability_fingerprint(matter.matter_id)
+            current = self.workspace.source_availability_fingerprint(
+                matter.matter_id, retrieval_boundary.get("source_set_id"))
         return readiness, _source_coverage(readiness,
             changed_since_retrieval=retrieval_boundary.get("source_fingerprint") != current)
 
@@ -4264,13 +4278,7 @@ class CaseIntelligenceWorkbench:
             source_set_id = self.workspace.answer_source_set_id(
                 matter.matter_id, job.job_id
             )
-            scoped_document_ids = (
-                self.workspace.source_set_document_ids(
-                    matter.matter_id, source_set_id
-                )
-                if source_set_id is not None
-                else None
-            )
+            scoped_document_ids, retrieval_boundary = self._answer_source_boundary(matter, source_set_id)
             if scoped_document_ids is not None and not scoped_document_ids:
                 raise AnswerJobFailure(
                     "The selected source set is empty. Add sources to it or use all searchable sources."
@@ -4280,7 +4288,6 @@ class CaseIntelligenceWorkbench:
                 report_stage(stage_key, ANSWER_STAGE_MESSAGES[stage_key])
 
             intent = classify_question(job.question)
-            retrieval_boundary: dict[str, str] = {}
             citations = self._answer_evidence_citations(
                 matter,
                 self._answer_search(
@@ -4447,7 +4454,8 @@ class CaseIntelligenceWorkbench:
                 payload = dict(result.payload)
                 if result.retrieval_source_fingerprint is not None:
                     readiness, payload["source_coverage"] = self._completion_source_coverage(matter,
-                        {"source_fingerprint": result.retrieval_source_fingerprint})
+                        {"source_fingerprint": result.retrieval_source_fingerprint,
+                         "source_set_id": self.workspace.answer_source_set_id(matter.matter_id, job.job_id) or ""})
                     if result.verified_answer is not None:
                         payload["review_scope"] = _focused_answer_scope(job.question, readiness,
                             result.verified_answer,
@@ -4596,7 +4604,7 @@ class CaseIntelligenceWorkbench:
                 fingerprint = prepared.pop("_retrieval_source_fingerprint", None)
                 if isinstance(fingerprint, str):
                     _, coverage = self._completion_source_coverage(matter,
-                        {"source_fingerprint": fingerprint})
+                        {"source_fingerprint": fingerprint, "source_set_id": job.source_set_id or ""})
                     coverage["notice"] = " ".join(part for part in (
                         str(coverage["notice"]), RESEARCH_COVERAGE_NOTICE,
                     ) if part)
@@ -4645,10 +4653,7 @@ class CaseIntelligenceWorkbench:
             raise WorkflowFailure(
                 "No source is searchable for this research run. Finish active preparation or resolve a source issue, then retry."
             )
-        scoped_document_ids = (
-            self.workspace.source_set_document_ids(matter.matter_id, job.source_set_id)
-            if job.source_set_id else None
-        )
+        scoped_document_ids, retrieval_boundary = self._answer_source_boundary(matter, job.source_set_id)
         if scoped_document_ids is not None and not scoped_document_ids:
             raise WorkflowFailure("The selected source set is empty.")
 
@@ -4691,10 +4696,11 @@ class CaseIntelligenceWorkbench:
             seen_tokens.add(citation.support_token)
         candidate_count = int(checkpoint.get("candidate_count", 0) or 0)
         saved_fingerprint = checkpoint.get("retrieval_source_fingerprint")
-        current_fingerprint = self.workspace.source_availability_fingerprint(matter.matter_id)
+        current_fingerprint = retrieval_boundary.get("source_fingerprint") or self.workspace.source_availability_fingerprint(matter.matter_id)
         if passes and saved_fingerprint != current_fingerprint:
             checkpoint_stale = True
-        retrieval_boundary = {"source_fingerprint": str(saved_fingerprint or "")}
+        if passes and not checkpoint_stale:
+            retrieval_boundary["source_fingerprint"] = str(saved_fingerprint)
         if checkpoint_stale:
             if not self.workspace.restart_research_checkpoint(job.job_id):
                 raise WorkflowFailure("Research cancelled.")
@@ -4875,7 +4881,7 @@ class CaseIntelligenceWorkbench:
             final_answer_payload["modality_coverage"] = evidence_shape
         # Retrieval passes use the live index, which can gain sources while
         # an investigation runs. Describe current availability and disclose
-        # availability changes since the last retrieval pass separately.
+        # availability changes since the first retrieval pass separately.
         readiness, coverage = self._completion_source_coverage(matter, retrieval_boundary)
         coverage["notice"] = " ".join(part for part in (
             str(coverage["notice"]),
