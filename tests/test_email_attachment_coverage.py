@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from email.message import EmailMessage
+import html
+import re
 import io
 import time
 import zipfile
@@ -22,7 +24,20 @@ def generated_email(kind="message"):
     inner = EmailMessage()
     inner["Subject"] = "Generated attached message"
     inner.set_content("AttachmentOnlyCanary describes a different event.")
-    if kind == "message":
+    if kind == "related":
+        outer.clear_content()
+        outer.set_type("multipart/related")
+        outer.set_param("type", "text/html")
+        root = EmailMessage()
+        root.set_content("<p>ParentBodyCanary describes the generated meeting.</p>", subtype="html")
+        root["Content-ID"] = "<body@example.test>"
+        resource = EmailMessage()
+        resource.set_content("AttachmentOnlyCanary")
+        resource["Content-ID"] = "<resource@example.test>"
+        resource["Content-Disposition"] = "inline"
+        outer.attach(root)
+        outer.attach(resource)
+    elif kind == "message":
         outer.add_attachment(inner, filename="forwarded.eml")
     elif kind == "multipart":
         inner.add_alternative("<p>HiddenHtmlCanary</p>", subtype="html")
@@ -42,7 +57,7 @@ def generated_email(kind="message"):
     return outer.as_bytes()
 
 
-@pytest.mark.parametrize("kind,name", [("message", "forwarded.eml"), ("multipart", "bundle.mime"), ("unnamed", "unnamed"), ("inline", "unnamed"), ("text", "notes.txt")])
+@pytest.mark.parametrize("kind,name", [("message", "forwarded.eml"), ("multipart", "bundle.mime"), ("unnamed", "unnamed"), ("inline", "unnamed"), ("text", "notes.txt"), ("related", "unnamed")])
 def test_attachment_boundaries_and_explicit_inventory(tmp_path, kind, name):
     path = tmp_path / "generated.eml"
     path.write_bytes(generated_email(kind))
@@ -105,14 +120,15 @@ class EvidenceEchoGenerator:
         }
 
 
-def test_uploaded_email_search_answer_export_and_matter_boundaries(tmp_path):
+@pytest.mark.parametrize("email_kind", ["message", "related"])
+def test_uploaded_email_search_answer_export_and_matter_boundaries(tmp_path, email_kind):
     app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(),
         auth_mode="test", malware_scanner=CleanScanner(), malware_scan_mode="extended")
     with TestClient(app) as client:
         slug = _matter(client, "Generated email attachment review")
         bench = app.state.workbench
         matter = bench.matter(slug, ACTOR)
-        response = client.post(f"/matters/{slug}/uploads", files=[("files", ("generated.eml", generated_email(), "message/rfc822"))])
+        response = client.post(f"/matters/{slug}/uploads", files=[("files", ("generated.eml", generated_email(email_kind), "message/rfc822"))])
         assert response.status_code == 200
         store = bench.source_store(matter)
         document = next(iter(store.documents.values()))
@@ -121,7 +137,7 @@ def test_uploaded_email_search_answer_export_and_matter_boundaries(tmp_path):
         source = client.get(f"/matters/{slug}/sources/{token}")
         assert source.status_code == 200
         assert EMAIL_COVERAGE_NOTICE in source.text
-        assert "forwarded.eml" in source.text
+        assert ("forwarded.eml" if email_kind == "message" else "Attachment: unnamed") in source.text
         assert "Attachment contents were not processed or searched" in source.text
         body = client.get(f"/matters/{slug}/sources/{token}?unit=2")
         assert "ParentBodyCanary" in body.text and "AttachmentOnlyCanary" not in body.text
@@ -203,6 +219,17 @@ def test_investigation_retains_email_and_source_coverage_in_results_and_exports(
             ("files", ("damaged.pdf", b"%PDF-1.4\nGenerated damaged document.\n%%EOF\n", "application/pdf")),
         ])
         assert uploaded.status_code == 200
+        workspace_page = client.get(f"/matters/{slug}")
+        store = bench.source_store(matter)
+        email = next(document for document in store.documents.values() if document.media_type == "message/rfc822")
+        source_page = client.get(f"/matters/{slug}/sources/{store.action_token(email)}")
+        coverage_links = re.findall(r'data-(?:conversation|assistant)-coverage-action href="([^"]+)"', workspace_page.text + source_page.text)
+        assert len(coverage_links) == 2
+        for link in coverage_links:
+            assert "status=attention" not in link
+            library = client.get(html.unescape(link))
+            assert library.status_code == 200
+            assert "generated.eml" in library.text and "damaged.pdf" in library.text
         conversation = bench.workspace.get_conversation(matter.matter_id)
         started = client.post(f"/matters/{slug}/ask", data={
             "conversation": conversation.conversation_id,
@@ -242,3 +269,45 @@ def test_investigation_retains_email_and_source_coverage_in_results_and_exports(
             assert entries and all(EMAIL_COVERAGE_NOTICE in archive.read(name).decode() for name in entries)
         foreign = _matter(client, "Generated investigation boundary")
         assert client.get(f"/matters/{foreign}/research/{job_id}/export?format=json").status_code == 404
+
+
+@pytest.mark.parametrize("root_kind", ["first", "start", "named", "alternative"])
+def test_related_root_is_selected_without_reading_other_text_resources(tmp_path, root_kind):
+    from email.parser import BytesParser
+    from email import policy
+    message = BytesParser(policy=policy.default).parsebytes(generated_email("related"))
+    root, resource = message.get_payload()
+    if root_kind == "start":
+        message.set_payload([resource, root])
+        message.set_param("start", "<body@example.test>")
+    elif root_kind == "named":
+        root["Content-Disposition"] = 'inline; filename="body.html"'
+    elif root_kind == "alternative":
+        alternative = EmailMessage()
+        alternative.set_content("ParentBodyCanary plain alternative.")
+        alternative.add_alternative("<p>ParentBodyCanary HTML alternative.</p>", subtype="html")
+        alternative["Content-ID"] = "<body@example.test>"
+        message.set_payload([alternative, resource])
+        message.set_param("type", "multipart/alternative")
+    path = tmp_path / "related.eml"
+    path.write_bytes(message.as_bytes())
+    text = "\n".join(section.text for section in extract_email(path))
+    assert "ParentBodyCanary" in text
+    assert "AttachmentOnlyCanary" not in text
+    assert "Attachment: unnamed (text/plain)" in text
+    assert "Attachment: body.html" not in text
+
+
+@pytest.mark.parametrize("invalid_root", ["missing", "ambiguous"])
+def test_unresolvable_related_root_is_not_guessed(tmp_path, invalid_root):
+    from email.parser import BytesParser
+    from email import policy
+    message = BytesParser(policy=policy.default).parsebytes(generated_email("related"))
+    message.set_param("start", "<absent@example.test>" if invalid_root == "missing" else "<body@example.test>")
+    if invalid_root == "ambiguous":
+        resource = message.get_payload()[1]
+        resource.replace_header("Content-ID", "<body@example.test>")
+    path = tmp_path / "related.eml"
+    path.write_bytes(message.as_bytes())
+    with pytest.raises(ValueError, match="message body"):
+        extract_email(path)

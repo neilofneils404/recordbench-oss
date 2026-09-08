@@ -8,6 +8,10 @@ and the normal merge gate remain required. No runtime activation is implied.
 Show attachment names/types with an explicit unprocessed-content notice in
 newly extracted email headers. Treat attached messages and multipart attachments
 as boundaries: their descendant text must not become parent-message body.
+Related email selects its root by the `start` Content-ID or first child, inventories
+other resources without reading them into the body, and rejects missing/ambiguous
+roots. The selected body may have its own filename or inline disposition. See
+[related MIME root semantics](https://www.rfc-editor.org/rfc/rfc2387.html).
 Inventory unnamed non-body parts too. Keep container, MIME-part and decoded-body
 limits. Attachment child sources, archive expansion and PST support remain
 separate work.
@@ -41,7 +45,10 @@ email-only matter. The notice describes the limitation without asserting that
 all attachment text is absent from older extractions. It is conservative for
 email without attachments, because old source records do not carry a complete
 structured attachment inventory. No source-file read or new inventory is added
-to readiness queries. Source review also shows the notice before searchable
+to readiness queries. Coverage links open all sources so ready email remains
+reachable alongside sources needing attention, including after live status
+updates in Review and Quick question. Dedicated processing-recovery actions keep
+their existing destinations. Source review also shows the notice before searchable
 content; new header units list each attachment boundary, with unknown names
 shown as **unnamed**. Descendants of attached messages are not separately listed.
 
@@ -71,10 +78,11 @@ make check
 ```
 
 Six initial failing parser cases reproduced attached-text leakage, missing
-inventory/coverage and malformed-container readiness. Fourteen parser/HTTP tests now
-pass; the combined email and investigation selection passes 35 tests. New failing
+inventory/coverage and malformed-container readiness. Twenty-two parser/HTTP tests now
+pass; the combined email, investigation and readiness selection passes 48 tests. New failing
 regressions reproduce lost investigation coverage and invented delivery-report
-attachments before their corrections. Fixtures
+attachments before their corrections. Related-resource/root and mixed-navigation
+regressions also fail before correction and pass afterward. Fixtures
 cover ordinary, unnamed, inline non-body, attached-message and attached-multipart
 parts, HTML alternatives, MIME/body limits, exact parent passages, attachment-only
 no-match searches, saved coverage and cross-matter access. The stopped-reader
@@ -83,13 +91,13 @@ unit/digest/version on upgrade, checks corrected new extraction, reads both with
 the older application and exports the saved notice, then verifies forward read
 and unchanged original bytes. No new storage contract requires migration.
 
-September 8, 2026 acceptance: `make check` passes 968 application tests with nine
+September 8, 2026 acceptance: `make check` passes 976 application tests with nine
 optional skips, all 194 transcription tests, compilation, both Compose graphs and
-publication inspection. All seven Chrome workflows pass: actual selected-file
+publication inspection. All eight Chrome workflows pass: actual selected-file
 upload/receipt/source inventory, desktop/narrow review, attachment-only no-match
 search, exact parent support saved to notes, ordinary question submission and
 saved answer download/reload, investigation notices and standalone evidence-ledger
-download, cross-matter denial, final bundle and owner closure
+download, two-tab mixed-coverage refresh/navigation, cross-matter denial, final bundle and owner closure
 with unchanged external email bytes. Desktop and narrow screenshots were
 inspected. The stopped-reader/forward-read drill also resolves the support token
 created by the old extractor to the same exact old source version and passage.
