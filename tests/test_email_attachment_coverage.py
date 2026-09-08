@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from email.message import EmailMessage
+from concurrent.futures import ThreadPoolExecutor
 import html
 import re
 import io
@@ -419,3 +420,77 @@ def test_investigation_refreshes_coverage_after_upload_between_live_passes(tmp_p
         with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
             entries = [name for name in archive.namelist() if name.startswith("investigations/")]
             assert entries and all(EMAIL_COVERAGE_NOTICE in archive.read(name).decode() for name in entries)
+
+
+@pytest.mark.parametrize("answer_mode", ["queued", "synchronous"])
+def test_answer_coverage_includes_email_uploaded_before_live_retrieval(tmp_path, monkeypatch, answer_mode):
+    app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(),
+        auth_mode="test", malware_scanner=CleanScanner(), malware_scan_mode="extended")
+    before_search = threading.Event()
+    continue_search = threading.Event()
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as executor:
+        slug = _matter(client, "Generated changing answer coverage")
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        uploaded = client.post(f"/matters/{slug}/uploads", files=[
+            ("files", ("generated.txt", b"InitialSourceCanary contains unrelated housekeeping.", "text/plain")),
+        ])
+        assert uploaded.status_code == 200
+        assert bench.workspace.matter_readiness(matter.matter_id).email_count == 0
+        original_search = bench._answer_search
+
+        def pause_before_retrieval(*args, **kwargs):
+            before_search.set()
+            assert continue_search.wait(10), "Concurrent upload did not finish"
+            return original_search(*args, **kwargs)
+
+        monkeypatch.setattr(bench, "_answer_search", pause_before_retrieval)
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        question = "What does ParentBodyCanary describe?"
+        if answer_mode == "queued":
+            started = client.post(f"/matters/{slug}/ask", data={
+                "conversation": conversation.conversation_id, "question": question,
+                "request_key": "answer-request-" + "f" * 32,
+            }, headers={"Accept": "application/json"})
+            assert started.status_code == 202
+        else:
+            future = executor.submit(bench.ask, matter, conversation, question)
+        try:
+            assert before_search.wait(10)
+            added = client.post(f"/matters/{slug}/uploads", files=[
+                ("files", ("generated.eml", generated_email(), "message/rfc822")),
+            ])
+            assert added.status_code == 200
+        finally:
+            continue_search.set()
+        if answer_mode == "queued":
+            deadline = time.monotonic() + 10
+            while True:
+                status = client.get(started.json()["status_url"]).json()
+                if status["state"] in {"succeeded", "failed", "cancelled"}:
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(.02)
+            assert status["state"] == "succeeded"
+            answer = bench.workspace.messages(matter.matter_id, conversation.conversation_id)[-1]
+        else:
+            answer = future.result(timeout=10)
+        assert answer.role == "assistant" and "ParentBodyCanary" in answer.content
+        citations = [citation for claim in answer.payload["claims"] for citation in claim["citations"]]
+        assert any(item["source_name"] == "generated.eml" for item in citations)
+        for item in citations:
+            assert bench.support(matter, item["support_token"]).source_name == item["source_name"]
+        coverage = answer.payload["source_coverage"]
+        assert coverage["mode"] == "partial"
+        assert coverage["searchable_count"] == 2 and coverage["total_count"] == 2
+        assert EMAIL_COVERAGE_NOTICE in coverage["notice"]
+        root = f"/matters/{slug}/conversations/{conversation.conversation_id}"
+        for route in [root + "/export", root + f"/messages/{answer.message_id}/export"]:
+            for format_name in ("markdown", "docx"):
+                exported = client.get(route, params={"format": format_name})
+                assert exported.status_code == 200
+                if format_name == "docx":
+                    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                        assert EMAIL_COVERAGE_NOTICE in archive.read("word/document.xml").decode()
+                else:
+                    assert EMAIL_COVERAGE_NOTICE in exported.text

@@ -4063,7 +4063,6 @@ class CaseIntelligenceWorkbench:
         if not value or len(value) > MAX_QUESTION_CHARS:
             raise WorkspaceProblem("Question must be between 1 and 2,000 characters.")
         prior = self.workspace.messages(matter.matter_id, conversation.conversation_id)
-        readiness = self.workspace.matter_readiness(matter.matter_id)
         self.workspace.append_message(
             matter.matter_id, conversation.conversation_id, "user", value
         )
@@ -4095,6 +4094,7 @@ class CaseIntelligenceWorkbench:
         except GenerationGroundingRejected:
             answer = self._verification_abstention()
         payload = self._answer_payload(answer, evidence)
+        readiness = self.workspace.matter_readiness(matter.matter_id)
         payload["source_coverage"] = _source_coverage(readiness)
         evidence_shape = modality_coverage(value, evidence, answer.used_evidence_ids)
         if evidence_shape:
@@ -4176,7 +4176,6 @@ class CaseIntelligenceWorkbench:
                     "active processing to finish, or resolve an attention item if no "
                     "source is searchable, then try again."
                 )
-            source_coverage = _source_coverage(readiness)
             conversation = self.workspace.get_conversation(
                 matter.matter_id, job.conversation_id
             )
@@ -4302,7 +4301,8 @@ class CaseIntelligenceWorkbench:
             )
             if evidence_shape:
                 payload["modality_coverage"] = evidence_shape
-            payload["source_coverage"] = source_coverage
+            readiness = self.workspace.matter_readiness(matter.matter_id)
+            payload["source_coverage"] = _source_coverage(readiness)
             payload["review_scope"] = _focused_answer_scope(
                 job.question,
                 readiness,

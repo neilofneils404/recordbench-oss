@@ -62,7 +62,9 @@ including the legacy synchronous path, save current attachment coverage.
 Coverage is retained in answer/conversation Markdown and Word exports and the
 ordinary matter bundle. Investigations refresh coverage from the source catalog
 after final evidence validation because later retrieval passes can include newly
-uploaded sources. The saved result carries that completion-time coverage snapshot. Investigation results combine source/attachment coverage
+uploaded sources. The saved result carries that completion-time coverage snapshot. Queued answers
+and the synchronous compatibility path likewise refresh source counts and coverage
+after generation so newly retrieved email cannot retain an earlier complete notice. Investigation results combine source/attachment coverage
 with their focused-search caution; Markdown, Word, JSON and complete-bundle
 investigation exports retain both notices. Structured delivery/read-receipt body
 parts are report metadata rather than unnamed attachments, unless a filename or
@@ -83,8 +85,8 @@ make check
 ```
 
 Six initial failing parser cases reproduced attached-text leakage, missing
-inventory/coverage and malformed-container readiness. Thirty-five parser/HTTP tests now
-pass; the combined email, investigation and readiness selection passes 61 tests. New failing
+inventory/coverage and malformed-container readiness. Thirty-seven parser/HTTP tests now
+pass; the combined email, investigation and readiness selection passes 63 tests; including answer-job contracts passes 75. New failing
 regressions reproduce lost investigation coverage and invented delivery-report
 attachments before their corrections. Related-resource/root and mixed-navigation
 regressions also fail before correction and pass afterward. Unnamed encapsulated
@@ -92,7 +94,9 @@ message cases reproduce leakage for five additional subtypes; corrected HTTP
 upload, search, answer export and isolation checks also cover an attached news message.
 Further regressions reproduce empty root references, decoding-time base64 defects
 and an email indexed between live investigation passes; the corrected result
-retains exact new-source support and updated coverage through every export. Fixtures
+retains exact new-source support and updated coverage through every export. Both
+ordinary answer paths also reproduce and correct a concurrent email upload before
+retrieval, with exact support and answer/conversation exports checked. Fixtures
 cover ordinary, unnamed, inline non-body, attached-message and attached-multipart
 parts, HTML alternatives, MIME/body limits, exact parent passages, attachment-only
 no-match searches, saved coverage and cross-matter access. The stopped-reader
@@ -101,7 +105,7 @@ unit/digest/version on upgrade, checks corrected new extraction, reads both with
 the older application and exports the saved notice, then verifies forward read
 and unchanged original bytes. No new storage contract requires migration.
 
-September 8, 2026 acceptance: `make check` passes 989 application tests with nine
+September 8, 2026 acceptance: `make check` passes 991 application tests with nine
 optional skips, all 194 transcription tests, compilation, both Compose graphs and
 publication inspection. All eight Chrome workflows pass: actual selected-file
 upload/receipt/source inventory, desktop/narrow review, attachment-only no-match

@@ -77,7 +77,8 @@ The ordinary answer coverage snapshot flows into UI and work-product exports.
 Investigation results combine source/attachment coverage with the focused-search
 caution, retaining both in standalone and complete-bundle exports. After final
 evidence validation, investigations refresh coverage from the source catalog to
-include sources admitted during their live retrieval passes. Structured
+include sources admitted during their live retrieval passes. Queued and synchronous
+answers refresh their coverage after generation for the same live-index reason. Structured
 delivery/read-receipt body parts are not invented attachment entries; explicit
 attachment disposition or filenames still identify real attached report data.
 Related MIME containers select their body root and inventory other resources;
