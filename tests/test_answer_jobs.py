@@ -620,9 +620,9 @@ def test_http_acknowledges_immediately_reconnects_cancels_retries_and_deduplicat
             "cited_passage_count": 1,
             "cited_source_count": 1,
             "notice": (
-                "RecordBench searched 1 searchable source, "
-                "compared the strongest matching passages, and grounded this answer in "
-                "1 cited source."
+                "At completion, 1 source had searchable text. "
+                "This focused answer compared the strongest matching passages and used "
+                "1 cited source; it did not review every source."
             ),
         }
         assistant = client.get(

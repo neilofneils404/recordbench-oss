@@ -494,3 +494,97 @@ def test_answer_coverage_includes_email_uploaded_before_live_retrieval(tmp_path,
                         assert EMAIL_COVERAGE_NOTICE in archive.read("word/document.xml").decode()
                 else:
                     assert EMAIL_COVERAGE_NOTICE in exported.text
+
+
+@pytest.mark.parametrize('header', [b'Content-Type: message', b'Content-Disposition: attachment; filename', b'Content-Transfer-Encoding: base64 junk'])
+def test_malformed_mime_classification_header_uses_processing_recovery(tmp_path, header):
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(b'Content-Type: multipart/mixed; boundary="generated"\r\n\r\n'
+        b'--generated\r\nContent-Type: text/plain\r\n\r\nParentBodyCanary\r\n'
+        b'--generated\r\n' + header + b'\r\n\r\nSubject: AttachedCanary\r\n\r\n'
+        b'AttachmentOnlyCanary\r\n--generated--\r\n')
+    with pytest.raises(ValueError, match='malformed'):
+        extract_email(path)
+
+
+@pytest.mark.parametrize('answer_mode', ['queued', 'synchronous', 'research'])
+def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path, monkeypatch, answer_mode):
+    app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
+        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
+    generating = threading.Event()
+    continue_generation = threading.Event()
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as executor:
+        slug = _matter(client, 'Generated late source availability')
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('initial.txt', b'ParentBodyCanary describes a generated meeting.', 'text/plain')),
+        ]).status_code == 200
+        original_answer = bench.generator.answer
+
+        def pause_final_generation(question, *args, **kwargs):
+            if answer_mode != 'research' or question.startswith('Answer the original research objective'):
+                generating.set()
+                assert continue_generation.wait(10), 'Concurrent upload did not finish'
+            return original_answer(question, *args, **kwargs)
+
+        monkeypatch.setattr(bench.generator, 'answer', pause_final_generation)
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        question = 'What does ParentBodyCanary describe?'
+        if answer_mode == 'synchronous':
+            future = executor.submit(bench.ask, matter, conversation, question)
+        else:
+            data = {'conversation': conversation.conversation_id, 'question': question,
+                'request_key': 'answer-request-' + 'd' * 32}
+            if answer_mode == 'research':
+                data['review_task'] = 'research'
+            started = client.post(f'/matters/{slug}/ask', data=data,
+                headers={'Accept': 'application/json'}, follow_redirects=False)
+            assert started.status_code == 202
+        try:
+            assert generating.wait(10)
+            assert client.post(f'/matters/{slug}/uploads', files=[
+                ('files', ('late.txt', b'LateSourceCanary describes a different meeting.', 'text/plain')),
+            ]).status_code == 200
+        finally:
+            continue_generation.set()
+        if answer_mode == 'synchronous':
+            answer = future.result(timeout=10)
+        else:
+            deadline = time.monotonic() + 10
+            while True:
+                if answer_mode == 'research':
+                    job = bench.workspace.research_jobs(matter.matter_id, ACTOR)[0]
+                    state = job.state
+                else:
+                    state = client.get(started.json()['status_url']).json()['state']
+                if state in {'succeeded', 'failed', 'cancelled'}:
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(.02)
+            assert state == 'succeeded'
+            if answer_mode != 'research':
+                answer = bench.workspace.messages(matter.matter_id, conversation.conversation_id)[-1]
+        if answer_mode == 'research':
+            coverage = job.result['coverage']
+            citations = job.result['evidence']
+            route = f'/matters/{slug}/research/{job.job_id}/export'
+        else:
+            coverage = answer.payload['source_coverage']
+            citations = [item for claim in answer.payload['claims'] for item in claim['citations']]
+            assert 'searched 2' not in answer.payload['review_scope']['notice']
+            route = f'/matters/{slug}/conversations/{conversation.conversation_id}/messages/{answer.message_id}/export'
+        assert citations and all(item['source_name'] == 'initial.txt' for item in citations)
+        for item in citations:
+            assert bench.support(matter, item['support_token']).source_name == 'initial.txt'
+        assert coverage['mode'] == 'partial'
+        assert coverage['searchable_count'] == coverage['total_count'] == 2
+        assert 'changed after retrieval' in coverage['notice']
+        for format_name in ('markdown', 'docx'):
+            exported = client.get(route, params={'format': format_name})
+            assert exported.status_code == 200
+            if format_name == 'docx':
+                with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                    assert 'changed after retrieval' in archive.read('word/document.xml').decode()
+            else:
+                assert 'changed after retrieval' in exported.text

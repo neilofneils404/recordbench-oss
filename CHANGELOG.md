@@ -15,7 +15,9 @@
   coverage links after live status updates. Apply attachment boundaries to every
   non-report message subtype, including unnamed encapsulated and extension types.
   Refresh investigation and ordinary-answer coverage after live retrieval; reject empty related roots
-  and MIME defects discovered during body decoding.
+  and MIME defects discovered during body decoding or lazy header parsing.
+  Keep completion-time availability distinct from evidence actually used and retain
+  a rerun notice when availability changes after retrieval during generation.
   Add generated parser/HTTP contracts, browser acceptance and stopped-reader recovery.
 
 - 2026-09-08: Show counts and comparison links for received sources with identical

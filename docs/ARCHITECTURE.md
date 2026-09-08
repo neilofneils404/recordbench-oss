@@ -68,7 +68,9 @@ without entering attached messages or multipart attachments. All non-report
 inventory attachment names/types and state that attachment contents were not
 processed or searched. All parsed parts still count toward the MIME limit,
 including descendants of attachment boundaries; malformed MIME containers fail
-with ordinary retry/remove recovery. Body decoding rechecks MIME defects so
+with ordinary retry/remove recovery. Lazily parsed MIME classification headers
+are checked for their own defects before fallback types can mix attached text
+into parent evidence. Body decoding rechecks MIME defects so
 reported transfer-encoding defects cannot leave best-effort text searchable. The existing catalog supplies a
 matter-scoped email count for readiness and query-time coverage without reading
 source files. Email does not block otherwise-ready queries, but `partial_query`
@@ -78,7 +80,12 @@ Investigation results combine source/attachment coverage with the focused-search
 caution, retaining both in standalone and complete-bundle exports. After final
 evidence validation, investigations refresh coverage from the source catalog to
 include sources admitted during their live retrieval passes. Queued and synchronous
-answers refresh their coverage after generation for the same live-index reason. Structured
+answers refresh their coverage after generation for the same live-index reason.
+The saved counts describe current availability, not an exhaustive searched-source
+ledger. A changed availability snapshot after the last retrieval sets partial
+coverage with a rerun notice retained by exports. Focused-answer wording describes
+current availability and actual cited support without claiming every available
+source was searched. Structured
 delivery/read-receipt body parts are not invented attachment entries; explicit
 attachment disposition or filenames still identify real attached report data.
 Related MIME containers select their body root and inventory other resources;

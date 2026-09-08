@@ -167,6 +167,12 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
             raise ValueError("That email contains too many MIME parts.")
         if part.defects:
             raise ValueError("That email is damaged or malformed.")
+        # Structured MIME headers are parsed lazily and keep their own defects.
+        # A malformed Content-Type can otherwise fall back to text/plain and
+        # turn an attached message into apparent parent body text.
+        for name in ("Content-Type", "Content-Disposition", "Content-Transfer-Encoding", "Content-ID"):
+            if any(header.defects for header in part.get_all(name, [])):
+                raise ValueError("That email is damaged or malformed.")
         if part.is_multipart():
             pending.extend(part.get_payload())
     header_lines = []

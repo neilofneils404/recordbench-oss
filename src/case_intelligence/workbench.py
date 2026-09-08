@@ -258,7 +258,10 @@ ANSWER_STAGE_MESSAGES = {
 }
 
 
-def _source_coverage(readiness: MatterReadinessRecord) -> dict[str, object]:
+def _source_coverage(
+    readiness: MatterReadinessRecord,
+    retrieval_readiness: MatterReadinessRecord | None = None,
+) -> dict[str, object]:
     """Describe query-time coverage without exposing source identity or content."""
 
     partial = readiness.can_query and readiness.attention_count > 0
@@ -283,8 +286,17 @@ def _source_coverage(readiness: MatterReadinessRecord) -> dict[str, object]:
         from .extended_extract import EMAIL_COVERAGE_NOTICE
 
         notice = " ".join(part for part in (notice, EMAIL_COVERAGE_NOTICE) if part)
+    changed = retrieval_readiness is not None and any(
+        getattr(readiness, field) != getattr(retrieval_readiness, field)
+        for field in ("total_count", "searchable_count", "attention_count", "processing_count", "email_count")
+    )
+    if changed:
+        notice = " ".join(part for part in (notice,
+            "Source availability changed after retrieval. Counts show current availability; "
+            "newly available material may not be included. Run the question again to include it.",
+        ) if part)
     return {
-        "mode": "partial" if partial or readiness.email_count else "complete",
+        "mode": "partial" if partial or readiness.email_count or changed else "complete",
         "searchable_count": readiness.searchable_count,
         "total_count": readiness.total_count,
         "excluded_count": excluded,
@@ -343,9 +355,9 @@ def _focused_answer_scope(
         searchable_word = "source" if readiness.searchable_count == 1 else "sources"
         cited_word = "source" if cited_sources == 1 else "sources"
         notice = (
-            f"RecordBench searched {readiness.searchable_count:,} "
-            f"searchable {searchable_word}, compared the strongest matching passages, and "
-            f"grounded this answer in {cited_sources:,} cited {cited_word}."
+            f"At completion, {readiness.searchable_count:,} {searchable_word} had searchable text. "
+            f"This focused answer compared the strongest matching passages and used "
+            f"{cited_sources:,} cited {cited_word}; it did not review every source."
         )
         mode = "focused"
     scope = {
@@ -4089,13 +4101,14 @@ class CaseIntelligenceWorkbench:
             for identifier, citation in evidence.items()
         )
         history = tuple((message.role, message.content) for message in prior[-6:])
+        retrieval_readiness = self.workspace.matter_readiness(matter.matter_id)
         try:
             answer = self.generator.answer(value, packet, history=history)
         except GenerationGroundingRejected:
             answer = self._verification_abstention()
         payload = self._answer_payload(answer, evidence)
         readiness = self.workspace.matter_readiness(matter.matter_id)
-        payload["source_coverage"] = _source_coverage(readiness)
+        payload["source_coverage"] = _source_coverage(readiness, retrieval_readiness)
         evidence_shape = modality_coverage(value, evidence, answer.used_evidence_ids)
         if evidence_shape:
             payload["modality_coverage"] = evidence_shape
@@ -4252,6 +4265,7 @@ class CaseIntelligenceWorkbench:
                 ),
                 required_kinds=intent.required_evidence_kinds,
             )
+            retrieval_readiness = self.workspace.matter_readiness(matter.matter_id)
             if cancelled():
                 raise AnswerJobFailure("Answer cancelled.")
             evidence = {
@@ -4302,7 +4316,7 @@ class CaseIntelligenceWorkbench:
             if evidence_shape:
                 payload["modality_coverage"] = evidence_shape
             readiness = self.workspace.matter_readiness(matter.matter_id)
-            payload["source_coverage"] = _source_coverage(readiness)
+            payload["source_coverage"] = _source_coverage(readiness, retrieval_readiness)
             payload["review_scope"] = _focused_answer_scope(
                 job.question,
                 readiness,
@@ -4639,6 +4653,7 @@ class CaseIntelligenceWorkbench:
             candidate_count = 0
         intent = classify_question(job.question)
 
+        retrieval_readiness = self.workspace.matter_readiness(matter.matter_id)
         for index, query in enumerate(queries[len(passes):], len(passes) + 1):
             if cancelled():
                 raise WorkflowFailure("Research cancelled.")
@@ -4653,6 +4668,7 @@ class CaseIntelligenceWorkbench:
                 )
             except RetrievalUnavailable:
                 found = ()
+            retrieval_readiness = self.workspace.matter_readiness(matter.matter_id)
             candidate_count += len(found)
             selected = self._answer_evidence_citations(
                 matter,
@@ -4804,9 +4820,10 @@ class CaseIntelligenceWorkbench:
         if evidence_shape:
             final_answer_payload["modality_coverage"] = evidence_shape
         # Retrieval passes use the live index, which can gain sources while
-        # an investigation runs. Save coverage from the final source state.
+        # an investigation runs. Describe current availability and disclose
+        # availability changes since the last retrieval pass separately.
         readiness = self.workspace.matter_readiness(matter.matter_id)
-        coverage = _source_coverage(readiness)
+        coverage = _source_coverage(readiness, retrieval_readiness)
         coverage["notice"] = " ".join(part for part in (
             str(coverage["notice"]),
             "This investigation used multiple focused retrieval passes. It is broader than one answer, "

@@ -84,7 +84,9 @@ and exact reference. Group actions return to the current comparison and filters.
 Email review shows attachment names and types while keeping attachment contents
 outside newly extracted parent-message text. Search, answers, investigations and saved exports
 explain that attachments are not fully searched and need separate review. Older
-saved passages retain their citation basis. Coverage links include ready email
+saved passages retain their citation basis. If source availability changes after
+a question retrieves evidence, its saved result explains that newly available
+material may be absent and the question should be run again. Coverage links include ready email
 alongside sources needing attention; see [email attachment coverage and
 recovery](docs/EMAIL_ATTACHMENT_COVERAGE.md).
 
