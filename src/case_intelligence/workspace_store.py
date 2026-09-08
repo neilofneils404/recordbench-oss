@@ -5548,6 +5548,42 @@ class WorkspaceStore:
         return SourceFolderPageRecord(tuple(SourceFolderRecord(row['name'],
             (folder + '/' if folder else '') + row['name'], row['source_count']) for row in rows), count)
 
+    def source_availability_fingerprint(self, matter_id: str) -> str:
+        """Stream only matter-scoped source identity/version/state metadata."""
+        if not _IDENTIFIER.fullmatch(matter_id):
+            raise KeyError(matter_id)
+        digest = hashlib.sha256(b"source-availability-v2\0" + matter_id.encode("ascii"))
+        with self._lock:
+            if self.connection.execute(
+                "SELECT 1 FROM workbench_matter WHERE matter_id=?", (matter_id,),
+            ).fetchone() is None:
+                raise KeyError(matter_id)
+            rows = self.connection.execute(
+                "SELECT c.document_id,c.version_id,c.content_basis_digest,c.source_state,"
+                "c.media_type,c.tone,c.kind,ij.state,mj.state FROM workbench_source_catalog c "
+                "LEFT JOIN workbench_ingest_job ij ON ij.matter_id=c.matter_id AND ij.document_id=c.document_id "
+                "LEFT JOIN workbench_media_job mj ON mj.matter_id=c.matter_id AND mj.document_id=c.document_id "
+                "AND mj.source_version_id=c.version_id WHERE c.matter_id=? ORDER BY c.document_id",
+                (matter_id,),
+            )
+            for row in rows:
+                digest.update(json.dumps(tuple(row), ensure_ascii=True, separators=(",", ":")).encode("ascii"))
+                digest.update(b"\n")
+            digest.update(b"orphan-uploads\0")
+            rows = self.connection.execute(
+                "SELECT i.upload_item_id,i.upload_session_id,i.document_id,i.state,"
+                "i.expected_size,i.received_size,s.state FROM workbench_upload_item i "
+                "JOIN workbench_upload_session s ON s.matter_id=i.matter_id "
+                "AND s.upload_session_id=i.upload_session_id "
+                "LEFT JOIN workbench_source_catalog c ON c.matter_id=i.matter_id AND c.document_id=i.document_id "
+                "WHERE i.matter_id=? AND s.state<>'cancelled' AND (i.document_id IS NULL OR c.document_id IS NULL) "
+                "ORDER BY i.upload_item_id", (matter_id,),
+            )
+            for row in rows:
+                digest.update(json.dumps(tuple(row), ensure_ascii=True, separators=(",", ":")).encode("ascii"))
+                digest.update(b"\n")
+        return digest.hexdigest()
+
     def source_catalog_page(
         self,
         matter_id: str,
@@ -9432,6 +9468,30 @@ class WorkspaceStore:
             )
         return True
 
+    def restart_research_checkpoint(self, job_id: str) -> bool:
+        """Discard a stale search checkpoint while preserving the job and plan."""
+        if not _RESEARCH_JOB.fullmatch(job_id or ""):
+            raise KeyError(job_id)
+        now = self._now()
+        message = "Source coverage changed or was not recorded. Repeating the evidence searches."
+        with self._lock, self.connection:
+            changed = self.connection.execute(
+                "UPDATE workbench_research_job SET result_json='{}',completed_steps=0,"
+                "candidate_count=0,evidence_count=0,stage='searching',message=?,updated_at=? "
+                "WHERE job_id=? AND state='running' AND cancellation_requested=0",
+                (message, now, job_id),
+            ).rowcount
+            if changed != 1:
+                return False
+            row = self.connection.execute(
+                "SELECT total_steps FROM workbench_research_job WHERE job_id=?", (job_id,),
+            ).fetchone()
+            self._append_research_event_locked(
+                job_id, state="running", stage="searching", message=message,
+                completed_steps=0, total_steps=int(row["total_steps"]), created_at=now,
+            )
+        return True
+
     def checkpoint_research_job(
         self, job_id: str, result: Mapping[str, object]
     ) -> ResearchJobRecord:
@@ -9467,7 +9527,9 @@ class WorkspaceStore:
         return bool(row["cancellation_requested"] or row["state"] == "cancelled")
 
     def finish_research_job(self, job_id: str, result: Mapping[str, object]) -> ResearchJobRecord:
-        encoded = json.dumps(dict(result), ensure_ascii=False, separators=(",", ":"))
+        result = dict(result)
+        result.pop("_retrieval_source_fingerprint", None)
+        encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
         if len(encoded) > 2_000_000:
             raise ValueError("research result is too large")
         now = self._now()

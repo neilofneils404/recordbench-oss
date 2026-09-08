@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from email.message import EmailMessage
+from concurrent.futures import ThreadPoolExecutor
 import html
 import re
 import io
 import time
+import threading
 import zipfile
 
 import pytest
@@ -315,16 +317,467 @@ def test_related_root_is_selected_without_reading_other_text_resources(tmp_path,
     assert "Attachment: body.html" not in text
 
 
-@pytest.mark.parametrize("invalid_root", ["missing", "ambiguous"])
+@pytest.mark.parametrize("invalid_root", ["missing", "ambiguous", "empty", "whitespace"])
 def test_unresolvable_related_root_is_not_guessed(tmp_path, invalid_root):
     from email.parser import BytesParser
     from email import policy
     message = BytesParser(policy=policy.default).parsebytes(generated_email("related"))
     message.set_param("start", "<absent@example.test>" if invalid_root == "missing" else "<body@example.test>")
+    if invalid_root in {"empty", "whitespace"}:
+        message.set_param("start", "" if invalid_root == "empty" else "   ")
     if invalid_root == "ambiguous":
         resource = message.get_payload()[1]
         resource.replace_header("Content-ID", "<body@example.test>")
     path = tmp_path / "related.eml"
     path.write_bytes(message.as_bytes())
     with pytest.raises(ValueError, match="message body"):
+        extract_email(path)
+
+
+@pytest.mark.parametrize("encoded_body", ["UGFyZW50Qm9keUNhbmFyeQ==!", "UGFyZW50Qm9keUNhbmFyeQ"])
+def test_invalid_base64_body_uses_processing_recovery(tmp_path, encoded_body):
+    raw = ("Subject: Generated damaged encoding\r\nContent-Type: text/plain; charset=utf-8\r\n"
+        "Content-Transfer-Encoding: base64\r\n\r\n" + encoded_body + "\r\n").encode()
+    path = tmp_path / "generated.eml"
+    path.write_bytes(raw)
+    with pytest.raises(ValueError, match="malformed"):
+        extract_email(path)
+
+
+def test_investigation_refreshes_coverage_after_upload_between_live_passes(tmp_path, monkeypatch):
+    app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(),
+        auth_mode="test", malware_scanner=CleanScanner(), malware_scan_mode="extended")
+    first_pass = threading.Event()
+    continue_search = threading.Event()
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated changing investigation coverage")
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        initial = client.post(f"/matters/{slug}/uploads", files=[
+            ("files", ("generated.txt", b"ParentBodyCanary describes the generated meeting.", "text/plain")),
+        ])
+        assert initial.status_code == 200
+        assert bench.workspace.matter_readiness(matter.matter_id).email_count == 0
+        original_search = bench._answer_search
+
+        def pause_after_first_pass(*args, **kwargs):
+            found = original_search(*args, **kwargs)
+            if not first_pass.is_set():
+                first_pass.set()
+                assert continue_search.wait(10), "Concurrent upload did not finish"
+            return found
+
+        monkeypatch.setattr(bench, "_answer_search", pause_after_first_pass)
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        started = client.post(f"/matters/{slug}/ask", data={
+            "conversation": conversation.conversation_id,
+            "question": "What does ParentBodyCanary describe?", "review_task": "research",
+            "request_key": "answer-request-" + "e" * 32,
+        }, follow_redirects=False)
+        assert started.status_code == 303
+        try:
+            assert first_pass.wait(10)
+            added = client.post(f"/matters/{slug}/uploads", files=[
+                ("files", ("generated.eml", generated_email(), "message/rfc822")),
+            ])
+            assert added.status_code == 200
+        finally:
+            continue_search.set()
+        job_id = bench.workspace.research_jobs(matter.matter_id, ACTOR)[0].job_id
+        deadline = time.monotonic() + 10
+        while True:
+            job = bench.workspace.research_job(matter.matter_id, ACTOR, job_id)
+            if job.state in {"succeeded", "failed", "cancelled"}:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(.02)
+        assert job.state == "succeeded"
+        store = bench.source_store(matter)
+        email = next(document for document in store.documents.values() if document.media_type == "message/rfc822")
+        email_evidence = [item for item in job.result["evidence"] if item["document_id"] == email.document_id]
+        assert email_evidence
+        for item in email_evidence:
+            assert item["source_version_id"] == email.version_id
+            support = bench.support(matter, item["support_token"])
+            assert support.source_name == "generated.eml"
+        coverage = job.result["coverage"]
+        assert coverage["mode"] == "partial"
+        assert coverage["searchable_count"] == 2 and coverage["total_count"] == 2
+        assert coverage["excluded_count"] == 0
+        assert EMAIL_COVERAGE_NOTICE in coverage["notice"]
+        page = client.get(f"/matters/{slug}/research", params={"job": job_id})
+        assert EMAIL_COVERAGE_NOTICE in page.text
+        for format_name in ("markdown", "json", "docx"):
+            exported = client.get(f"/matters/{slug}/research/{job_id}/export", params={"format": format_name})
+            assert exported.status_code == 200
+            if format_name == "docx":
+                with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                    assert EMAIL_COVERAGE_NOTICE in archive.read("word/document.xml").decode()
+            else:
+                assert EMAIL_COVERAGE_NOTICE in exported.text
+        bundle = client.get(f"/matters/{slug}/export")
+        assert bundle.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+            entries = [name for name in archive.namelist() if name.startswith("investigations/")]
+            assert entries and all(EMAIL_COVERAGE_NOTICE in archive.read(name).decode() for name in entries)
+
+
+@pytest.mark.parametrize("answer_mode", ["queued", "synchronous"])
+def test_answer_coverage_includes_email_uploaded_before_live_retrieval(tmp_path, monkeypatch, answer_mode):
+    app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(),
+        auth_mode="test", malware_scanner=CleanScanner(), malware_scan_mode="extended")
+    before_search = threading.Event()
+    continue_search = threading.Event()
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as executor:
+        slug = _matter(client, "Generated changing answer coverage")
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        uploaded = client.post(f"/matters/{slug}/uploads", files=[
+            ("files", ("generated.txt", b"InitialSourceCanary contains unrelated housekeeping.", "text/plain")),
+        ])
+        assert uploaded.status_code == 200
+        assert bench.workspace.matter_readiness(matter.matter_id).email_count == 0
+        original_search = bench._answer_search
+
+        def pause_before_retrieval(*args, **kwargs):
+            before_search.set()
+            assert continue_search.wait(10), "Concurrent upload did not finish"
+            return original_search(*args, **kwargs)
+
+        monkeypatch.setattr(bench, "_answer_search", pause_before_retrieval)
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        question = "What does ParentBodyCanary describe?"
+        if answer_mode == "queued":
+            started = client.post(f"/matters/{slug}/ask", data={
+                "conversation": conversation.conversation_id, "question": question,
+                "request_key": "answer-request-" + "f" * 32,
+            }, headers={"Accept": "application/json"})
+            assert started.status_code == 202
+        else:
+            future = executor.submit(bench.ask, matter, conversation, question)
+        try:
+            assert before_search.wait(10)
+            added = client.post(f"/matters/{slug}/uploads", files=[
+                ("files", ("generated.eml", generated_email(), "message/rfc822")),
+            ])
+            assert added.status_code == 200
+        finally:
+            continue_search.set()
+        if answer_mode == "queued":
+            deadline = time.monotonic() + 10
+            while True:
+                status = client.get(started.json()["status_url"]).json()
+                if status["state"] in {"succeeded", "failed", "cancelled"}:
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(.02)
+            assert status["state"] == "succeeded"
+            answer = bench.workspace.messages(matter.matter_id, conversation.conversation_id)[-1]
+        else:
+            answer = future.result(timeout=10)
+        assert answer.role == "assistant" and "ParentBodyCanary" in answer.content
+        citations = [citation for claim in answer.payload["claims"] for citation in claim["citations"]]
+        assert any(item["source_name"] == "generated.eml" for item in citations)
+        for item in citations:
+            assert bench.support(matter, item["support_token"]).source_name == item["source_name"]
+        coverage = answer.payload["source_coverage"]
+        assert coverage["mode"] == "partial"
+        assert coverage["searchable_count"] == 2 and coverage["total_count"] == 2
+        assert EMAIL_COVERAGE_NOTICE in coverage["notice"]
+        root = f"/matters/{slug}/conversations/{conversation.conversation_id}"
+        for route in [root + "/export", root + f"/messages/{answer.message_id}/export"]:
+            for format_name in ("markdown", "docx"):
+                exported = client.get(route, params={"format": format_name})
+                assert exported.status_code == 200
+                if format_name == "docx":
+                    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                        assert EMAIL_COVERAGE_NOTICE in archive.read("word/document.xml").decode()
+                else:
+                    assert EMAIL_COVERAGE_NOTICE in exported.text
+
+
+@pytest.mark.parametrize('header', [b'Content-Type: message', b'Content-Disposition: attachment; filename', b'Content-Transfer-Encoding: base64 junk'])
+def test_malformed_mime_classification_header_uses_processing_recovery(tmp_path, header):
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(b'Content-Type: multipart/mixed; boundary="generated"\r\n\r\n'
+        b'--generated\r\nContent-Type: text/plain\r\n\r\nParentBodyCanary\r\n'
+        b'--generated\r\n' + header + b'\r\n\r\nSubject: AttachedCanary\r\n\r\n'
+        b'AttachmentOnlyCanary\r\n--generated--\r\n')
+    with pytest.raises(ValueError, match='malformed'):
+        extract_email(path)
+
+
+@pytest.mark.parametrize('answer_mode,pause_stage', [('queued', 'generation'), ('synchronous', 'generation'), ('research', 'generation'), ('queued', 'finishing'), ('research', 'finishing')])
+@pytest.mark.parametrize('source_change', ['add', 'swap', 'pending'])
+def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path, monkeypatch, answer_mode, source_change, pause_stage):
+    app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
+        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended',
+        background_ingestion=source_change == 'pending', ingestion_workers=1)
+    generating = threading.Event()
+    continue_generation = threading.Event()
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as executor:
+        slug = _matter(client, 'Generated late source availability')
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('initial.txt', b'ParentBodyCanary describes a generated meeting.', 'text/plain')),
+        ]).status_code == 200
+        if source_change == 'pending':
+            deadline = time.monotonic() + 10
+            while not bench.workspace.matter_readiness(matter.matter_id).can_query:
+                assert time.monotonic() < deadline
+                time.sleep(.02)
+        if source_change == 'swap':
+            assert client.post(f'/matters/{slug}/uploads', files=[
+                ('files', ('unused.txt', b'Unrelated housekeeping instructions only.', 'text/plain')),
+            ]).status_code == 200
+            store = bench.source_store(matter)
+            unused = next(item for item in store.documents.values() if item.display_name == 'unused.txt')
+        original_answer = bench.generator.answer
+
+        def pause_final_generation(question, *args, **kwargs):
+            if pause_stage == 'generation' and (answer_mode != 'research' or question.startswith('Answer the original research objective')):
+                generating.set()
+                assert continue_generation.wait(10), 'Concurrent upload did not finish'
+            return original_answer(question, *args, **kwargs)
+
+        monkeypatch.setattr(bench.generator, 'answer', pause_final_generation)
+        if pause_stage == 'finishing':
+            coordinator = bench.answers if answer_mode == 'queued' else bench.research
+            original_finish = coordinator.finish
+            def pause_before_save(*args, **kwargs):
+                generating.set()
+                assert continue_generation.wait(10), 'Concurrent upload did not finish'
+                return original_finish(*args, **kwargs)
+            monkeypatch.setattr(coordinator, 'finish', pause_before_save)
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        question = 'What does ParentBodyCanary describe?'
+        if answer_mode == 'synchronous':
+            future = executor.submit(bench.ask, matter, conversation, question)
+        else:
+            data = {'conversation': conversation.conversation_id, 'question': question,
+                'request_key': 'answer-request-' + 'd' * 32}
+            if answer_mode == 'research':
+                data['review_task'] = 'research'
+            started = client.post(f'/matters/{slug}/ask', data=data,
+                headers={'Accept': 'application/json'}, follow_redirects=False)
+            assert started.status_code == 202
+        try:
+            assert generating.wait(10)
+            if source_change == 'swap':
+                assert client.post(f'/matters/{slug}/sources/{store.action_token(unused)}/remove').status_code == 200
+            if source_change == 'pending':
+                from tests.test_intake_receipt_http import descriptor, selection, upload
+                files = [descriptor('Pending/late.txt', 128)]
+                receipt = selection(client, slug, files, [0])
+                upload(client, slug, receipt, files, [0])
+                assert len(bench.source_store(matter).documents) == 1
+                readiness = bench.workspace.matter_readiness(matter.matter_id)
+                assert readiness.total_count == 2 and readiness.processing_count == 1
+            else:
+                assert client.post(f'/matters/{slug}/uploads', files=[
+                    ('files', ('late.txt', b'LateSourceCanary describes a different meeting.', 'text/plain')),
+                ]).status_code == 200
+        finally:
+            continue_generation.set()
+        if answer_mode == 'synchronous':
+            answer = future.result(timeout=10)
+        else:
+            deadline = time.monotonic() + 10
+            while True:
+                if answer_mode == 'research':
+                    job = bench.workspace.research_jobs(matter.matter_id, ACTOR)[0]
+                    state = job.state
+                else:
+                    state = client.get(started.json()['status_url']).json()['state']
+                if state in {'succeeded', 'failed', 'cancelled'}:
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(.02)
+            assert state == 'succeeded'
+            if answer_mode != 'research':
+                answer = bench.workspace.messages(matter.matter_id, conversation.conversation_id)[-1]
+        if answer_mode == 'research':
+            coverage = job.result['coverage']
+            assert '_retrieval_source_fingerprint' not in job.result
+            citations = job.result['evidence']
+            route = f'/matters/{slug}/research/{job.job_id}/export'
+        else:
+            coverage = answer.payload['source_coverage']
+            citations = [item for claim in answer.payload['claims'] for item in claim['citations']]
+            assert 'searched 2' not in answer.payload['review_scope']['notice']
+            assert answer.payload['review_scope']['searchable_source_count'] == (1 if source_change == 'pending' else 2)
+            route = f'/matters/{slug}/conversations/{conversation.conversation_id}/messages/{answer.message_id}/export'
+        assert citations and all(item['source_name'] == 'initial.txt' for item in citations)
+        for item in citations:
+            assert bench.support(matter, item['support_token']).source_name == 'initial.txt'
+        assert coverage['mode'] == 'partial'
+        assert coverage['total_count'] == 2
+        assert coverage['searchable_count'] == (1 if source_change == 'pending' else 2)
+        assert coverage['excluded_count'] == (1 if source_change == 'pending' else 0)
+        assert 'changed after the search started' in coverage['notice']
+        for format_name in ('markdown', 'docx'):
+            exported = client.get(route, params={'format': format_name})
+            assert exported.status_code == 200
+            if format_name == 'docx':
+                with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                    assert 'changed after the search started' in archive.read('word/document.xml').decode()
+            else:
+                assert 'changed after the search started' in exported.text
+
+
+@pytest.mark.parametrize('parameter', ['filename', 'name'])
+@pytest.mark.parametrize('filename', ['', '   '])
+def test_explicit_empty_filename_is_an_unnamed_attachment(tmp_path, parameter, filename):
+    header = (f'Content-Disposition: inline; filename="{filename}"' if parameter == 'filename'
+        else f'Content-Type: text/plain; name="{filename}"')
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(('Content-Type: multipart/mixed; boundary="generated"\r\n\r\n'
+        '--generated\r\nContent-Type: text/plain\r\n\r\nParentBodyCanary\r\n'
+        '--generated\r\n' + header + '\r\n\r\nAttachmentOnlyCanary\r\n--generated--\r\n').encode())
+    text = '\n'.join(section.text for section in extract_email(path))
+    assert 'ParentBodyCanary' in text and 'AttachmentOnlyCanary' not in text
+    assert 'Attachment: unnamed (text/plain)' in text
+    assert 'Attachment contents were not processed or searched' in text
+
+
+@pytest.mark.parametrize('content_id', [
+    b'(generated) <body@example.test>',
+    b'(before <not-the-root@example.test>) <body@example.test> (after)',
+    b'(outer (inner))\n\t<body@example.test>',
+])
+def test_related_root_accepts_content_id_comments_and_folding(tmp_path, content_id):
+    from email import policy
+    from email.parser import BytesParser
+    message = BytesParser(policy=policy.default).parsebytes(generated_email('related'))
+    message.set_param('start', '<body@example.test>')
+    raw = message.as_bytes().replace(b'Content-ID: <body@example.test>', b'Content-ID: ' + content_id)
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(raw)
+    text = '\n'.join(section.text for section in extract_email(path))
+    assert 'ParentBodyCanary' in text and 'AttachmentOnlyCanary' not in text
+    assert 'Attachment: unnamed (text/plain)' in text
+
+
+def test_related_root_ambiguity_is_checked_after_content_id_normalization(tmp_path):
+    from email import policy
+    from email.parser import BytesParser
+    message = BytesParser(policy=policy.default).parsebytes(generated_email('related'))
+    message.set_param('start', '<body@example.test>')
+    message.get_payload()[1].replace_header('Content-ID', '(same root) <body@example.test>')
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(message.as_bytes())
+    with pytest.raises(ValueError, match='ambiguous'):
+        extract_email(path)
+
+
+@pytest.mark.parametrize('checkpoint_kind', ['current', 'legacy'])
+def test_recovered_final_research_checkpoint_retrieves_new_sources(tmp_path, monkeypatch, checkpoint_kind):
+    app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
+        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
+    with TestClient(app) as client:
+        slug = _matter(client, 'Generated final-pass recovery')
+        bench = app.state.workbench
+        bench.research.close()
+        matter = bench.matter(slug, ACTOR)
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('initial.txt', b'ParentBodyCanary describes a generated meeting.', 'text/plain')),
+        ]).status_code == 200
+        job, created = bench.workspace.queue_research_job(matter.matter_id, ACTOR,
+            'What does ParentBodyCanary describe?', 'Generated recovery', 'research-request-' + 'b' * 32)
+        assert created
+        claimed = bench.workspace.claim_research_job('generated-first-worker')
+        assert claimed.job_id == job.job_id
+        original_checkpoint = bench.workspace.checkpoint_research_job
+        original_answer = bench.generator.answer
+
+        class StoppedAfterPasses(Exception):
+            pass
+
+        def stop_before_final_generation(question, *args, **kwargs):
+            if question.startswith('Answer the original research objective'):
+                raise StoppedAfterPasses()
+            return original_answer(question, *args, **kwargs)
+
+        if checkpoint_kind == 'legacy':
+            def legacy_checkpoint(job_id, result):
+                result = dict(result)
+                result.pop('retrieval_source_fingerprint', None)
+                return original_checkpoint(job_id, result)
+            monkeypatch.setattr(bench.workspace, 'checkpoint_research_job', legacy_checkpoint)
+        monkeypatch.setattr(bench.generator, 'answer', stop_before_final_generation)
+        with pytest.raises(StoppedAfterPasses):
+            bench._process_research_job(claimed, lambda: False)
+        stopped = bench.workspace.research_job(matter.matter_id, ACTOR, job.job_id)
+        assert len(stopped.result['passes']) == len(stopped.plan['queries'])
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('late.txt', b'ParentBodyCanary also describes a later generated meeting.', 'text/plain')),
+        ]).status_code == 200
+        assert bench.workspace.recover_running_research_jobs() == 1
+        resumed = bench.workspace.claim_research_job('generated-resumed-worker')
+        monkeypatch.setattr(bench.generator, 'answer', original_answer)
+        monkeypatch.setattr(bench.workspace, 'checkpoint_research_job', original_checkpoint)
+        searches = []
+        original_search = bench._answer_search
+        def tracked_search(*args, **kwargs):
+            searches.append(args[2])
+            return original_search(*args, **kwargs)
+        monkeypatch.setattr(bench, '_answer_search', tracked_search)
+        result = bench._process_research_job(resumed, lambda: False)
+        finished = bench.workspace.finish_research_job(job.job_id, result)
+        assert finished.state == 'succeeded'
+        assert searches == list(stopped.plan['queries'])
+        assert any(item['source_name'] == 'late.txt' for item in result['evidence'])
+        for item in result['evidence']:
+            assert bench.support(matter, item['support_token']).source_name == item['source_name']
+        assert result['coverage']['searchable_count'] == result['coverage']['total_count'] == 2
+        for format_name in ('markdown', 'json', 'docx'):
+            exported = client.get(f'/matters/{slug}/research/{job.job_id}/export', params={'format': format_name})
+            assert exported.status_code == 200
+            if format_name == 'docx':
+                with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                    assert 'late.txt' in archive.read('word/document.xml').decode()
+            else:
+                assert 'late.txt' in exported.text
+
+
+def test_source_availability_boundary_is_matter_scoped_and_version_sensitive(tmp_path):
+    app = create_workbench_app(tmp_path / 'runtime', generator=EvidenceEchoGenerator(),
+        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
+    with TestClient(app) as client:
+        slug = _matter(client, 'Generated boundary owner')
+        other_slug = _matter(client, 'Generated foreign boundary')
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        fingerprint = lambda: bench.workspace.source_availability_fingerprint(matter.matter_id)
+        initial = fingerprint()
+        assert client.post(f'/matters/{other_slug}/uploads', files=[
+            ('files', ('foreign.txt', b'ForeignBoundaryCanary', 'text/plain')),
+        ]).status_code == 200
+        assert fingerprint() == initial
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('own.txt', b'OwnBoundaryCanary', 'text/plain')),
+        ]).status_code == 200
+        uploaded = fingerprint()
+        assert uploaded != initial
+        store = bench.source_store(matter)
+        document = next(iter(store.documents.values()))
+        with store.mutation_guard():
+            document.version_id = 'f' * 32
+            store._save((document.document_id,))
+        assert fingerprint() != uploaded
+
+
+@pytest.mark.parametrize('headers', [
+    b'Content-Type: text/plain\r\nContent-Type: message/rfc822',
+    b'Content-Disposition: inline\r\nContent-Disposition: attachment; filename="generated.txt"',
+    b'Content-Transfer-Encoding: 7bit\r\nContent-Transfer-Encoding: quoted-printable',
+    b'Content-ID: <first@example.test>\r\nContent-ID: <second@example.test>',
+])
+def test_duplicate_mime_classification_headers_use_processing_recovery(tmp_path, headers):
+    path = tmp_path / 'generated.eml'
+    path.write_bytes(b'Content-Type: multipart/mixed; boundary="generated"\r\n\r\n'
+        b'--generated\r\nContent-Type: text/plain\r\n\r\nParentBodyCanary\r\n'
+        b'--generated\r\n' + headers + b'\r\n\r\nAttachmentOnlyCanary\r\n--generated--\r\n')
+    with pytest.raises(ValueError, match='malformed'):
         extract_email(path)
