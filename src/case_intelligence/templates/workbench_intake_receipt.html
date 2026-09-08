@@ -29,10 +29,10 @@
   {% if can_discard_receipt %}
   <details class="intake-receipt-discard">
     <summary>Discard receipt</summary>
-    <p>Download this receipt first if you want to keep it. Discarding removes this selection record. It does not delete uploaded sources.</p>
+    <p>Download this receipt first if you want to keep it. Discarding removes this selection record{% if receipt.has_upload_bindings %} and cancels its pending uploads{% endif %}. Receipts with received data stay with the matter.</p>
     <form method="post" action="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}/discard">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label><input type="checkbox" name="confirm" value="yes" required> I want to discard this receipt.</label>
+      <label><input type="checkbox" name="confirm" value="yes" required> I want to {% if receipt.has_upload_bindings %}cancel these pending uploads and {% endif %}discard this receipt.</label>
       <button class="button button-secondary" type="submit">Discard receipt</button>
     </form>
   </details>

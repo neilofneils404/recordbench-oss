@@ -84,5 +84,8 @@ API and downloads; they do not attest historical capacity or the contents of a
 file chooser. Independent server filename checks, authoritative upload admission,
 received-byte counts and exact source availability remain separate. Browser
 review states never authorize upload. Receipt metadata has atomic cumulative
-matter, creator and workspace limits; only owners may discard receipts
-without upload bindings.
+matter, creator and workspace limits. Only owners may discard receipts with no
+received data, including cancelling bound empty upload attempts. The same source
+mutation lock covers chunk writes/offset commits and cleanup; cleanup checks saved
+partial files as well as control rows. Requests recheck upload state after reading
+their body and acquiring that lock, so a delayed request cannot write after cleanup.

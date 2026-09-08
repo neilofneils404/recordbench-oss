@@ -40,7 +40,8 @@ use idempotent metadata/session bindings and exact source versions, and provide
 coherent paginated views and complete exports. Their tables stay in the existing
 temporary-matter deletion and backup boundary. Atomic matter/creator/workspace
 receipt, selected-row and metadata-byte limits admit writes before storage grows;
-only owners can discard receipts without upload bindings.
+only owners can cancel empty pending uploads and discard their receipts. Received
+source data and saved partial bytes prevent discard.
 
 Accepted documents then enter extraction. Text PDFs use native extraction;
 missing-text pages use bounded CPU OCR. Media enters the durable media queue,

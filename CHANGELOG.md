@@ -6,8 +6,9 @@
   retry, reload and export. Add paginated receipts, exact received-source links,
   separate byte/processing counts, legacy upload adoption and complete-bundle
   inclusion. Enforce atomic matter, creator and workspace metadata limits, permit
-  owner-confirmed cleanup of receipts without uploads, and allow collection-name
-  correction without losing retry identity. Identify reported selection reasons
+  owner-confirmed cleanup before data is received, and allow collection-name
+  correction without losing retry identity. Cancel empty bound upload attempts
+  during cleanup while preserving saved partial bytes and rejecting late writes. Identify reported selection reasons
   explicitly across UI/API/exports, reject unsupported Unicode names, and clear
   the earlier receipt link when a new selection starts. Keep receipt state within
   the existing temporary matter, activity,
