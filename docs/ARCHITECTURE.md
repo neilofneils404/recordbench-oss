@@ -60,6 +60,19 @@ with previous readers. SQL materializes at most 100 display rows before counting
 matching sources; folder and matching-only filters stay database-native.
 Comparison URLs use existing matter-bound source action tokens, never hashes.
 
+[Email extraction](EMAIL_ATTACHMENT_COVERAGE.md) traverses the parent body tree
+without entering attached messages or multipart attachments. Header sections
+inventory attachment names/types and state that attachment contents were not
+processed or searched. All parsed parts still count toward the MIME limit,
+including descendants of attachment boundaries; malformed MIME containers fail
+with ordinary retry/remove recovery. The existing catalog supplies a
+matter-scoped email count for readiness and query-time coverage without reading
+source files. Email does not block otherwise-ready queries, but `partial_query`
+also identifies incomplete attachment coverage with zero excluded source files.
+The ordinary answer coverage snapshot flows into UI and work-product exports.
+No schema or source registry shape changes; older passages and indexes are not
+silently rewritten or assigned a new citation basis.
+
 Accepted documents then enter extraction. Text PDFs use native extraction;
 missing-text pages use bounded CPU OCR. Media enters the durable media queue,
 which performs a bounded offline recording check before processor submission.

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-08: Keep attached-message and multipart-attachment contents out of
+  newly extracted parent email text. Inventory named, unnamed and inline non-body
+  attachments with an explicit unprocessed-content notice; reject malformed MIME
+  containers. Show attachment coverage in review, search, answers and saved
+  exports while retaining old passages and citations without automatic reprocessing.
+  Add generated parser/HTTP contracts, browser acceptance and stopped-reader recovery.
+
 - 2026-09-08: Show counts and comparison links for received sources with identical
   bytes, plus a matching-files filter. Preserve distinct sources, collections,
   folder/filter scope and exact references; keep comparison after group actions.

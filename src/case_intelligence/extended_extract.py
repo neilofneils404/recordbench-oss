@@ -20,6 +20,10 @@ MAX_IMAGE_DIMENSION = 30_000
 MAX_IMAGE_PIXELS = 100_000_000
 MAX_EMAIL_PARTS = 500
 MAX_EMAIL_BODY_BYTES = 10 * 1024 * 1024
+EMAIL_COVERAGE_NOTICE = (
+    "Email searches use extracted message text. Attachment contents are not fully "
+    "searched; review any attachments separately."
+)
 MAX_TEXT_CONTAINER_BYTES = 25 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 2_000
 MAX_ARCHIVE_EXPANDED_BYTES = 150 * 1024 * 1024
@@ -152,9 +156,17 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
         message = BytesParser(policy=policy.default).parsebytes(raw)
     except Exception as exc:
         raise ValueError("That email is damaged or malformed.") from exc
-    parts = tuple(message.walk())
-    if len(parts) > MAX_EMAIL_PARTS:
-        raise ValueError("That email contains too many MIME parts.")
+    pending = [message]
+    part_count = 0
+    while pending:
+        part = pending.pop()
+        part_count += 1
+        if part_count > MAX_EMAIL_PARTS:
+            raise ValueError("That email contains too many MIME parts.")
+        if part.defects:
+            raise ValueError("That email is damaged or malformed.")
+        if part.is_multipart():
+            pending.extend(part.get_payload())
     header_lines = []
     for label in ("From", "To", "Cc", "Date", "Subject", "Message-ID"):
         value = " ".join(str(message.get(label, "")).split())
@@ -164,16 +176,26 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
     rich: list[str] = []
     attachments: list[str] = []
     used = 0
-    for part in parts:
-        if part.is_multipart():
-            continue
+    # Walk the body tree explicitly. A generic MIME walk enters attached
+    # messages and multipart attachments, mixing their text into parent evidence.
+    pending = [message]
+    while pending:
+        part = pending.pop()
         disposition = (part.get_content_disposition() or "").casefold()
         filename = " ".join((part.get_filename() or "").split())[:240]
         media_type = part.get_content_type()
-        if disposition == "attachment" or filename:
+        attachment = part is not message and (
+            disposition == "attachment" or filename or
+            part.get_content_maintype() == "message" or
+            (not part.is_multipart() and media_type not in {"text/plain", "text/html"})
+        )
+        if attachment:
             attachments.append(
                 f"Attachment: {filename or 'unnamed'} ({media_type})"
             )
+            continue
+        if part.is_multipart():
+            pending.extend(reversed(part.get_payload()))
             continue
         if media_type not in {"text/plain", "text/html"}:
             continue
@@ -189,6 +211,8 @@ def extract_email(path: Path) -> tuple[ExtractedSection, ...]:
             rich.append(parser.text())
     body = "\n\n".join(plain or rich)
     sections: list[ExtractedSection] = []
+    if attachments:
+        attachments.append("Attachment contents were not processed or searched. Review attachments separately.")
     metadata = "\n".join((*header_lines, *attachments)).strip()
     if metadata:
         sections.append(ExtractedSection(1, "Email headers", _bounded_text(metadata)))

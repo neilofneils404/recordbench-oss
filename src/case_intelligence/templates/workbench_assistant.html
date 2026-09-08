@@ -1,7 +1,7 @@
 <aside class="matter-assistant" data-assistant-dock data-assistant-presentation="{{ assistant.presentation }}" data-fragment-url="{{ assistant.fragment_url }}" data-matter-id="{{ matter.matter_id }}" data-conversation-id="{{ assistant.conversation.conversation_id }}" data-matter-ready="{{ 'true' if assistant.matter_ready else 'false' }}" aria-label="Ask RecordBench">
   <button class="assistant-collapsed-tab" type="button" data-assistant-expand aria-label="Open Ask RecordBench">
     <span class="assistant-brand-mark" aria-hidden="true">RB</span>
-    <span><strong>{{ assistant.display_label }}</strong><small data-assistant-readiness-copy>{{ assistant.searchable_source_count }} of {{ assistant.readiness.total_count }} searchable{% if assistant.readiness.partial_query %} · {{ assistant.readiness.excluded_count }} excluded{% endif %}</small></span>
+    <span><strong>{{ assistant.display_label }}</strong><small data-assistant-readiness-copy>{{ assistant.searchable_source_count }} of {{ assistant.readiness.total_count }} searchable{% if assistant.readiness.excluded_count %} · {{ assistant.readiness.excluded_count }} excluded{% endif %}</small></span>
   </button>
   <div class="assistant-panel">
     <header class="assistant-header">
@@ -29,8 +29,8 @@
     </div>
 
     <div class="assistant-source-coverage" data-assistant-coverage {% if not assistant.readiness.partial_query %}hidden{% endif %} role="note">
-      <div><strong>Searchable subset</strong><span data-assistant-coverage-copy>{{ assistant.readiness.coverage_notice }}</span></div>
-      <a data-assistant-coverage-action href="{{ assistant.readiness.action_url or assistant.readiness.sources_url }}">Review issues</a>
+      <div><strong>Search coverage</strong><span data-assistant-coverage-copy>{{ assistant.readiness.coverage_notice }}</span></div>
+      <a data-assistant-coverage-action href="{{ assistant.readiness.action_url or assistant.readiness.sources_url }}">Review sources</a>
     </div>
 
     <div class="assistant-thread" data-assistant-thread data-has-messages="{{ 'true' if assistant.messages else 'false' }}" aria-live="polite">

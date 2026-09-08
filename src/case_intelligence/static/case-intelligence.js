@@ -3494,7 +3494,7 @@
     }
     const collapsedCopy = assistantDock.querySelector("[data-assistant-readiness-copy]");
     if (collapsedCopy) {
-      const excluded = readiness.partial_query === true
+      const excluded = Number(readiness.excluded_count || 0) > 0
         ? ` · ${readiness.excluded_count || 0} excluded`
         : "";
       collapsedCopy.textContent = `${readiness.searchable_count || 0} of ${readiness.total_count || 0} searchable${excluded}`;

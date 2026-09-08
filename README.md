@@ -81,6 +81,12 @@ and a link to inspect those files together across collections. A matching-files
 filter and saved source groups help review copies while preserving every source
 and exact reference. Group actions return to the current comparison and filters.
 
+Email review shows attachment names and types while keeping attachment contents
+outside newly extracted parent-message text. Search, answers and saved exports
+explain that attachments are not fully searched and need separate review. Older
+saved passages retain their citation basis; see [email attachment coverage and
+recovery](docs/EMAIL_ATTACHMENT_COVERAGE.md).
+
 Case-note edits preserve unsaved fields when another team member has changed
 the note. Confirm/Delete actions also require the version just reviewed. See
 [shared note editing and recovery](docs/CASE_NOTE_EDITING.md).

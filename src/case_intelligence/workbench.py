@@ -261,7 +261,7 @@ ANSWER_STAGE_MESSAGES = {
 def _source_coverage(readiness: MatterReadinessRecord) -> dict[str, object]:
     """Describe query-time coverage without exposing source identity or content."""
 
-    partial = readiness.partial_query
+    partial = readiness.can_query and readiness.attention_count > 0
     excluded = readiness.attention_count if partial else 0
     notice = ""
     if partial:
@@ -279,8 +279,12 @@ def _source_coverage(readiness: MatterReadinessRecord) -> dict[str, object]:
             f"{excluded:,} sources are not searchable and are excluded. "
             "Recordings without a transcript remain available for playback and review."
         )
+    if readiness.email_count:
+        from .extended_extract import EMAIL_COVERAGE_NOTICE
+
+        notice = " ".join(part for part in (notice, EMAIL_COVERAGE_NOTICE) if part)
     return {
-        "mode": "partial" if partial else "complete",
+        "mode": "partial" if partial or readiness.email_count else "complete",
         "searchable_count": readiness.searchable_count,
         "total_count": readiness.total_count,
         "excluded_count": excluded,
@@ -4059,6 +4063,7 @@ class CaseIntelligenceWorkbench:
         if not value or len(value) > MAX_QUESTION_CHARS:
             raise WorkspaceProblem("Question must be between 1 and 2,000 characters.")
         prior = self.workspace.messages(matter.matter_id, conversation.conversation_id)
+        readiness = self.workspace.matter_readiness(matter.matter_id)
         self.workspace.append_message(
             matter.matter_id, conversation.conversation_id, "user", value
         )
@@ -4090,12 +4095,13 @@ class CaseIntelligenceWorkbench:
         except GenerationGroundingRejected:
             answer = self._verification_abstention()
         payload = self._answer_payload(answer, evidence)
+        payload["source_coverage"] = _source_coverage(readiness)
         evidence_shape = modality_coverage(value, evidence, answer.used_evidence_ids)
         if evidence_shape:
             payload["modality_coverage"] = evidence_shape
         payload["review_scope"] = _focused_answer_scope(
             value,
-            self.workspace.matter_readiness(matter.matter_id),
+            readiness,
             answer,
             evidence,
         )
@@ -5607,6 +5613,13 @@ def create_workbench_app(
             guidance = "You can now ask questions across the full record."
             action_label = "View sources"
             action_url = f"/matters/{matter.slug}/setup?view=list#source-library"
+
+        if readiness.email_count and readiness.state == "ready":
+            summary = (
+                "1 source has searchable text." if readiness.searchable_count == 1
+                else f"{readiness.searchable_count:,} sources have searchable text."
+            )
+            guidance = str(_source_coverage(readiness)["notice"])
 
         active_work = tuple(
             item
@@ -10990,6 +11003,10 @@ def create_workbench_app(
                 **base_context(request, matter),
                 "matter": matter,
                 "source": source,
+                "email_coverage_notice": (
+                    str(_source_coverage(bench.workspace.matter_readiness(matter.matter_id))["notice"])
+                    if source.document.media_type in EMAIL_MEDIA_TYPES else ""
+                ),
                 "source_sequence": source_sequence,
                 "notice": notice,
                 "error": error,

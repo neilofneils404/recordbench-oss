@@ -36,6 +36,9 @@
 
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+  {% if email_coverage_notice %}
+  <div class="notice" role="note" aria-label="Email attachment coverage">{{ email_coverage_notice }}</div>
+  {% endif %}
 
   {% if source.embedded_content_href %}
   {% if source.row.kind == 'IMAGE' %}
