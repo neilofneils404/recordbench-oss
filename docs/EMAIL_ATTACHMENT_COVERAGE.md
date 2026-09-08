@@ -73,7 +73,7 @@ unit/digest/version on upgrade, checks corrected new extraction, reads both with
 the older application and exports the saved notice, then verifies forward read
 and unchanged original bytes. No new storage contract requires migration.
 
-September 8, 2026 acceptance: `make check` passes 961 application tests with nine
+September 8, 2026 acceptance: `make check` passes 963 application tests with nine
 optional skips, all 194 transcription tests, compilation, both Compose graphs and
 publication inspection. All six Chrome workflows pass: actual selected-file
 upload/receipt/source inventory, desktop/narrow review, attachment-only no-match
