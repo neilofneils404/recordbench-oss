@@ -80,7 +80,9 @@ hashes and starts the matching binaries.
 
 The first pinned-browser run correctly failed on a navigation race in the intake
 harness while the Report journey passed. Reading the current document atomically
-fixed that wait without weakening workflow assertions. Both generated journeys
+fixed that wait without weakening workflow assertions. A later keyboard-reorder
+navigation in the Report harness needed its existing detached-node predicate too;
+its section-order and export assertions remain intact. Both generated journeys
 then passed, **11 intake checks and 11 Report/export-readiness checks**. The run
 also exposed an upload-status race, addressed separately before final combined
 acceptance; see [upload status recovery](UPLOAD_STATUS_RECOVERY.md).

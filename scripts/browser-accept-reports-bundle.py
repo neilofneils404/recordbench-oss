@@ -142,7 +142,7 @@ def main():
             click(f"#{cards[1].get_attribute('id')} .report-section-content form:first-child button")
             move = driver.find_element(By.CSS_SELECTOR, "button[aria-label='Move Human conclusion up']")
             move.send_keys(Keys.ENTER)
-            wait.until(EC.staleness_of(move))
+            wait.until(lambda _: detached(move))
             assert driver.find_elements(By.CSS_SELECTOR, ".report-section-card input[name=heading]")[0].get_attribute("value") == "Human conclusion"
             Select(driver.find_element(By.CSS_SELECTOR, ".report-settings select")).select_by_value("final")
             click(".report-settings form:first-child button")
