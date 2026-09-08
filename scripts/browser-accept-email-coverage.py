@@ -227,6 +227,32 @@ def main():
             assert "did not check every source" in research_file.read_text()
             checked("Normal investigation retains attachment coverage beside its focused-search caution on desktop/narrow results and the downloaded evidence ledger")
 
+            go(prefix + "?" + urlencode({"conversation": conversation.conversation_id}))
+            main_window = driver.current_window_handle
+            driver.execute_script("window.emailMixedCoverage = false; window.addEventListener('recordbench:readiness', event => { if (event.detail.attention_count === 1) window.emailMixedCoverage = true; });")
+            damaged = root / "damaged.pdf"
+            damaged.write_bytes(b"%PDF-1.4\nGenerated damaged document.\n%%EOF\n")
+            driver.switch_to.new_window("tab")
+            go(prefix + "/setup")
+            driver.find_element(By.CSS_SELECTOR, "[data-file-input]").send_keys(str(damaged))
+            wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-upload-preflight-confirm]").text == "Upload 1 ready file")
+            click("[data-upload-preflight-confirm]", False)
+            wait.until(lambda _: bench.workspace.matter_readiness(matter.matter_id).attention_count == 1
+                and not any(bench.workspace.active_matter_work_counts(matter.matter_id).values()))
+            driver.close()
+            driver.switch_to.window(main_window)
+            wait.until(lambda d: d.execute_script("return window.emailMixedCoverage === true"))
+            href = driver.find_element(By.CSS_SELECTOR, "[data-conversation-coverage-action]").get_attribute("href")
+            assert "status=attention" not in href and "view=list" in href
+            click("[data-conversation-coverage-action]")
+            library_text = driver.find_element(By.TAG_NAME, "body").text
+            assert "generated.eml" in library_text and "damaged.pdf" in library_text
+            click(f'a[href="{prefix}/sources/{token}"]')
+            assert "forwarded.eml" in driver.find_element(By.TAG_NAME, "body").text
+            assistant_href = driver.find_element(By.CSS_SELECTOR, "[data-assistant-coverage-action]").get_attribute("href")
+            assert "status=attention" not in assistant_href and "view=list" in assistant_href
+            checked("After a second tab adds a failed source, live coverage links still open both the ready email and affected source, with exact email review reachable")
+
             foreign_owner = "generated-email-foreign-owner"
             bench.workspace.upsert_principal("test", foreign_owner, "Generated foreign owner", foreign_owner,
                 preferred_principal_id=foreign_owner)
