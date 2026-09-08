@@ -32,7 +32,11 @@ run. Each journey has a 300-second default timeout (`--timeout` accepts 1–600)
 Both journeys run even when the first fails, preserving useful failure evidence.
 An error, timeout or missing/incomplete/failed receipt makes the runner fail.
 Normal completion, interruption and timeout stop the command's process group,
-including leftover browser/driver processes. A killed runner cannot report success.
+including leftover browser/driver processes. Cleanup allows three seconds after
+forced termination for the group to stop; it inspects only matching Linux process
+group members and does not wait for init to reap already-dead children. Failure
+to confirm shutdown makes the journey fail even with a passing receipt. A killed
+runner cannot report success.
 
 ## Pin and intentional updates
 
@@ -72,9 +76,10 @@ state unchanged; old generated artifacts expire under their retention setting.
 
 ## Local evidence
 
-Ten runner/installer regressions pass: fresh complete success; command failure;
+Twelve runner/installer regressions pass: fresh complete success; command failure;
 missing, invalid, failed or incomplete receipts; refusal to reuse old output;
-timeout and normal-exit descendant cleanup; and rejection of corrupted archives
+timeout, normal-exit and delayed-signal descendant cleanup, cleanup-limit failure;
+and rejection of corrupted archives
 before extraction. Positive installation also verifies both recorded archive
 hashes and starts the matching binaries.
 
@@ -92,7 +97,12 @@ artifact retention on Ubuntu 24.04: Actions run 34261111636.
 Its downloaded result confirms the pinned browser/driver and both complete receipts.
 This is branch execution; the actual PR integration job remains required.
 
-The final combined `make check` passes 1,016 application tests with nine optional
+Before the cleanup correction, combined `make check` passed 1,016 application tests with nine optional
 skips, all 194 transcription tests, compilation, both Compose graphs and publication
-inspection. Actual PR integration execution and final-head review remain required
+inspection. A hosted unit run then exposed a signal-delivery race: the command
+had exited, but a terminated child could still hold its listener when success
+returned. Delayed-termination regressions reproduce it and now pass; cleanup waits
+for group shutdown or returns a bounded failure. Both actual pinned-browser
+journeys also pass after this correction (22 checks). Updated hosted full checks,
+actual PR integration execution and final-head review remain required
 before merge. No live deployment or release tag is created by this workflow.

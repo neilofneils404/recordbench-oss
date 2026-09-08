@@ -16,8 +16,30 @@ ROOT = Path(__file__).resolve().parents[1]
 BROWSER_VERSION = "152.0.7977.82"
 
 
-def stop_group(process: subprocess.Popen) -> None:
-    """Reap the command and stop browser/driver descendants it may have left."""
+def group_is_running(group: int) -> bool:
+    """Check Linux group liveness without waiting for init to reap dead children."""
+    try:
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        return False
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal() or entry.is_symlink():
+            continue
+        try:
+            if os.getpgid(int(entry.name)) != group:
+                continue
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            if int(fields[2]) == group and fields[0] not in {"Z", "X"}:
+                return True
+        except (FileNotFoundError, ProcessLookupError):
+            continue  # The process exited during inspection.
+        except (OSError, ValueError, IndexError):
+            return True  # Cannot confirm cleanup; remain bounded and fail closed.
+    return False
+
+
+def stop_group(process: subprocess.Popen) -> bool:
+    """Reap the command and wait for its browser/driver descendants to stop."""
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -26,12 +48,20 @@ def stop_group(process: subprocess.Popen) -> None:
         process.wait(timeout=3)
     except subprocess.TimeoutExpired:
         pass
-    finally:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 3
+    try:
         process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        return False
+    while group_is_running(process.pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(.01)
+    return True
 
 
 def run_journey(command: list[str], *, output: Path, receipt_name: str,
@@ -54,7 +84,8 @@ def run_journey(command: list[str], *, output: Path, receipt_name: str,
                 timed_out = True
                 problem = "Browser journey exceeded its time limit."
         finally:
-            stop_group(process)
+            if not stop_group(process):
+                problem = "Browser journey processes did not stop within the cleanup limit."
     if not problem and return_code != 0:
         problem = "Browser journey command failed."
     receipt = output / receipt_name

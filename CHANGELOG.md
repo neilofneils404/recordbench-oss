@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 2026-09-08: Wait for browser-job process groups to stop after termination, and
+  fail a journey when cleanup cannot finish within its limit. Reproduce delayed
+  signal delivery and verify listener release before reporting success.
+
 - 2026-09-08: Run standalone generated intake and Report/export-readiness browser
   journeys in contributor CI with a checksum-verified browser/driver pair.
   Require fresh complete receipts, bound each journey, clean process descendants

@@ -3,6 +3,9 @@ import importlib.util
 import json
 from pathlib import Path
 import socket
+import signal
+import threading
+import time
 import sys
 
 import pytest
@@ -72,8 +75,28 @@ def test_timeout_stops_descendant_listener_and_records_failure(tmp_path):
         socket.create_connection(("127.0.0.1", port), timeout=1)
 
 
-def test_completed_command_also_cleans_its_descendant_listener(tmp_path):
-    child = "import socket; from pathlib import Path; " \
+@pytest.mark.parametrize("termination_delay", [0, .1, 3.2])
+def test_completed_command_also_cleans_its_descendant_listener(tmp_path, monkeypatch, termination_delay):
+    original_killpg = runner.os.killpg
+    timers = []
+    groups = set()
+    if termination_delay:
+        def delayed_killpg(group, requested_signal):
+            if requested_signal == signal.SIGKILL:
+                groups.add(group)
+                def deliver():
+                    try:
+                        original_killpg(group, requested_signal)
+                    except ProcessLookupError:
+                        pass
+                timer = threading.Timer(termination_delay, deliver)
+                timer.start()
+                timers.append(timer)
+            else:
+                original_killpg(group, requested_signal)
+        monkeypatch.setattr(runner.os, "killpg", delayed_killpg)
+    child = "import socket,signal; from pathlib import Path; " \
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); " \
         "s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); " \
         "Path('port').write_text(str(s.getsockname()[1])); s.accept()"
     parent = "import subprocess,sys,time; from pathlib import Path; " \
@@ -82,8 +105,23 @@ def test_completed_command_also_cleans_its_descendant_listener(tmp_path):
         "Path('receipt.json').write_text(" + repr(json.dumps({
             "synthetic_only": True, "passed": True, "checks": ["one", "two"]
         })) + ")"
-    result = run(tmp_path, parent)
-    assert result["passed"] is True
+    try:
+        result = run(tmp_path, parent)
+        assert result["passed"] is (termination_delay < 3)
+        if termination_delay >= 3:
+            assert "cleanup limit" in result["problem"]
+        else:
+            port = int((tmp_path / "journey" / "port").read_text())
+            with pytest.raises(OSError):
+                with socket.create_connection(("127.0.0.1", port), timeout=1):
+                    pass
+    finally:
+        for timer in timers:
+            timer.join(timeout=5)
+        deadline = time.monotonic() + 2
+        while any(runner.group_is_running(group) for group in groups):
+            assert time.monotonic() < deadline
+            time.sleep(.01)
     port = int((tmp_path / "journey" / "port").read_text())
     with pytest.raises(OSError):
         socket.create_connection(("127.0.0.1", port), timeout=1)
