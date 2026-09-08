@@ -13,7 +13,7 @@ limits. Attachment child sources, archive expansion and PST support remain
 separate work.
 
 Surface the coverage limitation in source review, matter search/answers and
-saved answer exports. Email readiness means its extracted text is searchable;
+saved answer and investigation exports. Email readiness means its extracted text is searchable;
 it must not imply complete attachment coverage. Count email sources through the
 existing matter-scoped catalog; do not read all source files to display coverage.
 
@@ -50,7 +50,15 @@ Malformed MIME containers fail as a source-processing error with existing
 upload. Earlier saved answers keep their historical snapshot; new answers,
 including the legacy synchronous path, save current attachment coverage.
 Coverage is retained in answer/conversation Markdown and Word exports and the
-ordinary matter bundle. This change does not unpack attachments or provide a
+ordinary matter bundle. Investigation results combine source/attachment coverage
+with their focused-search caution; Markdown, Word, JSON and complete-bundle
+investigation exports retain both notices. Structured delivery/read-receipt body
+parts are report metadata rather than unnamed attachments, unless a filename or
+attachment disposition explicitly identifies an attachment. Current extraction
+uses the human-readable report body and does not extract machine report fields.
+See the [multipart/report definition](https://www.rfc-editor.org/rfc/rfc3462.html)
+and [read-receipt format](https://www.rfc-editor.org/rfc/rfc8098.html).
+This change does not unpack attachments or provide a
 new email application; use the original email to review attachments separately.
 
 ## Synthetic acceptance
@@ -63,8 +71,10 @@ make check
 ```
 
 Six initial failing parser cases reproduced attached-text leakage, missing
-inventory/coverage and malformed-container readiness. Nine parser/HTTP tests now
-pass; the expanded answer/readiness/export selection passes 39 tests. Fixtures
+inventory/coverage and malformed-container readiness. Fourteen parser/HTTP tests now
+pass; the combined email and investigation selection passes 35 tests. New failing
+regressions reproduce lost investigation coverage and invented delivery-report
+attachments before their corrections. Fixtures
 cover ordinary, unnamed, inline non-body, attached-message and attached-multipart
 parts, HTML alternatives, MIME/body limits, exact parent passages, attachment-only
 no-match searches, saved coverage and cross-matter access. The stopped-reader
@@ -73,12 +83,13 @@ unit/digest/version on upgrade, checks corrected new extraction, reads both with
 the older application and exports the saved notice, then verifies forward read
 and unchanged original bytes. No new storage contract requires migration.
 
-September 8, 2026 acceptance: `make check` passes 963 application tests with nine
+September 8, 2026 acceptance: `make check` passes 968 application tests with nine
 optional skips, all 194 transcription tests, compilation, both Compose graphs and
-publication inspection. All six Chrome workflows pass: actual selected-file
+publication inspection. All seven Chrome workflows pass: actual selected-file
 upload/receipt/source inventory, desktop/narrow review, attachment-only no-match
 search, exact parent support saved to notes, ordinary question submission and
-saved answer download/reload, cross-matter denial, final bundle and owner closure
+saved answer download/reload, investigation notices and standalone evidence-ledger
+download, cross-matter denial, final bundle and owner closure
 with unchanged external email bytes. Desktop and narrow screenshots were
 inspected. The stopped-reader/forward-read drill also resolves the support token
 created by the old extractor to the same exact old source version and passage.

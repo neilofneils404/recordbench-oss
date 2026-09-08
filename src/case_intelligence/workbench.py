@@ -4803,6 +4803,12 @@ class CaseIntelligenceWorkbench:
         )
         if evidence_shape:
             final_answer_payload["modality_coverage"] = evidence_shape
+        coverage = _source_coverage(readiness)
+        coverage["notice"] = " ".join(part for part in (
+            str(coverage["notice"]),
+            "This investigation used multiple focused retrieval passes. It is broader than one answer, "
+            "but it did not check every source. Use Check every source for a document-by-document task.",
+        ) if part)
         return {
             "summary": final_answer.text,
             "answer": final_answer_payload,
@@ -4810,16 +4816,12 @@ class CaseIntelligenceWorkbench:
             "evidence": [self._workflow_citation_payload(item) for item in citations],
             "gaps": gaps,
             "coverage": {
-                **_source_coverage(readiness),
+                **coverage,
                 "search_pass_count": len(queries),
                 "candidate_passage_count": candidate_count,
                 "evidence_passage_count": len(citations),
                 "evidence_source_count": len({item.document_id for item in citations}),
                 "scope": "source_set" if job.source_set_id else "all_searchable_sources",
-                "notice": (
-                    "This investigation used multiple focused retrieval passes. It is broader than one answer, "
-                    "but it did not check every source. Use Check every source for a document-by-document task."
-                ),
             },
         }
 

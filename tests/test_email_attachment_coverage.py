@@ -166,3 +166,79 @@ def test_uploaded_email_search_answer_export_and_matter_boundaries(tmp_path):
         assert client.get(f"/matters/{foreign_slug}/sources/{token}").status_code == 404
         assert client.get(root.replace(slug, foreign_slug) + "/export").status_code == 404
         assert (document.document_id, document.version_id) == identity
+
+
+@pytest.mark.parametrize("report_type", ["delivery-status", "disposition-notification"])
+@pytest.mark.parametrize("explicit_attachment", [False, True])
+def test_structured_delivery_report_is_not_an_invented_attachment(tmp_path, report_type, explicit_attachment):
+    headers = 'Content-Disposition: attachment; filename="status.dat"\r\n' if explicit_attachment else ''
+    details = ("Reporting-MTA: dns; mail.example.test\r\n\r\n"
+        "Final-Recipient: rfc822; reader@example.test\r\nAction: failed\r\nStatus: 5.1.1\r\n")
+    if report_type == "disposition-notification":
+        details = ("Final-Recipient: rfc822; reader@example.test\r\n"
+            "Disposition: manual-action/MDN-sent-manually; displayed\r\n")
+    raw = (f'Subject: Generated delivery report\r\nMIME-Version: 1.0\r\n'
+        f'Content-Type: multipart/report; report-type="{report_type}"; boundary="generated"\r\n\r\n'
+        '--generated\r\nContent-Type: text/plain\r\n\r\nGeneratedDeliveryBodyCanary.\r\n'
+        f'--generated\r\nContent-Type: message/{report_type}\r\n{headers}\r\n{details}'
+        '\r\n--generated--\r\n')
+    path = tmp_path / "generated-report.eml"
+    path.write_bytes(raw.encode())
+    text = "\n".join(section.text for section in extract_email(path))
+    assert "GeneratedDeliveryBodyCanary" in text
+    assert "Attachment: unnamed" not in text
+    assert ("Attachment: status.dat" in text) is explicit_attachment
+    assert ("Attachment contents were not processed" in text) is explicit_attachment
+
+
+def test_investigation_retains_email_and_source_coverage_in_results_and_exports(tmp_path):
+    app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(),
+        auth_mode="test", malware_scanner=CleanScanner(), malware_scan_mode="extended")
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated email investigation")
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        uploaded = client.post(f"/matters/{slug}/uploads", files=[
+            ("files", ("generated.eml", generated_email(), "message/rfc822")),
+            ("files", ("damaged.pdf", b"%PDF-1.4\nGenerated damaged document.\n%%EOF\n", "application/pdf")),
+        ])
+        assert uploaded.status_code == 200
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        started = client.post(f"/matters/{slug}/ask", data={
+            "conversation": conversation.conversation_id,
+            "question": "What does ParentBodyCanary describe?", "review_task": "research",
+            "request_key": "answer-request-" + "b" * 32,
+        }, follow_redirects=False)
+        assert started.status_code == 303
+        job_id = bench.workspace.research_jobs(matter.matter_id, ACTOR)[0].job_id
+        deadline = time.monotonic() + 10
+        while True:
+            job = bench.workspace.research_job(matter.matter_id, ACTOR, job_id)
+            if job.state in {"succeeded", "failed", "cancelled"}:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(.02)
+        assert job.state == "succeeded"
+        coverage = job.result["coverage"]
+        assert EMAIL_COVERAGE_NOTICE in coverage["notice"]
+        assert "1 source needs attention" in coverage["notice"]
+        assert "did not check every source" in coverage["notice"]
+        assert coverage["excluded_count"] == 1
+        page = client.get(f"/matters/{slug}/research", params={"job": job_id})
+        assert EMAIL_COVERAGE_NOTICE in page.text
+        for format_name in ("markdown", "json", "docx"):
+            exported = client.get(f"/matters/{slug}/research/{job_id}/export", params={"format": format_name})
+            assert exported.status_code == 200
+            if format_name == "docx":
+                with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                    text = archive.read("word/document.xml").decode()
+            else:
+                text = exported.text
+            assert EMAIL_COVERAGE_NOTICE in text and "did not check every source" in text
+        bundle = client.get(f"/matters/{slug}/export")
+        assert bundle.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+            entries = [name for name in archive.namelist() if name.startswith("investigations/")]
+            assert entries and all(EMAIL_COVERAGE_NOTICE in archive.read(name).decode() for name in entries)
+        foreign = _matter(client, "Generated investigation boundary")
+        assert client.get(f"/matters/{foreign}/research/{job_id}/export?format=json").status_code == 404
