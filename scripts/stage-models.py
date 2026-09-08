@@ -61,10 +61,13 @@ def _selected(
     groups: frozenset[str],
     *,
     review_profile: str,
+    retrieval_only: bool = False,
 ) -> bool:
     if value.get("group") not in groups:
         return False
     if value.get("group") == "review" and value.get("role") == "generator":
+        if retrieval_only:
+            return False
         return value.get("profile") == review_profile
     return True
 
@@ -166,6 +169,7 @@ def main() -> int:
         help="comma-separated review and transcription module groups",
     )
     parser.add_argument("--token-stdin", action="store_true")
+    parser.add_argument("--retrieval-only", action="store_true", help="omit the Linux generator when staging review models for a native Mac generator")
     parser.add_argument(
         "--review-profile",
         choices=("portable", "quality"),
@@ -181,6 +185,10 @@ def main() -> int:
     root = args.model_root.resolve()
     cache = root / "huggingface" / "hub"
     cache.mkdir(parents=True, exist_ok=True)
+    if transcription_selected:
+        # WhisperX initializes TORCH_HOME even when its packaged VAD is used.
+        # Runtime mounts the model vault read-only, so create it while staging.
+        (root / "torch").mkdir(parents=True, exist_ok=True)
     payload = _catalog(args.catalog)
     token = _token(args)
     try:
@@ -189,7 +197,7 @@ def main() -> int:
         dependency_index = 0
         for raw in payload.get("models", []):
             if not isinstance(raw, dict) or not _selected(
-                raw, groups, review_profile=args.review_profile
+                raw, groups, review_profile=args.review_profile, retrieval_only=args.retrieval_only
             ):
                 continue
             if raw.get("gated") and not token:

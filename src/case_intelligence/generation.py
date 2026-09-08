@@ -456,13 +456,33 @@ def _parse_model_content(content: object) -> Mapping[str, object]:
     return payload
 
 
+def _optional_output_limit(value: int | str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    limit = int(value)
+    if not 1 <= limit <= 32768:
+        raise ValueError("generator output limit must be between 1 and 32768 tokens")
+    return limit
+
+
 class OllamaGenerator:
-    def __init__(self, endpoint: str, model: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
+    def __init__(
+        self, endpoint: str, model: str, *,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS, disable_thinking: bool = False,
+        context_tokens: int = 8192,
+        max_output_tokens: int | None = None, max_review_tokens: int | None = None,
+    ) -> None:
         self.endpoint = _validate_endpoint(endpoint)
         self.model = model.strip()
         if not self.model or len(self.model) > 200:
             raise ValueError("generator model role is not configured")
         self.timeout = min(max(float(timeout), 1.0), 300.0)
+        self.disable_thinking = bool(disable_thinking)
+        self.context_tokens = int(context_tokens)
+        if not 2048 <= self.context_tokens <= 131072:
+            raise ValueError("generator context must be between 2048 and 131072 tokens")
+        self.max_output_tokens = _optional_output_limit(max_output_tokens)
+        self.max_review_tokens = _optional_output_limit(max_review_tokens)
 
     @property
     def available(self) -> bool:
@@ -495,12 +515,16 @@ class OllamaGenerator:
             {
                 "model": self.model,
                 "stream": False,
+                **({"think": False} if self.disable_thinking else {}),
                 "format": ANSWER_SCHEMA,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "options": {"temperature": 0.1, "num_ctx": 8192},
+                "options": {
+                    "temperature": 0.1, "num_ctx": self.context_tokens,
+                    **({"num_predict": self.max_output_tokens} if self.max_output_tokens is not None else {}),
+                },
                 "keep_alive": "5m",
             },
             timeout=self.timeout,
@@ -526,12 +550,16 @@ class OllamaGenerator:
             {
                 "model": self.model,
                 "stream": False,
+                **({"think": False} if self.disable_thinking else {}),
                 "format": REVIEW_SCHEMA,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "options": {"temperature": 0.0, "num_ctx": 8192},
+                "options": {
+                    "temperature": 0.0, "num_ctx": self.context_tokens,
+                    **({"num_predict": self.max_review_tokens} if self.max_review_tokens is not None else {}),
+                },
                 "keep_alive": "5m",
             },
             timeout=self.timeout,
@@ -682,7 +710,15 @@ def generator_from_environment() -> GeneratorClient:
     model = os.getenv("CASE_INTELLIGENCE_GENERATOR_MODEL", "").strip()
     timeout = float(os.getenv("CASE_INTELLIGENCE_GENERATOR_TIMEOUT", str(DEFAULT_TIMEOUT_SECONDS)))
     if backend == "ollama":
-        return OllamaGenerator(endpoint, model, timeout=timeout)
+        return OllamaGenerator(
+            endpoint, model, timeout=timeout,
+            disable_thinking=(
+                os.getenv("CASE_INTELLIGENCE_GENERATOR_DISABLE_THINKING", "0") == "1"
+            ),
+            context_tokens=int(os.getenv("CASE_INTELLIGENCE_GENERATOR_CONTEXT", "8192")),
+            max_output_tokens=_optional_output_limit(os.getenv("CASE_INTELLIGENCE_GENERATOR_MAX_OUTPUT_TOKENS")),
+            max_review_tokens=_optional_output_limit(os.getenv("CASE_INTELLIGENCE_GENERATOR_MAX_REVIEW_TOKENS")),
+        )
     if backend == "openai":
         return OpenAICompatibleGenerator(
             endpoint,

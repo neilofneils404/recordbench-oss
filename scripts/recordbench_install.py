@@ -49,6 +49,7 @@ RELEASE_FILES = (
     "SECURITY.md",
     "THIRD_PARTY_NOTICES.md",
     "compose.kerberos.yaml",
+    "compose.macos.yaml",
     "compose.yaml",
     "install",
     "pyproject.toml",
@@ -1978,6 +1979,12 @@ def main() -> int:
                 )
             )
         root = args.root.expanduser().resolve(strict=False)
+        if (root / "mac-configuration.pending").exists():
+            raise RuntimeError("Mac configuration is incomplete; rerun scripts/mac-install.py configure")
+        if (root / "installation.json").is_file():
+            installed = json.loads((root / "installation.json").read_text(encoding="utf-8"))
+            if installed.get("platform") == "macos-arm64":
+                raise RuntimeError("this is a Mac node; use scripts/mac-install.py and docs/MACOS.md")
         if args.command == "doctor":
             _doctor(console, args, root)
             return 0

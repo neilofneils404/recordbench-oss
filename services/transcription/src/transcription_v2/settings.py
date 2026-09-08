@@ -160,6 +160,8 @@ class Settings:
     api_token: str = ""
     api_token_file: Path | None = None
     pipeline_backend: str = "mock"
+    inference_device: str = "cuda"
+    cpu_compute_type: str = "int8"
     worker_poll_seconds: float = 1.0
     worker_id: str = "worker-local"
     max_upload_bytes: int = 5 * 1024**3
@@ -235,6 +237,8 @@ class Settings:
             api_token=load_api_token_from_env(),
             api_token_file=Path(token_file_value).expanduser() if token_file_value else None,
             pipeline_backend=os.environ.get("TRANSCRIPTION_V2_PIPELINE", "mock").strip().lower(),
+            inference_device=os.environ.get("TRANSCRIPTION_V2_DEVICE", "cuda").strip().lower(),
+            cpu_compute_type=os.environ.get("TRANSCRIPTION_V2_CPU_COMPUTE_TYPE", "int8").strip().lower(),
             worker_poll_seconds=_env_float("TRANSCRIPTION_V2_WORKER_POLL_SECONDS", 1.0, minimum=0.1),
             worker_id=os.environ.get("TRANSCRIPTION_V2_WORKER_ID", "worker-local").strip(),
             max_upload_bytes=max_upload_bytes,
@@ -305,6 +309,10 @@ class Settings:
         _validate_api_token(self.api_token)
         if self.pipeline_backend not in {"mock", "whisperx"}:
             raise ValueError("TRANSCRIPTION_V2_PIPELINE must be 'mock' or 'whisperx'")
+        if self.inference_device not in {"cpu", "cuda"}:
+            raise ValueError("TRANSCRIPTION_V2_DEVICE must be 'cpu' or 'cuda'")
+        if self.cpu_compute_type not in {"int8", "float32"}:
+            raise ValueError("TRANSCRIPTION_V2_CPU_COMPUTE_TYPE must be 'int8' or 'float32'")
         if self.default_retention_hours > self.max_retention_hours:
             raise ValueError("default retention cannot exceed maximum retention")
         if self.max_active_job_hours > 7 * 24:
@@ -372,6 +380,8 @@ class Settings:
             "bind_host": self.bind_host,
             "bind_port": self.bind_port,
             "pipeline_backend": self.pipeline_backend,
+            "inference_device": self.inference_device,
+            "cpu_compute_type": self.cpu_compute_type,
             "model_manifest_required": self.pipeline_backend == "whisperx",
             "allow_degraded_diarization": self.allow_degraded_diarization,
             "max_upload_bytes": self.max_upload_bytes,

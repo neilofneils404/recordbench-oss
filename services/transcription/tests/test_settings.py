@@ -10,6 +10,34 @@ from transcription_v2.settings import Settings
 
 
 class SettingsTests(unittest.TestCase):
+    def test_cpu_compute_type_is_explicit_and_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for value in ("int8", "float32", "float16", "auto"):
+                with self.subTest(value=value), patch.dict(
+                    os.environ,
+                    {"TRANSCRIPTION_V2_DATA_ROOT": tmp, "TRANSCRIPTION_V2_CPU_COMPUTE_TYPE": value},
+                    clear=True,
+                ):
+                    if value in {"int8", "float32"}:
+                        self.assertEqual(Settings.from_env().cpu_compute_type, value)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "TRANSCRIPTION_V2_CPU_COMPUTE_TYPE"):
+                            Settings.from_env()
+
+    def test_cpu_device_is_explicit_and_invalid_devices_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for value in ("cpu", "cuda", "mps", "auto"):
+                with self.subTest(value=value), patch.dict(
+                    os.environ,
+                    {"TRANSCRIPTION_V2_DATA_ROOT": tmp, "TRANSCRIPTION_V2_DEVICE": value},
+                    clear=True,
+                ):
+                    if value in {"cpu", "cuda"}:
+                        self.assertEqual(Settings.from_env().inference_device, value)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "TRANSCRIPTION_V2_DEVICE"):
+                            Settings.from_env()
+
     def test_defaults_are_loopback_and_mock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
@@ -19,6 +47,8 @@ class SettingsTests(unittest.TestCase):
             settings = Settings.from_env()
         self.assertEqual(settings.bind_host, "127.0.0.1")
         self.assertEqual(settings.pipeline_backend, "mock")
+        self.assertEqual(settings.inference_device, "cuda")
+        self.assertEqual(settings.cpu_compute_type, "int8")
         self.assertEqual(settings.max_upload_bytes, 5 * 1024**3)
         self.assertEqual(settings.max_batch_upload_bytes, 5 * 1024**3)
         self.assertEqual(settings.max_files_per_request, 100)

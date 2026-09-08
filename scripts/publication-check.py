@@ -248,8 +248,21 @@ def _scan_bytes(
         if owner not in {"default", "example", "public", "recordbench", "user"}:
             findings.append(Finding(location, "personal-home-path"))
             break
-    if INTERNAL_FQDN.search(data):
-        findings.append(Finding(location, "internal-fqdn"))
+    # Reserved public container-runtime aliases, not organization hostnames.
+    # A regex match may begin inside an IDN or underscore-containing DNS name;
+    # never allow a reserved suffix cut out of a larger private hostname.
+    public_runtime_hosts = {b"host.docker.internal", b"host.lima.internal"}
+    for match in INTERNAL_FQDN.finditer(data):
+        before = data[match.start() - 1] if match.start() else None
+        after = data[match.end()] if match.end() < len(data) else None
+        complete_alias = (
+            match.group(0).lower() in public_runtime_hosts
+            and (before is None or (before != ord('.') and before < 128))
+            and (after is None or after < 128)
+        )
+        if not complete_alias:
+            findings.append(Finding(location, "internal-fqdn"))
+            break
     quoted_values = (
         match.group(2) for match in QUOTED_SECRET_ASSIGNMENT.finditer(data)
     )

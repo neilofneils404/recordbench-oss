@@ -229,6 +229,7 @@ class JobWorker:
                 self.settings.pipeline_backend,
                 model_cache_dir=self.settings.model_cache_dir,
                 diarization_model_path=diarization_model_path,
+                model_readiness=self.model_readiness,
             )
             self._pipeline_factory = self._default_pipeline
         else:
@@ -390,8 +391,9 @@ class JobWorker:
             min_speakers=job.options.min_speakers,
             max_speakers=job.options.max_speakers,
             hotwords=job.options.hotwords,
-            device="cuda" if self.settings.pipeline_backend == "whisperx" else "cpu",
+            device=self.settings.inference_device if self.settings.pipeline_backend == "whisperx" else "cpu",
             device_index=0,
+            cpu_compute_type=self.settings.cpu_compute_type,
             local_files_only=True,
             job_id=job.id,
         )
@@ -399,7 +401,12 @@ class JobWorker:
         reservation = nullcontext()
         if self.settings.pipeline_backend == "whisperx":
             self._assert_reserved_gpu()
-            reservation = gpu_reservation(self.settings.gpu_lock_path)
+            lock_path = (
+                self.settings.data_root / "worker.lock"
+                if self.settings.inference_device == "cpu"
+                else self.settings.gpu_lock_path
+            )
+            reservation = gpu_reservation(lock_path)
 
         pipeline = self._pipeline_factory(progress)
         def cancel_requested() -> bool:
@@ -556,6 +563,8 @@ class JobWorker:
         LOGGER.info("job_canceled job_id=%s purge_requested=%s", job.id, delete_requested)
 
     def _assert_reserved_gpu(self) -> None:
+        if self.settings.inference_device == "cpu":
+            return
         visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
         if not visible or "," in visible or not visible.isdigit():
             raise WorkerConfigurationError(

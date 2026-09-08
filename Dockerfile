@@ -33,6 +33,17 @@ HEALTHCHECK --interval=20s --timeout=5s --start-period=20s --retries=6 \
 
 CMD ["python", "-m", "case_intelligence.workbench", "--host", "0.0.0.0", "--port", "8786", "--runtime", "/var/lib/recordbench/runtime"]
 
+# The Mac VM needs CPU wheels, not the CUDA runtime pulled by Linux defaults.
+# Keep this independent from the production NVIDIA retrieval target below.
+FROM application AS retrieval-cpu
+RUN pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir '.[models]' \
+    && python -c 'import torch; assert torch.version.cuda is None'
+EXPOSE 8787
+HEALTHCHECK --interval=20s --timeout=5s --start-period=180s --retries=18 \
+  CMD python -c "import json,urllib.request; p=json.load(urllib.request.urlopen('http://127.0.0.1:8787/health',timeout=3)); assert p['status']=='ok' and p['embedding_loaded'] and p['reranker_loaded']"
+CMD ["python", "-m", "case_intelligence.retrieval_worker", "--host", "0.0.0.0", "--port", "8787"]
+
 FROM application AS retrieval
 RUN pip install --no-cache-dir '.[models]'
 EXPOSE 8787

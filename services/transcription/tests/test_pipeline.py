@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,6 +27,7 @@ from transcription_v2.pipeline import (  # noqa: E402
     create_pipeline_engine,
 )
 from transcription_v2.profiles import get_profile  # noqa: E402
+from transcription_v2.model_manifest import MODEL_MANIFEST_SCHEMA, verify_model_manifest  # noqa: E402
 
 
 class OrderedMockEngine(MockPipelineEngine):
@@ -104,6 +107,63 @@ class DiarizationTrackingEngine(MockPipelineEngine):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_asr_uses_only_exact_verified_snapshot_without_main_ref(self) -> None:
+        cache = Path(self.temp_dir.name) / "models"
+        revision = "0123456789abcdef0123456789abcdef01234567"
+        snapshot = cache / "models--Systran--faster-whisper-large-v3" / "snapshots" / revision
+        snapshot.mkdir(parents=True)
+        files = []
+        for name in ("model.bin", "config.json", "tokenizer.json"):
+            path = snapshot / name
+            path.write_bytes(b"synthetic artifact")
+            files.append({"path": path.relative_to(cache).as_posix(),
+                          "size_bytes": path.stat().st_size,
+                          "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+        manifest = cache / "approved-model-manifest.json"
+        manifest.write_text(json.dumps({"schema_version": MODEL_MANIFEST_SCHEMA, "artifacts": [{
+            "role": "asr", "model_id": "Systran/faster-whisper-large-v3",
+            "revision": revision, "license": "MIT", "files": files,
+        }]}))
+        readiness = verify_model_manifest(cache, manifest)
+        engine = LocalWhisperXEngine(model_cache_dir=cache, model_readiness=readiness)
+        self.assertEqual(engine.provenance()["approved_models"]["artifacts"][0]["revision"], revision)
+        self.assertEqual(engine._resolve_asr_model("large-v3"), str(snapshot))
+        self.assertFalse((snapshot.parent.parent / "refs" / "main").exists())
+        with self.assertRaisesRegex(ValueError, "not uniquely approved"):
+            engine._resolve_asr_model("turbo")
+        extra = snapshot / "unapproved.json"
+        extra.write_text("{}")
+        with self.assertRaisesRegex(ValueError, "unapproved or changed"):
+            engine._resolve_asr_model("large-v3")
+        extra.unlink()
+        (snapshot / "model.bin").write_bytes(b"changed artifact")
+        with self.assertRaisesRegex(ValueError, "unapproved or changed"):
+            engine._resolve_asr_model("large-v3")
+
+    def test_cpu_execution_preserves_model_and_records_actual_precision(self) -> None:
+        class RecordingEngine(MockPipelineEngine):
+            def transcribe_source(inner, request, profile):
+                self.assertEqual(request.device, "cpu")
+                self.assertEqual(profile.compute_type, "int8")
+                self.assertEqual(profile.batch_size, 1)
+                self.assertEqual(profile.asr_model, "large-v3")
+                return super().transcribe_source(request, profile)
+
+        result = TranscriptionPipeline(RecordingEngine()).run(
+            TranscriptionRequest(self.media_path, profile="balanced", device="cpu")
+        )
+        self.assertEqual(result.profile["compute_type"], "int8")
+        self.assertEqual(result.profile["batch_size"], 1)
+        self.assertEqual(get_profile("balanced").compute_type, "float16")
+        self.assertEqual(get_profile("balanced").batch_size, 8)
+
+    def test_cpu_float32_override_is_recorded_in_exports(self) -> None:
+        result = TranscriptionPipeline(MockPipelineEngine()).run(
+            TranscriptionRequest(self.media_path, device="cpu", cpu_compute_type="float32")
+        )
+        self.assertEqual(result.profile["compute_type"], "float32")
+        self.assertEqual(result.profile["batch_size"], 1)
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)

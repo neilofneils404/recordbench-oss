@@ -109,7 +109,7 @@ def _diarization_config_present(configured_path: Path | None) -> bool:
 
 def readiness(settings: Settings) -> dict[str, object]:
     usage = shutil.disk_usage(settings.data_root)
-    gpus = gpu_states()
+    gpus = gpu_states() if settings.inference_device == "cuda" else []
     visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
     reserved_index = int(visible) if visible.isdigit() else None
     reserved_gpu = next(
@@ -134,6 +134,8 @@ def readiness(settings: Settings) -> dict[str, object]:
         "ffmpeg_available": shutil.which("ffmpeg") is not None,
         "ffprobe_available": shutil.which("ffprobe") is not None,
         "pipeline_backend": settings.pipeline_backend,
+        "inference_device": settings.inference_device,
+        "gpu_required": settings.pipeline_backend == "whisperx" and settings.inference_device == "cuda",
         "model_manifest_required": settings.pipeline_backend == "whisperx",
         "model_manifest_present": _manifest_file_present(settings),
         "model_manifest_integrity_gate": "worker_start_and_verify_models_cli",
@@ -164,7 +166,7 @@ def readiness(settings: Settings) -> dict[str, object]:
             and checks["disk_admission_ready"]
             and checks["ffmpeg_available"]
             and checks["ffprobe_available"]
-            and checks["reserved_gpu_ready"]
+            and (settings.inference_device == "cpu" or checks["reserved_gpu_ready"])
             and checks["model_cache_present"]
             and checks["model_manifest_present"]
             and checks["whisperx_version_compatible"]

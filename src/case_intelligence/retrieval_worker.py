@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import os
 from typing import Any
 
@@ -131,6 +133,36 @@ def health() -> dict[str, object]:
     }
 
 
+def check_models() -> dict[str, object]:
+    """Exercise staged models without accepting matter text or downloading weights."""
+    checks: dict[str, str] = {}
+    texts = ["The synthetic blue crate is in the north store.", "A synthetic tree has green leaves."]
+    try:
+        vectors = _embedding_model().encode(texts, normalize_embeddings=True)
+        valid = len(vectors) == 2 and all(
+            len(row) == 768
+            and all(math.isfinite(float(value)) for value in row)
+            and math.isclose(sum(float(value) ** 2 for value in row), 1.0, abs_tol=0.01)
+            for row in vectors
+        )
+        checks["embedding"] = "ready" if valid else "invalid_output"
+    except Exception:
+        checks["embedding"] = "unavailable"
+    try:
+        scores = _reranker_model().predict([("Where is the blue crate?", text) for text in texts])
+        valid = len(scores) == 2 and all(math.isfinite(float(score)) for score in scores)
+        checks["reranker"] = "ready" if valid else "invalid_output"
+    except Exception:
+        checks["reranker"] = "unavailable"
+    return {
+        "status": "ready" if all(value == "ready" for value in checks.values()) else "not_ready",
+        "device": DEVICE,
+        "checks": checks,
+        "embedding_revision": EMBEDDING_REVISION,
+        "reranker_revision": RERANKER_REVISION,
+    }
+
+
 @app.post("/embed")
 def embed(payload: EmbedPayload) -> dict[str, object]:
     texts = _validate_texts(payload.texts, maximum=48)
@@ -152,7 +184,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the local retrieval-model worker")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8767)
+    readiness = parser.add_mutually_exclusive_group()
+    readiness.add_argument("--check-models", action="store_true", help="Run synthetic offline model probes and exit")
+    readiness.add_argument(
+        "--warm-models", action="store_true",
+        help="Load and probe both offline models before accepting requests",
+    )
     args = parser.parse_args()
+    if args.check_models:
+        result = check_models()
+        print(json.dumps(result, sort_keys=True))
+        raise SystemExit(0 if result["status"] == "ready" else 1)
     if args.host != "127.0.0.1" and not (
         args.host == "0.0.0.0"
         and os.getenv("RECORDBENCH_ALLOW_CONTAINER_BIND", "") == "1"
@@ -160,6 +202,11 @@ def main() -> None:
         parser.error(
             "non-loopback binding is allowed only in the isolated container profile"
         )
+    if args.warm_models:
+        result = check_models()
+        print(json.dumps(result, sort_keys=True), flush=True)
+        if result["status"] != "ready":
+            raise SystemExit(1)
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)
 
 

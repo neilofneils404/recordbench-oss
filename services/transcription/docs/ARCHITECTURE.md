@@ -105,6 +105,11 @@ lock. Other GPU processes remain outside the contract, so an operator must
 assign an exclusive device or provide a scheduler that coordinates every
 consumer. Mock-mode product testing does not require a GPU.
 
+The experimental CPU worker explicitly sets `TRANSCRIPTION_V2_DEVICE=cpu` and
+keeps the same offline model approval gate. It uses a cooperative lock under
+its data root, serial processing, int8 execution, and batch size 1; the
+container must bound its memory. See [CPU execution](CPU_EXECUTION.md).
+
 ## Speaker identity trust model
 
 The data model deliberately separates:

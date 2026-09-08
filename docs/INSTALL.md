@@ -5,6 +5,11 @@ For a source checkout used to write code and run tests, start with
 below installs an application node; `make bootstrap` prepares a development
 environment and does not deploy the application.
 
+
+For a complete local Apple Silicon evaluation, see [Standalone macOS](MACOS.md).
+That experimental profile uses an ARM64 Linux VM and a native Metal generator;
+the Linux/NVIDIA installer below does not manage Mac nodes.
+
 ## Hardware and capability profiles
 
 RecordBench targets a modern x86-64 Linux host with Docker Engine and Docker

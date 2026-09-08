@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "model": "qwen3.5:4b",
+  "source": "https://registry.ollama.ai/v2/library/qwen3.5/manifests/4b",
+  "revision": "sha256:2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd",
+  "license": "Apache-2.0",
+  "license_source": "https://ollama.com/library/qwen3.5:4b",
+  "upstream_model": "Qwen/Qwen3.5-4B",
+  "upstream_revision": null,
+  "upstream_revision_note": "Ollama registry does not attest the upstream Hugging Face commit; the distributed artifact is pinned by its full manifest and blob digests. Do not claim equivalence to the Linux snapshot.",
+  "quantization": "Q4_K_M",
+  "runtime_observed": "Ollama 0.33.3",
+  "status": "evaluation-candidate",
+  "manifest": {
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+    "config": {
+      "mediaType": "application/vnd.docker.container.image.v1+json",
+      "digest": "sha256:de9fed2251b37295b763727a59ca35cf5cfe5c7379bc3e2104b2ce3c145aa887",
+      "size": 475
+    },
+    "layers": [
+      {
+        "mediaType": "application/vnd.ollama.image.model",
+        "digest": "sha256:81fb60c7daa80fc1123380b98970b320ae233409f0f71a72ed7b9b0d62f40490",
+        "size": 3389971840
+      },
+      {
+        "mediaType": "application/vnd.ollama.image.license",
+        "digest": "sha256:7339fa418c9ad3e8e12e74ad0fd26a9cc4be8703f9c110728a992b193be85cb2",
+        "size": 11355
+      },
+      {
+        "mediaType": "application/vnd.ollama.image.params",
+        "digest": "sha256:9371364b27a52acac9d87f88bd93c9db1174d8d6ec57f6888925cdc1788871ff",
+        "size": 65
+      }
+    ]
+  },
+  "evaluation": {
+    "suite_id": "recordbench-model-portfolio-gold-v1",
+    "fingerprint": "d863a4e79874ee7c6f440d1999309438ed52834d5fbc566cf2279e6658c2ed14",
+    "date": "2026-09-08",
+    "hardware": "Apple M4",
+    "runtime": "Ollama 0.33.3",
+    "context_tokens": 8192,
+    "passed": 6,
+    "total": 10,
+    "accepted": false,
+    "evidence": "docs/MAC_MODELS.md",
+    "failed_cases": [
+      "superseded-vehicle-color",
+      "final-invoice-reconciliation",
+      "partially-readable-vehicle",
+      "evidence-prompt-injection"
+    ]
+  },
+  "long_context_probe": {
+    "context_tokens": 16384,
+    "evidence_chars": 44500,
+    "scope": "One synthetic context capacity probe, not long-context quality acceptance.",
+    "passed": true,
+    "used_evidence_ids": [
+      "S1",
+      "S12"
+    ],
+    "omitted_claims": 0,
+    "elapsed_ms": 69320,
+    "prompt_tokens": 14181
+  }
+}

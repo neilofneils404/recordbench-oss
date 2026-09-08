@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "model": "qwen3.5:9b",
+  "source": "https://registry.ollama.ai/v2/library/qwen3.5/manifests/9b",
+  "revision": "sha256:6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+  "license": "Apache-2.0",
+  "license_source": "https://ollama.com/library/qwen3.5:9b",
+  "upstream_model": "Qwen/Qwen3.5-9B",
+  "upstream_revision": null,
+  "upstream_revision_note": "Ollama registry does not attest the upstream Hugging Face commit; the distributed artifact is pinned by its full manifest and blob digests. Do not claim equivalence to the Linux snapshot.",
+  "quantization": "Q4_K_M",
+  "runtime_observed": "Ollama 0.33.3",
+  "status": "evaluation-candidate",
+  "manifest": {
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+    "config": {
+      "mediaType": "application/vnd.docker.container.image.v1+json",
+      "digest": "sha256:be595b49fe22012bd1f5605ec14c7ffa58331783a88a4fd8c22e5fc8ec42cf9f",
+      "size": 475
+    },
+    "layers": [
+      {
+        "mediaType": "application/vnd.ollama.image.model",
+        "digest": "sha256:dec52a44569a2a25341c4e4d3fee25846eed4f6f0b936278e3a3c900bb99d37c",
+        "size": 6594462816
+      },
+      {
+        "mediaType": "application/vnd.ollama.image.license",
+        "digest": "sha256:7339fa418c9ad3e8e12e74ad0fd26a9cc4be8703f9c110728a992b193be85cb2",
+        "size": 11355
+      },
+      {
+        "mediaType": "application/vnd.ollama.image.params",
+        "digest": "sha256:9371364b27a52acac9d87f88bd93c9db1174d8d6ec57f6888925cdc1788871ff",
+        "size": 65
+      }
+    ]
+  },
+  "evaluation": {
+    "suite_id": "recordbench-model-portfolio-gold-v1",
+    "fingerprint": "d863a4e79874ee7c6f440d1999309438ed52834d5fbc566cf2279e6658c2ed14",
+    "date": "2026-09-08",
+    "hardware": "Apple M4",
+    "runtime": "Ollama 0.33.3",
+    "context_tokens": 8192,
+    "passed": 5,
+    "total": 10,
+    "accepted": false,
+    "evidence": "docs/MAC_MODELS.md",
+    "failed_cases": [
+      "superseded-vehicle-color",
+      "unresolved-entrance-conflict",
+      "same-surname-distinct-people",
+      "final-invoice-reconciliation",
+      "partially-readable-vehicle"
+    ]
+  }
+}

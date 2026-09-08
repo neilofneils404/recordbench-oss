@@ -112,6 +112,54 @@ class _TrackingDiarizationEngine(MockPipelineEngine):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_cpu_real_worker_uses_manifest_and_processes_without_gpu(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache = root / "models"
+            manifest = _approved_manifest(cache)
+            runtime = build_runtime(Settings(
+                data_root=root / "data",
+                database_path=root / "data" / "jobs.sqlite3",
+                pipeline_backend="whisperx",
+                inference_device="cpu",
+                model_cache_dir=cache,
+                model_manifest_path=manifest,
+                allow_degraded_diarization=True,
+            ))
+            job = runtime.store.create_job(
+                owner_key="owner",
+                options=TranscriptionOptions(diarize_speakers=False),
+                profile="balanced",
+            )
+            ingested = runtime.storage.ingest_stream(
+                job.id, io.BytesIO(_wav_bytes()), "Synthetic.wav",
+                media_type="audio/wav", max_bytes=1024 * 1024,
+            )
+            runtime.store.register_file(
+                job.id, owner_key="owner", original_name=ingested.original_name,
+                safe_name=ingested.safe_name, relative_path=ingested.relative_path,
+                media_type=ingested.media_type, size_bytes=ingested.size_bytes,
+                sha256=ingested.sha256,
+            )
+            runtime.store.enqueue_job(job.id, "owner")
+            requests = []
+
+            class RecordingEngine(MockPipelineEngine):
+                def transcribe_source(self, request, profile):
+                    requests.append(request)
+                    return super().transcribe_source(request, profile)
+
+            with patch("transcription_v2.worker.create_pipeline_engine", return_value=RecordingEngine()), patch(
+                "transcription_v2.worker.gpu_states", side_effect=AssertionError("CPU must not query NVIDIA")
+            ):
+                worker = JobWorker(runtime)
+                self.assertIsNotNone(worker.model_readiness)
+                self.assertTrue(worker.run_once())
+            self.assertEqual(runtime.store.get_job(job.id).status, JobStatus.SUCCEEDED)
+            self.assertEqual(requests[0].device, "cpu")
+            self.assertEqual(requests[0].cpu_compute_type, "int8")
+            self.assertTrue((runtime.settings.data_root / "worker.lock").is_file())
+
     def test_duration_limit_is_permanent_and_staff_safe(self) -> None:
         self.assertEqual(
             ("media_duration_exceeded", False),

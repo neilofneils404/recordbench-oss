@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -21,6 +22,41 @@ class _FakeDistribution:
 
 
 class ReadinessTests(unittest.TestCase):
+    def test_mock_readiness_does_not_claim_a_gpu_is_required(self) -> None:
+        self.settings = replace(self.settings, pipeline_backend="mock")
+        report = self._report(_FakeDistribution(self.root / "empty-package"))
+        self.assertEqual(report["status"], "ready")
+        self.assertFalse(report["checks"]["gpu_required"])
+
+    def test_cuda_readiness_still_requires_the_reserved_gpu(self) -> None:
+        package_root = self.root / "site-packages"
+        vad = package_root / "whisperx" / "assets" / "pytorch_model.bin"
+        vad.parent.mkdir(parents=True)
+        vad.write_bytes(b"fixture")
+        self.environment["CUDA_VISIBLE_DEVICES"] = "2"
+        report = self._report(_FakeDistribution(package_root))
+        self.assertEqual(self.settings.inference_device, "cuda")
+        self.assertEqual(report["status"], "not_ready")
+        self.assertTrue(report["checks"]["gpu_required"])
+        self.assertFalse(report["checks"]["reserved_gpu_ready"])
+
+    def test_cpu_readiness_keeps_model_and_offline_gates_without_nvidia(self) -> None:
+        self.settings = replace(self.settings, inference_device="cpu")
+        self.environment.pop("CUDA_VISIBLE_DEVICES")
+        package_root = self.root / "site-packages"
+        vad = package_root / "whisperx" / "assets" / "pytorch_model.bin"
+        vad.parent.mkdir(parents=True)
+        vad.write_bytes(b"fixture")
+        report = self._report(_FakeDistribution(package_root))
+        self.assertEqual(report["status"], "ready")
+        self.assertFalse(report["checks"]["gpu_required"])
+        self.assertEqual(report["checks"]["gpus"], [])
+        self.environment["HF_HUB_OFFLINE"] = "0"
+        self.assertEqual(self._report(_FakeDistribution(package_root))["status"], "not_ready")
+        self.environment["HF_HUB_OFFLINE"] = "1"
+        self.manifest.unlink()
+        self.assertEqual(self._report(_FakeDistribution(package_root))["status"], "not_ready")
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
