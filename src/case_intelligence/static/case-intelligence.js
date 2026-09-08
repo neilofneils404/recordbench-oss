@@ -486,8 +486,8 @@
       });
     }
     if (uploadPreflightConfirm) {
-      uploadPreflightConfirm.textContent = `Upload ${eligible.toLocaleString()} ready ${eligible === 1 ? "file" : "files"}`;
-      uploadPreflightConfirm.disabled = eligible === 0;
+      uploadPreflightConfirm.textContent = eligible ? `Upload ${eligible.toLocaleString()} ready ${eligible === 1 ? "file" : "files"}` : "Save selection receipt";
+      uploadPreflightConfirm.disabled = selected === 0;
     }
     if (uploadPreflightRetry) uploadPreflightRetry.hidden = true;
     revealUploadPreflight();
@@ -500,13 +500,15 @@
     media_type: file.type,
   });
 
+  let memoryUploadCheckpoint = null;
   const storedUploadCheckpoint = () => {
     const fingerprintPattern = /^[0-9a-f]{64}$/;
     const sessionPattern = /^upload-session-[0-9a-f]{32}$/;
     const collectionPattern = /^source-collection-[0-9a-f]{32}$/;
     if (!uploadSessionKey) return null;
     try {
-      const parsed = JSON.parse(window.localStorage.getItem(uploadSessionKey) || "null");
+      let parsed = memoryUploadCheckpoint;
+      try { parsed = JSON.parse(window.localStorage.getItem(uploadSessionKey) || "null"); } catch (_error) { /* retain same-page recovery when storage is unavailable */ }
       const sessionId = String(parsed?.session_id || "");
       const collectionId = String(parsed?.collection_id || "");
       const identifiersValid = sessionPattern.test(sessionId) && collectionPattern.test(collectionId);
@@ -1422,6 +1424,7 @@
   };
 
   const clearUploadResumeState = () => {
+    memoryUploadCheckpoint = null;
     if (!uploadSessionKey) return;
     try { window.localStorage.removeItem(uploadSessionKey); } catch (_error) { /* no-op */ }
   };
@@ -1569,11 +1572,81 @@
           ...shared,
         }
         : { version: 3, ...shared };
+      memoryUploadCheckpoint = value;
       window.localStorage.setItem(uploadSessionKey, JSON.stringify(value));
     } catch (_error) { /* no-op */ }
   };
 
-  const startResumableUpload = async (files) => {
+  const intakeResumeKey = uploadSessionKey ? `${uploadSessionKey}:selection-receipt` : "";
+  let memoryIntakeCheckpoint = null;
+  const clearIntakeResumeState = () => {
+    memoryIntakeCheckpoint = null;
+    if (!intakeResumeKey) return;
+    try { window.localStorage.removeItem(intakeResumeKey); } catch (_error) { /* the durable receipt remains available */ }
+  };
+  const recordConfirmedSelection = async (files, preview, version) => {
+    const root = uploadForm?.dataset.intakeUrl;
+    if (!root) throw new Error("The selected-file receipt is unavailable. Refresh Sources and try again.");
+    const fingerprint = await rawSelectionFingerprint(files);
+    if (!fingerprint) throw new Error("This browser cannot save a resumable selection receipt. Use a current browser and try again.");
+    const indexes = preview.eligible_indexes.slice();
+    let checkpoint = null;
+    let saved = memoryIntakeCheckpoint;
+    try { saved ||= JSON.parse(window.localStorage.getItem(intakeResumeKey) || "null"); } catch (_error) { /* use same-page checkpoint */ }
+    {
+      if (saved?.version === 1 && /^[0-9a-f]{32}$/.test(saved.selection_key)
+        && saved.selection_fingerprint === fingerprint && saved.selected_count === files.length
+        && Array.isArray(saved.eligible_indexes) && JSON.stringify(saved.eligible_indexes) === JSON.stringify(indexes)
+        && typeof saved.collection_name === "string" && saved.collection_name.length <= 160) checkpoint = saved;
+    }
+    checkpoint ||= { version: 1, selection_key: selectionNonce(), selection_fingerprint: fingerprint,
+      selected_count: files.length, eligible_indexes: indexes,
+      collection_name: uploadCollectionName?.value || "Uploaded sources" };
+    memoryIntakeCheckpoint = checkpoint;
+    if (uploadCollectionName) uploadCollectionName.value = checkpoint.collection_name;
+    try { window.localStorage.setItem(intakeResumeKey, JSON.stringify(checkpoint)); } catch (_error) { /* same-page retries remain possible */ }
+    const post = async (url, payload) => {
+      if (version !== preflightVersion) throw new Error("The selection changed. Review the current files before uploading.");
+      const response = await fetch(url, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify(payload), cache: "no-store" });
+      return readUploadJson(response);
+    };
+    let receipt = await post(root, checkpoint);
+    const receiptId = receipt.receipt_id;
+    if (!/^intake-[0-9a-f]{32}$/.test(receiptId)) throw new Error("The selection receipt could not be verified. Try again.");
+    const linkBox = document.querySelector("[data-intake-receipt-link]");
+    const link = document.querySelector("[data-intake-receipt-open]");
+    if (link && linkBox) {
+      // Build the local route from a validated opaque identity.
+      link.href = `${root.replace(/\/intake-receipts$/, "/intake")}/${receiptId}`;
+      linkBox.hidden = false;
+    }
+    const descriptors = files.map((file, index) => preview.items[index]?.path_safety_validated
+      ? preflightDescriptor(file)
+      : { name: "", relative_path: "", size: Number.isSafeInteger(file.size) ? file.size : null,
+          media_type: preview.items[index]?.supplied_type || "" });
+    const encoder = new TextEncoder();
+    let start = 0;
+    while (start < files.length) {
+      let count = Math.min(maximumUploadBatchItems, files.length - start);
+      let payload;
+      while (count > 0) {
+        payload = { start, files: descriptors.slice(start, start + count),
+          reviewed_states: preview.items.slice(start, start + count).map(item => item.state) };
+        if (encoder.encode(JSON.stringify(payload)).byteLength <= maximumPreflightRequestBytes) break;
+        count = Math.floor(count / 2);
+      }
+      if (!count) throw new Error("A selection entry is too large to record. Review that entry again.");
+      if (uploadPreflightStatus) uploadPreflightStatus.textContent = `Saving selection receipt: ${start.toLocaleString()} of ${files.length.toLocaleString()} files recorded.`;
+      receipt = await post(`${root}/${receiptId}/items`, payload);
+      start += count;
+    }
+    receipt = await post(`${root}/${receiptId}/seal`, {});
+    if (receipt.state !== "ready" || receipt.recorded_count !== files.length) throw new Error("The selection receipt is incomplete. Try again before uploading.");
+    if (version !== preflightVersion) throw new Error("The selection changed. Review the current files before uploading.");
+    return { receipt_id: receiptId, ordinals: new Map(files.map((file, ordinal) => [file, ordinal])) };
+  };
+
+  const startResumableUpload = async (files, intake, version) => {
     if (!uploadForm?.dataset.sessionUrl) return;
     selectedUploadFiles = Array.from(files);
     const checkpointBinding = activePreflight?.checkpoint_binding || null;
@@ -1633,6 +1706,8 @@
                 collection_id: collectionId,
                 resume_session_id: resumeSessionId,
                 files: selectedUploadFiles.map(preflightDescriptor),
+                intake_receipt_id: intake.receipt_id,
+                intake_ordinals: selectedUploadFiles.map(file => intake.ordinals.get(file)),
               }),
               signal: uploadAbortController.signal,
             });
@@ -1676,11 +1751,13 @@
       pollUploadProcessing();
       if (["complete", "partial"].includes(activeUpload.state)) {
         clearUploadResumeState();
+        clearIntakeResumeState();
       }
     } catch (error) {
       if (error.name !== "AbortError") {
         if (uploadTitle) uploadTitle.textContent = "Upload paused";
-        if (uploadStatus) uploadStatus.textContent = `${error.message} Reselect the same records to resume from the saved offsets.`;
+        if (uploadStatus) uploadStatus.textContent = `${error.message} Try again with this selection, or reselect the same records to resume from the saved offsets.`;
+        if (version === preflightVersion && uploadPreflightConfirm) uploadPreflightConfirm.disabled = false;
       }
     } finally {
       uploadDrop?.classList.remove("uploading");
@@ -1688,28 +1765,40 @@
     }
   };
 
-  const confirmUploadPreflight = () => {
-    const indexes = Array.isArray(activePreflight?.eligible_indexes)
-      ? activePreflight.eligible_indexes
-      : [];
-    const eligibleFiles = indexes
-      .filter((index) => Number.isSafeInteger(index) && index >= 0 && index < preflightFiles.length)
-      .map((index) => preflightFiles[index]);
-    if (!eligibleFiles.length || eligibleFiles.length !== indexes.length) {
-      previewSelectedFiles(preflightFiles);
+  const confirmUploadPreflight = async () => {
+    const preview = activePreflight;
+    const files = preflightFiles.slice();
+    const version = preflightVersion;
+    const indexes = Array.isArray(preview?.eligible_indexes) ? preview.eligible_indexes : [];
+    const eligibleFiles = indexes.filter(index => Number.isSafeInteger(index) && index >= 0 && index < files.length).map(index => files[index]);
+    if (!preview || !files.length || eligibleFiles.length !== indexes.length) {
+      previewSelectedFiles(files);
       return;
     }
     if (uploadPreflightConfirm) uploadPreflightConfirm.disabled = true;
-    if (uploadPreflightState) uploadPreflightState.textContent = "Uploading reviewed files";
-    if (uploadPreflightStatus) {
-      uploadPreflightStatus.textContent = `${eligibleFiles.length.toLocaleString()} reviewed ${eligibleFiles.length === 1 ? "file is" : "files are"} starting the retained upload checks. Other selected files will not be copied.`;
+    if (uploadPreflightState) uploadPreflightState.textContent = "Saving selected-file receipt";
+    try {
+      const intake = await recordConfirmedSelection(files, preview, version);
+      if (!eligibleFiles.length) {
+        clearIntakeResumeState();
+        if (uploadPreflightState) uploadPreflightState.textContent = "Selection receipt saved";
+        if (uploadPreflightStatus) uploadPreflightStatus.textContent = `All ${files.length.toLocaleString()} selected files are recorded. No file bytes were uploaded. Open the receipt to review what needs attention.`;
+        return;
+      }
+      if (uploadPreflightState) uploadPreflightState.textContent = "Uploading reviewed files";
+      if (uploadPreflightStatus) uploadPreflightStatus.textContent = `${files.length.toLocaleString()} selected files are recorded. ${eligibleFiles.length.toLocaleString()} ready files are starting upload; the other files remain in the receipt.`;
+      await startResumableUpload(eligibleFiles, intake, version);
+    } catch (error) {
+      if (version !== preflightVersion) return;
+      if (uploadPreflightState) uploadPreflightState.textContent = "Selection receipt paused";
+      if (uploadPreflightStatus) uploadPreflightStatus.textContent = `${error.message} Your selection is still here. Try confirming again, or reselect the same files to resume.`;
+      if (uploadPreflightConfirm) uploadPreflightConfirm.disabled = false;
     }
-    startResumableUpload(eligibleFiles);
   };
 
   uploadForm?.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (activePreflight?.eligible_indexes?.length) {
+    if (activePreflight?.selected_count) {
       confirmUploadPreflight();
     } else if (preflightFiles.length) {
       previewSelectedFiles(preflightFiles);
@@ -1745,9 +1834,8 @@
       });
       activeUpload = await readUploadJson(response);
       renderUpload(activeUpload, "Upload cancelled. Sources already queued remain in this matter.");
-      if (uploadSessionKey) {
-        try { window.localStorage.removeItem(uploadSessionKey); } catch (_error) { /* no-op */ }
-      }
+      clearUploadResumeState();
+      clearIntakeResumeState();
     } catch (error) {
       if (uploadStatus) uploadStatus.textContent = error.message;
     }

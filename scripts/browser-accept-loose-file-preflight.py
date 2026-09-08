@@ -322,6 +322,7 @@ def main() -> int:
         _wait_until(lambda: server.started, "synthetic loopback server did not start")
 
         options = Options()
+        options.page_load_strategy = "none"
         options.binary_location = str(args.chrome_binary)
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
@@ -339,6 +340,11 @@ def main() -> int:
             driver.set_page_load_timeout(20)
             driver.set_script_timeout(60)
             wait = WebDriverWait(driver, 20)
+            original_get = driver.get
+            def navigate(url):
+                original_get(url)
+                wait.until(lambda current: current.execute_script("return document.readyState") in {"interactive", "complete"})
+            driver.get = navigate
             base_url = f"http://127.0.0.1:{port}"
             driver.get(f"{base_url}/matters/new")
             driver.find_element(By.ID, "matter-name").send_keys(
@@ -1035,7 +1041,7 @@ def main() -> int:
                 and current.find_element(
                     By.CSS_SELECTOR, "[data-upload-preflight-confirm]"
                 ).text
-                == "Upload 0 ready files"
+                == "Save selection receipt"
             )
             oversized_row = driver.find_element(
                 By.CSS_SELECTOR, "[data-upload-preflight-items] > li"
@@ -1611,6 +1617,9 @@ def main() -> int:
                 ACTOR,
                 capacity_checkpoint_binding["session_id"],
             )
+            # The following fixture represents a checkpoint created before
+            # receipts existed; discard only the modern bootstrap's browser key.
+            driver.execute_script("window.localStorage.removeItem(arguments[0] + ':selection-receipt');", capacity_resume_key)
             driver.refresh()
             capacity_resume_input = wait.until(
                 lambda current: current.find_element(
@@ -2470,7 +2479,11 @@ def main() -> int:
                         "batch_index": 0,
                     }
                 )
+                # This fixture represents a pre-receipt browser checkpoint.
+                # Earlier modern uploads in this matter must not donate their
+                # already-bound selection receipt to an unrelated legacy retry.
                 driver.execute_script(
+                    "window.localStorage.removeItem(arguments[0] + ':selection-receipt');"
                     "window.localStorage.setItem(arguments[0], arguments[1]);",
                     terminal_key,
                     checkpoint,
@@ -2562,10 +2575,11 @@ def main() -> int:
                     )
                 else:
                     WebDriverWait(driver, 30).until(
-                        lambda current: current.find_element(
+                        lambda current: current.execute_script(
+                            "return window.__slice1aStatusEvents.some(event => event.kind === 'status');"
+                        ) and current.find_element(
                             By.CSS_SELECTOR, "[data-upload-form]"
-                        ).get_attribute("aria-busy")
-                        is None
+                        ).get_attribute("aria-busy") is None
                     )
                 events = driver.execute_script(
                     "return window.__slice1aStatusEvents;"

@@ -7929,3 +7929,17 @@ body.activity-open .activity-drawer { transform: translateX(0); }
 .review-decision-form textarea { width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--canvas); color: var(--ink); font: inherit; }
 .decision-recovery-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 760px) { .decision-recovery-columns { grid-template-columns: minmax(0, 1fr); } .decision-recovery-panel { padding: 16px; } }
+
+.intake-receipt { max-width: 1120px; margin: 0 auto; padding: 24px; }
+.intake-receipt-summary, .intake-receipt-actions, .intake-receipt-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 18px 0; }
+.intake-receipt-summary { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.intake-receipt-items { padding-left: 24px; }
+.intake-receipt-items > li { padding: 18px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow-wrap: anywhere; }
+.intake-receipt-file { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+.intake-receipt-items dl { display: flex; flex-wrap: wrap; gap: 20px; margin: 14px 0; }
+.intake-receipt-items dt, .intake-receipt-boundary { color: var(--ink-soft); font-size: .9rem; }
+.intake-receipt-items dd { margin: 4px 0 0; }
+.intake-recent { margin: 24px 0; padding: 18px; border: 1px solid var(--line); border-radius: 12px; }
+.intake-recent ul { padding: 0; list-style: none; }
+.intake-recent li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 0; }
+@media (max-width: 640px) { .intake-receipt { padding: 16px 10px; } .intake-receipt-items { padding-left: 18px; } .intake-receipt-items > li { padding: 12px; } }

@@ -85,6 +85,8 @@ from .media_evidence import (
 from .managed_storage import ManagedMatterStorage, StoragePolicy, format_bytes
 from .malware_scan import MalwareScanner, scanner_from_environment, scanner_status
 from .loose_file_preflight import evaluate_loose_file_preflight
+from .intake_receipts import IntakeReceipts, IntakeUploadResumeMismatch
+from .intake_receipt_exports import export_intake_receipt, LABELS as INTAKE_LABELS
 from .matter_analysis import MAX_ANALYSIS_UNITS, analyze_candidates
 from .media_playback import BrowserPlaybackCoordinator
 from .model_portfolio import model_portfolio_projection
@@ -1308,9 +1310,18 @@ class CaseIntelligenceWorkbench:
         files: Sequence[Mapping[str, object]],
         *,
         collection_id: str = "",
+        intake_receipt_id: str = "",
+        intake_ordinals: Sequence[int] = (),
     ):
         requested = sum(int(item.get("expected_size") or 0) for item in files)
         with self._storage_reservation_lock:
+            if intake_receipt_id:
+                with self.workspace._lock:
+                    existing = IntakeReceipts(self.workspace).validate_upload_locked(
+                        matter.matter_id, actor_id, intake_receipt_id, intake_ordinals, files
+                    )
+                    if existing:
+                        return self.workspace.upload_session(matter.matter_id, actor_id, existing)
             used = self.storage.matter_payload_usage_bytes(matter.matter_id)
             matter_reserved = self.workspace.pending_upload_bytes(
                 matter.matter_id
@@ -1344,6 +1355,8 @@ class CaseIntelligenceWorkbench:
                 collection_name,
                 files,
                 collection_id=collection_id,
+                intake_receipt_id=intake_receipt_id,
+                intake_ordinals=intake_ordinals,
             )
 
     def ensure_upload_write_capacity(self) -> None:
@@ -7859,6 +7872,7 @@ def create_workbench_app(
         sort: str = Query("newest", max_length=20),
         page: int = Query(1, ge=1, le=100_000),
         page_size: int = Query(50, ge=1, le=100),
+        receipt_page: int = Query(1, ge=1, le=100_000),
         notice: str = Query("", max_length=240),
         error: str = Query("", max_length=240),
     ):
@@ -7949,6 +7963,17 @@ def create_workbench_app(
                 "recent_upload_sessions": bench.workspace.recent_upload_sessions(
                     matter.matter_id, context.principal_id
                 ),
+                "intake_receipts": IntakeReceipts(bench.workspace).recent(
+                    matter.matter_id,
+                    context.principal_id,
+                    limit=11,
+                    offset=(receipt_page - 1) * 10,
+                    administrator_override=(
+                        getattr(request.state, "administrator_matter_override", None)
+                        == matter.matter_id
+                    ),
+                ),
+                "receipt_page": receipt_page,
                 "registered_locations": bench.source_registry.staff_locations(),
                 "ingest_plan": ingest_plan,
                 "plan_items": plan_items[:200],
@@ -9604,6 +9629,139 @@ def create_workbench_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    async def read_intake_json(request: Request) -> dict:
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > MAX_UPLOAD_PREFLIGHT_REQUEST_BYTES:
+                raise HTTPException(413, "The selected-file receipt batch is too large.")
+            raw.extend(chunk)
+        try:
+            payload = json.loads(raw)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise HTTPException(400, "The selected-file receipt could not be read.") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "The selected-file receipt request is invalid.")
+        return payload
+
+    def intake_response(matter: MatterRecord, receipt: dict, *, status_code: int = 200):
+        return JSONResponse({**receipt, "receipt_url": f"/matters/{matter.slug}/intake/{receipt['receipt_id']}"},
+            status_code=status_code, headers={"Cache-Control": "no-store"})
+
+    @app.post("/matters/{slug}/intake-receipts", dependencies=[Depends(require_csrf_header)])
+    async def record_intake_selection(request: Request, slug: str):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        payload = await read_intake_json(request)
+        try:
+            receipt = await run_in_threadpool(IntakeReceipts(bench.workspace).create, matter.matter_id, context.principal_id,
+                selection_key=payload.get("selection_key"), selection_fingerprint=payload.get("selection_fingerprint"),
+                selected_count=payload.get("selected_count"), eligible_indexes=payload.get("eligible_indexes"),
+                collection_name=payload.get("collection_name") or "Uploaded sources")
+        except KeyError as exc:
+            raise HTTPException(404, "Selection receipt not found") from exc
+        except (WorkspaceProblem, TypeError) as exc:
+            return JSONResponse({"message": str(exc) if isinstance(exc, WorkspaceProblem) else "The selection receipt is invalid."},
+                status_code=409, headers={"Cache-Control": "no-store"})
+        audit(request, "source.intake_receipt_create", "success", context=context, matter=matter,
+            object_type="matter", object_id=matter.matter_id, details={"count": receipt["selected_count"]})
+        return intake_response(matter, receipt, status_code=201)
+
+    @app.post("/matters/{slug}/intake-receipts/{receipt_id}/items", dependencies=[Depends(require_csrf_header)])
+    async def record_intake_items(request: Request, slug: str, receipt_id: str):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        payload = await read_intake_json(request)
+        capability = await run_in_threadpool(scanner_status, bench.malware_scanner)
+        try:
+            receipt = await run_in_threadpool(IntakeReceipts(bench.workspace).append, matter.matter_id, context.principal_id, receipt_id,
+                start=payload.get("start"), files=payload.get("files"), reviewed_states=payload.get("reviewed_states"),
+                document_limit=bench.storage_policy.document_file_bytes, media_limit=bench.storage_policy.media_file_bytes,
+                malware_scan_mode=bench.malware_scan_mode, scanner_ready=capability.ready)
+        except KeyError as exc:
+            raise HTTPException(404, "Selection receipt not found") from exc
+        except WorkspaceProblem as exc:
+            return JSONResponse({"message": str(exc)}, status_code=409, headers={"Cache-Control": "no-store"})
+        return intake_response(matter, receipt)
+
+    @app.post("/matters/{slug}/intake-receipts/{receipt_id}/seal", dependencies=[Depends(require_csrf_header)])
+    def finish_intake_receipt(request: Request, slug: str, receipt_id: str):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        try:
+            receipt = IntakeReceipts(bench.workspace).seal(matter.matter_id, context.principal_id, receipt_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Selection receipt not found") from exc
+        except WorkspaceProblem as exc:
+            return JSONResponse({"message": str(exc)}, status_code=409, headers={"Cache-Control": "no-store"})
+        return intake_response(matter, receipt)
+
+    @app.get("/matters/{slug}/intake-receipts/{receipt_id}")
+    def intake_receipt_status(request: Request, slug: str, receipt_id: str):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        try:
+            receipt = IntakeReceipts(bench.workspace).get(
+                matter.matter_id, context.principal_id, receipt_id,
+                administrator_override=(
+                    getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+                ),
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Selection receipt not found") from exc
+        return intake_response(matter, receipt)
+
+    @app.get("/matters/{slug}/intake/{receipt_id}")
+    def view_intake_receipt(request: Request, slug: str, receipt_id: str, page: int = Query(1, ge=1, le=100)):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        receipts = IntakeReceipts(bench.workspace)
+        try:
+            receipt = receipts.snapshot(
+                matter.matter_id, context.principal_id, receipt_id, offset=(page - 1) * 100, limit=100,
+                administrator_override=(
+                    getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+                ),
+            )
+            rows = receipt.pop("items")
+            store = bench.source_store(matter)
+            for row in rows:
+                row["source_url"] = ""
+                if row["catalog_document_id"]:
+                    try:
+                        document = store.get(row["catalog_document_id"])
+                        if document.version_id == row["version_id"]:
+                            row["source_url"] = f"/matters/{slug}/sources/{store.action_token(document)}"
+                    except KeyError:
+                        pass
+        except KeyError as exc:
+            raise HTTPException(404, "Selection receipt not found") from exc
+        return templates.TemplateResponse(request=request, name="workbench_intake_receipt.html",
+            context={**base_context(request, matter), "matter": matter, "receipt": receipt,
+                "receipt_items": rows, "intake_labels": INTAKE_LABELS, "page": page},
+            headers={"Cache-Control": "no-store"})
+
+    @app.get("/matters/{slug}/intake/{receipt_id}/export", dependencies=[Depends(require_matter_response_lease)])
+    def download_intake_receipt(request: Request, slug: str, receipt_id: str,
+                                format_name: str = Query("csv", alias="format", pattern="^(csv|json|markdown)$")):
+        context = auth_context(request)
+        matter = response_lease_matter(request, slug)
+        receipts = IntakeReceipts(bench.workspace)
+        try:
+            receipt = receipts.snapshot(
+                matter.matter_id, context.principal_id, receipt_id,
+                administrator_override=(
+                    getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+                ),
+            )
+            artifact = export_intake_receipt(receipt, format_name)
+        except KeyError as exc:
+            raise HTTPException(404, "Selection receipt not found") from exc
+        except (WorkspaceProblem, ExportProblem) as exc:
+            return PlainTextResponse(str(exc), status_code=409)
+        audit(request, "work_product.export", "success", context=context, matter=matter,
+            object_type="matter", object_id=matter.matter_id, details={"kind": "intake_receipt", "format": format_name})
+        return download_response(request, artifact)
+
     @app.post(
         "/matters/{slug}/upload-preflight",
         dependencies=[Depends(require_csrf_header)],
@@ -9827,8 +9985,46 @@ def create_workbench_app(
         except UploadProblem as exc:
             return JSONResponse({"message": str(exc)}, status_code=exc.status_code)
 
+        intake_receipt_id = payload.get("intake_receipt_id", "")
+        intake_ordinals = payload.get("intake_ordinals", [])
+        if (not isinstance(intake_receipt_id, str) or not isinstance(intake_ordinals, list)
+            or any(not isinstance(i, int) or isinstance(i, bool) for i in intake_ordinals)):
+            return JSONResponse({"message": "The selected-file receipt binding is invalid."}, status_code=400)
+        if intake_receipt_id:
+            try:
+                with bench.workspace._lock:
+                    matching_session = IntakeReceipts(bench.workspace).validate_upload_locked(
+                        matter.matter_id, context.principal_id, intake_receipt_id, intake_ordinals, prepared)
+                if matching_session:
+                    session, _ = bench.workspace.upload_session(matter.matter_id, context.principal_id, matching_session)
+                    if ((payload.get("resume_session_id") and payload["resume_session_id"] != matching_session)
+                        or (payload.get("collection_id") and payload["collection_id"] != session.collection_id)):
+                        return JSONResponse({"code": "upload_resume_mismatch",
+                            "message": "The saved upload no longer matches this reviewed selection."},
+                            status_code=409, headers={"Cache-Control": "no-store"})
+                    session, existing_items = reconcile_upload_session(matter, context.principal_id, matching_session)
+                    return JSONResponse(upload_projection(matter, session, existing_items), headers={"Cache-Control": "no-store"})
+            except KeyError as exc:
+                raise HTTPException(404, "Selection receipt not found") from exc
+            except WorkspaceProblem as exc:
+                return JSONResponse({"message": str(exc)}, status_code=409)
+        elif intake_ordinals:
+            return JSONResponse({"message": "The selected-file receipt is missing."}, status_code=400)
+
         resume_session_id = str(payload.get("resume_session_id") or "")
         collection_id = str(payload.get("collection_id") or "")
+        if resume_session_id and intake_receipt_id:
+            try:
+                IntakeReceipts(bench.workspace).adopt_upload(
+                    matter.matter_id, context.principal_id, intake_receipt_id,
+                    intake_ordinals, prepared, resume_session_id, collection_id=collection_id)
+            except KeyError as exc:
+                raise HTTPException(404, "Saved upload not found") from exc
+            except IntakeUploadResumeMismatch as exc:
+                return JSONResponse({"code": "upload_resume_mismatch", "message": str(exc)},
+                    status_code=409, headers={"Cache-Control": "no-store"})
+            except WorkspaceProblem as exc:
+                return JSONResponse({"message": str(exc)}, status_code=409, headers={"Cache-Control": "no-store"})
         if resume_session_id:
             requested_manifest = tuple(
                 (
@@ -9897,6 +10093,8 @@ def create_workbench_app(
                 collection_name,
                 prepared,
                 collection_id=collection_id,
+                intake_receipt_id=intake_receipt_id,
+                intake_ordinals=intake_ordinals,
             )
         except UploadProblem as exc:
             return JSONResponse({"message": str(exc)}, status_code=exc.status_code)
@@ -10075,6 +10273,7 @@ def create_workbench_app(
                 item_id,
                 document.document_id,
                 queue_ingestion=not media_source,
+                source_version_id=document.version_id,
                 media_details=(
                     {
                         "source_version_id": document.version_id,
@@ -13580,6 +13779,12 @@ def create_workbench_app(
                         ),
                         artifact=review_artifact,
                     )
+            for index, receipt in enumerate(IntakeReceipts(bench.workspace).export(
+                matter.matter_id, read_actor_id, administrator_override=administrator_override
+            ), 1):
+                for format_name in ("markdown", "csv", "json"):
+                    receipt_artifact = export_intake_receipt(receipt, format_name)
+                    add_work_product(kind="intake_receipt", path=f"intake/{index:03d}-{receipt_artifact.filename}", artifact=receipt_artifact)
             artifact = export_matter_bundle(
                 matter,
                 conversations,

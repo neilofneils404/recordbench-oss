@@ -1,0 +1,41 @@
+{% extends "workbench_base.html" %}
+{% block title %}Selected-file receipt · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}setup-page{% endblock %}
+{% block content %}
+<main class="setup-main">
+<section class="setup-workspace intake-receipt" aria-labelledby="intake-receipt-heading">
+  <div class="source-library-heading">
+    <div><p class="eyebrow">Sources</p><h1 id="intake-receipt-heading">Selected-file receipt</h1><p>{{ receipt.collection_name }}</p></div>
+    <a class="button button-secondary" href="/matters/{{ matter.slug }}/setup">Return to sources</a>
+  </div>
+  {% with active='sources' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
+  {% if receipt.state == 'recording' %}
+  <div class="notice notice-neutral"><strong>{{ receipt.recorded_count }} of {{ receipt.selected_count }} selected files recorded.</strong> Recording this selection was interrupted before uploading began. Reselect the same files in Sources to finish the receipt. Unrecorded files are not included in the rows below.</div>
+  {% endif %}
+  <div class="intake-receipt-summary" aria-label="Selection totals">
+    <strong>{{ receipt.counts.selected }} selected</strong><span>{{ receipt.counts.included }} included for upload</span><span>{{ receipt.counts.skipped }} not uploaded</span>{% if receipt.counts.unrecorded %}<span>{{ receipt.counts.unrecorded }} not yet recorded</span>{% endif %}
+  </div>
+  <p class="intake-receipt-transfer">{{ receipt.counts.received }} received · {{ receipt.counts.partial }} partly received · {{ receipt.counts.not_received }} included files not received</p>
+  <p>{{ receipt.counts.searchable }} searchable · {{ receipt.counts.processing }} uploading or processing · {{ receipt.counts.playback_only }} playback only · {{ receipt.counts.needs_review }} need review · {{ receipt.counts.failed }} failed or cancelled · {{ receipt.counts.unavailable }} unavailable · {{ receipt.counts.not_started }} not started</p>
+  <p class="intake-receipt-boundary">This receipt lists files supplied by your browser. Empty folders are not listed. Received files may still need processing.</p>
+  <div class="intake-receipt-actions">
+    <a class="button button-primary" href="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}/export?format=csv" data-download>Download receipt</a>
+    <a href="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}/export?format=markdown" data-download>Text version</a>
+    <a href="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}/export?format=json" data-download>Structured version</a>
+    <a href="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}?page={{ page }}">Refresh status</a>
+  </div>
+  <ol class="intake-receipt-items" start="{{ (page - 1) * 100 + 1 }}">
+  {% for item in receipt_items %}
+    <li data-intake-row data-disposition="{{ item.selection_state }}" data-transfer="{{ item.transfer_state }}">
+      <div class="intake-receipt-file"><strong>{{ item.relative_path or item.display_name }}</strong>{% if item.source_url %}<a href="{{ item.source_url }}">Open source</a>{% endif %}</div>
+      <dl><div><dt>Selection</dt><dd>{{ intake_labels[item.selection_state] }}</dd></div><div><dt>Transfer</dt><dd>{{ intake_labels[item.transfer_state] }}</dd></div><div><dt>Availability</dt><dd>{{ intake_labels[item.availability] }}</dd></div></dl>
+      <p>{% if item.upload_message %}{{ item.upload_message }}{% else %}At confirmation: {{ item.reason }}{% endif %}</p>
+      <small>{{ item.received_size }} bytes received{% if item.expected_size is not none %} of {{ item.expected_size }} selected{% endif %} · Filename check: {{ intake_labels[item.preflight_state] }}</small>
+    </li>
+  {% endfor %}
+  </ol>
+  <nav class="intake-receipt-pages" aria-label="Receipt pages">{% if page > 1 %}<a href="?page={{ page - 1 }}">Previous 100 files</a>{% endif %}{% if page * 100 < receipt.recorded_count %}<a href="?page={{ page + 1 }}">Next 100 files</a>{% endif %}</nav>
+</section>
+</main>
+{% endblock %}

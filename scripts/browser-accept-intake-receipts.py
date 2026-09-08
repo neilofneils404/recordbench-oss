@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""Synthetic receipt recovery through real Chrome and disposable loopback state."""
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import socket
+import sys
+import tempfile
+import threading
+import time
+import zipfile
+from pathlib import Path
+from urllib.parse import urlparse
+
+import uvicorn
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'src'))
+from case_intelligence.generation import UnavailableGenerator  # noqa: E402
+from case_intelligence.intake_receipts import IntakeReceipts  # noqa: E402
+from case_intelligence.managed_storage import StoragePolicy  # noqa: E402
+from case_intelligence.workbench import create_workbench_app  # noqa: E402
+
+ACTOR = 'development-taylor-morgan'
+
+
+def require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def until(predicate, message, seconds=25):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(.05)
+    raise AssertionError(message)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--chrome-binary', type=Path, required=True)
+    parser.add_argument('--chromedriver', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
+    output = args.output.resolve()
+    downloads = output / 'downloads'
+    downloads.mkdir(exist_ok=True)
+    report = {'synthetic_only': True, 'passed': False, 'checks': []}
+    def record_check(message):
+        report['checks'].append(message)
+        print(message, flush=True)
+    driver = server = thread = sock = None
+    with tempfile.TemporaryDirectory(prefix='recordbench-intake-browser-') as d:
+        root = Path(d)
+        folder = root / 'Generated-selection'
+        fixtures = {
+            'North/report.txt': b'Synthetic north copper journal passage.\n',
+            'South/report.txt': b'Synthetic south amber journal passage.\n',
+            'Copies/copy.txt': b'Synthetic north copper journal passage.\n',
+            'Attention/damaged.pdf': b'Not a PDF file.\n',
+            'Unsupported/opaque.bin': b'Generated unsupported bytes',
+            'Empty/empty.txt': b'',
+            'Large/large.txt': b'x' * (128 * 1024 + 1),
+        }
+        for relative, body in fixtures.items():
+            path = folder / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(body)
+        app = create_workbench_app(root / 'runtime', generator=UnavailableGenerator(),
+            auth_mode='test', background_ingestion=True, ingestion_workers=1,
+            storage_policy=StoragePolicy(matter_quota_bytes=1024*1024, upload_session_bytes=256*1024,
+                document_file_bytes=128*1024, media_file_bytes=128*1024, reserve_bytes=0))
+        bench = app.state.workbench
+        receipts = IntakeReceipts(bench.workspace)
+        sock = socket.socket()
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+        server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=port, log_level='warning', access_log=False))
+        thread = threading.Thread(target=server.run, kwargs={'sockets': [sock]}, daemon=True)
+        thread.start()
+        until(lambda: server.started, 'Synthetic server did not start')
+        base = f'http://127.0.0.1:{port}'
+        options = Options()
+        options.binary_location = str(args.chrome_binary)
+        options.page_load_strategy = 'none'
+        for flag in ('--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-proxy-server', '--window-size=1440,1000'):
+            options.add_argument(flag)
+        options.add_experimental_option('prefs', {'download.default_directory': str(downloads), 'download.prompt_for_download': False})
+        options.set_capability('goog:loggingPrefs', {'browser': 'ALL'})
+        try:
+            driver = webdriver.Chrome(service=Service(str(args.chromedriver)), options=options)
+            driver.set_page_load_timeout(30)
+            wait = WebDriverWait(driver, 25)
+            original_get = driver.get
+            def navigate(url):
+                original_get(url)
+                wait.until(lambda current: current.execute_script('return document.readyState') in {'interactive', 'complete'})
+            driver.get = navigate
+
+            def create_matter(name):
+                driver.get(base + '/matters/new')
+                driver.find_element(By.ID, 'matter-name').send_keys(name)
+                driver.find_element(By.ID, 'matter-descriptor').send_keys('Generated receipt acceptance')
+                driver.find_element(By.CSS_SELECTOR, '.matter-form button[type=submit]').click()
+                wait.until(lambda x: '/setup' in x.current_url)
+                slug = urlparse(driver.current_url).path.split('/')[2]
+                wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-folder-input]').is_enabled())
+                return bench.matter(slug, ACTOR)
+
+            def confirm():
+                button = driver.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]')
+                driver.execute_script('arguments[0].scrollIntoView({block:"center",behavior:"instant"});', button)
+                wait.until(lambda current: current.execute_script('const r=arguments[0].getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight;', button))
+                button.click()
+
+            def completed(matter):
+                sessions = bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR)
+                return sessions and all(s.state in {'complete', 'partial'} for s in sessions) and not any(bench.workspace.active_matter_work_counts(matter.matter_id).values())
+
+            matter = create_matter('Synthetic nested receipt')
+            # Lose an actual successful confirmation response while browser
+            # storage is unavailable. Retrying must reuse its in-memory key.
+            driver.execute_script(r'''
+                Object.defineProperty(window, 'localStorage', {configurable:true, get() {throw new DOMException('Synthetic storage denied', 'SecurityError');}});
+                window.receiptOriginalFetch = window.fetch;
+                window.receiptLostResponse = false;
+                window.fetch = async (...args) => {
+                    const response = await window.receiptOriginalFetch(...args);
+                    if (!window.receiptLostResponse && /\/intake-receipts$/.test(String(args[0])) && args[1]?.method === 'POST') {
+                        window.receiptLostResponse = true;
+                        throw new Error('Synthetic confirmation response lost');
+                    }
+                    return response;
+                };
+            ''')
+            driver.find_element(By.CSS_SELECTOR, '[data-folder-input]').send_keys(str(folder))
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Upload 4 ready files')
+            confirm()
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-state]').text == 'Selection receipt paused')
+            require(len(receipts.recent(matter.matter_id, ACTOR)) == 1, 'Lost response created extra receipts')
+            confirm()
+            until(lambda: completed(matter), 'Retried folder upload did not finish')
+            saved = receipts.recent(matter.matter_id, ACTOR)
+            require(len(saved) == 1, 'Storage-denied retry duplicated selection')
+            receipt = saved[0]
+            require(receipt['counts']['recorded'] == 7 and receipt['counts']['received'] == 4
+                and receipt['counts']['skipped'] == 3 and receipt['counts']['searchable'] == 3
+                and receipt['counts']['failed'] == 1, 'Selection/transfer/processing accounting differs')
+            record_check('Nested selection and storage-denied lost-response retry preserve every row without duplicate receipts')
+            driver.find_element(By.CSS_SELECTOR, '[data-intake-receipt-open]').click()
+            wait.until(lambda x: len(x.find_elements(By.CSS_SELECTOR, '[data-intake-row]')) == 7)
+            driver.refresh()
+            require(len(driver.find_elements(By.CSS_SELECTOR, '[data-intake-row]')) == 7, 'Reload lost selected rows')
+            require('Unsupported/opaque.bin' in driver.find_element(By.TAG_NAME, 'body').text, 'Reload lost skipped path')
+            driver.save_screenshot(str(output / 'synthetic-nested-receipt.png'))
+            source_links = [a.get_attribute('href') for a in driver.find_elements(By.LINK_TEXT, 'Open source')]
+            require(len(source_links) == 3, 'Exact source links missing')
+            receipt_url = driver.current_url
+            for source_url in source_links:
+                driver.get(source_url)
+                require('journal passage' in driver.find_element(By.TAG_NAME, 'body').text, 'Source link opened wrong content')
+            record_check('Reload retains skipped reasons; receipt opens all three exact source passages')
+            driver.get(receipt_url)
+            driver.find_element(By.LINK_TEXT, 'Structured version').click()
+            receipt_file = until(lambda: next(downloads.glob('selected-file-receipt*.json'), None), 'Browser receipt download did not finish')
+            data = json.loads(receipt_file.read_text())
+            require(len(data['items']) == 7 and data['counts']['received'] == 4, 'Downloaded receipt is incomplete')
+            driver.get(base + f'/matters/{matter.slug}/close')
+            export_link = driver.find_element(By.CSS_SELECTOR, f'a[href="/matters/{matter.slug}/export"]')
+            export_link.click()
+            bundle_file = until(lambda: next(downloads.glob('*.zip'), None), 'Browser bundle download did not finish')
+            with zipfile.ZipFile(io.BytesIO(bundle_file.read_bytes())) as archive:
+                names = [n for n in archive.namelist() if n.startswith('intake/')]
+                require(len(names) == 3, 'Complete bundle omitted receipt formats')
+                exported = json.loads(archive.read(next(n for n in names if n.endswith('.json'))))
+                require(exported == data, 'Bundle and individual receipt differ')
+            record_check('Normal browser receipt and final-export downloads contain a coherent complete selection')
+
+            driver.get(base + f'/matters/{matter.slug}/setup')
+            driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(folder/'Unsupported/opaque.bin'))
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Save selection receipt')
+            confirm()
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-state]').text == 'Selection receipt saved')
+            saved = receipts.recent(matter.matter_id, ACTOR)
+            require(len(saved) == 2 and saved[0]['counts']['skipped'] == 1 and saved[0]['counts']['received'] == 0, 'All-skipped selection was not saved')
+            record_check('All-skipped selection creates a useful receipt without transferring bytes')
+
+            interrupted = create_matter('Synthetic interrupted receipt')
+            resume_file = root/'resume.txt'
+            resume_body = b'Synthetic exact resumed source.\n' * 100
+            resume_file.write_bytes(resume_body)
+            driver.execute_script('''
+                window.receiptOriginalFetch = window.fetch;
+                window.receiptPartialStored = false;
+                window.fetch = async (url, options) => {
+                    if (options?.method === 'PUT' && String(url).includes('/upload-sessions/')) {
+                        if (!window.receiptPartialStored) {
+                            await window.receiptOriginalFetch(url, {...options, body: options.body.slice(0, 7)});
+                            window.receiptPartialStored = true;
+                        }
+                        throw new Error('Synthetic interrupted transfer');
+                    }
+                    return window.receiptOriginalFetch(url, options);
+                };
+            ''')
+            driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(resume_file))
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Upload 1 ready file')
+            confirm()
+            wait.until(lambda x: x.execute_script('return window.receiptPartialStored === true'))
+            previous = receipts.recent(interrupted.matter_id, ACTOR)[0]
+            require(previous['counts']['partial'] == 1, 'Interrupted bytes were not recorded')
+            driver.refresh()
+            driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(resume_file))
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Upload 1 ready file')
+            confirm()
+            until(lambda: completed(interrupted), 'Reloaded upload did not resume')
+            current = receipts.recent(interrupted.matter_id, ACTOR)
+            require(len(current) == 1 and current[0]['receipt_id'] == previous['receipt_id'], 'Reload created a second selection receipt')
+            require(current[0]['counts']['received'] == current[0]['counts']['searchable'] == 1, 'Resumed receipt did not become searchable')
+            require(len(bench.workspace.recent_upload_sessions(interrupted.matter_id, ACTOR)) == 1, 'Reload duplicated the upload session')
+            document = next(iter(bench.source_store(interrupted).documents.values()))
+            require((bench.source_store(interrupted).files/document.stored_name).read_bytes() == resume_body, 'Resumed bytes differ')
+            record_check('Interrupted seven-byte transfer resumes after reload with one receipt/session and exact final bytes')
+            cancelled = create_matter('Synthetic cancelled selection')
+            driver.execute_script(r'''
+                window.receiptOriginalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    if (options?.method === 'PUT') return new Promise((resolve, reject) => {
+                        options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {once:true});
+                    });
+                    return window.receiptOriginalFetch(url, options);
+                };
+            ''')
+            driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(resume_file))
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Upload 1 ready file')
+            confirm()
+            until(lambda: bench.workspace.recent_upload_sessions(cancelled.matter_id, ACTOR), 'Cancellation fixture did not start')
+            cancel_button = driver.find_element(By.CSS_SELECTOR, '[data-upload-cancel]')
+            driver.execute_script('arguments[0].scrollIntoView({block:"center",behavior:"instant"});', cancel_button)
+            cancel_button.click()
+            until(lambda: bench.workspace.recent_upload_sessions(cancelled.matter_id, ACTOR)[0].state == 'cancelled', 'Cancel did not finish')
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-form]').get_attribute('aria-busy') is None)
+            driver.execute_script('window.fetch = window.receiptOriginalFetch; arguments[0].value="";', driver.find_element(By.CSS_SELECTOR, '[data-file-input]'))
+            driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(resume_file))
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Upload 1 ready file')
+            confirm()
+            until(lambda: len(receipts.recent(cancelled.matter_id, ACTOR)) == 2 and receipts.recent(cancelled.matter_id, ACTOR)[0]['counts']['searchable'] == 1, 'Reselection after cancellation did not finish')
+            record_check('Explicit cancellation retains its receipt and permits a later deliberate selection')
+            for relative, body in fixtures.items():
+                require((folder/relative).read_bytes() == body, 'Original selected fixture changed')
+            record_check('All external originals remain byte-identical')
+            report['passed'] = True
+            print(json.dumps(report, indent=2))
+        except Exception:
+            if driver:
+                try:
+                    driver.save_screenshot(str(output/'failure.png'))
+                    (output/'browser-errors.json').write_text(json.dumps(driver.get_log('browser'), indent=2))
+                except Exception:
+                    pass
+            raise
+        finally:
+            (output/'receipt-browser-result.json').write_text(json.dumps(report, indent=2)+'\n')
+            if driver:
+                driver.quit()
+            if server:
+                server.should_exit = True
+            if thread:
+                thread.join(15)
+            if sock:
+                sock.close()
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -30,9 +30,14 @@ preflight. It returns one content-minimized row per selected file without
 copying bytes, reserving capacity, or creating an upload session; filename
 type is explicitly provisional, while detected type, readability, source
 version, content duplicates, and scan results remain pending. Explicit staff
-confirmation sends only the eligible subset through the retained upload route,
+confirmation records the complete selection in the control database before
+sending only the eligible subset through the retained upload route,
 which revalidates metadata and remains authoritative for staging, signature
-checks, configured ClamAV policy, and failure recovery.
+checks, configured ClamAV policy, and failure recovery. [Selection receipts](INTAKE_RECEIPTS.md)
+retain skipped reasons separately from byte receipt and source availability,
+use idempotent metadata/session bindings and exact source versions, and provide
+coherent paginated views and complete exports. Their tables stay in the existing
+temporary-matter deletion and backup boundary.
 
 Accepted documents then enter extraction. Text PDFs use native extraction;
 missing-text pages use bounded CPU OCR. Media enters the durable media queue,

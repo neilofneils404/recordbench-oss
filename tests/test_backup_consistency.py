@@ -377,3 +377,44 @@ def test_encrypted_split_snapshot_and_postgres_restore(node_factory, monkeypatch
         execute("pg_amcheck", "-U", "recordbench", "-d", "restored_recordbench", "--install-missing")
     finally:
         subprocess.run(["docker", "rm", "--force", container], capture_output=True, check=True)
+
+
+def test_selection_receipts_round_trip_through_normal_backup_restore(node_factory):
+    from case_intelligence.intake_receipts import IntakeReceipts
+    from case_intelligence.workspace_store import WorkspaceStore
+
+    node = node_factory(wal=True)
+    owner = 'generated-receipt-owner'
+    with_store = WorkspaceStore(node.control)
+    try:
+        with_store.upsert_principal('test', owner, 'Generated Owner', owner, preferred_principal_id=owner)
+        matter = with_store.create_matter('Generated receipt backup', '', owner)
+        receipts = IntakeReceipts(with_store)
+        receipt = receipts.create(matter.matter_id, owner, selection_key='a'*32,
+            selection_fingerprint='b'*64, selected_count=2, eligible_indexes=[0], collection_name='Generated selection')
+        receipts.append(matter.matter_id, owner, receipt['receipt_id'], start=0,
+            files=[{'name': 'record.txt', 'relative_path': 'Folder/record.txt', 'size': 48},
+                   {'name': 'opaque.bin', 'relative_path': 'Skipped/opaque.bin', 'size': 4}],
+            reviewed_states=['valid', 'unsupported'], document_limit=1024, media_limit=1024,
+            malware_scan_mode='off', scanner_ready=True)
+        receipts.seal(matter.matter_id, owner, receipt['receipt_id'])
+        session, items = with_store.create_upload_session(matter.matter_id, owner, 'Generated selection',
+            [{'display_name': 'record.txt', 'relative_path': 'Folder/record.txt', 'media_type': 'text/plain', 'expected_size': 48}],
+            intake_receipt_id=receipt['receipt_id'], intake_ordinals=[0])
+        with_store.set_upload_item_offset(matter.matter_id, owner, session.upload_session_id, items[0].upload_item_id, 0, 7)
+        selected_before = receipts.snapshot(matter.matter_id, owner, receipt['receipt_id'])
+        partial = node.storage / 'matters' / matter.matter_id / 'sources' / 'incoming' / items[0].upload_item_id
+        partial.parent.mkdir(parents=True)
+        partial.write_bytes(b'Partial')
+    finally:
+        with_store.close()
+    assert node.backup() == 0
+    assert node.restore() == 0
+    restored = node.root / 'restored'
+    reopened = WorkspaceStore(restored / 'payload/runtime/workbench.sqlite')
+    try:
+        assert IntakeReceipts(reopened).snapshot(matter.matter_id, owner, receipt['receipt_id']) == selected_before
+        assert (restored / 'managed-storage' / partial.relative_to(node.storage)).read_bytes() == b'Partial'
+        assert reopened.connection.execute('PRAGMA foreign_key_check').fetchall() == []
+    finally:
+        reopened.close()

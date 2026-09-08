@@ -987,6 +987,7 @@ class WorkspaceStore:
             "migrations/sqlite/0022_session_application_roles.sql",
             "migrations/sqlite/0023_review_conversation_continuity.sql",
             "migrations/sqlite/0024_review_source_content_basis.sql",
+            "migrations/sqlite/0025_intake_receipts.sql",
         ):
             migration = resources.files("case_intelligence").joinpath(name).read_text(encoding="utf-8")
             self.connection.executescript(migration)
@@ -2020,7 +2021,7 @@ class WorkspaceStore:
             elif key == "kind":
                 if value not in {
                     "answer", "conversation", "matter", "notebook", "notebook_item",
-                    "transcript", "transcript_summary", "media_clip",
+                    "transcript", "transcript_summary", "media_clip", "intake_receipt",
                 }:
                     raise ValueError("invalid audit export kind")
             else:
@@ -2457,9 +2458,10 @@ class WorkspaceStore:
                 "UNION ALL SELECT updated_at FROM workbench_notebook_item WHERE matter_id=? "
                 "UNION ALL SELECT updated_at FROM workbench_report WHERE matter_id=? "
                 "UNION ALL SELECT updated_at FROM workbench_source_catalog WHERE matter_id=? "
-                "UNION ALL SELECT updated_at FROM workbench_matter_activity WHERE matter_id=?"
+                "UNION ALL SELECT updated_at FROM workbench_matter_activity WHERE matter_id=? "
+                "UNION ALL SELECT updated_at FROM workbench_intake_receipt WHERE matter_id=?"
                 ")",
-                (matter_id,) * 12,
+                (matter_id,) * 13,
             ).fetchone()
         if row is None or row[0] is None:
             raise KeyError(matter_id)
@@ -2856,6 +2858,9 @@ class WorkspaceStore:
             )
             self.connection.execute(
                 "DELETE FROM workbench_ingest_plan WHERE matter_id=?", (matter_id,)
+            )
+            self.connection.execute(
+                "DELETE FROM workbench_intake_receipt WHERE matter_id=?", (matter_id,)
             )
             self.connection.execute(
                 "DELETE FROM workbench_upload_session WHERE matter_id=?", (matter_id,)
@@ -6115,6 +6120,8 @@ class WorkspaceStore:
         files: Sequence[Mapping[str, object]],
         *,
         collection_id: str = "",
+        intake_receipt_id: str = "",
+        intake_ordinals: Sequence[int] = (),
     ) -> tuple[UploadSessionRecord, tuple[UploadItemRecord, ...]]:
         if not files:
             raise WorkspaceProblem("Choose at least one supported file.")
@@ -6145,7 +6152,19 @@ class WorkspaceStore:
             prepared.append((display_name, relative_path, media_type, size_value))
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             self.membership(matter_id, actor)
+            if intake_receipt_id:
+                from .intake_receipts import IntakeReceipts
+
+                receipts = IntakeReceipts(self)
+                existing_session = receipts.validate_upload_locked(
+                    matter_id, actor, intake_receipt_id, intake_ordinals, files
+                )
+                if existing_session:
+                    return self.upload_session(matter_id, actor, existing_session)
+            elif intake_ordinals:
+                raise WorkspaceProblem("The upload receipt is missing. Review the selection again.")
             if collection_id:
                 if not _SOURCE_COLLECTION.fullmatch(collection_id):
                     raise WorkspaceProblem("The upload collection is invalid.")
@@ -6233,6 +6252,8 @@ class WorkspaceStore:
                 "WHERE upload_session_id=?",
                 (session_id,),
             ).fetchone()
+            if intake_receipt_id:
+                receipts.bind_upload_locked(matter_id, intake_receipt_id, intake_ordinals, item_ids)
             item_rows = self.connection.execute(
                 "SELECT upload_item_id,upload_session_id,matter_id,ordinal,display_name,"
                 "relative_path,media_type,expected_size,received_size,state,document_id,"
@@ -6473,6 +6494,7 @@ class WorkspaceStore:
         document_id: str,
         *,
         queue_ingestion: bool = True,
+        source_version_id: str = "",
         media_details: Mapping[str, object] | None = None,
         maximum_media_bytes: int = 5 * 1024 * 1024 * 1024,
     ) -> tuple[UploadItemRecord, IngestJobRecord | None]:
@@ -6512,6 +6534,19 @@ class WorkspaceStore:
                 raise ValueError("invalid media upload metadata")
             media_values = (version, digest, size, media_type, duration_ms)
         with self._lock, self.connection:
+            linked_receipt = self.connection.execute(
+                "SELECT source_version_id FROM workbench_intake_transfer WHERE matter_id=? AND upload_item_id=?",
+                (matter_id, item_id),
+            ).fetchone()
+            if linked_receipt is not None:
+                if not re.fullmatch(r"[0-9a-f]{32}", source_version_id):
+                    raise WorkspaceProblem("The received source version is unavailable. Retry finalizing this upload.")
+                if linked_receipt["source_version_id"] not in {"", source_version_id}:
+                    raise WorkspaceProblem("The received source version changed. Review the upload again.")
+                self.connection.execute(
+                    "UPDATE workbench_intake_transfer SET source_version_id=? WHERE matter_id=? AND upload_item_id=?",
+                    (source_version_id, matter_id, item_id),
+                )
             self.connection.execute(
                 "INSERT INTO workbench_source_organization("
                 "matter_id,document_id,collection_id,relative_path,review_state,"

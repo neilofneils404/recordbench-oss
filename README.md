@@ -55,12 +55,17 @@ See the [public-alpha boundary](docs/PUBLIC_ALPHA.md) for scope and limitations.
 
 | Workflow | Current capabilities |
 | --- | --- |
-| **Bring records together** | Review selected loose files before transfer, explicitly confirm the ready subset, then use resumable file and folder uploads, malware scanning, text extraction, and bounded OCR. |
+| **Bring records together** | Review selected files and folders before transfer, retain every confirmed item and skipped reason in a durable selection receipt, then use resumable uploads, malware scanning, text extraction, and bounded OCR. |
 | **Review documents and media** | Source browsing, word and meaning-based search, recording checks before transcription, timestamped transcripts, playback, and clips. Videos without audio remain playable; uncertain checks offer listen/continue/retry. |
 | **Ask questions with sources in view** | Local AI answers and follow-up conversations with citations and coverage information. |
 | **Screen a collection** | Apply a criterion to a frozen source population, then inspect coverage and human-review status. |
 | **Organize the work** | Shared matters with owner/admin renaming, attributed activity, notes, people, places, dates, and report drafting. |
-| **Take work product with you** | Export conversations, transcripts, summaries, clips, notebooks, and reports. Complete matter bundles include every saved draft and final Report in Word and Markdown. |
+| **Take work product with you** | Export conversations, transcripts, summaries, clips, notebooks, and reports. Complete matter bundles include every saved draft/final Report and every selected-file receipt. |
+
+Selected-file receipts stay available after reload and distinguish received bytes
+from processing or source availability. Retry interrupted uploads without losing
+previous bytes, open exact source support, and download individual receipts or the
+complete matter bundle. See [selection receipts and recovery](docs/INTAKE_RECEIPTS.md).
 
 Case-note edits preserve unsaved fields when another team member has changed
 the note. Confirm/Delete actions also require the version just reviewed. See
@@ -98,8 +103,8 @@ separate because it freezes a population and produces one decision per source.
 ## How it works
 
 1. **Intake:** RecordBench previews selected loose-file metadata without
-   copying bytes, then revalidates the confirmed subset as it enters a private
-   staging area and applies any required malware scan.
+   copying bytes, records the complete selection on confirmation, then revalidates
+   the included subset as it enters a private staging area and applies any required malware scan.
 2. **Processing:** It extracts usable text, applies bounded OCR where needed,
    and checks audio/likely speech before sending media through the bundled
    transcription queue. [Recording checks](docs/MEDIA_PREFLIGHT.md) preserve
