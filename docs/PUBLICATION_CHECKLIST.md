@@ -30,7 +30,9 @@ clone URL or verified GitHub no-reply identity, keep the deny term and pass an
 explicit, owner-approved adjudication. `--allow-public-clone-url` applies only
 to an exact URL token in `README.md`; `--allow-public-git-identity` requires an
 exact username/no-reply pair; and `--allow-public-baseline-git-identity`
-requires an exact commit boundary, display name, and no-reply address. These
+requires an exact commit boundary, display name, and no-reply address. The one
+explicitly reviewed personal attribution described in [public alpha](PUBLIC_ALPHA.md)
+is also accepted by that option, but only at its named commit, never ancestors. These
 options do not suppress the same deny term in files, commit messages, later
 legacy-identity commits, or near-match URLs.
 

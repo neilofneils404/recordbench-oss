@@ -94,7 +94,8 @@ use a Linux development environment such as WSL2 for the complete gate; native
 Windows setup and the full native Windows suite have not been validated.
 The bootstrap's Windows interpreter-path support alone is not that validation.
 
-GitHub Actions runs the same application, transcription, sanitizer, compilation,
+GitHub Actions installs and reruns the same bootstrap, then runs application,
+transcription, sanitizer, compilation,
 standard Compose, Kerberos overlay, and non-interactive installer contracts. The
 workflow actions are pinned to reviewed commit SHAs.
 

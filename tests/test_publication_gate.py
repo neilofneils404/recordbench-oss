@@ -398,6 +398,12 @@ def test_reviewed_email_disposition_is_exact_and_metadata_only(tmp_path, monkeyp
     assert publication.scan_history(tmp_path, ()) == []
     assert publication.Finding('git-metadata', 'operator-deny-term') in publication.scan_history(
         tmp_path, (name.encode(),))
+    exception = publication._baseline_public_git_identities([(commit, name, email)])
+    assert publication.scan_history(tmp_path, (name.encode(), email.encode()),
+                                    baseline_public_git_identities=exception) == []
+    import pytest
+    with pytest.raises(RuntimeError, match='no-reply'):
+        publication._baseline_public_git_identities([('0' * 40, name, email)])
     assert publication.Finding('fixture', 'non-example-email-address') in publication._scan_bytes(
         email.encode(), location='fixture', deny=())
     monkeypatch.setattr(publication, 'REVIEWED_COMMIT_EMAIL_IDENTITIES', {commit: {'0' * 64}})
@@ -405,3 +411,26 @@ def test_reviewed_email_disposition_is_exact_and_metadata_only(tmp_path, monkeyp
     monkeypatch.setattr(publication, 'REVIEWED_COMMIT_EMAIL_IDENTITIES', {commit: {digest}})
     git('commit', '--allow-empty', '-qm', 'synthetic later attribution')
     assert expected in publication.scan_history(tmp_path, ())
+
+
+def test_reviewed_personal_baseline_does_not_cover_ancestors(tmp_path, monkeypatch):
+    import hashlib
+    name = 'Synthetic Contributor'
+    email = 'maintainer@' + 'synthetic.invalid'
+    def git(*args):
+        return subprocess.check_output(['git', *args], cwd=tmp_path, text=True).strip()
+    git('init', '-q')
+    git('config', 'user.name', name)
+    git('config', 'user.email', email)
+    git('commit', '--allow-empty', '-qm', 'unreviewed ancestor')
+    ancestor = git('rev-parse', 'HEAD')
+    git('commit', '--allow-empty', '-qm', 'reviewed descendant')
+    reviewed = git('rev-parse', 'HEAD')
+    digest = hashlib.sha256((name + '\0' + email).encode()).hexdigest()
+    # Both email fields have their generic disposition; only the descendant has
+    # the separate, explicit operator-deny adjudication.
+    monkeypatch.setattr(publication, 'REVIEWED_COMMIT_EMAIL_IDENTITIES',
+                        {ancestor: {digest}, reviewed: {digest}})
+    exception = publication._baseline_public_git_identities([(reviewed, name, email)])
+    assert publication.Finding('git-metadata', 'operator-deny-term') in publication.scan_history(
+        tmp_path, (name.encode(),), baseline_public_git_identities=exception)

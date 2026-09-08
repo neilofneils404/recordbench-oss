@@ -59,8 +59,10 @@ jobs:
           sudo apt-get install --yes --no-install-recommends \
             ffmpeg imagemagick poppler-utils tesseract-ocr \
             tesseract-ocr-eng tesseract-ocr-spa
-      - name: Install application test environment
-        run: python -m pip install --disable-pip-version-check -e '.[dev,postgres]'
+      - name: Bootstrap contributor environment
+        run: make bootstrap SYSTEM_PYTHON=python
+      - name: Verify repeatable setup
+        run: make bootstrap SYSTEM_PYTHON=python
       - name: Check out exact publication head separately
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -74,15 +76,15 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_PUBLICATION_SHA"
       - name: Scan tree and Git history
         working-directory: _publication_head
-        run: python scripts/publication-check.py
+        run: ../.venv/bin/python scripts/publication-check.py
       - name: Compile Python sources
-        run: python -m compileall -q src scripts tests
+        run: .venv/bin/python -m compileall -q src scripts tests
       - name: Run application suite
         env:
           # Hosted runners are intentionally smaller than supported review nodes.
           # Production keeps the 100 GiB default from recordbench.env.example.
           CASE_INTELLIGENCE_STORAGE_RESERVE_GIB: "0"
-        run: python -m pytest -q
+        run: .venv/bin/python -m pytest -q
 
   transcription:
     runs-on: ubuntu-24.04

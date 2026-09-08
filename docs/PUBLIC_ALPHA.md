@@ -20,7 +20,10 @@ author/committer email on commit `d2f1e779e70063b94fece1291169f547c7c44d83`.
 The scanner records that reviewed attribution by exact commit and identity
 digest, suppressing only the non-example-email finding for those metadata
 fields. It does not permit the address in file content, commit messages, other
-commits, or unrelated identities; operator deny terms still apply. Keep the private audit and its deny terms outside Git.
+commits, or unrelated identities. Operator deny terms still apply unless the
+operator explicitly supplies the same exact commit/name/email through the
+existing baseline-identity option. For this reviewed personal attribution, that
+option covers only the named commit, never its ancestors. Keep the private audit and its deny terms outside Git.
 
 Source publication does not ship a production image or promise installation,
 hardware, recovery, legal accuracy, completeness, or confidential-workload

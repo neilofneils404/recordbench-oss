@@ -530,6 +530,11 @@ def scan_history(
         if boundary not in revision_ids:
             findings.append(Finding("git-metadata", "history-scan-failed"))
             continue
+        if hashlib.sha256(name + b"\0" + email).hexdigest() in REVIEWED_COMMIT_EMAIL_IDENTITIES.get(boundary, ()):
+            # A reviewed personal address is accepted at this commit only.
+            # Unlike legacy no-reply baselines, it never covers ancestors.
+            baseline_identities.setdefault(boundary, set()).add((name, email))
+            continue
         baseline = subprocess.run(
             ["git", "rev-list", boundary],
             cwd=root,
@@ -789,7 +794,11 @@ def _baseline_public_git_identities(
     for boundary, name, email in values:
         if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", boundary) is None:
             raise RuntimeError("public baseline boundary must be an exact commit SHA")
-        encoded_name, encoded_email = _public_identity(name, email, current=False)
+        encoded_name = _ascii_value(name, label="Public Git identity name", maximum=100)
+        encoded_email = _ascii_value(email, label="Public Git identity email", maximum=254)
+        digest = hashlib.sha256(encoded_name + b"\0" + encoded_email).hexdigest()
+        if digest not in REVIEWED_COMMIT_EMAIL_IDENTITIES.get(boundary, ()):
+            encoded_name, encoded_email = _public_identity(name, email, current=False)
         result.append((boundary, encoded_name, encoded_email))
     return tuple(result)
 
