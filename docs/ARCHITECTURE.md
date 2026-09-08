@@ -69,7 +69,8 @@ folder and matching-only filters stay database-native.
 Comparison URLs use existing matter-bound source action tokens, never hashes.
 
 [Email extraction](EMAIL_ATTACHMENT_COVERAGE.md) traverses the parent body tree
-without entering attached messages or multipart attachments. Header sections
+without entering attached messages or multipart attachments. All non-report
+`message/*` children are boundaries even without filenames or attachment disposition. Header sections
 inventory attachment names/types and state that attachment contents were not
 processed or searched. All parsed parts still count toward the MIME limit,
 including descendants of attachment boundaries; malformed MIME containers fail
