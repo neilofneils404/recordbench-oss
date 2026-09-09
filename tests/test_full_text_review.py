@@ -32,6 +32,54 @@ def test_every_character_has_one_canonical_range_and_context_overlap():
         TextReviewPolicy(packet_chars=6_001)
 
 
+@pytest.mark.parametrize('state', ['running', 'queued'])
+def test_repeated_cancellation_preserves_one_event_and_ledger_charge(frozen, state):
+    store, matter, run, _ = frozen
+    if state == 'queued':
+        with store._lock, store.connection:
+            store.connection.execute("UPDATE workbench_review_run SET state='queued',worker_id=NULL WHERE run_id=?", (run.run_id,))
+    def snapshot():
+        events = tuple(tuple(row) for row in store.connection.execute(
+            'SELECT * FROM workbench_review_event WHERE run_id=? ORDER BY rowid', (run.run_id,)))
+        budget = tuple(store.connection.execute(
+            'SELECT * FROM workbench_text_review_budget WHERE run_id=?', (run.run_id,)).fetchone())
+        return events, budget
+    before, _ = snapshot()
+    first = store.cancel_review_run(matter.matter_id, ACTOR, run.run_id)
+    saved = snapshot()
+    assert len(saved[0]) == len(before) + 1
+    for _ in range(100):
+        assert store.cancel_review_run(matter.matter_id, ACTOR, run.run_id) == first
+    assert snapshot() == saved
+
+
+def test_concurrent_cancellation_refreshes_state_inside_write_transaction(frozen, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    store, matter, run, _ = frozen
+    other = WorkspaceStore(store.path)
+    barrier = threading.Barrier(2)
+    before = store.connection.execute('SELECT count(*) FROM workbench_review_event WHERE run_id=?', (run.run_id,)).fetchone()[0]
+    for instance in (store, other):
+        original = instance.review_run
+        def stale_admission(*args, _original=original, _seen=[False], **kwargs):
+            result = _original(*args, **kwargs)
+            if not _seen[0]:
+                _seen[0] = True
+                barrier.wait(timeout=3)
+            return result
+        monkeypatch.setattr(instance, 'review_run', stale_admission)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = [pool.submit(instance.cancel_review_run, matter.matter_id, ACTOR, run.run_id)
+                       for instance in (store, other)]
+            assert all(result.result(timeout=5).cancellation_requested for result in results)
+        after = store.connection.execute('SELECT count(*) FROM workbench_review_event WHERE run_id=?', (run.run_id,)).fetchone()[0]
+        assert after == before + 1
+    finally:
+        other.close()
+
+
 def test_unit_stream_reads_existing_format_incrementally_and_validates_tail():
     units = [dict(number=i, text=('Synthetic text ' * 5_000 if i == 2 else 'Synthetic text')) for i in range(1, 16)]
     class Stream(io.StringIO):

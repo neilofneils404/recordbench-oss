@@ -81,7 +81,10 @@ and completing the run.
 
 Restart recovery keeps spent calls, storage reservations and the existing fair
 actor/matter scheduling history. Saved ranges are skipped; pending ranges can
-resume. Repeated recovery/retry cannot grow uncharged event history. Cancellation
+resume. Repeated recovery/retry cannot grow uncharged event history. Repeated
+running cancellation is idempotent: it preserves the first cancellation event
+and resource charge, including concurrent requests through separate connections.
+Cancellation
 keeps a running worker's reservation until it stops; queued cancellation releases
 active capacity. Only the run creator may delete a terminal saved text review,
 which removes findings and human decisions and releases its retained capacity.
