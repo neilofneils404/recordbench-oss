@@ -107,3 +107,34 @@ stale-token attempts, delayed heartbeats, cancellation/retry, denied matter acce
 admission pressure, rollback after report creation, and a SQLite online backup
 restored into a clean workspace. Restore preserves the original live lease until
 expiry, then admits one replacement claim; `PRAGMA integrity_check` remains clean.
+
+## Relevance of human review
+
+Topic reports classify saved human notes and recorded gaps before selecting them
+for the report. The existing grounded answer service receives these as attributed
+review records, including unsourced notes. The compiler consumes only allowed
+record identifiers from the classification result: it retains the original human
+text, exact citations, author, status, and revision. Classification prose is never
+used as a source fact. Related disagreements remain visible; unrelated disputes
+are omitted along with unrelated ordinary notes. Source-coverage limits remain a
+separate appendix because they qualify the selected work rather than assert a
+topic finding.
+
+People/Places/Things reports retain explicit human person/place/thing categories.
+Ordinary human notes are semantically classified using the same record-selection
+protocol; notes that cannot be classified appear in an explicit review appendix.
+Similar names still do not establish the same identity. Classification shares the
+report's model-call and context budgets with source synthesis. The durable report
+basis includes checked, selected, unchecked, and omitted note counts and text
+truncation; it never treats a budget omission as a negative relevance finding.
+
+If no model is available, a multi-item topic compilation asks the reviewer to
+retry or select one relevant saved item. A single-item fallback is visibly labeled
+unfiltered, with topic relevance not checked. Plain-language coverage is visible
+in the draft; technical counters remain after the `Review basis:` delimiter.
+
+The `model_calls` counter and call policy count verified answer-service calls.
+The existing generation service can make one additional source-close repair
+request inside each call; this is part of its established verification contract.
+It is not a count of raw model-server requests. Coverage records this unit
+explicitly rather than presenting repair requests as unbounded or nonexistent.

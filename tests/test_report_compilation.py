@@ -201,3 +201,99 @@ def test_compilation_cooperatively_stops_between_model_calls():
 
     with pytest.raises(CompilationProblem, match="cancelled"):
         compile_report("entities", materials=(material(),), generator=CancellingService(), cancelled=lambda: stopped[0])
+
+
+def test_topic_semantically_selects_original_human_notes_and_related_disputes():
+    notes = (
+        material(1, origin="human", text="The delivery record identifies the blue device.", review_status="confirmed"),
+        material(2, origin="human", text="Human reviewers dispute the delivery time.", review_status="disputed", citations=()),
+        material(3, origin="human", text="A payroll review found an unrelated accounting question.", review_status="confirmed", citations=()),
+        material(4, origin="human", text="Human reviewers dispute the payroll total.", review_status="disputed", citations=()),
+    )
+
+    class RelevanceService:
+        available = True
+
+        def answer(self, question, evidence, **kwargs):
+            if "saved review records" in question:
+                return VerifiedAnswer(True, "", (
+                    VerifiedClaim("Classification prose must never appear as a report fact.", ("S1",)),
+                    VerifiedClaim("Classification of a related dispute.", ("S2",)),
+                ), None, "", ("S1", "S2"), True, 1)
+            return VerifiedAnswer(False, "", (), None, "No additional source finding.", (), True, 1)
+
+    draft = compile_report("topic", "delivery", notes, RelevanceService())
+    content = "\n".join(section["body"] for section in draft.sections)
+    assert notes[0].text in content and notes[1].text in content
+    assert "payroll" not in content
+    assert "Classification prose" not in content
+    selected = [section for section in draft.sections if section.get("material_ids")]
+    assert selected[0]["citations"] == notes[0].citations
+    assert selected[1]["citations"] == ()
+    assert "Disagreements and open review" in selected[1]["heading"]
+    assert draft.coverage["classified_review_records"] == 4
+    assert draft.coverage["omitted_human_material_ids"] == (notes[2].material_id, notes[3].material_id)
+    assert "Review basis:\n" in draft.sections[-1]["body"]
+    assert "Model calls:" not in draft.sections[-1]["body"].split("\n\nReview basis:\n")[0]
+
+
+def test_topic_relevance_cannot_select_a_foreign_review_identifier():
+    class InvalidClassifier:
+        available = True
+
+        def answer(self, question, evidence, **kwargs):
+            return VerifiedAnswer(True, "", (VerifiedClaim("Wrong record.", ("S99",)),), None, "", ("S99",), True, 1)
+
+    with pytest.raises(CompilationProblem, match="did not produce supported report content"):
+        compile_report("topic", "delivery", (material(origin="human", citations=()),), InvalidClassifier())
+
+
+def test_topic_without_model_requires_narrower_work_and_labels_unfiltered_single_item():
+    with pytest.raises(CompilationProblem, match="Topic relevance could not be checked"):
+        compile_report("topic", "delivery", (material(origin="human"), material(2, origin="human")))
+    draft = compile_report("topic", "delivery", (material(origin="human"),))
+    assert draft.coverage["mode"] == "unfiltered_saved_material_arrangement"
+    assert "relevance not checked" in draft.sections[0]["heading"]
+    assert "topic relevance has not been checked" in draft.sections[-1]["body"]
+
+
+def test_untyped_human_entity_mentions_are_selected_semantically_or_kept_in_appendix():
+    notes = (
+        material(1, origin="human", category="note", text="Alex Kim is mentioned in the generated review.", citations=()),
+        material(2, origin="human", category="fact", text="The generated blue device was discussed.", citations=()),
+        material(3, origin="human", category="note", text="Review formatting needs another pass.", citations=()),
+    )
+
+    class EntityClassifier:
+        available = True
+
+        def answer(self, question, evidence, **kwargs):
+            selected = "S1" if "named people" in question else ("S2" if "objects, devices" in question else None)
+            claims = (VerifiedClaim("Classification output is not a source fact.", (selected,)),) if selected else ()
+            return VerifiedAnswer(bool(claims), "", claims, None, "", (selected,) if selected else (), True, 1)
+
+    draft = compile_report("entities", materials=notes, generator=EntityClassifier())
+    assert draft.sections[0]["category"].startswith("People")
+    assert draft.sections[1]["category"].startswith("Things")
+    assert draft.sections[2]["category"] == "Unclassified review notes"
+    assert all("Classification output" not in section["body"] for section in draft.sections)
+    assert draft.sections[2]["body"].startswith(notes[2].text)
+
+
+def test_note_classification_shares_model_budget_and_discloses_unchecked_notes():
+    notes = tuple(material(index, origin="human", citations=(), text="Generated delivery review. " * 300) for index in range(1, 14))
+
+    class FirstOnlyClassifier:
+        available = True
+
+        def answer(self, question, evidence, **kwargs):
+            assert len(evidence) <= 12
+            assert sum(len(item.excerpt) for item in evidence) <= 48_000
+            return VerifiedAnswer(True, "", (VerifiedClaim("Relevant review.", ("S1",)),), None, "", ("S1",), True, 1)
+
+    draft = compile_report("topic", "delivery", notes, FirstOnlyClassifier(), budget=CompilationBudget(max_model_calls=1))
+    assert draft.coverage["model_calls"] == draft.coverage["classification_calls"] == 1
+    assert draft.coverage["unclassified_review_material_ids"]
+    assert draft.coverage["classification_truncated_chars"] > 0
+    assert draft.coverage["stop_reason"] == "budget_reached"
+    assert len(draft.coverage["omitted_human_material_ids"]) == 12
