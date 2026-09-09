@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import json
 import shutil
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -192,6 +193,15 @@ def test_failed_relocation_backup_keeps_source(tmp_path):
     assert not (tmp_path / "dedicated" / "local-accounts.json").exists()
 
 
+def test_relocation_rejects_nested_recovery_before_moving_source(tmp_path):
+    _, repo = configured_app(tmp_path)
+    before = repo.path.read_bytes()
+    destination = tmp_path / "dedicated" / "local-accounts.json"
+    with pytest.raises(RuntimeError, match="outside"):
+        repo.relocate(destination, destination.parent / "nested/recovery.json", actor="synthetic-operator", writers_stopped=True)
+    assert repo.path.read_bytes() == before and not destination.parent.exists()
+
+
 def test_self_demotion_requires_confirmation_and_ends_session(tmp_path):
     app, repo = configured_app(tmp_path)
     with TestClient(app, base_url=ORIGIN) as admin:
@@ -239,3 +249,21 @@ def test_audit_failure_prevents_mutation_and_missing_edit_token_conflicts(tmp_pa
         response = edit(admin, "alice.admin", "name", display_name="Must not apply")
         assert response.status_code == 503
         assert repo.path.read_bytes() == before
+
+
+def test_self_change_reports_completion_audit_failure_at_sign_in(tmp_path, monkeypatch):
+    app, repo = configured_app(tmp_path)
+    with TestClient(app, base_url=ORIGIN) as admin:
+        login(admin)
+        original = app.state.workbench.workspace.append_audit_event
+        def fail_completion(**event):
+            if event["action"].endswith(".completed"):
+                raise OSError("synthetic missing completion")
+            return original(**event)
+        monkeypatch.setattr(app.state.workbench.workspace, "append_audit_event", fail_completion)
+        response = edit(admin, "alice.admin", "password", password="synthetic-new-password", password_confirm="synthetic-new-password")
+        assert response.status_code == 303
+        destination = urlsplit(response.headers["location"])
+        assert destination.path == "/auth/login"
+        assert "Audit completion needs operator attention" in parse_qs(destination.query)["error"][0]
+        assert admin.get("/admin/people", follow_redirects=False).status_code == 303

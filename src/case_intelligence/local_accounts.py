@@ -280,7 +280,7 @@ class LocalAccountRepository:
         destination, backup_file = Path(destination), Path(backup_file)
         if destination.name != "local-accounts.json" or destination.parent == self.path.parent:
             raise RuntimeError("Use local-accounts.json in a separate dedicated account directory")
-        if backup_file in {self.path, destination} or backup_file.parent == destination.parent:
+        if backup_file in {self.path, destination} or backup_file.resolve(strict=False).is_relative_to(destination.parent.resolve(strict=False)):
             raise RuntimeError("Keep the recovery copy outside the dedicated account directory")
         receipt = self._receipt("relocate", "*", actor)
         with self._writer() as source_directory:
