@@ -26,7 +26,8 @@ Every backend must apply matter and selected-population boundaries before
 matching and counting. Empty/tokenless documents never match, including NOT.
 
 Text and queries use Unicode NFC, case folding, and curly-to-straight apostrophe
-normalization. Words retain internal apostrophes and ASCII hyphens; `RB-101` is
+normalization, with NFC applied again after folding. Words retain attached
+Unicode combining marks, internal apostrophes and ASCII hyphens; `RB-101` is
 different from `RB 101`. Other punctuation separates words inside document text
 and quoted phrases. There is no stemming or stop-word removal. Phrase adjacency
 does not mean byte equality, and phrases do not cross extracted-unit boundaries.
@@ -42,6 +43,8 @@ or NOT levels. Parse errors contain an explanation and character location,
 without echoing matter query text. The serialized plan records original text,
 normalized expression, grammar version, and a typed operator tree. This is a
 backend contract, not executable SQL and not permission to access a source.
+Normalized expressions omit redundant grouping and use implicit AND so
+serialization does not add grammar depth or tokens at those input limits.
 
 ## Known-answer corpus and validation
 
