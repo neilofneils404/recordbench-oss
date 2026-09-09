@@ -96,6 +96,12 @@ limit, overflow before an unread large tail, a slow read that expires before
 decoding, serialized whitespace exhaustion, and oversized complete or unfinished
 first records. Existing cross-unit Boolean proofs and proximity results retain
 their semantics; invalid source tails still invalidate the entire scan.
+Decoded unit numbers, text and displayed locator types are validated inside the
+source-reading boundary. Corrupt locators produce the documented unavailable
+response rather than a server error or an apparently exact partial total.
+Pagination fingerprints include both media timestamp endpoints, even when line
+locators and text remain unchanged; retiming a media projection invalidates the
+previous result fingerprint and requires a fresh search.
 
 This initial adapter deliberately rescans each page. It is not the scalable
 indexed backend. A production-scale adapter should use a consistent database

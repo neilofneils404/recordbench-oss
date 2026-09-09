@@ -171,6 +171,69 @@ def test_file_backed_invalid_tail_suppresses_already_matched_sources(tmp_path):
         scan([document(1, 'red'), source])
 
 
+@pytest.mark.parametrize('field,value', [('start_ms', 1100), ('end_ms', 2200)])
+def test_timestamp_only_media_change_invalidates_pagination(tmp_path, field, value):
+    import hashlib
+    import io
+    from dataclasses import replace
+    from case_intelligence.pilot_uploads import PilotStore, PilotUnit
+    store = PilotStore(tmp_path / 'synthetic-media-projection')
+    source, _ = store.store_stream('Synthetic media projection.txt', 'text/plain', io.BytesIO(b'red bicycle'))
+    source.media_type = 'audio/wav'
+    source.duration_ms = 10_000
+    unit = PilotUnit(1, 'red bicycle', start_ms=1000, end_ms=2000,
+                     excerpt_digest=hashlib.sha256(b'red bicycle').hexdigest())
+    store.install_media_transcript(source.document_id, [unit])
+    assert source.units_file and not source.units
+    sources = [source] + [document(index, 'red') for index in range(30)]
+    first = scan(sources)
+    original_version = source.version_id
+    store.install_media_transcript(source.document_id, [replace(unit, **{field: value})])
+    assert source.version_id == original_version
+    with pytest.raises(ExactSearchChanged):
+        scan(sources, page=2, expected_fingerprint=first.fingerprint)
+
+
+@pytest.mark.parametrize('field,value', [
+    ('number', 'one'), ('number', []), ('number', None), ('number', True),
+    ('start_ms', '1000'), ('end_ms', []), ('line_start', False),
+    ('line_end', 'two'), ('location_label', {}), ('text', ['red']),
+])
+def test_corrupt_file_backed_locator_is_unavailable_without_partial_totals(tmp_path, field, value):
+    source, path = _file_backed_source(tmp_path, ['red'])
+    source.media_type, source.page_count = 'application/pdf', 1
+    payload = json.loads(path.read_text())
+    payload['units'][0][field] = value
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([document(1, 'red'), source])
+
+
+def test_missing_reader_never_becomes_an_empty_source_exclusion():
+    source = document(100)
+    source.units_file = 'a' * 32 + '.json'
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([document(1, 'red'), source])
+
+
+def test_corrupt_locator_route_returns_unavailable_instead_of_server_error(tmp_path):
+    app = create_workbench_app(tmp_path / 'runtime', auth_mode='test')
+    with TestClient(app) as client:
+        bench = app.state.workbench
+        matter = bench.create_matter('Synthetic corrupt locator', '', 'development-taylor-morgan')
+        valid, corrupt = document(1, 'red'), document(2, 'red')
+        corrupt.media_type, corrupt.page_count = 'application/pdf', 1
+        corrupt.units[0]['number'] = 'one'
+        store = bench.source_store(matter)
+        store.documents.update({source.document_id: source for source in (valid, corrupt)})
+        bench.workspace.reconcile_source_organizations(matter.matter_id,
+            tuple((source.document_id, 'upload', source.display_name) for source in (valid, corrupt)))
+        response = client.get(f'/matters/{matter.slug}/exact-search', params={'q': 'red'})
+        assert response.status_code == 503
+        assert 'finish this search' in response.text
+        assert '1 source found' not in response.text and '0 sources found' not in response.text
+
+
 def test_frozen_known_answer_corpus_runs_through_result_service():
     corpus = json.loads((Path(__file__).parent / "fixtures/synthetic/product-foundation/v1/corpus.json").read_text())
     documents = []
