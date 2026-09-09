@@ -74,9 +74,15 @@ jobs:
         env:
           EXPECTED_PUBLICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_PUBLICATION_SHA"
-      - name: Scan tree and Git history
+      - name: Scan exact candidate tree and complete reachable history
         working-directory: _publication_head
-        run: ../.venv/bin/python scripts/publication-check.py
+        env:
+          EXPECTED_PUBLICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PUBLICATION_REF: ${{ github.ref }}
+        run: |
+          ../.venv/bin/python scripts/check-publication-candidate.py \
+            --expected-head "$EXPECTED_PUBLICATION_SHA" \
+            --publication-ref "$PUBLICATION_REF"
       - name: Compile Python sources
         run: .venv/bin/python -m compileall -q src scripts tests
       - name: Run application suite
