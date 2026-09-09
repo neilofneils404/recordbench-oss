@@ -1,0 +1,108 @@
+{% extends "workbench_base.html" %}
+{% block title %}{{ selected_account.display_name if selected_account else 'People' }} · {{ product_name }}{% endblock %}
+{% block body_class %}administrator-page people-page{% endblock %}
+{% block content %}
+<main class="administrator-main people-main">
+  <header class="administrator-heading compact-heading">
+    <div><p class="eyebrow">Administration</p><h1>{{ selected_account.display_name if selected_account else 'People' }}</h1>
+      <p>{{ 'Manage this person’s sign-in and application access.' if selected_account else 'Give people a sign-in, then choose which matters they can access.' }}</p></div>
+    <a class="button button-secondary" href="{{ '/admin/people' if selected_account else '/admin' }}">{{ 'All people' if selected_account else 'Workspace health' }}</a>
+  </header>
+  {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice notice-error" role="alert" tabindex="-1">{{ error }}</div>{% endif %}
+
+  {% if auth_mode != 'local' %}
+  <section class="administrator-panel" aria-labelledby="provider-heading">
+    <h2 id="provider-heading">Accounts are managed by your {{ 'Windows organization' if auth_mode == 'kerberos' else 'sign-in provider' if auth_mode == 'oidc' else 'preview environment' }}</h2>
+    <p>{{ 'Ask your directory administrator to add people and set admission or administrator groups.' if auth_mode == 'kerberos' else 'Ask your identity-provider administrator to add people and set admission or administrator roles.' if auth_mode == 'oidc' else 'Preview identities are for synthetic evaluation. Use a configured local or organization sign-in mode for a team.' }}</p>
+    <p>After a person signs in, add them from the relevant matter’s <strong>Case team</strong> page. Application administrator access and matter-team membership are separate.</p>
+    <a class="button button-primary" href="/matters/new">Create a first matter</a>
+  </section>
+  {% if provider_people %}<section class="administrator-panel"><h2>People who have signed in</h2><ul>{% for person in provider_people %}<li>{{ person.display_name }}</li>{% endfor %}</ul></section>{% endif %}
+  {% else %}
+  {% if not selected_account %}
+  <section class="administrator-panel people-start" aria-labelledby="start-heading">
+    <p class="eyebrow">Start here</p><h2 id="start-heading">Set up your team</h2>
+    <ol class="people-checklist">
+      <li><strong>{{ 'A teammate account is ready' if has_teammate else 'Add your first teammate' }}</strong><span>{{ 'Have your teammate sign in once so they appear in the Case team picker.' if has_teammate else 'Create their account below. Share the sign-in address and password privately, and have them sign in once.' }}</span></li>
+      <li><strong>{{ 'A matter is available' if has_matter else 'Create a first matter' }}</strong><span>A matter keeps its sources and case team together. <a href="/matters/new">Create a matter</a>, then open Case team to add a person.</span></li>
+      <li><strong>Check access together</strong><span>Have your teammate sign in and confirm they can open the intended matter. This step needs your verification.</span></li>
+    </ol>
+    <p class="people-help">For processing and storage readiness, <a href="/admin#admin-ai-heading">check workspace health</a>.</p>
+  </section>
+  {% endif %}
+
+  {% if not management_enabled %}
+  <section class="administrator-panel" aria-labelledby="enable-heading">
+    <h2 id="enable-heading">Account changes need the installation operator</h2>
+    <p>People can sign in, but browser account changes have not been enabled for this installation. Ask the operator to enable browser account management.</p>
+    <a class="button button-primary" href="/admin/people/setup">Open operator setup instructions</a>
+  </section>
+  {% endif %}
+
+  {% if not selected_account %}
+  <div class="people-columns">
+    {% if management_enabled %}
+    <section class="administrator-panel" id="add-person" aria-labelledby="add-heading">
+      <h2 id="add-heading">Add a person</h2>
+      <p>Start with reviewer access. You will choose their matter team separately.</p>
+      <form class="people-form" action="/admin/people/create" method="post" data-working-form data-working-label="Creating account…">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="new-display-name">Name shown in RecordBench</label><input id="new-display-name" name="display_name" autocomplete="name" maxlength="160" required value="{{ form_values.get('display_name', '') }}">
+        <label for="new-username">Sign-in username</label><input id="new-username" name="username" autocomplete="off" autocapitalize="none" spellcheck="false" minlength="3" maxlength="128" required aria-describedby="username-help" value="{{ form_values.get('username', '') }}">
+        <small id="username-help">3–128 letters, numbers, dots, dashes, underscores or @. Usernames cannot be changed later.</small>
+        <label for="new-password">Password</label><input id="new-password" type="password" name="password" autocomplete="new-password" minlength="14" maxlength="1024" required aria-describedby="new-password-help">
+        <small id="new-password-help">Use at least 14 characters. The password will not be shown after saving.</small>
+        <label for="new-password-confirm">Enter password again</label><input id="new-password-confirm" type="password" name="password_confirm" autocomplete="new-password" minlength="14" maxlength="1024" required>
+        <label for="new-role">Application role</label><select id="new-role" name="role"><option value="reviewer">Reviewer — works in assigned matters</option><option value="administrator">Administrator — manages people and workspace</option></select>
+        <button class="button button-primary" type="submit">Create account</button>
+      </form>
+    </section>
+    {% endif %}
+    <section class="administrator-panel" aria-labelledby="people-heading">
+      <h2 id="people-heading">{{ people|length }} {{ 'person' if people|length == 1 else 'people' }}</h2>
+      <ul class="people-list">
+      {% for person in people %}<li><div><strong>{{ person.display_name }}{% if person.username == current_username %} <small>(you)</small>{% endif %}</strong><span>{{ person.username }}</span><small>{{ 'Administrator' if person.administrator else 'Reviewer' }} · {{ 'Can sign in' if person.enabled else 'Sign-in disabled' }}</small></div><a class="button button-secondary" href="{{ person.url }}" aria-label="Manage {{ person.display_name }}">Manage</a></li>{% endfor %}
+      </ul>
+    </section>
+  </div>
+  {% elif management_enabled %}
+  {% set person = selected_account %}
+  <p class="people-help">Username: <strong>{{ person.username }}</strong> · {{ 'Can sign in' if person.enabled else 'Sign-in disabled' }}. Changing application access does not add or remove matter-team membership.</p>
+  <div class="people-columns">
+    <section class="administrator-panel"><h2>Display name</h2><form class="people-form" method="post" action="{{ person.url }}/name" data-working-form>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="edit_token" value="{{ person.edit_token }}">
+      <label for="person-name">Name shown in RecordBench</label><input id="person-name" name="display_name" maxlength="160" required value="{{ person.display_name }}">
+      <button class="button button-primary" type="submit">Save name</button>
+    </form></section>
+    <section class="administrator-panel"><h2>Set a new password</h2><p>Previous sessions will end. Share the new password privately.{% if person.username == current_username %} You will need to sign in again.{% endif %}</p>
+      <form class="people-form" method="post" action="{{ person.url }}/password" data-working-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="edit_token" value="{{ person.edit_token }}">
+        <input type="text" name="username" autocomplete="username" value="{{ person.username }}" hidden>
+        <label for="reset-password">New password</label><input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="14" maxlength="1024" required>
+        <label for="reset-password-confirm">Enter new password again</label><input id="reset-password-confirm" name="password_confirm" type="password" autocomplete="new-password" minlength="14" maxlength="1024" required>
+        <button class="button button-primary" type="submit">Change password</button>
+      </form>
+    </section>
+    <section class="administrator-panel"><h2>Application role</h2><p>Reviewers work in assigned matters. Administrators also manage people and workspace settings. Role changes require a new sign-in.</p>
+      <form class="people-form" method="post" action="{{ person.url }}/role" data-working-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="edit_token" value="{{ person.edit_token }}">
+        <label for="person-role">Application role</label><select id="person-role" name="role"><option value="reviewer" {% if not person.administrator %}selected{% endif %}>Reviewer</option><option value="administrator" {% if person.administrator %}selected{% endif %}>Administrator</option></select>
+        {% if person.username == current_username %}<label class="people-confirm"><input type="checkbox" name="confirm_self" value="yes"> I understand removing my administrator role will sign me out.</label>{% endif %}
+        <button class="button button-secondary" type="submit">Save role</button>
+      </form>
+    </section>
+    <section class="administrator-panel"><h2>{{ 'Disable sign-in' if person.enabled else 'Allow sign-in again' }}</h2>
+      <p>{{ 'This person will lose access, including sessions already open. Their matters and work remain in place.' if person.enabled else 'This person can sign in with their current password. Earlier sessions will remain closed.' }}</p>
+      <form class="people-form" method="post" action="{{ person.url }}/state" data-working-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="edit_token" value="{{ person.edit_token }}"><input type="hidden" name="enabled" value="{{ 'no' if person.enabled else 'yes' }}">
+        {% if person.username == current_username and person.enabled %}<label class="people-confirm"><input type="checkbox" name="confirm_self" value="yes" required> I understand this will sign me out and another administrator must re-enable my account.</label>{% endif %}
+        <button class="button {{ 'button-danger' if person.enabled else 'button-primary' }}" type="submit">{{ 'Disable sign-in' if person.enabled else 'Enable sign-in' }}</button>
+      </form>
+      <p class="people-help">At least one enabled administrator must remain.</p>
+    </section>
+  </div>
+  {% endif %}
+  {% endif %}
+</main>
+{% endblock %}

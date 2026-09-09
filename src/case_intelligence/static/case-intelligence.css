@@ -7958,3 +7958,29 @@ body.activity-open .activity-drawer { transform: translateX(0); }
 .source-folder-list small { color: var(--ink-faint); white-space: nowrap; }
 .source-folder-empty { margin: 12px 0 0; color: var(--ink-soft); font-size: 12px; }
 .source-folder-pages { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; }
+
+/* Local account administration follows the existing workspace form language. */
+.people-main { max-width: 1140px; }
+.people-main .administrator-panel { padding: 22px; }
+.people-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; align-items: start; }
+.people-columns > .administrator-panel { min-width: 0; }
+.people-start h2, .people-columns h2 { margin-top: 0; }
+.people-checklist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px; margin: 22px 0; padding-left: 22px; }
+.people-checklist strong, .people-checklist span { display: block; }
+.people-checklist span { margin-top: 7px; color: var(--ink-soft); font-size: 13px; line-height: 1.6; }
+.people-form { display: grid; gap: 9px; margin-top: 18px; }
+.people-form label { font-size: 13px; font-weight: 700; margin-top: 6px; }
+.people-form input:not([type="hidden"]):not([type="checkbox"]), .people-form select { width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink); background: var(--canvas); font: inherit; }
+.people-form small, .people-help { color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
+.people-form .button { margin-top: 12px; justify-self: start; }
+.people-form .people-confirm { display: flex; align-items: flex-start; gap: 9px; font-weight: 500; line-height: 1.5; }
+.people-confirm input { margin: 4px 0 0; flex: none; width: 16px; height: 16px; }
+.people-list { list-style: none; margin: 18px 0 0; padding: 0; }
+.people-list li { display: flex; gap: 14px; justify-content: space-between; align-items: center; padding: 17px 0; border-top: 1px solid var(--line); }
+.people-list li > div { min-width: 0; overflow-wrap: anywhere; }
+.people-list strong, .people-list span, .people-list small { display: block; }
+.people-list strong small { display: inline; font-weight: 400; }
+.people-list span, .people-list small { color: var(--ink-soft); font-size: 12px; margin-top: 3px; }
+.people-main pre { max-width: 100%; overflow-x: auto; padding: 14px; background: var(--canvas); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+@media (max-width: 1050px) { .people-columns, .people-checklist { grid-template-columns: minmax(0, 1fr); } .people-checklist { gap: 18px; } }
+@media (max-width: 600px) { .people-main { padding: 26px 18px 48px; } .people-main .administrator-heading { flex-direction: column; gap: 16px; } .people-list li { align-items: flex-start; } .people-list .button { min-height: 44px; } .people-form .button { width: 100%; } }

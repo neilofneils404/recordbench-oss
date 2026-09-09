@@ -168,6 +168,8 @@ def _compose(node: Path, installation: Mapping[str, Any]) -> list[str]:
     ]
     if installation.get("auth") == "kerberos":
         command.extend(("-f", str(release / "compose.kerberos.yaml")))
+    if installation.get("local_account_management") is True:
+        command.extend(("-f", str(release / "compose.local-accounts.yaml")))
     profiles = installation.get("profiles", [])
     if not isinstance(profiles, list) or any(not isinstance(item, str) for item in profiles):
         raise BackupError("node profile configuration is invalid")
@@ -460,7 +462,7 @@ def _validate_sqlite(path: Path) -> None:
 
 
 def _hash_controls(payload: Path) -> None:
-    roots = ("configuration", "control", "metadata", "postgres", "secrets")
+    roots = ("configuration", "control", "metadata", "postgres", "secrets", "accounts")
     lines: list[str] = []
     for root_name in roots:
         root = payload / root_name
@@ -471,6 +473,23 @@ def _hash_controls(payload: Path) -> None:
                     digest.update(block)
             lines.append(f"{digest.hexdigest()}  {path.relative_to(payload).as_posix()}")
     (payload / "CONTROL_SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="ascii")
+
+
+def _validate_frozen_accounts(payload: Path, installation: Mapping[str, Any]) -> None:
+    if installation.get("local_account_management") is not True:
+        return
+    if installation.get("auth") != "local":
+        raise BackupError("browser account snapshot requires local authentication")
+    # Load only this reviewed release's stdlib validator. Isolated Python ignores
+    # ambient PYTHONPATH and user-site packages, with no Argon2 host dependency.
+    validator = PROJECT / "src/case_intelligence/local_account_format.py"
+    try:
+        subprocess.run(
+            [sys.executable, "-I", str(validator), str(payload / "accounts/local-accounts.json")],
+            check=True, capture_output=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BackupError("frozen local account snapshot is missing, unsafe or invalid") from exc
 
 
 def _snapshot_id(output: str) -> str:
@@ -533,12 +552,14 @@ def backup(args: argparse.Namespace) -> int:
         "configuration": _exact_directory(environment["RECORDBENCH_CONFIG_ROOT"], label="configuration root"),
         "secrets": _exact_directory(environment["RECORDBENCH_SECRETS_ROOT"], label="secrets root"),
     }
+    if installation.get("local_account_management") is True:
+        sources["accounts"] = _exact_directory(environment["RECORDBENCH_LOCAL_ACCOUNT_ROOT"], label="local account root")
     managed_storage = _exact_directory(
         environment["RECORDBENCH_STORAGE_ROOT"], label="matter storage"
     )
     if not (managed_storage / ".recordbench-managed-storage.json").is_file():
         raise BackupError("matter storage ownership marker is unavailable")
-    _same_filesystem((node, *sources.values()))
+    _same_filesystem((node, *(source for name, source in sources.items() if name != "accounts")))
     snapshot = Path(tempfile.mkdtemp(prefix=".recordbench-backup-snapshot-", dir=node))
     os.chmod(snapshot, 0o700)
     payload = snapshot / "payload"
@@ -569,13 +590,21 @@ def backup(args: argparse.Namespace) -> int:
         )
 
         for name, source in sources.items():
-            _copy_linked(source, payload / name)
+            if name == "accounts":
+                # The bounded account directory may live on another filesystem.
+                # Copy it during quiescence; preserve symlinks for the subsequent
+                # rejection rather than following them into another boundary.
+                _snapshot_files(source)
+                shutil.copytree(source, payload / name, symlinks=True)
+            else:
+                _copy_linked(source, payload / name)
         _copy_linked(managed_storage, storage_snapshot)
         control = payload / "control"
         control.mkdir()
         shutil.copy2(node / "compose.env", control / "compose.env")
         shutil.copy2(node / "installation.json", control / "installation.json")
         databases = _sqlite_files(_snapshot_files(payload, storage_snapshot))
+        _validate_frozen_accounts(payload, installation)
         for database in databases:
             _validate_sqlite(database)
         metadata = payload / "metadata"
@@ -741,6 +770,8 @@ def restore(args: argparse.Namespace) -> int:
         payload = checksum.parent
         for line in checksum.read_text(encoding="ascii").splitlines():
             _verify_checksum_line(payload, line)
+        restored_installation = _read_json(payload / "control/installation.json", label="restored installation record")
+        _validate_frozen_accounts(payload, restored_installation)
         storage_markers = [path for path in files if path.name == ".recordbench-managed-storage.json"]
         if len(storage_markers) != 1:
             raise BackupError("restored managed storage boundary is unavailable or ambiguous")

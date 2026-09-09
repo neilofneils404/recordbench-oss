@@ -63,6 +63,11 @@ def _accounts_migrate(args: argparse.Namespace) -> None:
     _report(LocalAccountRepository(args.file).migrate(args.backup_file, actor=_actor()))
 
 
+def _accounts_relocate(args: argparse.Namespace) -> None:
+    _report(LocalAccountRepository(args.file).relocate(
+        args.destination, args.backup_file, actor=_actor(), writers_stopped=args.confirm_stopped))
+
+
 def _accounts_display_name(args: argparse.Namespace) -> None:
     _report(LocalAccountRepository(args.file).change_display_name(
         args.username, args.display_name, actor=_actor()))
@@ -89,6 +94,11 @@ def _accounts_list(args: argparse.Namespace) -> None:
 def _storage_init(args: argparse.Namespace) -> None:
     storage = ManagedMatterStorage.initialize(args.root, policy=StoragePolicy.from_environment())
     print(f"Initialized managed storage {storage.root}.")
+
+
+def _storage_status(args: argparse.Namespace) -> None:
+    ManagedMatterStorage(args.root, policy=StoragePolicy.from_environment(), require_marker=True)
+    print("Existing managed storage boundary validated; sources and ownership marker retained.")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -118,6 +128,12 @@ def _parser() -> argparse.ArgumentParser:
     migrate.add_argument("--file", type=Path, required=True)
     migrate.add_argument("--backup-file", type=Path, required=True)
     migrate.set_defaults(handler=_accounts_migrate)
+    relocate = account_commands.add_parser("relocate", help="Move accounts into a dedicated browser-management directory")
+    relocate.add_argument("--file", type=Path, required=True)
+    relocate.add_argument("--destination", type=Path, required=True)
+    relocate.add_argument("--backup-file", type=Path, required=True)
+    relocate.add_argument("--confirm-stopped", action="store_true")
+    relocate.set_defaults(handler=_accounts_relocate)
     for name, handler in (("display-name", _accounts_display_name),
                           ("enable", _accounts_enabled), ("disable", _accounts_enabled),
                           ("role", _accounts_role)):
@@ -139,6 +155,9 @@ def _parser() -> argparse.ArgumentParser:
     initialize = storage_commands.add_parser("init")
     initialize.add_argument("--root", type=Path, required=True)
     initialize.set_defaults(handler=_storage_init)
+    status = storage_commands.add_parser("status", help="Validate existing managed storage without resetting it")
+    status.add_argument("--root", type=Path, required=True)
+    status.set_defaults(handler=_storage_status)
     return parser
 
 

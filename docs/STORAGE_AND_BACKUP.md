@@ -26,6 +26,7 @@ Whichever method you choose, capture these as one consistent boundary:
 - managed matter storage;
 - the control SQLite database and session key;
 - generated configuration and secrets;
+- the dedicated canonical account directory when browser account management is enabled;
 - the PostgreSQL projection dump (or a separately tested projection rebuild);
 - version/install metadata and integrity hashes.
 
@@ -123,3 +124,26 @@ replace an operator's installed-node or replacement-host acceptance.
 
 The tooling remains prerelease. Do not depend on this candidate as the sole copy
 of retained work product until your own scheduled backup and restore drill pass.
+
+## Browser account snapshot validation
+
+When the dedicated browser-account profile is enabled, backup requires its
+canonical `local-accounts.json` in the frozen copy before application restart,
+transfer or retention. The copied directory must be owner-only `0700` and its
+account/lock/temp files regular owner-only `0600` files. The canonical file is
+bounded to 1 MiB and must contain a valid version 2 store with an enabled
+administrator. Missing files, malformed JSON, invalid account fields, unusable
+Argon2id encodings or permissions fail the snapshot; the application restart
+recovery still runs. Restore repeats this check against the restored installation
+record as well as checking file hashes, so checksums alone do not establish a
+usable account format.
+
+Runtime and backup share a standard-library format validator for account shape,
+PHC Argon2id encoding, parameter ranges and revision fields. The backup tool runs
+this exact bundled validator in isolated Python, without relying on host Argon2
+packages or ambient Python imports. Runtime readers retain their additional
+argon2-cffi parameter validation and password authentication. Structural backup
+validation cannot establish that an operator knows a working administrator
+password; the clean restore drill must still verify synthetic sign-in and
+administrator recovery. The suite covers a clean account restore, corrupted
+frozen copies, invalid modes, missing administrators and malformed hashes.
