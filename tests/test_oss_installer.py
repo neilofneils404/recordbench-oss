@@ -47,6 +47,19 @@ def test_management_flag_rejects_ambiguous_or_existing_node_before_writes(tmp_pa
     assert not root.exists()
 
 
+def test_interrupted_provisioning_resume_retains_canonical_account_profile(tmp_path, monkeypatch):
+    record = {"release_path": str(ROOT), "release_id": "synthetic", "auth": "local", "models": "none", "local_account_management": True}
+    monkeypatch.setattr(installer, "_installed_release", lambda root: (record, ROOT))
+    monkeypatch.setattr(installer, "_preflight", lambda *args, **kwargs: ())
+    monkeypatch.setattr(installer, "_run", lambda *args, **kwargs: None)
+    calls = []
+    monkeypatch.setattr(installer, "_provision", lambda console, args, *rest: calls.append(args.enable_account_management))
+    args = installer._parser().parse_args(["install", "--resume"])
+    assert not args.enable_account_management
+    installer._resume_node(installer.Console(color=False, quiet=True), args, tmp_path)
+    assert calls == [True]
+
+
 def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path) -> None:
     node = tmp_path / "node"
     result = subprocess.run(

@@ -1707,6 +1707,7 @@ def _doctor(console: Console, args: argparse.Namespace, root: Path) -> None:
 
 def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None:
     installation, _release = _installed_release(root)
+    args.enable_account_management = installation.get("local_account_management") is True
     auth = str(installation.get("auth", ""))
     models = str(installation.get("models", "none"))
     installed_languages = installation.get("transcription_languages", ["en"])
