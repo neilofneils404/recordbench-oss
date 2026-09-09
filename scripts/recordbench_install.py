@@ -359,14 +359,15 @@ def _private_write(path: Path, value: str, *, replace: bool = False) -> None:
     os.chmod(path, 0o600)
 
 
-def _credential_source_available(source: Path | None, *, maximum_bytes: int = 1024 * 1024) -> bool:
+def _credential_source_available(source: Path | None, *, minimum_bytes: int = 1,
+                                 maximum_bytes: int = 1024 * 1024) -> bool:
     """Check credential-file metadata without opening or retaining its contents."""
     if source is None:
         return False
     try:
         source = source.expanduser()
         metadata = source.lstat()
-        return (stat.S_ISREG(metadata.st_mode) and 0 < metadata.st_size <= maximum_bytes
+        return (stat.S_ISREG(metadata.st_mode) and minimum_bytes <= metadata.st_size <= maximum_bytes
                 and os.access(source, os.R_OK))
     except OSError:
         return False
@@ -1319,12 +1320,14 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 ("kerberos", args.kerberos_keytab, "kerberos-keytab-input", "--kerberos-keytab"),
             ):
                 if args.auth == auth and (source is not None or (args.non_interactive and not args.dry_run)):
+                    minimum_bytes = 16 if auth == "oidc" else 1
                     maximum_bytes = 4096 if auth == "oidc" else 1024 * 1024
-                    available = _credential_source_available(source, maximum_bytes=maximum_bytes)
+                    available = _credential_source_available(source, minimum_bytes=minimum_bytes,
+                                                             maximum_bytes=maximum_bytes)
                     add(name, available,
                         "Credential source metadata is available; contents not read" if available else "Required credential source is missing or unsafe",
                         "Configure the selected identity provider",
-                        f"Supply {option} as a readable nonempty regular file no larger than {maximum_bytes} bytes including line endings, without a symbolic link. Contents are not validated by this metadata check.")
+                        f"Supply {option} as a readable regular file between {minimum_bytes} and {maximum_bytes} bytes including line endings, without a symbolic link. Contents are not validated by this metadata check.")
             if args.auth == "kerberos" and not args.dry_run:
                 host_join = Path("/var/lib/sss/pipes").is_dir() and Path("/etc/krb5.conf").is_file()
                 add("kerberos-host", host_join,
@@ -1391,13 +1394,14 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
             "Use --bind-address with an IPv4 or unbracketed, unscoped IPv6 literal, without a hostname, port or control characters. Set the port separately with --https-port.")
         pair = bool(args.tls_cert) == bool(args.tls_key)
         supplied = bool(args.tls_cert and args.tls_key)
-        readable = supplied and all(path.is_file() and not path.is_symlink() and os.access(path, os.R_OK)
+        readable = supplied and all(_storage_path_text_valid(path) and path.is_file()
+                                    and not path.is_symlink() and os.access(path, os.R_OK)
                                     for path in (args.tls_cert, args.tls_key))
         tls_ok = pair and (readable if supplied else bind in {"127.0.0.1", "::1"})
         add("tls", tls_ok, "Readable supplied TLS pair; trust must be verified" if readable else
             "Loopback smoke certificate will be generated during installation" if tls_ok else "TLS choice incomplete or files unavailable",
             "Reach the private HTTPS gateway with secure sessions",
-            "Supply both --tls-cert and --tls-key as readable regular files. LAN binding requires an organization-trusted pair; use the default loopback bind for local evaluation.")
+            "Supply both --tls-cert and --tls-key as readable regular files with no control characters in their paths. LAN binding requires an organization-trusted pair; use the default loopback bind for local evaluation.")
         add("https-port", 1 <= args.https_port <= 65535, "Valid port" if 1 <= args.https_port <= 65535 else "Invalid port",
             "Bind the HTTPS gateway", "Choose --https-port between 1 and 65535.")
 

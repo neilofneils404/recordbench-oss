@@ -30,7 +30,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/installer-cleanup-20260909",
-      "headRefOid": "e52ea886126d56d0ca3676fe2d7be85832304293",
+      "headRefOid": "d921db7b295aa581724f2efba3b2f46e51102e9b",
       "number": 54,
       "title": "Validate installation inputs and protect nested storage paths",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/54"
@@ -54,7 +54,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/team-setup-cleanup-20260909",
-      "headRefOid": "e823922c9c162bc1d5faba7dead027385b72b65b",
+      "headRefOid": "c661db2a5dcbbd32ac1d248c3e5c37c8b34f072e",
       "number": 57,
       "title": "Guide resumable installation and local team administration",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/57"
