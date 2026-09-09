@@ -1002,7 +1002,9 @@ def _storage_ancestors_safe(ancestor: Path) -> bool:
     return True
 
 
-def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> PreflightResult:
+def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
+                       model_args: argparse.Namespace | None = None,
+                       needs_model_staging: bool = True) -> PreflightResult:
     checks: list[PreflightCheck] = []
     devices: tuple[GpuDevice, ...] = ()
 
@@ -1041,11 +1043,12 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
     add("openssl", openssl, "OpenSSL available" if openssl else "OpenSSL missing",
         "Prepare HTTPS", "Install the distribution OpenSSL package; retain HTTPS and secure cookies.")
 
-    if args is not None:
+    options = model_args if model_args is not None else args
+    if options is not None:
         try:
-            languages = _transcription_languages(args.transcription_languages)
+            languages = _transcription_languages(options.transcription_languages)
             _model_stage_groups(models, transcription_languages=languages,
-                                diarization=bool(args.enable_diarization))
+                                diarization=bool(options.enable_diarization))
             model_options_ok = True
         except RuntimeError:
             model_options_ok = False
@@ -1053,6 +1056,17 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
             "Selected model options are compatible" if model_options_ok else "Selected model options conflict or use an unsupported language",
             "Stage the selected AI capabilities",
             "Choose --transcription-languages en, es, or en,es. Enable diarization only with --models transcription or all.")
+        if (needs_model_staging and options.non_interactive
+                and options.enable_diarization and models in {"transcription", "all"}):
+            add("model-terms", bool(options.accept_model_terms),
+                "Diarization terms acknowledged" if options.accept_model_terms else "Diarization terms acknowledgement missing",
+                "Stage the selected gated speaker module",
+                "Accept the selected model's terms, then pass --accept-model-terms.")
+            add("model-token-input", bool(options.hf_token_stdin),
+                "Token input selected; no token read" if options.hf_token_stdin else "One-time token input not selected",
+                "Authorize one-time gated model staging without retaining credentials",
+                "Pass --hf-token-stdin and supply a read-only token through controlled standard input when staging runs.")
+    if args is not None:
         for name, path in (("node-storage", args.root), ("matter-storage", args.storage_root or args.root / "matter-storage")):
             entered_path = path.expanduser()
             try:
@@ -1123,7 +1137,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
 
     if not _required_gpu_count(models):
         try:
-            _resolve_gpu_plans(args or _parser().parse_args(["--models", models]), models, ())
+            _resolve_gpu_plans(options or _parser().parse_args(["--models", models]), models, ())
             gpu_options_ok = True
         except RuntimeError:
             gpu_options_ok = False
@@ -1144,7 +1158,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
             devices = _parse_gpu_inventory(inventory.stdout)
             if not devices or any(device.compute_capability is None for device in devices):
                 raise RuntimeError("GPU inventory or compute capability unavailable")
-            plan_args = args or _parser().parse_args(["--models", models])
+            plan_args = options or _parser().parse_args(["--models", models])
             _resolve_gpu_plans(plan_args, models, devices)
             add("gpu", True, "Selected GPU and model plan fits current reported hardware",
                 "Run the selected local AI tasks", "")
@@ -1179,8 +1193,11 @@ def _render_preflight(console: Console, result: PreflightResult) -> None:
 
 
 def _preflight(console: Console, *, models: str, dry_run: bool,
-               args: argparse.Namespace | None = None) -> tuple[GpuDevice, ...]:
-    result = _collect_preflight(models, args)
+               args: argparse.Namespace | None = None,
+               model_args: argparse.Namespace | None = None,
+               needs_model_staging: bool = True) -> tuple[GpuDevice, ...]:
+    result = _collect_preflight(models, args, model_args=model_args,
+                                needs_model_staging=needs_model_staging)
     _render_preflight(console, result)
     if not result.ready:
         raise RuntimeError("installation prerequisites are incomplete; see the checklist above")
@@ -1198,6 +1215,29 @@ def _paths(root: Path, storage_root: Path | None = None) -> dict[str, Path]:
         "models": root / "models",
         "tls": root / "tls",
     }
+
+
+def _mkdir_private(component: str, *, dir_fd: int) -> None:
+    """Create relative to a held parent with owner access under any caller umask.
+
+    Umask is process-global: change it only in an isolated child, before mkdir.
+    The child inherits one already-validated directory descriptor and does not
+    traverse an attacker-supplied path or repair permissions through a pathname.
+    """
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-c",
+         "import os,sys\nos.umask(0)\n"
+         "try: os.mkdir(sys.argv[1], 0o700, dir_fd=int(sys.argv[2]))\n"
+         "except FileExistsError: sys.exit(17)\n"
+         "except OSError: sys.exit(1)\n",
+         component, str(dir_fd)],
+        pass_fds=(dir_fd,), stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+    )
+    if result.returncode == 17:
+        raise FileExistsError("storage component was created concurrently")
+    if result.returncode:
+        raise OSError("storage component could not be created privately")
 
 
 def _create_private_directory(path: Path) -> None:
@@ -1222,9 +1262,9 @@ def _create_private_directory(path: Path) -> None:
             except FileNotFoundError:
                 if parent.st_uid != uid or parent.st_mode & 0o022:
                     raise RuntimeError("storage creation directory must be service-owned and protected")
-                # mode applies to this component even when the process umask is 000.
+                # The child preserves owner access even when umask masks 0700.
                 try:
-                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                    _mkdir_private(component, dir_fd=descriptor)
                 except FileExistsError:
                     pass  # Revalidate a concurrently created entry below.
                 child = os.open(component, flags, dir_fd=descriptor)
@@ -1921,22 +1961,52 @@ def _doctor(console: Console, args: argparse.Namespace, root: Path) -> None:
     console.ok("Node diagnostic complete")
 
 
+def _restore_model_options(
+    args: argparse.Namespace,
+    installation: Mapping[str, object],
+    compose_env: Mapping[str, str],
+    transcription_env: Mapping[str, str],
+) -> None:
+    """Validate the saved deployment's choices, never substitute an automatic plan."""
+    languages = installation.get("transcription_languages", ["en"])
+    topology = installation.get("gpu_topology", {})
+    if (not isinstance(languages, list)
+            or not all(isinstance(value, str) for value in languages)
+            or not isinstance(topology, dict)):
+        raise RuntimeError("installed model metadata is invalid")
+    generator = topology.get("generator", [])
+    if not isinstance(generator, list) or not all(isinstance(value, str) for value in generator):
+        raise RuntimeError("installed GPU metadata is invalid")
+    args.transcription_languages = ",".join(languages)
+    args.enable_diarization = bool(installation.get("transcription_diarization", False))
+    args.review_model_profile = str(installation.get("review_model_profile", "portable"))
+    args.gpu_layout = compose_env.get("RECORDBENCH_GPU_LAYOUT", str(installation.get("gpu_layout", "shared")))
+    args.generator_gpus = compose_env.get("RECORDBENCH_GENERATOR_GPU", ",".join(generator)) or None
+    args.transcription_gpu = compose_env.get("RECORDBENCH_TRANSCRIPTION_GPU", topology.get("transcription"))
+    args.retrieval_device = compose_env.get("RECORDBENCH_RETRIEVAL_DEVICE", str(topology.get("retrieval_device", "cpu")))
+    args.retrieval_gpu = (compose_env.get("RECORDBENCH_RETRIEVAL_GPU", topology.get("retrieval_gpu"))
+                          if args.retrieval_device == "cuda" else None)
+    models = str(installation.get("models", "none"))
+    if (args.review_model_profile not in {"portable", "quality"}
+            or (models in {"review", "all"} and not args.generator_gpus)
+            or (models in {"transcription", "all"} and not args.transcription_gpu)
+            or (args.retrieval_device == "cuda" and not args.retrieval_gpu)):
+        raise RuntimeError("installed model/GPU selections are incomplete")
+    try:
+        utilization = compose_env.get("RECORDBENCH_GENERATOR_GPU_UTILIZATION")
+        args.generator_gpu_utilization = float(utilization) if utilization is not None else None
+        minimum_free = transcription_env.get("TRANSCRIPTION_V2_MIN_FREE_VRAM_MB")
+        args.transcription_min_free_vram_mib = int(minimum_free) if minimum_free is not None else None
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("installed GPU capacity settings are invalid") from exc
+
+
 def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None:
     installation, _release = _installed_release(root)
     auth = str(installation.get("auth", ""))
     models = str(installation.get("models", "none"))
-    installed_languages = installation.get("transcription_languages", ["en"])
-    if not isinstance(installed_languages, list) or not all(
-        isinstance(value, str) for value in installed_languages
-    ):
-        raise RuntimeError("installed transcription language metadata is invalid")
-    args.transcription_languages = ",".join(installed_languages)
-    args.enable_diarization = bool(
-        installation.get("transcription_diarization", False)
-    )
-    args.review_model_profile = str(
-        installation.get("review_model_profile", "portable")
-    )
+    _restore_model_options(args, installation, _dotenv(root / "compose.env"),
+                           _dotenv(root / "config" / "transcription.env") if models in {"transcription", "all"} else {})
     profiles = installation.get("profiles", [])
     if (
         auth not in {"local", "oidc", "kerberos"}
@@ -1944,12 +2014,14 @@ def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None
         or not isinstance(profiles, list)
     ):
         raise RuntimeError("installed node metadata is invalid")
-    _preflight(console, models=models, dry_run=args.dry_run)
+    complete = _provisioning_complete(root, installation)
+    _preflight(console, models=models, dry_run=args.dry_run, model_args=args,
+               needs_model_staging=not complete)
     console.phase(2, "REJOIN NODE", "Using sealed identity, storage, model, and release coordinates")
     compose = _compose(root, profiles)
     _run(console, [*compose, "config", "--quiet"], dry_run=args.dry_run)
     console.ok(f"release capsule :: {installation.get('release_id', 'legacy')}")
-    if not _provisioning_complete(root, installation):
+    if not complete:
         console.warn("Prior boot stopped before the provisioning seal; safely replaying idempotent phases")
         _provision(
             console,
@@ -2117,7 +2189,10 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
         "all",
     } or not isinstance(profiles, list):
         raise RuntimeError("installed node metadata is invalid")
-    _preflight(console, models=models, dry_run=args.dry_run)
+    _restore_model_options(args, installation, _dotenv(root / "compose.env"),
+                           _dotenv(root / "config" / "transcription.env") if models in {"transcription", "all"} else {})
+    _preflight(console, models=models, dry_run=args.dry_run, model_args=args,
+               needs_model_staging=False)
     console.phase(2, "SNAPSHOT BEFORE MUTATION", "Requiring a recoverable checkpoint before swapping release capsules")
     backup_configured = (root / "config" / "backup.json").is_file()
     if backup_configured:
