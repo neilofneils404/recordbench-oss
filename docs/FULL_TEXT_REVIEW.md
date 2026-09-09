@@ -82,6 +82,13 @@ JSON/CSV and bundle preservation, compatible content fingerprints, and deletion
 cascades. An online SQLite backup restores into a fresh WorkspaceStore with saved
 partial outcomes and clean integrity/foreign-key checks.
 
+The existing optional-overview acceptance scenario now holds the workspace
+lock while its synthetic fixture updates the shared SQLite connection. This
+prevents a background coordinator commit from racing the fixture transaction;
+all original scenario assertions remain unchanged. The frozen pack records the
+reviewed test-node and containing-file digest changes and updates its aggregate
+fingerprint. Case selection and source-fixture digests remain unchanged.
+
 The browser acceptance script launches this mode through the ordinary form,
 checks the late finding and failed-unit denominator, inspects desktop/mobile
 rendering, and downloads all 15 synthetic ranges. Run it with the repository's

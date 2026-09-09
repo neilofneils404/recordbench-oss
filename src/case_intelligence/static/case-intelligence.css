@@ -8093,6 +8093,8 @@ body.activity-open .activity-drawer { transform: translateX(0); }
 .find-filter-actions .find-clear-link { margin: 0; }
 
 /* Full-text review keeps outcome columns readable inside its scroll region. */
+.text-review-page .workflow-shell { grid-template-columns: minmax(0, 1fr); }
+.text-review-page .workflow-shell > * { min-width: 0; }
 .text-review-page .text-review-ledger { width: 100%; min-width: 42rem; border-collapse: collapse; }
 .text-review-page .text-review-ledger th,
 .text-review-page .text-review-ledger td { padding: .75rem; text-align: left; vertical-align: top; border-bottom: 1px solid #d5dfec; }
