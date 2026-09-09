@@ -17,6 +17,7 @@ from typing import Iterable, Protocol
 from .exact_search import And, Literal, Not, Or, ParsedQuery, Proximity, match_positionals, matching_spans, parse_query, tokenize_text
 from .media_evidence import format_timestamp
 from .pilot_uploads import PilotDocument, PilotStore, PilotUnit
+from .unit_stream import UnitRecordLimit
 
 
 class ExactSearchUnavailable(ValueError):
@@ -87,6 +88,8 @@ class ExactScanPolicy:
     max_documents: int = 10_000
     max_characters: int = 10_000_000
     max_seconds: float = 5.0
+    max_serialized_characters: int = 128_000_000
+    max_record_chars: int = 8_000_000
 
 
 class ExactSearchBackend(Protocol):
@@ -106,7 +109,9 @@ class ReferenceExactSearchBackend:
         return search_documents(documents, query, scope=scope, page=page,
             page_size=page_size, expected_fingerprint=expected_fingerprint,
             max_documents=self.policy.max_documents,
-            max_characters=self.policy.max_characters, max_seconds=self.policy.max_seconds)
+            max_characters=self.policy.max_characters, max_seconds=self.policy.max_seconds,
+            max_serialized_characters=self.policy.max_serialized_characters,
+            max_record_chars=self.policy.max_record_chars)
 
 
 def _positive_literals(query: ParsedQuery) -> tuple[Literal | Proximity, ...]:
@@ -220,7 +225,8 @@ def search_documents(
     documents: Iterable[PilotDocument], query: str, *, scope: tuple[str, ...],
     page: int = 1, page_size: int = 25, expected_fingerprint: str = "",
     max_documents: int = 10_000, max_characters: int = 10_000_000,
-    max_seconds: float = 5.0,
+    max_seconds: float = 5.0, max_serialized_characters: int = 128_000_000,
+    max_record_chars: int = 8_000_000,
 ) -> ExactSearchPage:
     """Caller holds source mutation lock and applies authorization/scope first.
 
@@ -232,17 +238,26 @@ def search_documents(
     if page < 1 or page_size not in {25, 50, 100}:
         raise ValueError("Choose a positive page and a page size of 25, 50, or 100.")
     deadline = time.monotonic() + max_seconds
-    characters = population = eligible = 0
+    characters = serialized_characters = population = eligible = 0
     exclusions: Counter[str] = Counter()
     matches: list[ExactDocumentResult] = []
     versions: list[tuple[str, str]] = []
 
+    def budget_failure():
+        return ExactSearchUnavailable(
+            "Exact search exceeded its scan budget. No exact total or partial results are shown. "
+            "Choose a smaller collection or source set and search again."
+        )
+
     def check_budget():
-        if population > max_documents or characters > max_characters or time.monotonic() > deadline:
-            raise ExactSearchUnavailable(
-                "Exact search exceeded its scan budget. No exact total or partial results are shown. "
-                "Choose a smaller collection or source set and search again."
-            )
+        if (population > max_documents or characters > max_characters
+                or serialized_characters > max_serialized_characters or time.monotonic() > deadline):
+            raise budget_failure()
+
+    def charge_read(count):
+        nonlocal serialized_characters
+        serialized_characters += count
+        check_budget()
 
     for document in documents:
         population += 1
@@ -256,16 +271,23 @@ def search_documents(
             versions.append((document.document_id, digest.hexdigest()))
             continue
         # A source loader failure invalidates the scan instead of reporting zero.
+        units, has_text = [], False
         try:
-            units = document.parsed_units()
+            for unit in document.iter_parsed_units(budget_check=check_budget,
+                    read_check=charge_read, max_record_chars=max_record_chars):
+                characters += len(unit.text)
+                check_budget()
+                # Retain only admitted text. A later unit or malformed tail
+                # invalidates the whole scan without exposing partial totals.
+                units.append(unit)
+                digest.update(json.dumps([unit.number, unit.text, unit.location], ensure_ascii=True).encode())
+                has_text = has_text or bool(tokenize_text(unit.text, budget_check=check_budget))
+        except ExactSearchUnavailable:
+            raise
+        except UnitRecordLimit as exc:
+            raise budget_failure() from exc
         except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
             raise ExactSearchUnavailable("A source could not be read. No exact total is available; retry after source preparation.") from exc
-        has_text = False
-        for unit in units:
-            characters += len(unit.text)
-            check_budget()
-            digest.update(json.dumps([unit.number, unit.text, unit.location], ensure_ascii=True).encode())
-            has_text = has_text or bool(tokenize_text(unit.text, budget_check=check_budget))
         versions.append((document.document_id, digest.hexdigest()))
         if not has_text:
             exclusions["No searchable text"] += 1

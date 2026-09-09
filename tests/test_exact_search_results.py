@@ -83,6 +83,94 @@ def test_reference_backend_uses_configurable_product_policy():
         backend.search([document(1, "red"), document(2, "red")], "red", scope=("synthetic",))
 
 
+def _file_backed_source(tmp_path, texts):
+    import io
+    from case_intelligence.pilot_uploads import PilotStore
+    store = PilotStore(tmp_path / 'synthetic-streaming-source')
+    source, _ = store.store_stream('Synthetic file-backed.txt', 'text/plain', io.BytesIO(b'Synthetic'))
+    path = store.derived / source.units_file
+    with path.open('w', encoding='utf-8') as stream:
+        json.dump({'version': 1, 'units': [{'number': index, 'text': text}
+                  for index, text in enumerate(texts, 1)]}, stream, ensure_ascii=False)
+    return source, path
+
+
+def test_file_backed_near_character_limit_preserves_proof_without_materializing(tmp_path, monkeypatch):
+    texts = ['red ' + 'neutral ' * 5000, 'bicycle ' + 'neutral ' * 5000, 'depot']
+    source, _ = _file_backed_source(tmp_path, texts)
+    expected = scan([document(1, *texts)], 'red AND bicycle NOT missing')
+    monkeypatch.setattr(source, '_units_loader', lambda name: pytest.fail('whole-file source loader invoked'))
+    result = scan([source], 'red AND bicycle NOT missing', max_characters=sum(map(len, texts)), max_seconds=30)
+    assert result.total == expected.total == 1
+    assert result.items[0].passage_positions == expected.items[0].passage_positions == (1, 2)
+    assert result.items[0].matching_unit_count == 2
+
+
+def test_file_backed_character_overflow_stops_before_large_tail(tmp_path):
+    source, path = _file_backed_source(tmp_path, ['red ' * 150_000] * 20)
+    reader, reads = source._units_iterator, []
+    def iterator(name, **kwargs):
+        charge = kwargs['read_check']
+        def read(count):
+            reads.append(count)
+            charge(count)
+        yield from reader(name, **{**kwargs, 'read_check': read})
+    source._units_iterator = iterator
+    with pytest.raises(ExactSearchUnavailable, match='No exact total or partial results'):
+        scan([source], max_characters=1_000_000, max_seconds=30)
+    assert 0 < sum(reads) < 1_400_000 < path.stat().st_size
+
+
+def test_file_backed_slow_read_expires_before_json_decode(tmp_path, monkeypatch):
+    from case_intelligence import exact_search_results, pilot_uploads
+    source, _ = _file_backed_source(tmp_path, ['red ' * 30_000])
+    now = [0.0]
+    monkeypatch.setattr(exact_search_results.time, 'monotonic', lambda: now[0])
+    original = pilot_uploads.os.fdopen
+    class SlowStream:
+        def __init__(self, stream):
+            self.stream = stream
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.stream.close()
+        def read(self, count):
+            data = self.stream.read(count)
+            now[0] += 6
+            return data
+    monkeypatch.setattr(pilot_uploads.os, 'fdopen', lambda *args, **kwargs: SlowStream(original(*args, **kwargs)))
+    monkeypatch.setattr(json.JSONDecoder, 'raw_decode', lambda *args: pytest.fail('decoded after slow read exceeded deadline'))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total or partial results'):
+        scan([source])
+
+
+@pytest.mark.parametrize('closed', [False, True])
+def test_file_backed_oversized_record_is_rejected_before_decode(tmp_path, monkeypatch, closed):
+    source, path = _file_backed_source(tmp_path, ['red'])
+    path.write_text('{"version":1,"units":[{"number":1,"text":"' + 'x' * 200_000 + ('"}]}' if closed else ''))
+    original = json.JSONDecoder.raw_decode
+    def decode(self, raw, *args, **kwargs):
+        assert len(raw) <= 1024, 'oversized record reached JSON decoder'
+        return original(self, raw, *args, **kwargs)
+    monkeypatch.setattr(json.JSONDecoder, 'raw_decode', decode)
+    with pytest.raises(ExactSearchUnavailable, match='No exact total or partial results'):
+        scan([source], max_record_chars=1024)
+
+
+def test_file_backed_serialized_input_budget_charges_whitespace_before_decode(tmp_path):
+    source, path = _file_backed_source(tmp_path, ['red'])
+    path.write_text(' ' * 200_000 + path.read_text())
+    with pytest.raises(ExactSearchUnavailable, match='No exact total or partial results'):
+        scan([source], max_serialized_characters=65_536)
+
+
+def test_file_backed_invalid_tail_suppresses_already_matched_sources(tmp_path):
+    source, path = _file_backed_source(tmp_path, ['red'])
+    path.write_text(path.read_text() + ' trailing synthetic corruption')
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([document(1, 'red'), source])
+
+
 def test_frozen_known_answer_corpus_runs_through_result_service():
     corpus = json.loads((Path(__file__).parent / "fixtures/synthetic/product-foundation/v1/corpus.json").read_text())
     documents = []

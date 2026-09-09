@@ -575,12 +575,27 @@ class PilotDocument:
 
     _units_iterator: Callable | None = field(default=None, repr=False, compare=False)
 
-    def iter_parsed_units(self):
+    def iter_parsed_units(self, *, budget_check=None, read_check=None, max_record_chars=None):
+        """Stream extracted units; budgeted callers never use a whole-file loader."""
         if self.units:
-            yield from (PilotUnit(**unit) for unit in self.units)
+            for unit in self.units:
+                if budget_check is not None:
+                    budget_check()
+                yield PilotUnit(**unit)
+            if budget_check is not None:
+                budget_check()
         elif self.units_file and self._units_iterator is not None:
-            yield from self._units_iterator(self.units_file)
+            kwargs = {}
+            if budget_check is not None:
+                kwargs['budget_check'] = budget_check
+            if read_check is not None:
+                kwargs['read_check'] = read_check
+            if max_record_chars is not None:
+                kwargs['max_record_chars'] = max_record_chars
+            yield from self._units_iterator(self.units_file, **kwargs)
         elif self.units_file and self._units_loader is not None:
+            if budget_check is not None or read_check is not None or max_record_chars is not None:
+                raise RuntimeError("bounded derived text reader is unavailable")
             yield from self._units_loader(self.units_file)
 
     def parsed_units(self) -> tuple[PilotUnit, ...]:
@@ -1188,18 +1203,22 @@ class PilotStore:
             and metadata.st_size == document.playback_size
         )
 
-    def _iter_units(self, name: str):
+    def _iter_units(self, name: str, **kwargs):
         from .unit_stream import iter_unit_records, UnitRecordLimit
         if not self._units_file_is_safe(name):
             raise RuntimeError("derived searchable text is unavailable")
         try:
             fd = os.open(self.derived / name, os.O_RDONLY | os.O_NOFOLLOW)
             with os.fdopen(fd, encoding="utf-8") as stream:
-                for item in iter_unit_records(stream):
+                for item in iter_unit_records(stream, **kwargs):
                     yield PilotUnit(**item)
         except UnitRecordLimit:
             raise
         except (OSError, TypeError, ValueError) as exc:
+            if kwargs:
+                # Budgeted callers own their failure taxonomy; preserve the
+                # exact callback exception instead of calling it a read error.
+                raise
             raise RuntimeError("derived searchable text could not be loaded") from exc
 
     def _load_units(self, name: str) -> tuple[PilotUnit, ...]:
