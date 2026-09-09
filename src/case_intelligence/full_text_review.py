@@ -253,6 +253,8 @@ class FullTextReviewLedger:
                 raise WorkspaceProblem('Cancel the review and wait for its worker to stop before deleting it.')
             if not self.enabled(run_id):
                 raise KeyError(run_id)
+            if self.workspace._text_review_export_leases.get(run_id, 0):
+                raise WorkspaceProblem('Wait for the active text-review download to finish before deleting this saved review.')
             self.workspace.connection.execute('DELETE FROM workbench_review_run WHERE run_id=?', (run_id,))
             return run
 
@@ -271,7 +273,64 @@ class FullTextReviewLedger:
                 (run_id, max(0, int(after)), min(500, max(1, int(limit))))))
 
 
+class _LeasedTextExport:
+    """Sequential iterator whose eager run lease also covers an unstarted body."""
+    def __init__(self, workspace, run_id, iterator):
+        self.workspace = workspace
+        self.run_id = run_id
+        self.iterator = iterator
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.closed:
+            raise StopIteration
+        try:
+            return next(self.iterator)
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        with self.workspace._lock:
+            if self.closed:
+                return
+            self.closed = True
+        try:
+            self.iterator.close()
+        finally:
+            with self.workspace._lock:
+                leases = self.workspace._text_review_export_leases
+                remaining = leases[self.run_id] - 1
+                if remaining:
+                    leases[self.run_id] = remaining
+                else:
+                    del leases[self.run_id]
+
+
 def iter_text_export(workspace, matter_id, actor_id, run_id, format_name='json', *, administrator_override=False):
+    """Admit a run-specific reader now; exhaust or close it on every exit.
+
+    Admission and creator deletion share the workspace lock. This is deliberately
+    an eager factory: a generator would leave a race before its first next().
+    Bundle consumers use the same lease and must close on an abandoned export.
+    """
+    if format_name not in ('json', 'csv'):
+        raise ValueError('Choose JSON or CSV for the full-text ledger.')
+    with workspace._lock:
+        workspace.review_run(matter_id, actor_id, run_id, administrator_override=administrator_override)
+        if not FullTextReviewLedger(workspace).enabled(run_id):
+            raise KeyError(run_id)
+        stream = _LeasedTextExport(workspace, run_id, _iter_text_export(
+            workspace, matter_id, actor_id, run_id, format_name, administrator_override=administrator_override))
+        leases = workspace._text_review_export_leases
+        leases[run_id] = leases.get(run_id, 0) + 1
+        return stream
+
+
+def _iter_text_export(workspace, matter_id, actor_id, run_id, format_name, *, administrator_override):
     """Stream one consistent snapshot, including failures and extraction records."""
     import csv
     import io

@@ -104,6 +104,16 @@ client disconnects; a failed download does not leave deletion blocked. The reade
 permits successive, serialized iterator calls on different ASGI worker threads.
 Authorization is still checked between record batches.
 
+Each JSON/CSV iterator also acquires a run-specific in-process lease before it is
+returned, including before the first response prefix. Admission and creator
+ledger deletion share the workspace lock, so deletion is refused until that
+run's readers finish; downloads of other runs do not block deletion. Exhaustion,
+explicit close and iterator errors release the lease. Response cleanup also
+closes an unstarted reader when sending headers fails. Direct consumers,
+including bundle preparation, close the iterator when abandoning an export so a
+byte-limit or writer failure cannot leave deletion blocked. No persistent schema
+or saved ledger content changes are required.
+
 Non-member administrators read coverage, paginated ranges, extraction rows and
 ledger downloads under their authenticated identity with an explicit read
 override. Deactivating the owner or revoking the owner's membership does not

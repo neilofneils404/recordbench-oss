@@ -124,7 +124,7 @@ def test_active_ledger_download_blocks_closure_until_final_body(workspace, monke
     assert bench.workspace.matter_lifecycle(matter.matter_id).state == "deleted"
 
 
-@pytest.mark.parametrize("failure", ["send", "generator", "disconnect"])
+@pytest.mark.parametrize("failure", ["start", "send", "generator", "disconnect"])
 def test_failed_ledger_stream_closes_reader_and_releases_lease(workspace, monkeypatch, failure):
     client, bench, matter = workspace
     run, _ = completed_text_run(bench, matter, ["The amber bicycle arrived."])
@@ -140,7 +140,9 @@ def test_failed_ledger_stream_closes_reader_and_releases_lease(workspace, monkey
                 stream.close()
         monkeypatch.setattr(workbench_module, "iter_text_export", broken)
     async def send(message):
-        if failure == "send" and message["type"] == "http.response.body" and message.get("body"):
+        if (failure == "start" and message["type"] == "http.response.start") or (
+            failure == "send" and message["type"] == "http.response.body" and message.get("body")
+        ):
             raise OSError("Synthetic client connection lost")
     request = asgi_download(client.app, f"/matters/{matter.slug}/full-review/{run.run_id}/text/export",
                             send_hook=send, disconnect=failure == "disconnect")
@@ -150,7 +152,12 @@ def test_failed_ledger_stream_closes_reader_and_releases_lease(workspace, monkey
         with pytest.raises(Exception):
             asyncio.run(request)
     assert bench._active_matter_response_count(matter.matter_id) == 0
-    assert_closed(connections)
+    if failure == "start":
+        assert not connections
+    else:
+        assert_closed(connections)
+    assert not bench.workspace._text_review_export_leases
+    assert FullTextReviewLedger(bench.workspace).delete(matter.matter_id, ACTOR, run.run_id)
 
 
 def test_unknown_ledger_releases_untransferred_lease(workspace):

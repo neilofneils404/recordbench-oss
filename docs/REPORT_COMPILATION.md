@@ -330,3 +330,7 @@ summary bound remain unchanged. Full-text wording distinguishes recorded range
 screening from complete preservation of that ledger. Final copied-citation
 validation uses the optional streaming source API and preserves exact source
 name, version, location, token, excerpt, and evidence-kind comparisons.
+The validator drains each cited source to completion even after all citations
+match, so a truncated container, unsupported trailing version, or extra content
+cannot produce a saved Report. Uncited trailing units are not retained or matched.
+An unreadable source returns a repair-or-rerun message without creating a Report.
