@@ -177,4 +177,8 @@ account snapshots from operator-authorized mutations of the same private JSON
 file. A shared repository serializes writers and preserves at least one enabled
 administrator. Version 2 account revisions bind local sessions to current
 credentials, enabled state and roles without changing the SQLite session schema
-or granting the web application write access to secrets.
+or granting the web application write access to its secrets mount. The optional
+[browser account profile](LOCAL_ACCOUNT_BROWSER.md) relocates the single account
+file into a dedicated owner-only writable directory. People uses the same
+repository with fresh administrator authorization and stale-edit protection
+inside its writer lock; no second account store is created.

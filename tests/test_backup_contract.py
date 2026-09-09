@@ -14,6 +14,17 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import recordbench_backup as backup  # noqa: E402
 
 
+def test_browser_account_profile_is_preserved_and_hashed_in_backup(tmp_path):
+    compose = backup._compose(tmp_path, {"release_path": str(ROOT), "local_account_management": True})
+    assert str(ROOT / "compose.local-accounts.yaml") in compose
+    accounts = tmp_path / "accounts"
+    accounts.mkdir()
+    account = accounts / "local-accounts.json"
+    account.write_text("synthetic account snapshot")
+    backup._hash_controls(tmp_path)
+    assert f"{hashlib.sha256(account.read_bytes()).hexdigest()}  accounts/local-accounts.json" in (tmp_path / "CONTROL_SHA256SUMS").read_text()
+
+
 def test_backup_entrypoints_are_executable_and_parse() -> None:
     scripts = [
         ROOT / "scripts/recordbench-backup.sh",

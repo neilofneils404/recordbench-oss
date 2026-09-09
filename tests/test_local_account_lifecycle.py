@@ -459,3 +459,160 @@ def test_live_account_restriction_revokes_prior_session_and_applies_to_new_login
         _, fresh = service.login_local("alice.admin", PASSWORD)
         assert not service.resolve(fresh).is_administrator
     assert service.resolve(token) is None
+
+
+@pytest.mark.parametrize("operation", ["migrate", "relocate"])
+@pytest.mark.parametrize("fail_sync", [False, True])
+def test_account_move_syncs_each_new_parent_before_canonical_change(tmp_path, monkeypatch, operation, fail_sync):
+    repo = LocalAccountRepository(_accounts_file(tmp_path)) if operation == "migrate" else repository(tmp_path)
+    before = repo.path.read_bytes()
+    destination = tmp_path / "new-target" / "managed" / "local-accounts.json"
+    backup = tmp_path / "new-recovery" / "snapshot" / "accounts.json"
+    pending = set()
+    synced = []
+    real_mkdir, real_fsync = os.mkdir, os.fsync
+    real_replace, real_unlink = os.replace, os.unlink
+
+    def make_directory(path, mode=0o777, *, dir_fd=None):
+        assert not pending, "A new parent was used before its directory entry was synced"
+        result = real_mkdir(path, mode, dir_fd=dir_fd)
+        if dir_fd is not None:
+            metadata = os.fstat(dir_fd)
+            pending.add((metadata.st_dev, metadata.st_ino))
+        return result
+
+    def sync_directory(descriptor):
+        metadata = os.fstat(descriptor)
+        inode = (metadata.st_dev, metadata.st_ino)
+        if inode in pending:
+            if fail_sync:
+                raise OSError("Synthetic directory persistence failure")
+            synced.append(inode)
+            pending.remove(inode)
+        return real_fsync(descriptor)
+
+    def replace(*args, **kwargs):
+        assert not pending, "Canonical replacement preceded parent persistence"
+        return real_replace(*args, **kwargs)
+
+    def unlink(*args, **kwargs):
+        assert not pending, "Canonical removal preceded parent persistence"
+        return real_unlink(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "mkdir", make_directory)
+        patch.setattr(os, "fsync", sync_directory)
+        patch.setattr(os, "replace", replace)
+        patch.setattr(os, "unlink", unlink)
+        def change():
+            if operation == "migrate":
+                repo.migrate(backup, actor=ACTOR)
+            else:
+                repo.relocate(destination, backup, actor=ACTOR, writers_stopped=True)
+        if fail_sync:
+            with pytest.raises(OSError, match="persistence failure"):
+                change()
+            assert repo.path.read_bytes() == before
+            assert not destination.exists() and not backup.exists()
+        else:
+            change()
+            assert not pending and len(synced) == (2 if operation == "migrate" else 4)
+            assert backup.read_bytes() == before
+            if operation == "relocate":
+                assert not repo.path.exists() and destination.exists()
+            else:
+                assert json.loads(repo.path.read_bytes())["format_version"] == 2
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o775])
+def test_replaceable_ancestor_denies_cached_reads_and_writes(tmp_path, mode):
+    boundary = tmp_path / "shared"
+    repo = repository(boundary)
+    assert repo.read()
+    original = repo.path.read_bytes()
+    boundary.chmod(mode)
+    with pytest.raises(RuntimeError, match="ancestors"):
+        repo.read()
+    assert repo._snapshot is None
+    with pytest.raises(RuntimeError, match="ancestors"):
+        repo.change_display_name("alice.admin", "Must Not Save", actor=ACTOR)
+    assert repo.path.read_bytes() == original
+    boundary.chmod(0o700)
+    assert repo.read()["alice.admin"].display_name == "Alice Administrator"
+
+
+@pytest.mark.parametrize("operation", ["initialize", "migrate", "relocate-destination", "relocate-backup"])
+def test_replaceable_ancestor_blocks_creation_and_recovery_before_canonical_change(tmp_path, operation):
+    unsafe = tmp_path / "shared"
+    unsafe.mkdir(mode=0o777)
+    unsafe.chmod(0o777)
+    source = _accounts_file(tmp_path) if operation == "migrate" else repository(tmp_path).path
+    repo = LocalAccountRepository(source)
+    original = source.read_bytes()
+    with pytest.raises(RuntimeError, match="ancestors"):
+        if operation == "initialize":
+            LocalAccountRepository(unsafe / "new/accounts.json").initialize("new.admin", "New Admin", PASSWORD, actor=ACTOR)
+        elif operation == "migrate":
+            repo.migrate(unsafe / "new/recovery.json", actor=ACTOR)
+        elif operation == "relocate-destination":
+            repo.relocate(unsafe / "new/local-accounts.json", tmp_path / "recovery/accounts.json", actor=ACTOR, writers_stopped=True)
+        else:
+            repo.relocate(tmp_path / "dedicated/local-accounts.json", unsafe / "new/recovery.json", actor=ACTOR, writers_stopped=True)
+    assert source.read_bytes() == original
+    assert not (unsafe / "new").exists()
+
+
+def test_foreign_owned_ancestor_is_refused_even_when_not_writable(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    repo = repository(tmp_path / "foreign")
+    assert repo.read()
+    ancestor = (tmp_path / "foreign").stat().st_ino
+    native = local_accounts.os.fstat
+    def foreign_owner(descriptor):
+        metadata = native(descriptor)
+        if metadata.st_ino == ancestor:
+            return SimpleNamespace(st_uid=os.geteuid() + 1000, st_mode=metadata.st_mode)
+        return metadata
+    monkeypatch.setattr(local_accounts.os, "fstat", foreign_owner)
+    with pytest.raises(RuntimeError, match="ancestors"):
+        repo.read()
+    assert repo._snapshot is None
+
+
+def test_only_root_owned_sticky_ancestors_are_trusted(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    repo = repository(tmp_path / "sticky")
+    ancestor = (tmp_path / "sticky").stat().st_ino
+    native = local_accounts.os.fstat
+    owner = 0
+    def sticky_owner(descriptor):
+        metadata = native(descriptor)
+        if metadata.st_ino == ancestor:
+            return SimpleNamespace(st_uid=owner, st_mode=0o41777)
+        return metadata
+    monkeypatch.setattr(local_accounts.os, "fstat", sticky_owner)
+    assert repo.read()
+    owner = os.geteuid() if os.geteuid() else 1000
+    with pytest.raises(RuntimeError, match="ancestors"):
+        repo.read()
+
+
+def test_session_resolution_cannot_overwrite_newer_persisted_account_name(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    service = identity(tmp_path, repo)
+    context, token = service.login_local("alice.admin", PASSWORD)
+    original = service.store.refresh_principal_display_name
+    repo.change_display_name("alice.admin", "Intermediate Name", actor=ACTOR)
+    def rename_before_projection(provider, username, display_name, *, expected_display_name=None):
+        assert display_name == "Intermediate Name" and expected_display_name == "Alice Administrator"
+        repo.change_display_name("alice.admin", "Newest Name", actor=ACTOR)
+        original(provider, username, "Newest Name")
+        original(provider, username, display_name, expected_display_name=expected_display_name)
+    monkeypatch.setattr(service.store, "refresh_principal_display_name", rename_before_projection)
+    resolved = service.resolve(token)
+    assert resolved.display_name == "Newest Name"
+    saved = service.store.get_principal(context.principal_id)
+    assert saved.display_name == "Newest Name"
+    assert saved.active == context.principal.active
+    assert saved.login_name == context.principal.login_name
+    assert saved.last_seen_at == context.principal.last_seen_at

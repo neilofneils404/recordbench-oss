@@ -99,4 +99,16 @@ replacement. Every local session resolution validates the opened file metadata,
 reuses only an unchanged validated snapshot, and checks its revision binding.
 Password, enabled-state and role changes invalidate
 previous sessions without requiring a process restart. Version 1 migration
-requires an explicit verified backup, and no browser mutation endpoint is added.
+requires an explicit verified backup. The optional
+[browser account profile](LOCAL_ACCOUNT_BROWSER.md) grants writes only to the
+dedicated canonical account directory. Browser mutations require CSRF and fresh
+administrator session validation under the account lock, enforce keyed edit
+preconditions, and audit the actor before replacement. Existing secrets remain
+read-only; provider authentication and trusted-proxy boundaries are unchanged.
+
+Account path validation covers every opened ancestor before descending; only
+root/service ownership with non-writable ancestors is accepted, apart from
+root-owned mode-1777 intermediate directories. Browser rename projection and
+direction-specific completion audits share the writer lock with the mutation.
+Frozen browser-account backups and clean restores validate the required store,
+permissions and shared bounded format before claiming success.

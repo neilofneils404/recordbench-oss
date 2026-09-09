@@ -70,6 +70,7 @@ from .generation import (
 )
 from .ingestion import IngestionCoordinator
 from .report_review_basis import research_sections, review_sections
+from .local_account_admin import register_local_account_routes
 from .media_evidence import (
     MediaCoordinator,
     MediaExport,
@@ -7283,6 +7284,9 @@ def create_workbench_app(
                 **({"role": "administrator"} if context.is_administrator else {}),
             },
         )
+        if (destination == "/" and context.is_administrator and identity.local_settings is not None
+                and sum(account.enabled for account in identity.local_settings.accounts.values()) == 1):
+            destination = "/admin/people"
         response = RedirectResponse(destination, status_code=303)
         response.set_cookie(SESSION_COOKIE, raw_token, **identity.session_cookie_options)
         response.delete_cookie(LOGIN_CHALLENGE_COOKIE, path="/auth")
@@ -7350,6 +7354,11 @@ def create_workbench_app(
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> FileResponse:
         return FileResponse(PACKAGE_ROOT / "static/favicon.svg", media_type="image/svg+xml")
+
+    register_local_account_routes(
+        app, identity=identity, bench=bench, templates=templates,
+        auth_context=auth_context, base_context=base_context, audit=audit,
+    )
 
     @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
     def administrator_console(

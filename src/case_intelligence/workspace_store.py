@@ -1524,6 +1524,29 @@ class WorkspaceStore:
             raise RuntimeError("principal upsert did not persist")
         return self._principal(current)
 
+    def refresh_principal_display_name(
+        self, provider: str, provider_subject: str, display_name: str, *,
+        expected_display_name: str | None = None,
+    ) -> None:
+        """Refresh an existing identity without recording a sign-in or enabling it."""
+        provider_value = self._safe_text(provider, label="Identity provider", maximum=64)
+        if not _PRINCIPAL_PROVIDER.fullmatch(provider_value):
+            raise WorkspaceProblem("Identity provider is invalid.")
+        subject = self._safe_text(provider_subject, label="Provider subject", maximum=512)
+        name = self._safe_text(display_name, label="Display name", maximum=160)
+        values = (name, provider_value, subject)
+        condition = ""
+        if expected_display_name is not None:
+            expected = self._safe_text(expected_display_name, label="Expected display name", maximum=160)
+            condition = " AND display_name=?"
+            values = (*values, expected)
+        with self._lock, self.connection:
+            self.connection.execute(
+                "UPDATE workbench_principal SET display_name=? "
+                "WHERE provider=? AND provider_subject=?" + condition,
+                values,
+            )
+
     def get_principal(self, principal_id: str) -> PrincipalRecord:
         if not _PRINCIPAL_ID.fullmatch(principal_id):
             raise KeyError(principal_id)

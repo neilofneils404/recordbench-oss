@@ -165,6 +165,31 @@ def node_factory(tmp_path, monkeypatch):
         node.close()
 
 
+def test_browser_accounts_are_in_snapshot_and_clean_restore(node_factory, monkeypatch):
+    from case_intelligence.identity import LocalAccountSettings
+    from case_intelligence.local_accounts import LocalAccountRepository
+    node = node_factory()
+    repository = LocalAccountRepository(node.node / "accounts/local-accounts.json")
+    repository.initialize("synthetic.admin", "Synthetic Administrator", "synthetic-backup-password", actor="synthetic-operator")
+    record = json.loads((node.node / "installation.json").read_text())
+    record["local_account_management"] = True
+    _private_json(node.node / "installation.json", record)
+    with (node.node / "compose.env").open("a") as stream:
+        stream.write(f"RECORDBENCH_LOCAL_ACCOUNT_ROOT={json.dumps(str(repository.path.parent))}\n")
+    before = repository.path.read_bytes()
+    same_filesystem = backup._same_filesystem
+    def reject_account_hardlink_boundary(roots):
+        assert repository.path.parent not in roots
+        return same_filesystem(roots)
+    monkeypatch.setattr(backup, "_same_filesystem", reject_account_hardlink_boundary)
+    assert node.backup() == 0
+    assert (node.archive / "payload/accounts/local-accounts.json").read_bytes() == before
+    assert node.restore() == 0
+    restored = node.root / "restored/payload/accounts/local-accounts.json"
+    settings = LocalAccountSettings(restored, management_root=restored.parent)
+    assert settings.authenticate("synthetic.admin", "synthetic-backup-password") is not None
+
+
 def test_managed_registry_is_frozen_before_restart(node_factory):
     node = node_factory()
     assert node.backup() == 0
@@ -548,3 +573,77 @@ def test_installer_prepared_nested_storage_round_trips_to_clean_target(tmp_path,
     assert (target / "payload/postgres/review-index.dump").read_text() == "frozen"
     assert _version(node.control) == "live"
     assert _version(node.registry) == "live"
+
+
+def _enable_browser_accounts(node):
+    from case_intelligence.local_accounts import LocalAccountRepository
+    repo = LocalAccountRepository(node.node / "accounts/local-accounts.json")
+    repo.initialize("synthetic.admin", "Synthetic Administrator", "synthetic-backup-password", actor="synthetic-operator")
+    record = json.loads((node.node / "installation.json").read_text())
+    record["local_account_management"] = True
+    _private_json(node.node / "installation.json", record)
+    with (node.node / "compose.env").open("a") as stream:
+        stream.write(f"RECORDBENCH_LOCAL_ACCOUNT_ROOT={json.dumps(str(repo.path.parent))}\n")
+    return repo
+
+
+def _damage_accounts(path, damage):
+    if damage == "missing":
+        path.unlink()
+    elif damage == "mode":
+        path.chmod(0o644)
+    elif damage == "directory-mode":
+        path.parent.chmod(0o755)
+    elif damage == "malformed":
+        path.write_bytes(b"synthetic invalid account JSON")
+    elif damage == "no-administrator":
+        payload = json.loads(path.read_bytes())
+        payload["accounts"][0]["roles"] = []
+        path.write_text(json.dumps(payload))
+    elif damage == "invalid-hash":
+        payload = json.loads(path.read_bytes())
+        payload["accounts"][0]["password_hash"] = "$argon2id$v=19$m=0,t=0,p=0$c2FsdA$aGFzaA"
+        path.write_text(json.dumps(payload))
+
+
+@pytest.mark.parametrize("damage", ["missing", "mode", "directory-mode", "malformed", "no-administrator", "invalid-hash"])
+def test_invalid_browser_account_store_blocks_backup_before_transfer(node_factory, damage):
+    node = node_factory()
+    repo = _enable_browser_accounts(node)
+    _damage_accounts(repo.path, damage)
+    with pytest.raises(backup.BackupError, match="local account snapshot"):
+        node.backup()
+    assert "restart" in node.events and "transfer" not in node.events
+    assert not node.archive.exists()
+    assert not list(node.node.glob(".recordbench-backup-snapshot-*"))
+    assert json.loads((node.node / "state/backup-status.json").read_text())["state"] == "failed"
+
+
+def test_account_backup_validates_frozen_copy_before_restart(node_factory, monkeypatch):
+    node = node_factory()
+    repo = _enable_browser_accounts(node)
+    original = shutil.copytree
+    def damaged_copy(source, destination, *args, **kwargs):
+        result = original(source, destination, *args, **kwargs)
+        if Path(source) == repo.path.parent:
+            assert "restart" not in node.events
+            (Path(destination) / "local-accounts.json").write_bytes(b"synthetic damaged frozen copy")
+        return result
+    monkeypatch.setattr(backup.shutil, "copytree", damaged_copy)
+    with pytest.raises(backup.BackupError, match="local account snapshot"):
+        node.backup()
+    assert "restart" in node.events and "transfer" not in node.events
+    assert repo.read()["synthetic.admin"].enabled
+
+
+@pytest.mark.parametrize("damage", ["missing", "mode", "directory-mode", "malformed", "no-administrator", "invalid-hash"])
+def test_restore_revalidates_account_contents_beyond_snapshot_checksums(node_factory, damage):
+    node = node_factory()
+    _enable_browser_accounts(node)
+    assert node.backup() == 0
+    account = node.archive / "payload/accounts/local-accounts.json"
+    _damage_accounts(account, damage)
+    backup._hash_controls(node.archive / "payload")
+    with pytest.raises(backup.BackupError, match="local account snapshot"):
+        node.restore()
+    assert not (node.root / "restored/RESTORE_DRILL_VERIFIED.json").exists()

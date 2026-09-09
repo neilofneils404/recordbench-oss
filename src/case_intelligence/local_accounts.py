@@ -13,26 +13,16 @@ import secrets
 import stat
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Iterator, Mapping
 
 from argon2 import PasswordHasher, extract_parameters
 
-_USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{2,127}$")
-_REVISION = re.compile(r"^[0-9a-f]{64}$")
+from .local_account_format import LocalAccount, normalized_account, parse_accounts
+
 _MAX_BYTES = 1024 * 1024
-
-
-@dataclass(frozen=True)
-class LocalAccount:
-    username: str
-    display_name: str
-    password_hash: str = field(repr=False)
-    roles: frozenset[str] = frozenset()
-    enabled: bool = True
-    session_revision: str = field(default="legacy", repr=False)
 
 
 @dataclass(frozen=True)
@@ -42,16 +32,6 @@ class LocalAccountChange:
     actor: str
 
 
-def normalized_account(username: str, display_name: str) -> tuple[str, str]:
-    login = (username or "").strip().casefold()
-    display = (display_name or "").strip()
-    if _USERNAME.fullmatch(login) is None:
-        raise RuntimeError("Username must be 3-128 lowercase letters, numbers, dots, dashes, underscores, or @")
-    if not display or len(display) > 160 or any(ord(value) < 32 for value in display):
-        raise RuntimeError("Display name is missing or invalid")
-    return login, display
-
-
 def hash_password(value: str) -> str:
     if not isinstance(value, str) or not 14 <= len(value) <= 1024 or "\x00" in value:
         raise RuntimeError("Local account passwords must contain 14 to 1,024 characters without NUL")
@@ -59,45 +39,14 @@ def hash_password(value: str) -> str:
 
 
 def _parse(payload: object) -> tuple[int, dict[str, LocalAccount]]:
-    if (not isinstance(payload, dict) or set(payload) != {"format_version", "accounts"}
-            or type(payload.get("format_version")) is not int
-            or payload["format_version"] not in {1, 2}
-            or not isinstance(payload.get("accounts"), list)
-            or not 1 <= len(payload["accounts"]) <= 500):
-        raise RuntimeError("Local account file does not match the required format")
-    version = payload["format_version"]
-    accounts: dict[str, LocalAccount] = {}
-    for raw in payload["accounts"]:
-        allowed = {"username", "display_name", "password_hash", "roles", "enabled"}
-        required = {"username", "display_name", "password_hash"}
-        if version == 2:
-            allowed.add("session_revision")
-            required.add("session_revision")
-        if not isinstance(raw, dict) or not set(raw).issubset(allowed) or not required.issubset(raw):
-            raise RuntimeError("Local account file contains an invalid account")
-        if not isinstance(raw["username"], str) or not isinstance(raw["display_name"], str):
-            raise RuntimeError("Local account file contains an invalid account")
-        username, display = normalized_account(raw["username"], raw["display_name"])
-        password_hash = raw["password_hash"]
-        roles = raw.get("roles", [])
-        enabled = raw.get("enabled", True)
-        revision = raw.get("session_revision", "legacy")
-        if (not isinstance(password_hash, str) or not password_hash.startswith("$argon2id$")
-                or len(password_hash) > 512 or not isinstance(roles, list)
-                or any(value != "administrator" for value in roles)
-                or len(set(roles)) != len(roles) or not isinstance(enabled, bool)
-                or username in accounts
-                or (version == 2 and (not isinstance(revision, str) or not _REVISION.fullmatch(revision)))):
-            raise RuntimeError("Local account file contains an invalid account")
+    version, accounts = parse_accounts(payload)
+    for account in accounts.values():
         try:
-            parameters = extract_parameters(password_hash)
+            parameters = extract_parameters(account.password_hash)
         except Exception as exc:
             raise RuntimeError("Local account file contains an invalid password hash") from exc
         if parameters.type.name.casefold() != "id":
             raise RuntimeError("Local account passwords must use Argon2id")
-        accounts[username] = LocalAccount(username, display, password_hash, frozenset(roles), enabled, revision)
-    if not any(account.enabled and "administrator" in account.roles for account in accounts.values()):
-        raise RuntimeError("At least one enabled local administrator is required")
     return version, accounts
 
 
@@ -110,12 +59,24 @@ def _payload(accounts: Mapping[str, LocalAccount]) -> dict[str, object]:
     ]}
 
 
+def _validate_directory(descriptor: int, *, final: bool = False) -> None:
+    metadata = os.fstat(descriptor)
+    mode = stat.S_IMODE(metadata.st_mode)
+    # Root-controlled sticky temporary directories protect entries owned by the
+    # service account. No other writable ancestor is a trusted traversal boundary.
+    trusted_sticky = metadata.st_uid == 0 and mode == 0o1777 and not final
+    if (metadata.st_uid not in ({os.geteuid()} if final else {0, os.geteuid()})
+            or (mode & 0o022 and not trusted_sticky)):
+        raise RuntimeError("Account directory ancestors must be root- or service-owned and not replaceable by other users")
+
+
 @contextmanager
 def _parent(path: Path, *, create: bool = False) -> Iterator[int]:
     if not path.is_absolute() or path.name in {"", ".", ".."} or ".." in path.parts:
         raise RuntimeError("Account file must be an exact absolute path")
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
+        _validate_directory(descriptor)
         for component in path.parent.parts[1:]:
             try:
                 child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
@@ -126,12 +87,14 @@ def _parent(path: Path, *, create: bool = False) -> Iterator[int]:
                     os.mkdir(component, 0o700, dir_fd=descriptor)
                 except FileExistsError:
                     pass
+                # Persist the new child entry before descending or removing
+                # an older canonical store after migration or relocation.
+                os.fsync(descriptor)
                 child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
-        metadata = os.fstat(descriptor)
-        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o022:
-            raise RuntimeError("Account directory must be owned by the service account and not writable by other users")
+            _validate_directory(descriptor)
+        _validate_directory(descriptor, final=True)
         yield descriptor
     finally:
         os.close(descriptor)
@@ -201,8 +164,14 @@ def _write(directory: int, name: str, data: bytes, *, create: bool = False) -> N
 class LocalAccountRepository:
     """Validated live snapshots and process-serialized account mutations."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *,
+                 guard: Callable[[Mapping[str, LocalAccount]], None] | None = None,
+                 before_write: Callable[[LocalAccountChange], None] | None = None,
+                 after_write: Callable[[LocalAccountChange, Mapping[str, LocalAccount]], None] | None = None) -> None:
         self.path = Path(path)
+        self.guard = guard
+        self.before_write = before_write
+        self.after_write = after_write
         self._snapshot_lock = threading.Lock()
         self._snapshot_key: tuple[int, ...] | None = None
         self._snapshot: Mapping[str, LocalAccount] | None = None
@@ -267,16 +236,24 @@ class LocalAccountRepository:
             _, version, accounts = _read(directory, self.path.name)
             if version != 2:
                 raise RuntimeError("Migrate local accounts with an explicit backup before changing them: run recordbench accounts migrate with --file and a new --backup-file")
+            if self.guard is not None:
+                self.guard(accounts)
             update(accounts)
             payload = _payload(accounts)
             _parse(payload)  # Last-admin and size/shape checks share the writer lock.
             data = (json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n").encode()
             if len(data) > _MAX_BYTES:
                 raise RuntimeError("Local account file exceeds its size limit")
+            if self.before_write is not None:
+                self.before_write(receipt)
             _write(directory, self.path.name, data)
+            if self.after_write is not None:
+                self.after_write(receipt, accounts)
         return receipt
 
     def initialize(self, username: str, display_name: str, password: str, *, actor: str) -> LocalAccountChange:
+        if self.guard is not None:
+            raise RuntimeError("Initial account setup is an operator-only action")
         username, display_name = normalized_account(username, display_name)
         receipt = self._receipt("initialize", username, actor)
         account = LocalAccount(username, display_name, hash_password(password), frozenset({"administrator"}), True, secrets.token_hex(32))
@@ -286,6 +263,8 @@ class LocalAccountRepository:
         return receipt
 
     def migrate(self, backup_file: Path, *, actor: str) -> LocalAccountChange:
+        if self.guard is not None:
+            raise RuntimeError("Account migration is an operator-only action")
         receipt = self._receipt("migrate", "*", actor)
         backup_file = Path(backup_file)
         if backup_file == self.path:
@@ -306,6 +285,41 @@ class LocalAccountRepository:
             if len(encoded) > _MAX_BYTES:
                 raise RuntimeError("Migrated local account file exceeds its size limit")
             _write(directory, self.path.name, encoded)
+        return receipt
+
+    def relocate(self, destination: Path, backup_file: Path, *, actor: str,
+                 writers_stopped: bool = False) -> LocalAccountChange:
+        """Move the sole canonical file during an explicit stopped-node change."""
+        if self.guard is not None or not writers_stopped:
+            raise RuntimeError("Stop the application and account writers, then confirm the operator relocation")
+        destination, backup_file = Path(destination), Path(backup_file)
+        if destination.name != "local-accounts.json" or destination.parent == self.path.parent:
+            raise RuntimeError("Use local-accounts.json in a separate dedicated account directory")
+        if backup_file in {self.path, destination} or backup_file.resolve(strict=False).is_relative_to(destination.parent.resolve(strict=False)):
+            raise RuntimeError("Keep the recovery copy outside the dedicated account directory")
+        receipt = self._receipt("relocate", "*", actor)
+        with self._writer() as source_directory:
+            data, version, accounts = _read(source_directory, self.path.name)
+            if version != 2:
+                raise RuntimeError("Migrate local accounts to version 2 before enabling browser changes")
+            with _parent(destination, create=True) as target_directory:
+                if stat.S_IMODE(os.fstat(target_directory).st_mode) != 0o700 or os.listdir(target_directory):
+                    raise RuntimeError("The destination account directory must be empty and have mode 0700")
+                with _parent(backup_file, create=True) as backup_directory:
+                    _write(backup_directory, backup_file.name, data, create=True)
+                    restored, _, _ = _read(backup_directory, backup_file.name)
+                    if restored != data:
+                        raise RuntimeError("Account relocation recovery copy could not be verified")
+                updated = {name: replace(account, session_revision=secrets.token_hex(32)) for name, account in accounts.items()}
+                encoded = (json.dumps(_payload(updated), indent=2, sort_keys=True) + "\n").encode()
+                if len(encoded) > _MAX_BYTES:
+                    raise RuntimeError("Relocated account file exceeds its size limit")
+                _write(target_directory, destination.name, encoded, create=True)
+                # Both the destination and recovery copy are durable before the
+                # old canonical location is removed. The operator switches the
+                # configuration before restarting any reader or writer.
+                os.unlink(self.path.name, dir_fd=source_directory)
+                os.fsync(source_directory)
         return receipt
 
     def create(self, username: str, display_name: str, password: str, *, administrator: bool = False,
