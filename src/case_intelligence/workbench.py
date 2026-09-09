@@ -9273,7 +9273,7 @@ def create_workbench_app(
                 "active_criterion": active_criterion,
                 "active_version": active_version,
                 "review_runs": runs,
-                "text_review_runs": {item.run_id for item in runs if FullTextReviewLedger(bench.workspace).enabled(item.run_id)},
+                "text_review_runs": {item.run_id for item in (*runs, *((active_run,) if active_run else ())) if FullTextReviewLedger(bench.workspace).enabled(item.run_id)},
                 "active_text_coverage": FullTextReviewLedger(bench.workspace).coverage(
                     matter.matter_id, read_actor, active_run.run_id
                 ) if active_run else None,

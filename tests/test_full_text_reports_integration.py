@@ -314,3 +314,33 @@ def test_full_text_run_only_offers_resume_when_budget_allows_it(workspace, state
     assert response.status_code == 200
     assert ('Resume saved run' in response.text) is not exhausted
     assert ('Start a new review with fewer sources' in response.text) is exhausted
+
+
+@pytest.mark.parametrize('state', ['failed', 'cancelled'])
+def test_legacy_full_text_run_directs_new_run_instead_of_resume(workspace, state):
+    client, bench, matter = workspace
+    run, _ = completed_text_run(bench, matter, ['The amber bicycle arrived.'])
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_review_run SET state=? WHERE run_id=?', (state, run.run_id))
+        bench.workspace.connection.execute('UPDATE workbench_text_review_budget SET legacy=1,limit_reason=? WHERE run_id=?', ('', run.run_id))
+    page = client.get(f'/matters/{matter.slug}/full-review', params={'criterion': run.criterion_id, 'run': run.run_id})
+    assert page.status_code == 200
+    assert 'Resume saved run' not in page.text
+    assert 'This older text ledger cannot be resumed' in page.text
+    assert f'/full-review/{run.run_id}/text' in page.text
+
+
+def test_older_selected_full_text_run_keeps_its_mode_and_ledger_link(workspace):
+    client, bench, matter = workspace
+    run, _ = completed_text_run(bench, matter, ['The amber bicycle arrived.'])
+    with bench.workspace._lock, bench.workspace.connection:
+        original = dict(bench.workspace.connection.execute('SELECT * FROM workbench_review_run WHERE run_id=?', (run.run_id,)).fetchone())
+        bench.workspace.connection.execute('UPDATE workbench_review_run SET created_at=? WHERE run_id=?', ('2000-01-01T00:00:00Z', run.run_id))
+        for index in range(101):
+            values = {**original, 'run_id': f'synthetic-newer-check-{index:03}', 'created_at': '2001-01-01T00:00:00Z'}
+            bench.workspace.connection.execute('INSERT INTO workbench_review_run (' + ','.join(values) + ') VALUES (' + ','.join('?' for _ in values) + ')', tuple(values.values()))
+    assert run.run_id not in {item.run_id for item in bench.workspace.review_runs(matter.matter_id, ACTOR)}
+    page = client.get(f'/matters/{matter.slug}/full-review', params={'criterion': run.criterion_id, 'run': run.run_id})
+    assert page.status_code == 200
+    assert '<h2>Review all extracted text</h2>' in page.text
+    assert f'/full-review/{run.run_id}/text' in page.text
