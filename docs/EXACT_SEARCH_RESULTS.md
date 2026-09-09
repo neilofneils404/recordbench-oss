@@ -102,6 +102,14 @@ response rather than a server error or an apparently exact partial total.
 Pagination fingerprints include both media timestamp endpoints, even when line
 locators and text remain unchanged; retiming a media projection invalidates the
 previous result fingerprint and requires a fresh search.
+Timed media projections must also have consecutive segment numbers, paired
+timestamps, nondecreasing start times, strictly later endpoints and endpoints
+within the producer's two-second duration allowance. These checks apply to
+inline and file-backed projections; corrupt or mixed timed/untimed locators
+make the scan unavailable before it can return misleading seek links. Equal
+starts and overlapping segments remain valid. Wholly untimed legacy media
+keeps its ordinary unit links, and PDF page numbering retains its separate
+coverage rules.
 
 This initial adapter deliberately rescans each page. It is not the scalable
 indexed backend. A production-scale adapter should use a consistent database
