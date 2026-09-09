@@ -2,10 +2,15 @@
 
 This change implements the shared grammar and reference matcher for product
 slices 00 and 07. It does not switch the existing browser search to exact mode.
-The ranked answer retriever still has its existing behavior. An explicit exact
-result service, pagination, backend integration, and UI follow in slice 08.
+The ranked answer retriever still has its existing behavior. Slice 08 adds a
+separate [exact result service and UI](EXACT_SEARCH_RESULTS.md), using this grammar
+for complete, scoped document enumeration with bounded scans.
 
-## Grammar v1
+## Grammar versions
+
+The current default is `recordbench-exact-v2`, adding [word proximity](EXACT_SEARCH_PROXIMITY.md).
+Explicit `parse_query(..., grammar_version="recordbench-exact-v1")` retains the
+original grammar and rejects proximity.
 
 `recordbench-exact-v1` supports words, quoted phrases, `AND`, `OR`, `NOT`, and
 parentheses. Operators are case-insensitive; quote a literal operator word such
@@ -34,14 +39,15 @@ does not mean byte equality, and phrases do not cross extracted-unit boundaries.
 This word-token contract does not promise language-specific segmentation.
 
 Unquoted punctuation must be quoted rather than silently reinterpreted. Dash
-negation, proximity, wildcards, fuzzy search, and field syntax are unsupported
+negation, wildcards, fuzzy search, and field syntax are unsupported
 and return a position-bearing error. Inside quoted phrases, only quote and
 backslash may be escaped. Control/hidden-format characters are rejected.
 
 Limits are 512 query characters before and after normalization, 128 grammar tokens, and 16 nested parentheses
 or NOT levels. Parse errors contain an explanation and character location,
 without echoing matter query text. The serialized plan records original text,
-normalized expression, grammar version, and a typed operator tree. This is a
+normalized expression, grammar version, tokenizer version (`recordbench-words-v1`),
+and a typed operator tree. This is a
 backend contract, not executable SQL and not permission to access a source.
 Normalized expressions omit redundant grouping and use implicit AND so
 serialization does not add grammar depth or tokens at those input limits.

@@ -1,0 +1,99 @@
+{
+  "provenance": "synthetic",
+  "confidential_data": false,
+  "grammar_version": "recordbench-exact-v2",
+  "documents": [
+    {
+      "id": 1,
+      "units": [
+        "A red bicycle arrived at the north depot."
+      ]
+    },
+    {
+      "id": 2,
+      "units": [
+        "The depot received a red bicycle."
+      ]
+    },
+    {
+      "id": 3,
+      "units": [
+        "A red bicycle was recorded.",
+        "The north depot was closed."
+      ]
+    },
+    {
+      "id": 4,
+      "units": [
+        "A red bicycle arrived after two lengthy scheduled inspection stops at the depot."
+      ]
+    },
+    {
+      "id": 5,
+      "units": [
+        "CAFÉ, reopened beside the STRASSE depot."
+      ]
+    },
+    {
+      "id": 6,
+      "units": [
+        "red red red"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "query": "\"red bicycle\" NEAR/4 depot",
+      "expected": [
+        1,
+        2
+      ]
+    },
+    {
+      "query": "\"red bicycle\" BEFORE/4 depot",
+      "expected": [
+        1
+      ]
+    },
+    {
+      "query": "depot BEFORE/4 \"red bicycle\"",
+      "expected": [
+        2
+      ]
+    },
+    {
+      "query": "\"red bicycle\" NEAR/3 depot",
+      "expected": [
+        2
+      ]
+    },
+    {
+      "query": "\"red bicycle\" NEAR/100 depot",
+      "expected": [
+        1,
+        2,
+        4
+      ]
+    },
+    {
+      "query": "café BEFORE/3 Straße",
+      "expected": [
+        5
+      ]
+    },
+    {
+      "query": "\"red red\" NEAR/0 red",
+      "expected": [
+        6
+      ]
+    },
+    {
+      "query": "NOT (\"red bicycle\" NEAR/100 depot)",
+      "expected": [
+        3,
+        5,
+        6
+      ]
+    }
+  ]
+}

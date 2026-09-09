@@ -1,0 +1,96 @@
+{% extends "workbench_base.html" %}
+{% block title %}Find sources · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}workflow-page exact-search-page{% endblock %}
+{% block content %}
+<main class="workflow-shell find-sources-shell">
+  <header class="find-sources-heading">
+    <div><a class="find-matter-link" href="/matters/{{ matter.slug }}">{{ matter.display_name }}</a>
+      <h1>Find sources</h1><p>Go straight to the records you need.</p></div>
+    <a class="find-conversation-link" href="/matters/{{ matter.slug }}#matter-question">Ask about this matter <span aria-hidden="true">↗</span></a>
+  </header>
+  {% with active='review', matter_readiness=none %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+
+  <section class="find-search-panel" aria-label="Find records">
+    <form id="find-basic-form" class="find-sources-form" method="get" action="/matters/{{ matter.slug }}/exact-search">
+      <input type="hidden" name="search" value="1">
+      <label for="find-words">Find records mentioning…</label>
+      <div class="find-input-row">
+        <div class="find-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+          <input id="find-words" name="words" value="{{ words }}" maxlength="512" placeholder="A name, a place, a detail…" aria-describedby="find-help" autocomplete="off">
+        </div>
+        <button class="button button-ink" type="submit" name="advanced" value="0">Find sources</button>
+      </div>
+      <p id="find-help" class="find-help">We'll find sources that include all the words you enter.</p>
+    </form>
+      <details class="find-refinements" {% if query or phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}open{% endif %}>
+        <summary>Narrow your search{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<span class="find-refinements-active">Filters on</span>{% endif %}</summary>
+        <div class="find-refinement-grid">
+          <div><label for="find-phrase">Include this exact phrase</label><input id="find-phrase" form="find-basic-form" name="phrase" value="{{ phrase }}" maxlength="512" placeholder="e.g. returned to the depot"><small>Keep these words together.</small></div>
+          <div><label for="find-exclude">Leave out these words</label><input id="find-exclude" form="find-basic-form" name="exclude" value="{{ exclude }}" maxlength="512" placeholder="e.g. cancelled"><small>Skip sources containing any of these words.</small></div>
+          <div><label for="find-collection">Look in a collection</label><select id="find-collection" form="find-basic-form" name="collection"><option value="">All collections</option>{% for item in collections %}<option value="{{ item.collection_id }}" {% if selected_collection == item.collection_id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
+          <div><label for="find-source-set">Use a saved source set</label><select id="find-source-set" form="find-basic-form" name="source_set"><option value="">All sources</option>{% for item in source_sets %}<option value="{{ item.source_set_id }}" {% if selected_source_set == item.source_set_id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
+        </div>
+        <fieldset class="find-proximity">
+          <legend>Find two details close together</legend>
+          <p id="find-proximity-help" class="find-help">Match both on the same extracted page or section. A detail can be a word or a phrase.</p>
+          <div class="find-refinement-grid">
+            <div><label for="find-proximity-first">First detail</label><input id="find-proximity-first" form="find-basic-form" name="proximity_first" value="{{ proximity_first }}" maxlength="256" placeholder="e.g. red bicycle" aria-describedby="find-proximity-help"></div>
+            <div><label for="find-proximity-second">Second detail</label><input id="find-proximity-second" form="find-basic-form" name="proximity_second" value="{{ proximity_second }}" maxlength="256" placeholder="e.g. depot" aria-describedby="find-proximity-help"></div>
+            <div><label for="find-proximity-gap">At most this many words between</label><input id="find-proximity-gap" form="find-basic-form" name="proximity_gap" type="number" min="0" max="100" step="1" value="{{ proximity_gap }}"><small>0 means adjacent; up to 100. Punctuation adds no words.</small></div>
+            <div><label for="find-proximity-order">Order of the details</label><select id="find-proximity-order" form="find-basic-form" name="proximity_order"><option value="either" {% if proximity_order == 'either' %}selected{% endif %}>In either order</option><option value="first" {% if proximity_order == 'first' %}selected{% endif %}>First detail before second</option></select></div>
+          </div>
+        </fieldset>
+        <div class="find-filter-actions"><button class="button button-secondary" type="submit" form="find-basic-form" name="advanced" value="0">Apply filters</button>
+        {% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<a class="find-clear-link" href="{{ clear_refinements_url }}">Clear filters</a>{% endif %}</div>
+    <details class="find-advanced" {% if query %}open{% endif %}>
+      <summary>Advanced search</summary>
+      <form class="find-advanced-fields" id="find-expression-form" method="get" action="/matters/{{ matter.slug }}/exact-search">
+        <input type="hidden" name="search" value="1">
+        <input type="hidden" name="advanced" value="1">
+        <label for="find-query">Search expression</label>
+        <p id="find-advanced-help">Use AND, OR, NOT, parentheses, or quoted phrases. Use NEAR/n for either order and BEFORE/n for first-then-second, with n from 0 to 100 words between two details. Phrases and proximity stay within one extracted page or section; excluded words apply to the whole source.</p>
+        <div class="find-input-row"><input id="find-query" name="q" value="{{ query }}" maxlength="512" aria-describedby="find-advanced-help" placeholder='e.g. bicycle AND (red OR blue)'><button class="button button-secondary" type="submit">Run expression</button></div>
+        <div class="find-refinement-grid">
+          <div><label for="expression-collection">Look in a collection</label><select id="expression-collection" name="collection"><option value="">All collections</option>{% for item in collections %}<option value="{{ item.collection_id }}" {% if selected_collection == item.collection_id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
+          <div><label for="expression-source-set">Use a saved source set</label><select id="expression-source-set" name="source_set"><option value="">All sources</option>{% for item in source_sets %}<option value="{{ item.source_set_id }}" {% if selected_source_set == item.source_set_id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
+        </div>
+      </form>
+    </details>
+      </details>
+  </section>
+
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+  {% if results %}
+  <section class="find-results" aria-labelledby="find-results-heading">
+    <header class="find-results-heading"><div><h2 id="find-results-heading">{{ results.total }} source{{ '' if results.total == 1 else 's' }} found</h2>
+      <p>Searched {{ results.eligible }} source{{ '' if results.eligible == 1 else 's' }}{% if selected_collection or selected_source_set %} in your selection{% else %} in this matter{% endif %}.</p></div>
+      {% if results.pages > 1 %}<span>Page {{ results.page }} of {{ results.pages }}</span>{% endif %}
+    </header>
+    {% if results.exclusions %}<div class="find-coverage-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/></svg><div>
+      <p>Some sources couldn't be searched yet.</p>
+      <span>{% for reason, count in results.exclusions.items() %}{{ count }} {{ 'still preparing or need attention' if reason == 'Not ready' else 'have incomplete page coverage and were left out' if reason == 'Incomplete page coverage' else 'have no readable text' }}{% if not loop.last %} · {% endif %}{% endfor %}. <a href="/matters/{{ matter.slug }}/setup?view=list">Review sources</a></span>
+    </div></div>{% endif %}
+    {% for item in results.items %}
+    <article class="find-document">
+      <div class="find-document-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/></svg></div>
+      <div class="find-document-content">
+        <div class="find-document-title"><h3><a href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}">{{ item.source_name }}</a></h3><a class="find-open-source" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}">Open source <span aria-hidden="true">↗</span></a></div>
+        {% if item.passages %}
+          {% set first = previews[item.document_id][0] %}
+          <a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if first.start_ms is not none %}?start_ms={{ first.start_ms }}#segment-{{ first.number }}{% else %}?unit={{ first.position }}{% endif %}">{{ first.location }}</a>
+          <p class="find-excerpt">{% for text, highlighted in first.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p>
+          {% if item.matching_unit_count > 1 %}<details class="find-more-passages"><summary>More places in this source <span>{{ item.matching_unit_count }} matching pages or sections</span></summary>
+            {% for unit in previews[item.document_id][1:] %}<div><a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if unit.start_ms is not none %}?start_ms={{ unit.start_ms }}#segment-{{ unit.number }}{% else %}?unit={{ unit.position }}{% endif %}">{{ unit.location }}</a><p class="find-excerpt">{% for text, highlighted in unit.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p></div>{% endfor %}
+            {% if item.matching_unit_count > 3 %}<p>Open the source to review every matching page or section.</p>{% endif %}
+          </details>{% endif %}
+        {% else %}<p class="find-excerpt">This source matches the exclusions in your search.</p>{% endif %}
+      </div>
+    </article>
+    {% else %}<div class="find-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><h3>No sources found</h3><p>Try a shorter name or fewer words.{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %} You can also clear your filters to look more broadly.{% endif %}</p>{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<a class="button button-secondary" href="{{ clear_refinements_url }}">Search without filters</a>{% endif %}</div>{% endfor %}
+    {% if results.pages > 1 %}<nav class="find-pagination" aria-label="Source result pages">{% if links.previous %}<a class="button button-secondary" href="{{ links.previous }}">← Previous</a>{% endif %}<span>Page {{ results.page }} of {{ results.pages }}</span>{% if links.next %}<a class="button button-secondary" href="{{ links.next }}">Next →</a>{% endif %}</nav>{% endif %}
+  </section>
+  {% elif not error %}
+  <div class="find-start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/></svg><h2>Start with something you remember.</h2><p>A person's name, an address, or a detail from a conversation.<br>We'll show you the sources and where to look.</p></div>
+  {% endif %}
+</main>
+{% endblock %}
