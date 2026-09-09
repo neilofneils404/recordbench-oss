@@ -366,3 +366,89 @@ def test_authored_basis_is_separate_from_user_delimiters_and_details_bind_finger
     assert all(section['body'].endswith('\n\nReview basis:\n' + section['compilation_basis']) for section in draft.sections)
     changed = replace(note, review_details='Saved technical coverage: 4 of 4.')
     assert compilation_fingerprint('timeline', '', (changed,)) != draft.fingerprint
+
+
+@pytest.mark.parametrize("kind,topic", [("topic", "delivery"), ("entities", "")])
+@pytest.mark.parametrize("failure", ["unavailable", "rejected"])
+def test_initially_available_model_failure_preserves_attributed_saved_findings(kind, topic, failure):
+    from case_intelligence.generation import GenerationRejected, GenerationUnavailable
+    items = (material(), material(2))
+    class FailedService:
+        available = True
+        def answer(self, *args, **kwargs):
+            raise (GenerationUnavailable if failure == "unavailable" else GenerationRejected)("Synthetic unavailable answer")
+    draft = compile_report(kind, topic, items, FailedService())
+    for item in items:
+        saved = next(section for section in draft.sections if section.get("material_ids") == (item.material_id,))
+        assert saved["body"].startswith(item.text)
+        assert item.revision in saved["compilation_basis"]
+        assert saved["citations"] == item.citations
+    assert draft.coverage["unprocessed_source_passages"] == 2
+    assert draft.coverage["unavailable_model_calls"] == draft.coverage["model_calls"]
+    assert draft.coverage["stop_reason"] == "analysis_incomplete"
+    if topic:
+        assert draft.coverage["mode"] == "unfiltered_saved_material_arrangement"
+        assert "topic relevance has not been checked" in draft.sections[-1]["body"]
+
+
+@pytest.mark.parametrize("failure", ["budget", "unavailable", "rejected"])
+def test_source_entity_categories_remain_incomplete_and_preserve_saved_fallback(failure):
+    from case_intelligence.generation import GenerationRejected, GenerationUnavailable
+    item = material()
+    class PartialService:
+        available = True
+        def answer(self, question, evidence, **kwargs):
+            if "named places" in question:
+                raise (GenerationRejected if failure == "rejected" else GenerationUnavailable)("Synthetic unexamined places")
+            return VerifiedAnswer(True, "", (VerifiedClaim(evidence[0].excerpt, ("S1",)),), None, "", ("S1",), True, 1)
+    draft = compile_report("entities", materials=(item,), generator=PartialService(),
+                           budget=CompilationBudget(max_model_calls=1 if failure == "budget" else 3))
+    assert any(section.get("category") == "People" for section in draft.sections)
+    saved = next(section for section in draft.sections if section.get("category") == "Saved findings awaiting compilation")
+    assert saved["body"].startswith(item.text)
+    assert draft.coverage["analyzed_source_passages"] == 0
+    assert draft.coverage["unprocessed_source_passages"] == 1
+    assert draft.coverage["partially_analyzed_source_passages"] == 1
+    assert draft.coverage["source_classification_categories"][0]["categories"] == (("People",) if failure == "budget" else ("People", "Things"))
+    assert draft.coverage["incompletely_analyzed_material_ids"] == (item.material_id,)
+    assert draft.coverage["stop_reason"] == ("budget_reached" if failure == "budget" else "analysis_incomplete")
+
+
+def test_repeated_generated_provenance_fits_real_report_storage_with_explicit_omissions(tmp_path):
+    from case_intelligence.workspace_store import WorkspaceStore
+    shared = citation()
+    items = tuple(material(index, title="Synthetic title " + "x" * 184, citations=(shared,)) for index in range(1, 201))
+    draft = compile_report("entities", materials=items, generator=service())
+    generated = [section for section in draft.sections if section.get("category") in {"People", "Places", "Things"}]
+    assert len(generated) == 3
+    assert draft.coverage["omitted_attribution_count"] == sum(section["omitted_attribution_count"] for section in generated) > 0
+    for section in generated:
+        assert len(section["compilation_basis"]) <= 40_000
+        assert len(section["body"]) <= 50_000
+        assert f"Attributions omitted from this section: {section['omitted_attribution_count']}." in section["compilation_basis"]
+        assert len(section["material_ids"]) == 200
+    store = WorkspaceStore(tmp_path / "workspace.sqlite")
+    try:
+        actor = store.upsert_principal("test", "synthetic-compiler", "Synthetic compiler", "synthetic-compiler", preferred_principal_id="synthetic-compiler")
+        matter = store.create_matter("Synthetic provenance", "Synthetic", actor.principal_id)
+        report = store.create_report_from_sections(matter.matter_id, actor.principal_id, title=draft.title,
+                                                  purpose=draft.purpose, origin_id="synthetic-compilation", sections=draft.sections)
+        assert len(store.report_sections(matter.matter_id, report.report_id)) == 4
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("markdown_special", [False, True])
+def test_repeated_generated_passages_fail_before_export_capacity_is_exceeded(markdown_special):
+    from case_intelligence.work_product_exports import MAX_EXPORT_TEXT_CHARS
+    marker = "*" if markdown_special else "x"
+    source_text = " ".join(f"Synthetic event {index}." for index in range(200)).ljust(50_000, marker)
+    class RepeatedSources:
+        available = True
+        def answer(self, question, evidence, **kwargs):
+            return VerifiedAnswer(True, "", tuple(VerifiedClaim(f"Synthetic event {index}.", ("S1",))
+                                                  for index in range(200)), None, "", ("S1",), True, 1)
+    with pytest.raises(CompilationProblem, match="too large to save and export completely"):
+        compile_report("topic", "synthetic events", (material(citations=(citation(text=source_text),)),), RepeatedSources())
+    small = compile_report("topic", "synthetic events", (material(),), service())
+    assert small.coverage["estimated_export_characters"] < small.coverage["export_character_limit"] == MAX_EXPORT_TEXT_CHARS
