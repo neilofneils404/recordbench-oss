@@ -26,6 +26,7 @@ Whichever method you choose, capture these as one consistent boundary:
 - managed matter storage;
 - the control SQLite database and session key;
 - generated configuration and secrets;
+- the dedicated canonical account directory when browser account management is enabled;
 - the PostgreSQL projection dump (or a separately tested projection rebuild);
 - version/install metadata and integrity hashes.
 

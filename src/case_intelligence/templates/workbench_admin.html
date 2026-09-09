@@ -17,6 +17,10 @@
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
 
+  <section class="administrator-panel" aria-labelledby="admin-team-heading">
+    <div class="administrator-panel-heading"><div><p class="eyebrow">Team setup</p><h2 id="admin-team-heading">Start with people and a first matter</h2><p>Manage sign-in access, then choose who belongs on each case team.</p></div><a class="button button-primary" href="/admin/people">Open People</a></div>
+  </section>
+
   <section class="administrator-metrics" aria-label="System activity">
     <article><strong>{{ admin_matters|length }}</strong><span>Active matters</span></article>
     <article><strong>{{ stale_matters|length }}</strong><span>Lifecycle attention</span></article>
@@ -200,14 +204,14 @@
 
   <details class="administrator-panel administrator-users" aria-labelledby="admin-users-heading">
     <summary class="administrator-panel-heading">
-      <div><p class="eyebrow">Identity</p><h2 id="admin-users-heading">Known domain users · {{ admin_principals|length }}</h2></div>
-      <small>Roles are managed by AD security groups.</small>
+      <div><p class="eyebrow">Identity</p><h2 id="admin-users-heading">{{ 'Local people' if auth_mode == 'local' else 'People who have signed in' }} · {{ admin_principals|length }}</h2></div>
+      <small>{{ 'Manage application roles from People.' if auth_mode == 'local' else 'Admission and administrator roles are managed by your sign-in provider.' if auth_mode in ('oidc', 'kerberos') else 'Synthetic preview identities.' }}</small>
     </summary>
     {% if admin_principals %}
     <div class="administrator-user-grid">
       {% for principal in admin_principals %}<article><span class="identity-avatar" aria-hidden="true">{{ principal.display_name.split()[0][0] }}{{ principal.display_name.split()[-1][0] }}</span><span><strong>{{ principal.display_name }}</strong><small>{{ principal.login_name }}</small></span></article>{% endfor %}
     </div>
-    {% else %}<p class="administrator-empty">No domain users have signed in yet.</p>{% endif %}
+    {% else %}<p class="administrator-empty">No people have signed in yet.</p>{% endif %}
   </details>
 </main>
 {% endblock %}

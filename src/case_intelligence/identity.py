@@ -331,14 +331,37 @@ class LocalAccountSettings:
 
     provider_key = "local"
 
-    def __init__(self, accounts_file: Path) -> None:
+    def __init__(self, accounts_file: Path, *, management_root: Path | None = None) -> None:
         from argon2 import PasswordHasher
 
         self.accounts_file = Path(accounts_file)
         self.repository = LocalAccountRepository(self.accounts_file)
         self.repository.read()  # Fail startup closed on unsafe or invalid files.
+        self.management_root = Path(management_root) if management_root is not None else None
+        if self.management_root is not None:
+            self._validate_management_boundary()
         self._hasher = PasswordHasher()
         self._dummy_hash = self._hasher.hash(secrets.token_urlsafe(32))
+
+    def _validate_management_boundary(self) -> None:
+        root = self.management_root
+        if root is None:
+            raise RuntimeError("Browser account management has not been enabled")
+        if (not root.is_absolute() or self.accounts_file != root / "local-accounts.json"
+                or root.is_symlink() or any(parent.is_symlink() for parent in root.parents)):
+            raise RuntimeError("Browser account management requires its dedicated account directory")
+        metadata = root.stat()
+        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+            raise RuntimeError("Browser account directory must be owner-only with mode 0700")
+        allowed = re.compile(r"^(?:local-accounts\.json|\.local-accounts\.json\.lock|\.local-accounts\.json-[0-9a-f]{32}\.tmp)$")
+        if any(not allowed.fullmatch(path.name) or path.is_symlink() or not path.is_file() for path in root.iterdir()):
+            raise RuntimeError("Browser account directory must contain only its account and lock files")
+        if any(account.session_revision == "legacy" for account in self.repository.read().values()):
+            raise RuntimeError("Migrate local accounts before enabling browser management")
+
+    @property
+    def management_enabled(self) -> bool:
+        return self.management_root is not None
 
     @property
     def accounts(self) -> dict[str, LocalAccount]:
@@ -351,7 +374,8 @@ class LocalAccountSettings:
         value = os.getenv("CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE", "").strip()
         if not value:
             raise RuntimeError("Local account file is required")
-        return cls(Path(value))
+        management = os.getenv("CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT", "").strip()
+        return cls(Path(value), management_root=Path(management) if management else None)
 
     def account(self, username: str) -> LocalAccount | None:
         normalized = (username or "").strip().casefold()
@@ -1010,6 +1034,12 @@ class IdentityService:
                                account.password_hash, sorted(account.roles), account.enabled],
                               separators=(",", ":")).encode()
         return hmac.new(self._secret, b"local-account-session:" + material, hashlib.sha256).hexdigest()
+
+    def local_account_edit_token(self, account: LocalAccount) -> str:
+        material = json.dumps([account.username, account.display_name, account.session_revision,
+                               account.password_hash, sorted(account.roles), account.enabled],
+                              separators=(",", ":")).encode()
+        return hmac.new(self._secret, b"local-account-edit:" + material, hashlib.sha256).hexdigest()
 
     def login_local(
         self,

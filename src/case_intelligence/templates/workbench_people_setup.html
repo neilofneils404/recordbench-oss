@@ -1,0 +1,10 @@
+{% extends "workbench_base.html" %}
+{% block title %}Enable account management · {{ product_name }}{% endblock %}
+{% block body_class %}administrator-page people-page{% endblock %}
+{% block content %}
+<main class="administrator-main people-main">
+  <header class="administrator-heading"><div><p class="eyebrow">Installation operator</p><h1>Enable browser account management</h1><p>Give local administrators a People page that can save account changes.</p></div><a class="button button-secondary" href="/admin/people">Back to People</a></header>
+  <section class="administrator-panel"><h2>For a new local-account installation</h2><p>Use the installer's explicit account-management option. It creates the initial administrator inside the dedicated private account directory.</p><pre><code>./install --auth local --enable-account-management</code></pre><p>After installation, the first administrator signs in and opens People to add a teammate.</p></section>
+  <section class="administrator-panel"><h2>For an existing installation</h2><ol><li>Stop the application and all account-admin commands. Back up accounts and configuration.</li><li>Use the documented account relocation command to move the same account file into its dedicated owner-only directory and retain a verified recovery copy.</li><li>Enable the local-account Compose overlay and update the canonical account-file configuration as described in the installation playbook.</li><li>Restart the application, sign in, and verify account changes plus another person's matter access with synthetic users.</li></ol><p>Keep all other secrets read-only. Do not expose a writable secrets directory to make the form work.</p><a href="https://github.com/neilofneils404/recordbench-oss/blob/main/docs/LOCAL_ACCOUNT_BROWSER.md">Full installation and recovery playbook</a></section>
+</main>
+{% endblock %}

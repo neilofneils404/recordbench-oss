@@ -50,6 +50,7 @@ RELEASE_FILES = (
     "SECURITY.md",
     "THIRD_PARTY_NOTICES.md",
     "compose.kerberos.yaml",
+    "compose.local-accounts.yaml",
     "compose.yaml",
     "install",
     "pyproject.toml",
@@ -180,6 +181,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", type=Path, help="exact installation state directory")
     parser.add_argument("--storage-root", type=Path, help="dedicated local or mounted-NAS matter storage directory")
     parser.add_argument("--auth", choices=("local", "oidc", "kerberos"), default=None)
+    parser.add_argument("--enable-account-management", action="store_true", help="enable browser account changes for an explicit --auth local installation")
     parser.add_argument("--models", choices=("none", "review", "transcription", "all"), default=None)
     parser.add_argument(
         "--gpu-layout",
@@ -519,7 +521,14 @@ def _compose(
     *,
     release: Path | None = None,
     auth: str | None = None,
+    local_accounts: bool | None = None,
 ) -> list[str]:
+    if local_accounts is None:
+        try:
+            record, _ = _installed_release(root)
+            local_accounts = bool(record.get("local_account_management", False))
+        except RuntimeError:
+            local_accounts = False
     if release is None:
         try:
             installation, release = _installed_release(root)
@@ -536,6 +545,8 @@ def _compose(
     ]
     if auth == "kerberos":
         command.extend(("-f", str(release / "compose.kerberos.yaml")))
+    if local_accounts:
+        command.extend(("-f", str(release / "compose.local-accounts.yaml")))
     for profile in profiles:
         command.extend(("--profile", profile))
     return command
@@ -1153,6 +1164,7 @@ def _paths(root: Path, storage_root: Path | None = None) -> dict[str, Path]:
     return {
         "config": root / "config",
         "secrets": root / "secrets",
+        "accounts": root / "accounts",
         "runtime": root / "runtime",
         "storage": storage_root or root / "matter-storage",
         "transcription": root / "transcription",
@@ -1348,7 +1360,12 @@ def _configure(
     }
     admin_username = admin_display = None
     if auth == "local":
-        app_values["CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE"] = "/run/recordbench-secrets/local-accounts.json"
+        if args.enable_account_management:
+            compose_values["RECORDBENCH_LOCAL_ACCOUNT_ROOT"] = paths["accounts"]
+            app_values["CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE"] = "/var/lib/recordbench-accounts/local-accounts.json"
+            app_values["CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT"] = "/var/lib/recordbench-accounts"
+        else:
+            app_values["CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE"] = "/run/recordbench-secrets/local-accounts.json"
         admin_username = args.admin_username or _ask(
             "Initial administrator username", "recordbench.admin", non_interactive=args.non_interactive
         )
@@ -1497,6 +1514,7 @@ def _configure(
                     "node_id": hashlib_short(root),
                     "storage_root": str(paths["storage"]),
                     "auth": auth,
+                    "local_account_management": bool(args.enable_account_management),
                     "models": models,
                     "transcription_languages": list(transcription_languages),
                     "transcription_diarization": bool(args.enable_diarization),
@@ -1627,7 +1645,7 @@ def _provision(
         profiles.append("ai")
     if models in {"all", "transcription"}:
         profiles.append("transcription")
-    compose = _compose(root, profiles)
+    compose = _compose(root, profiles, auth=auth, local_accounts=args.enable_account_management)
 
     console.phase(5, "FORGE RUNTIME", "Building isolated OCR, review, retrieval, and transcription images")
     targets = ["app", "account-admin"]
@@ -1656,7 +1674,9 @@ def _provision(
             [*compose, "run", "--rm", "--no-deps", "account-admin", "storage", "init", "--root", "/var/lib/recordbench/matter-storage"],
             dry_run=args.dry_run,
         )
-    if auth == "local" and not (root / "secrets" / "local-accounts.json").exists():
+    account_directory = root / ("accounts" if args.enable_account_management else "secrets")
+    account_container_file = "/var/lib/recordbench-accounts/local-accounts.json" if args.enable_account_management else "/run/recordbench-secrets/local-accounts.json"
+    if auth == "local" and not (account_directory / "local-accounts.json").exists():
         if not admin_username or not admin_display:
             raise RuntimeError(
                 "unfinished local installation requires --admin-username and "
@@ -1666,7 +1686,7 @@ def _provision(
         try:
             _run(
                 console,
-                [*compose, "run", "--rm", "--no-deps", "-T", "account-admin", "accounts", "init", "--file", "/run/recordbench-secrets/local-accounts.json", "--username", str(admin_username), "--display-name", str(admin_display), "--password-stdin"],
+                [*compose, "run", "--rm", "--no-deps", "-T", "account-admin", "accounts", "init", "--file", account_container_file, "--username", str(admin_username), "--display-name", str(admin_display), "--password-stdin"],
                 input_value=password + "\n",
                 dry_run=args.dry_run,
             )
@@ -1730,7 +1750,7 @@ def _provision(
         active.append("ai")
     if models in {"all", "transcription"}:
         active.append("transcription")
-    runtime_compose = _compose(root, active)
+    runtime_compose = _compose(root, active, local_accounts=args.enable_account_management)
     _run(console, [*runtime_compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
     if not args.dry_run:
         _wait_health(console, root)
@@ -2113,6 +2133,8 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
 
 def main() -> int:
     args = _parser().parse_args()
+    if args.enable_account_management and (args.command != "install" or args.auth != "local"):
+        _parser().error("--enable-account-management requires a new install with explicit --auth local; use the account relocation playbook for an existing node")
     console = Console(
         color=sys.stdout.isatty() and not args.no_color and os.getenv("NO_COLOR") is None,
         quiet=args.quiet,

@@ -187,8 +187,12 @@ def _write(directory: int, name: str, data: bytes, *, create: bool = False) -> N
 class LocalAccountRepository:
     """Fresh snapshots and process-serialized mutations of the existing account file."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *,
+                 guard: Callable[[Mapping[str, LocalAccount]], None] | None = None,
+                 before_write: Callable[[LocalAccountChange], None] | None = None) -> None:
         self.path = Path(path)
+        self.guard = guard
+        self.before_write = before_write
 
     def read(self) -> dict[str, LocalAccount]:
         with _parent(self.path) as directory:
@@ -219,16 +223,22 @@ class LocalAccountRepository:
             _, version, accounts = _read(directory, self.path.name)
             if version != 2:
                 raise RuntimeError("Migrate local accounts with an explicit backup before changing them: run recordbench accounts migrate with --file and a new --backup-file")
+            if self.guard is not None:
+                self.guard(accounts)
             update(accounts)
             payload = _payload(accounts)
             _parse(payload)  # Last-admin and size/shape checks share the writer lock.
             data = (json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n").encode()
             if len(data) > _MAX_BYTES:
                 raise RuntimeError("Local account file exceeds its size limit")
+            if self.before_write is not None:
+                self.before_write(receipt)
             _write(directory, self.path.name, data)
         return receipt
 
     def initialize(self, username: str, display_name: str, password: str, *, actor: str) -> LocalAccountChange:
+        if self.guard is not None:
+            raise RuntimeError("Initial account setup is an operator-only action")
         username, display_name = normalized_account(username, display_name)
         receipt = self._receipt("initialize", username, actor)
         account = LocalAccount(username, display_name, hash_password(password), frozenset({"administrator"}), True, secrets.token_hex(32))
@@ -238,6 +248,8 @@ class LocalAccountRepository:
         return receipt
 
     def migrate(self, backup_file: Path, *, actor: str) -> LocalAccountChange:
+        if self.guard is not None:
+            raise RuntimeError("Account migration is an operator-only action")
         receipt = self._receipt("migrate", "*", actor)
         backup_file = Path(backup_file)
         if backup_file == self.path:
@@ -258,6 +270,41 @@ class LocalAccountRepository:
             if len(encoded) > _MAX_BYTES:
                 raise RuntimeError("Migrated local account file exceeds its size limit")
             _write(directory, self.path.name, encoded)
+        return receipt
+
+    def relocate(self, destination: Path, backup_file: Path, *, actor: str,
+                 writers_stopped: bool = False) -> LocalAccountChange:
+        """Move the sole canonical file during an explicit stopped-node change."""
+        if self.guard is not None or not writers_stopped:
+            raise RuntimeError("Stop the application and account writers, then confirm the operator relocation")
+        destination, backup_file = Path(destination), Path(backup_file)
+        if destination.name != "local-accounts.json" or destination.parent == self.path.parent:
+            raise RuntimeError("Use local-accounts.json in a separate dedicated account directory")
+        if backup_file in {self.path, destination} or backup_file.parent == destination.parent:
+            raise RuntimeError("Keep the recovery copy outside the dedicated account directory")
+        receipt = self._receipt("relocate", "*", actor)
+        with self._writer() as source_directory:
+            data, version, accounts = _read(source_directory, self.path.name)
+            if version != 2:
+                raise RuntimeError("Migrate local accounts to version 2 before enabling browser changes")
+            with _parent(destination, create=True) as target_directory:
+                if stat.S_IMODE(os.fstat(target_directory).st_mode) != 0o700 or os.listdir(target_directory):
+                    raise RuntimeError("The destination account directory must be empty and have mode 0700")
+                with _parent(backup_file, create=True) as backup_directory:
+                    _write(backup_directory, backup_file.name, data, create=True)
+                    restored, _, _ = _read(backup_directory, backup_file.name)
+                    if restored != data:
+                        raise RuntimeError("Account relocation recovery copy could not be verified")
+                updated = {name: replace(account, session_revision=secrets.token_hex(32)) for name, account in accounts.items()}
+                encoded = (json.dumps(_payload(updated), indent=2, sort_keys=True) + "\n").encode()
+                if len(encoded) > _MAX_BYTES:
+                    raise RuntimeError("Relocated account file exceeds its size limit")
+                _write(target_directory, destination.name, encoded, create=True)
+                # Both the destination and recovery copy are durable before the
+                # old canonical location is removed. The operator switches the
+                # configuration before restarting any reader or writer.
+                os.unlink(self.path.name, dir_fd=source_directory)
+                os.fsync(source_directory)
         return receipt
 
     def create(self, username: str, display_name: str, password: str, *, administrator: bool = False,

@@ -168,6 +168,8 @@ def _compose(node: Path, installation: Mapping[str, Any]) -> list[str]:
     ]
     if installation.get("auth") == "kerberos":
         command.extend(("-f", str(release / "compose.kerberos.yaml")))
+    if installation.get("local_account_management") is True:
+        command.extend(("-f", str(release / "compose.local-accounts.yaml")))
     profiles = installation.get("profiles", [])
     if not isinstance(profiles, list) or any(not isinstance(item, str) for item in profiles):
         raise BackupError("node profile configuration is invalid")
@@ -460,7 +462,7 @@ def _validate_sqlite(path: Path) -> None:
 
 
 def _hash_controls(payload: Path) -> None:
-    roots = ("configuration", "control", "metadata", "postgres", "secrets")
+    roots = ("configuration", "control", "metadata", "postgres", "secrets", "accounts")
     lines: list[str] = []
     for root_name in roots:
         root = payload / root_name
@@ -533,6 +535,8 @@ def backup(args: argparse.Namespace) -> int:
         "configuration": _exact_directory(environment["RECORDBENCH_CONFIG_ROOT"], label="configuration root"),
         "secrets": _exact_directory(environment["RECORDBENCH_SECRETS_ROOT"], label="secrets root"),
     }
+    if installation.get("local_account_management") is True:
+        sources["accounts"] = _exact_directory(environment["RECORDBENCH_LOCAL_ACCOUNT_ROOT"], label="local account root")
     managed_storage = _exact_directory(
         environment["RECORDBENCH_STORAGE_ROOT"], label="matter storage"
     )

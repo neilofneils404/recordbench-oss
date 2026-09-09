@@ -1,5 +1,11 @@
 # Authentication
 
+Local administrators can use **People** to manage accounts when the explicit
+[browser account profile](LOCAL_ACCOUNT_BROWSER.md) is enabled. The same page
+explains operator setup when disabled and directs OIDC/Kerberos account changes
+to the sign-in provider. A new person signs in once before being added to a
+matter through **Case team**.
+
 RecordBench has three deployment modes. All use opaque server-side sessions,
 CSRF protection, explicit matter membership, and attributed audit events.
 
