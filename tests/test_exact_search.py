@@ -67,6 +67,12 @@ def test_document_scope_searches_all_units_and_phrase_does_not_cross_boundary():
     ("O’NEIL", "o'neil", True),
     ("café", "CAFE\u0301", True),
     ("Straße", "STRASSE", True),
+    ("हिंदी", "हिंदी", True),
+    ('"हिंदी"', "ह द", False),
+    ("İ", "i\u0307", True),
+    ("İ", "I", False),
+    ("I", "İ", False),
+    ("\u0390", "\u03b9\u0308\u0301", True),
     ("RB-101", "Item rb-101.", True),
     ("RB-101", "Item rb 101.", False),
     ("bike", "bikes", False),
@@ -127,3 +133,18 @@ def test_bounded_arbitrary_input_never_recurses_unchecked_or_silently_crashes():
         except QuerySyntaxError:
             continue
         assert isinstance(parsed.matches_units(["red bicycle"]), bool)
+
+
+@pytest.mark.parametrize("value", [
+    "NOT " * MAX_QUERY_DEPTH + "red",
+    "NOT " * (MAX_QUERY_DEPTH - 1) + "(red OR blue)",
+    "(" * MAX_QUERY_DEPTH + "red blue" + ")" * MAX_QUERY_DEPTH,
+    " ".join(["a"] * 128),
+    "red AND (blue OR (bicycle AND NOT truck))",
+])
+def test_normalization_preserves_meaning_at_grammar_boundaries(value):
+    original = parse_query(value)
+    reparsed = parse_query(original.normalized)
+    for terms in itertools.product((False, True), repeat=4):
+        text = "neutral " + " ".join(word for word, present in zip(("red", "blue", "bicycle", "truck"), terms) if present)
+        assert original.matches_units([text]) == reparsed.matches_units([text])

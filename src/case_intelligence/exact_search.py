@@ -15,7 +15,6 @@ GRAMMAR_VERSION = "recordbench-exact-v1"
 MAX_QUERY_CHARS = 512
 MAX_QUERY_TOKENS = 128
 MAX_QUERY_DEPTH = 16
-_WORD = re.compile(r"[^\W_]+(?:['-][^\W_]+)*", re.UNICODE)
 _APOSTROPHES = str.maketrans({"’": "'", "‘": "'"})
 _UNSUPPORTED = re.compile(r"^(?:NEAR|WITHIN|ADJ|W/\d+|PRE/\d+)(?:/\d+)?$", re.I)
 
@@ -29,14 +28,31 @@ class QuerySyntaxError(ValueError):
         super().__init__(f"{message} (character {position + 1}).")
 
 
+def _normalize_text(text: str) -> str:
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold()).translate(_APOSTROPHES)
+
+
 def tokenize_text(text: str) -> tuple[str, ...]:
     """NFC/casefold words; retain internal apostrophes and ASCII hyphens.
 
     Other punctuation separates words. No stemming or stop-word removal occurs.
     A phrase is consecutive tokens within one extracted unit, never across units.
     """
-    normalized = unicodedata.normalize("NFC", text).casefold().translate(_APOSTROPHES)
-    return tuple(_WORD.findall(normalized))
+    normalized = _normalize_text(text)
+    words: list[str] = []
+    word: list[str] = []
+    for index, char in enumerate(normalized):
+        attached_mark = bool(word) and unicodedata.category(char).startswith("M")
+        internal_joiner = (bool(word) and char in "'-" and index + 1 < len(normalized)
+                           and normalized[index + 1].isalnum())
+        if char.isalnum() or attached_mark or internal_joiner:
+            word.append(char)
+        elif word:
+            words.append("".join(word))
+            word = []
+    if word:
+        words.append("".join(word))
+    return tuple(words)
 
 
 @dataclass(frozen=True)
@@ -74,14 +90,18 @@ def _plan(node: Expression) -> dict[str, object]:
     }
 
 
-def _normalized(node: Expression) -> str:
+def _normalized(node: Expression, parent_precedence: int = 0) -> str:
     if isinstance(node, Literal):
         value = " ".join(node.words)
         return f'"{value}"' if node.phrase else value
     if isinstance(node, Not):
-        return f"NOT ({_normalized(node.operand)})"
-    operator = " AND " if isinstance(node, And) else " OR "
-    return "(" + operator.join(_normalized(item) for item in node.operands) + ")"
+        precedence = 3
+        value = f"NOT {_normalized(node.operand, precedence)}"
+    else:
+        precedence = 2 if isinstance(node, And) else 1
+        operator = " " if isinstance(node, And) else " OR "
+        value = operator.join(_normalized(item, precedence) for item in node.operands)
+    return f"({value})" if precedence < parent_precedence else value
 
 
 @dataclass(frozen=True)
@@ -204,8 +224,8 @@ def _lex(query: str) -> tuple[_Token, ...]:
                     raise QuerySyntaxError("Proximity operators are not supported yet", start)
                 if any(mark in value for mark in "*?~:"):
                     raise QuerySyntaxError("Wildcards, fuzzy search, and field operators are not supported yet", start)
-                normalized = unicodedata.normalize("NFC", value).casefold().translate(_APOSTROPHES)
-                if not _WORD.fullmatch(normalized):
+                normalized = _normalize_text(value)
+                if tokenize_text(normalized) != (normalized,):
                     raise QuerySyntaxError("Use a word, a quoted phrase, or AND, OR, NOT and parentheses", start)
                 result.append(_Token("literal", start, Literal((normalized,))))
         if len(result) > MAX_QUERY_TOKENS:
