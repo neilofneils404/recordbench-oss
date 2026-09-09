@@ -245,13 +245,16 @@ def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600, *, me
     if budget_check is not None:
         budget_check()
     location = unit.location
-    if unit.start_ms is not None:
-        location = format_timestamp(unit.start_ms)
-        if unit.end_ms is not None and unit.end_ms != unit.start_ms:
-            location += "–" + format_timestamp(unit.end_ms)
+    start_ms, end_ms = unit.start_ms, unit.end_ms
+    if start_ms is None and is_media_type(media_type):
+        start_ms, end_ms = unit.line_start, unit.line_end
+    if start_ms is not None:
+        location = format_timestamp(start_ms)
+        if end_ms is not None and end_ms != start_ms:
+            location += "–" + format_timestamp(end_ms)
     elif media_type == DOCX_MEDIA_TYPE and not unit.location_label and unit.line_start is None:
         location = f"Section {unit.number}"
-    return {"number": unit.number, "location": location, "start_ms": unit.start_ms, "pieces": tuple(pieces)}
+    return {"number": unit.number, "location": location, "start_ms": start_ms, "pieces": tuple(pieces)}
 
 
 def search_documents(
