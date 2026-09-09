@@ -126,13 +126,15 @@ For missing prerequisites:
   paths remain supported, as do separate dedicated storage directories.
 - For unattended local installation, supply `--password-stdin`. Preflight checks
   the input choice and administrator username/display-name syntax without reading
-  a password. Unattended OIDC and Kerberos installation require their credential
-  source files; preflight checks readable, nonempty regular-file metadata without
-  reading the contents. OIDC secret files must contain 16–4,096 bytes including
-  line endings. The metadata lower bound rejects definitely undersized values;
-  the conservative upper bound prevents an ASCII value exceeding the runtime's
-  4,096-character limit. Encoding, whitespace and decoded character length still
-  require runtime validation. Kerberos keytabs retain their 1-byte to 1 MiB range.
+  a password. Display names use the same NFC normalization and Unicode control
+  and formatting-character rejection as account creation.
+  Unattended OIDC and Kerberos installation require readable regular credential
+  source files without symbolic links, limited to 1 MiB. OIDC preflight performs
+  a bounded read, decodes UTF-8, strips trailing CR/LF, and requires 16–4,096
+  characters with no embedded CR/LF or NUL, matching the runtime. A newline after
+  a valid 4,096-character secret is accepted; line endings cannot pad a short
+  secret into a valid one. Secret values and source paths are not reported.
+  Kerberos preflight checks nonempty file metadata without reading its contents.
   Kerberos also requires the host SSSD and Kerberos paths.
   Non-secret OIDC settings require an HTTPS issuer, non-loopback external server
   name, and a nonempty client ID of at most 512 characters. OIDC group names can
@@ -178,8 +180,9 @@ synthetic acceptance steps below remain necessary.
 The launcher collects the selected identity mode, local administrator names or
 provider configuration, and any required Kerberos keytab path before preflight.
 It validates those exact choices and reuses them during configuration without
-asking again. These initial questions collect no passwords, tokens or credential
-file contents; secret entry remains in the later provisioning steps. Standalone
+asking again. These initial questions collect no passwords or tokens. A supplied
+OIDC file is validated during preflight; password and token entry remain in the
+later provisioning steps. Standalone
 `preflight` remains non-prompting and checks the options supplied on its command line.
 For a new browser-managed local-account node, include both `--auth local` and
 `--enable-account-management` in that preflight command. With `--resume`, preflight
@@ -189,6 +192,16 @@ includes relocated managed-account directories; an old account file in `secrets`
 does not replace the canonical managed account file. Supplied flags do not change
 the saved account mode or paths. Invalid saved coordinates are reported as a
 blocking checklist item, including with `--json`.
+For local resume, the canonical account store is checked before Compose builds
+or service changes: safe no-follow directory traversal, service ownership, mode 0600,
+bounded valid account JSON and password-hash structure, and an enabled
+administrator. Browser management additionally requires its dedicated mode-0700
+directory and a version-2 store; migrate a version-1 store explicitly with a
+backup before enabling it. An unsafe or malformed existing store is a blocking
+saved-node check. An absent account file during interrupted setup still requires
+the initial administrator and password input; missing saved mount directories
+remain blocked. These checks do not modify accounts, read a password, or report
+account contents.
 
 ```bash
 ./install

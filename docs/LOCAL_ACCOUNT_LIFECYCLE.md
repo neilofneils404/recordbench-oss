@@ -31,6 +31,12 @@ revisions. The browser caller must first authorize an administrator,
 validate CSRF and record its authenticated principal in the existing audit
 system. Possessing a repository object does not supply that authorization.
 
+Display names use the same NFC normalization and Unicode character policy as
+workspace principals. Create and rename reject control and format characters
+before writing the account file; supported accented, non-Latin and emoji names
+remain usable at sign-in and during session refresh. The 160-character limit
+applies after normalization and trimming.
+
 Each writer holds a persistent owner-only sibling lock file across a fresh
 read, validation, mutation and atomic replacement. The last enabled
 administrator check shares that lock, so independent writers cannot both

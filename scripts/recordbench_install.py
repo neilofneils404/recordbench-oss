@@ -12,6 +12,7 @@ import json
 import os
 import platform
 import re
+import runpy
 import secrets
 import shlex
 import shutil
@@ -371,6 +372,91 @@ def _credential_source_available(source: Path | None, *, minimum_bytes: int = 1,
                 and os.access(source, os.R_OK))
     except OSError:
         return False
+
+
+def _oidc_secret_source_valid(source: Path | None) -> bool:
+    """Read a bounded source without following its final link or reporting secrets."""
+    if not _credential_source_available(source):
+        return False
+    try:
+        descriptor = os.open(source.expanduser(), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode) or before.st_size > 1024 * 1024:
+                return False
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                content = stream.read(1024 * 1024 + 1)
+            after = os.fstat(descriptor)
+            if len(content) > 1024 * 1024 or _read_identity(before) != _read_identity(after):
+                return False
+            # Match OidcSettings.from_env: UTF-8, trailing CR/LF only, then
+            # character bounds and rejection of embedded CR/LF/NUL.
+            secret = content.decode("utf-8").rstrip("\r\n")
+            return 16 <= len(secret) <= 4096 and not any(value in secret for value in ("\x00", "\r", "\n"))
+        finally:
+            os.close(descriptor)
+    except (OSError, ValueError):
+        return False
+
+
+def _read_identity(metadata: os.stat_result) -> tuple:
+    return (metadata.st_dev, metadata.st_ino, metadata.st_mode, metadata.st_uid,
+            metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
+
+
+def _account_format() -> dict:
+    """Load this reviewed launcher's stdlib validator without runtime imports."""
+    return runpy.run_path(str(PROJECT / "src/case_intelligence/local_account_format.py"))
+
+
+def _saved_account_status(path: Path, *, managed: bool) -> str:
+    """Validate saved account bytes and private traversal without runtime imports."""
+    if not path.is_absolute() or path.name != "local-accounts.json" or ".." in path.parts:
+        return "invalid"
+    directory = None
+    try:
+        directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+        for component in (*path.parent.parts[1:], None):
+            metadata = os.fstat(directory)
+            mode = stat.S_IMODE(metadata.st_mode)
+            final = component is None
+            trusted_sticky = not final and metadata.st_uid == 0 and mode == 0o1777
+            if (metadata.st_uid not in ({os.geteuid()} if final else {0, os.geteuid()})
+                    or (mode & 0o022 and not trusted_sticky)
+                    or (final and managed and mode != 0o700)):
+                return "invalid"
+            if not final:
+                child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                os.close(directory)
+                directory = child
+        if managed:
+            allowed = re.compile(r"^(?:local-accounts\.json|\.local-accounts\.json\.lock|\.local-accounts\.json-[0-9a-f]{32}\.tmp)$")
+            if any(not allowed.fullmatch(name) or not stat.S_ISREG(os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode)
+                   for name in os.listdir(directory)):
+                return "invalid"
+        try:
+            descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except FileNotFoundError:
+            return "missing"
+        try:
+            before = os.fstat(descriptor)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_size > 1024 * 1024):
+                return "invalid"
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                content = stream.read(1024 * 1024 + 1)
+            if len(content) > 1024 * 1024 or _read_identity(before) != _read_identity(os.fstat(descriptor)):
+                return "invalid"
+            parser = _account_format()["parse_accounts"]
+            version, _accounts = parser(json.loads(content.decode("utf-8")))
+            return "valid" if not managed or version == 2 else "invalid"
+        finally:
+            os.close(descriptor)
+    except (OSError, RuntimeError, ValueError):
+        return "invalid"
+    finally:
+        if directory is not None:
+            os.close(directory)
 
 
 def _private_copy(source: Path, target: Path) -> None:
@@ -1295,22 +1381,34 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 pass
         account_directory = (getattr(args, "account_root", args.root / "accounts")
                              if args.enable_account_management else args.root / "secrets")
+        account_status = "missing"
+        if existing_resume and args.auth in {None, "local"}:
+            account_status = _saved_account_status(account_directory / "local-accounts.json",
+                                                   managed=args.enable_account_management)
+            if account_status != "missing":
+                valid = account_status == "valid"
+                add("saved-node", valid,
+                    "Saved local account store is valid" if valid else "Saved local account store is unsafe or invalid",
+                    "Resume using the existing attributed account store",
+                    "Restore the saved canonical account file with owner-only mode 0600, safe ownership and ancestry, and valid account JSON. Browser management requires a dedicated mode-0700 account directory and version 2; migrate version 1 explicitly with a backup before enabling it.")
         needs_local_account = args.auth in {None, "local"} and (
-            not existing_resume or not (account_directory / "local-accounts.json").is_file())
+            not existing_resume or account_status == "missing")
         if needs_local_account:
-            # Keep the dependency-free launcher aligned with account-admin's
-            # normalization; names are reported only as valid/invalid.
+            # Share account-admin's NFC and Unicode control policy; names are
+            # reported only as valid/invalid, with no runtime dependency.
             login = (args.admin_username if args.admin_username is not None else
                      "" if existing_resume else "recordbench.admin").strip().casefold()
             display = (args.admin_display_name if args.admin_display_name is not None else
                        "" if existing_resume else "RecordBench Administrator").strip()
-            identity_ok = (re.fullmatch(r"[a-z0-9][a-z0-9._@-]{2,127}", login) is not None
-                           and bool(display) and len(display) <= 160
-                           and not any(ord(character) < 32 for character in display))
+            try:
+                _account_format()["normalized_account"](login, display)
+                identity_ok = True
+            except RuntimeError:
+                identity_ok = False
             add("admin-identity", identity_ok,
                 "Initial administrator identity is valid" if identity_ok else "Initial administrator identity is invalid",
                 "Create the initial local administrator account",
-                "Choose --admin-username with 3-128 letters, numbers, dots, dashes, underscores or @, starting with a letter or number. Choose a nonempty --admin-display-name of at most 160 characters without control characters.")
+                "Choose --admin-username with 3-128 letters, numbers, dots, dashes, underscores or @, starting with a letter or number. Choose a nonempty --admin-display-name of at most 160 NFC-normalized characters without Unicode control or formatting characters.")
         if args.non_interactive and not args.dry_run and needs_local_account:
             add("admin-password-input", bool(args.password_stdin),
                 "Password input selected; no password read" if args.password_stdin else "Initial administrator password input not selected",
@@ -1328,14 +1426,16 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 ("kerberos", args.kerberos_keytab, "kerberos-keytab-input", "--kerberos-keytab"),
             ):
                 if args.auth == auth and (source is not None or (args.non_interactive and not args.dry_run)):
-                    minimum_bytes = 16 if auth == "oidc" else 1
-                    maximum_bytes = 4096 if auth == "oidc" else 1024 * 1024
-                    available = _credential_source_available(source, minimum_bytes=minimum_bytes,
-                                                             maximum_bytes=maximum_bytes)
+                    available = (_oidc_secret_source_valid(source) if auth == "oidc"
+                                 else _credential_source_available(source))
+                    observation = ("OIDC secret source is valid; contents not reported" if auth == "oidc"
+                                   else "Credential source metadata is available; contents not read")
+                    requirement = ("UTF-8 with 16–4096 characters after stripping trailing CR/LF, without embedded CR/LF or NUL"
+                                   if auth == "oidc" else "nonempty")
                     add(name, available,
-                        "Credential source metadata is available; contents not read" if available else "Required credential source is missing or unsafe",
+                        observation if available else "Required credential source is missing, unsafe or invalid",
                         "Configure the selected identity provider",
-                        f"Supply {option} as a readable regular file between {minimum_bytes} and {maximum_bytes} bytes including line endings, without a symbolic link. Contents are not validated by this metadata check.")
+                        f"Supply {option} as a readable regular file of at most 1 MiB without a symbolic link. It must be {requirement}.")
             if args.auth == "kerberos" and not args.dry_run:
                 host_join = Path("/var/lib/sss/pipes").is_dir() and Path("/etc/krb5.conf").is_file()
                 add("kerberos-host", host_join,

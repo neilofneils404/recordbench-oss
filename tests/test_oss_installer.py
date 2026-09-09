@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -545,6 +546,7 @@ def test_partial_local_resume_requires_explicit_bootstrap_identity(tmp_path, mon
 def ready_host(monkeypatch, tmp_path):
     actual_uid = os.geteuid()
     original_stat = Path.stat
+    original_fstat = os.fstat
     def synthetic_owner(path, *args, **kwargs):
         result = original_stat(path, *args, **kwargs)
         if result.st_uid == actual_uid and (actual_uid != 0 or path == tmp_path or tmp_path in path.parents):
@@ -553,6 +555,21 @@ def ready_host(monkeypatch, tmp_path):
             return os.stat_result(fields)
         return result
     monkeypatch.setattr(Path, "stat", synthetic_owner)
+    # Python 3.14's lstat calls os.lstat directly; keep the same no-follow
+    # identity simulation on every supported Python version.
+    monkeypatch.setattr(Path, "lstat", lambda path: synthetic_owner(path, follow_symlinks=False))
+    def synthetic_descriptor_owner(descriptor):
+        result = original_fstat(descriptor)
+        selected = actual_uid != 0
+        if actual_uid == 0:
+            descriptor_path = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+            selected = descriptor_path == tmp_path or tmp_path in descriptor_path.parents
+        if result.st_uid == actual_uid and selected:
+            fields = list(result)
+            fields[4] = 1000
+            return os.stat_result(fields)
+        return result
+    monkeypatch.setattr(os, "fstat", synthetic_descriptor_owner)
     import pwd
     from types import SimpleNamespace
     monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir="/home/synthetic-service"))
@@ -756,6 +773,8 @@ def test_preflight_nonempty_root_requires_explicit_resume(tmp_path, ready_host, 
     (args.root / "installation.json").write_text(json.dumps({
         "release_path": str(ROOT), "auth": "local", "models": "none", "profiles": ["tools"],
     }))
+    # Configuration is persisted only after its private directories exist.
+    (args.root / "secrets").mkdir(mode=0o700)
     # This synthetic record precedes local account initialization, so resuming
     # also supplies the explicit bootstrap identity required by first-run checks.
     args.admin_username = "synthetic.admin"
@@ -1314,7 +1333,7 @@ def test_invalid_identity_inputs_block_fresh_install_before_writes(
 
 
 @pytest.mark.parametrize("kind", ["regular", "empty", "large", "directory", "symlink"])
-def test_oidc_credential_preflight_checks_metadata_without_reading(tmp_path, ready_host, monkeypatch, kind):
+def test_oidc_credential_preflight_rejects_unsafe_sources_and_redacts_results(tmp_path, ready_host, monkeypatch, kind):
     source = tmp_path / "synthetic-secret"
     if kind == "directory":
         source.mkdir()
@@ -1324,8 +1343,6 @@ def test_oidc_credential_preflight_checks_metadata_without_reading(tmp_path, rea
         source.symlink_to(target)
     else:
         source.write_text("" if kind == "empty" else "x" * (1024 * 1024 + 1) if kind == "large" else "synthetic placeholder")
-    monkeypatch.setattr(Path, "read_text", lambda *a, **k: pytest.fail("preflight read a credential"))
-    monkeypatch.setattr(Path, "read_bytes", lambda *a, **k: pytest.fail("preflight read a credential"))
     args = preflight_args(tmp_path, "--auth", "oidc", "--non-interactive", "--oidc-client-secret-file", str(source))
     result = installer._collect_preflight("none", args)
     assert checks_by_name(result)["oidc-secret-input"].state == ("pass" if kind == "regular" else "fail")
@@ -1690,12 +1707,10 @@ def test_storage_control_characters_stop_before_writes(tmp_path, ready_host, mon
     assert not node.exists() and not Path(malformed).exists()
 
 
-def test_oversized_oidc_secret_stops_before_writes_without_reading(tmp_path, ready_host, monkeypatch):
+def test_oversized_oidc_secret_stops_before_writes(tmp_path, ready_host, monkeypatch):
     source = tmp_path / "synthetic-secret"
     source.write_text("x" * 4097)
     args = preflight_args(tmp_path, "--auth", "oidc", "--non-interactive", "--oidc-client-secret-file", str(source))
-    monkeypatch.setattr(Path, "read_text", lambda *a, **k: pytest.fail("read credential contents"))
-    monkeypatch.setattr(Path, "read_bytes", lambda *a, **k: pytest.fail("read credential contents"))
     assert not installer._collect_preflight("none", args).ready
     monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("oversized secret reached writes"))
     monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--models", "none", "--auth", "oidc", "--oidc-client-secret-file", str(source), "--non-interactive"])
@@ -1828,11 +1843,9 @@ def test_source_storage_cannot_equal_or_contain_node(tmp_path, ready_host, monke
 
 
 @pytest.mark.parametrize("auth,size,expected", [("oidc", 16, True), ("oidc", 4096, True), ("oidc", 4097, False), ("kerberos", 1, True), ("kerberos", 4097, True), ("kerberos", 1024 * 1024, True), ("kerberos", 1024 * 1024 + 1, False)])
-def test_provider_metadata_limits_keep_larger_keytabs(tmp_path, ready_host, monkeypatch, auth, size, expected):
+def test_provider_validation_keeps_larger_keytabs(tmp_path, ready_host, monkeypatch, auth, size, expected):
     source = tmp_path / "synthetic-credential"
     source.write_bytes(b"x" * size)
-    monkeypatch.setattr(Path, "read_bytes", lambda *a, **k: pytest.fail("read secret contents"))
-    monkeypatch.setattr(Path, "read_text", lambda *a, **k: pytest.fail("read secret contents"))
     option = "--oidc-client-secret-file" if auth == "oidc" else "--kerberos-keytab"
     args = preflight_args(tmp_path, "--auth", auth, "--dry-run", option, str(source))
     result = installer._collect_preflight("none", args)
@@ -1861,13 +1874,11 @@ def test_failed_post_stop_admission_reports_failed_rollback(tmp_path, request, m
     assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
 
 @pytest.mark.parametrize("size", [1, 15])
-def test_undersized_oidc_secret_blocks_before_writes_without_reading(tmp_path, ready_host, monkeypatch, size):
+def test_undersized_oidc_secret_blocks_before_writes(tmp_path, ready_host, monkeypatch, size):
     source = tmp_path / "synthetic-small-secret"
     source.write_bytes(b"x" * size)
     flags = ["--auth", "oidc", "--oidc-client-secret-file", str(source), "--non-interactive"]
     args = preflight_args(tmp_path, *flags)
-    monkeypatch.setattr(Path, "read_bytes", lambda *a, **k: pytest.fail("read credential contents"))
-    monkeypatch.setattr(Path, "read_text", lambda *a, **k: pytest.fail("read credential contents"))
     result = installer._collect_preflight("none", args)
     assert not result.ready and checks_by_name(result)["oidc-secret-input"].state == "fail"
     monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("small secret reached writes"))
@@ -2151,3 +2162,188 @@ def test_late_gpu_resume_dry_run_defers_actual_admission_without_runtime_changes
     assert "ps" not in events and "stop" not in events and "start" not in events
     assert all(dry_run for _command, dry_run in commands)
     assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("content,expected", [
+    (b"x" * 14 + b"\r\n", False), (b"x" * 15 + b"\n", False),
+    (b"x" * 16 + b"\r\n", True), (b"x" * 4096 + b"\n", True),
+    (("\U0001f511" * 4096 + "\r\n").encode(), True),
+    (b"x" * 16 + b"\xff", False), (b"x" * 16 + b"\ny", False),
+    (b"x" * 16 + b"\x00", False), (b" " * 16, True),
+])
+def test_oidc_preflight_matches_runtime_decoded_stripped_secret_semantics(tmp_path, ready_host, monkeypatch, content, expected):
+    from case_intelligence.identity import OidcSettings
+    source = tmp_path / "synthetic-oidc-boundary"
+    source.write_bytes(content)
+    source.chmod(0o600)
+    monkeypatch.setenv("CASE_INTELLIGENCE_OIDC_CLIENT_SECRET_FILE", str(source))
+    monkeypatch.setenv("CASE_INTELLIGENCE_OIDC_ISSUER", "https://identity.example.test")
+    monkeypatch.setenv("CASE_INTELLIGENCE_EXTERNAL_ORIGIN", "https://recordbench.example.test")
+    monkeypatch.setenv("CASE_INTELLIGENCE_OIDC_CLIENT_ID", "synthetic-client")
+    try:
+        OidcSettings.from_env()
+        runtime_accepts = True
+    except RuntimeError:
+        runtime_accepts = False
+    assert runtime_accepts is expected
+    args = preflight_args(tmp_path, "--auth", "oidc", "--oidc-client-secret-file", str(source), "--non-interactive")
+    result = installer._collect_preflight("none", args)
+    assert result.ready is expected
+    assert checks_by_name(result)["oidc-secret-input"].state == ("pass" if expected else "fail")
+    assert str(source) not in json.dumps(result.payload())
+    assert not args.root.exists()
+    if not expected:
+        monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("invalid secret reached writes"))
+        monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("invalid secret issued a runtime command"))
+        monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--auth", "oidc", "--non-interactive", "--models", "none", "--oidc-client-secret-file", str(source)])
+        assert installer.main() == 1
+        assert not args.root.exists()
+
+
+def synthetic_saved_account_preflight(tmp_path, request, monkeypatch, *, managed=True, mutation=None, root_style=False):
+    from tests.test_first_run_handoff import configured_node
+    from case_intelligence.local_accounts import LocalAccountRepository
+    root, _, paths = configured_node(tmp_path.resolve())
+    if not managed:
+        installation = json.loads((root / "installation.json").read_text())
+        installation["local_account_management"] = False
+        (root / "installation.json").write_text(json.dumps(installation))
+        installer._replace_env(root / "config/recordbench.env", "CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE", "/run/recordbench-secrets/local-accounts.json")
+        installer._replace_env(root / "config/recordbench.env", "CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT", "")
+    account_file = paths["accounts" if managed else "secrets"] / "local-accounts.json"
+    LocalAccountRepository(account_file).initialize("alice.admin", "Alice Administrator", "synthetic-preflight-password", actor="synthetic-operator")
+    if mutation == "symlink":
+        target = account_file.with_name("synthetic-target")
+        account_file.rename(target)
+        account_file.symlink_to(target)
+    elif mutation == "mode":
+        account_file.chmod(0o644)
+    elif mutation in {"malformed", "empty", "oversized", "invalid-utf8"}:
+        account_file.write_bytes({"malformed": b"{synthetic invalid", "empty": b"", "oversized": b"x" * (1024 * 1024 + 1), "invalid-utf8": b"\xff"}[mutation])
+    elif mutation in {"v1", "v3", "hash", "no-admin"}:
+        value = json.loads(account_file.read_text())
+        if mutation == "v1":
+            value["format_version"] = 1
+            for account in value["accounts"]:
+                del account["session_revision"]
+        elif mutation == "v3":
+            value["format_version"] = 3
+        elif mutation == "hash":
+            value["accounts"][0]["password_hash"] = "$argon2id$synthetic-invalid"
+        else:
+            value["accounts"][0]["roles"] = []
+        account_file.write_text(json.dumps(value))
+    elif mutation in {"directory", "fifo"}:
+        account_file.unlink()
+        if mutation == "directory":
+            account_file.mkdir()
+        else:
+            os.mkfifo(account_file, 0o600)
+    if root_style:
+        # Emulate a root-owned fixture on an unprivileged workstation; the
+        # Linux descriptor path lookup is synthetic, with no chmod/chown.
+        original_stat, original_fstat, original_readlink = Path.stat, os.fstat, os.readlink
+        entries = [tmp_path, *tmp_path.parents, *tmp_path.rglob("*")]
+        inode_paths = {(original_stat(path).st_dev, original_stat(path).st_ino): path for path in entries}
+        def root_metadata(metadata):
+            fields = list(metadata)
+            fields[4] = 0
+            return os.stat_result(fields)
+        def descriptor_path(path, *a, **k):
+            if str(path).startswith("/proc/self/fd/"):
+                metadata = original_fstat(int(str(path).rsplit("/", 1)[1]))
+                return str(inode_paths[(metadata.st_dev, metadata.st_ino)])
+            return original_readlink(path, *a, **k)
+        monkeypatch.setattr(Path, "stat", lambda path, *a, **k: root_metadata(original_stat(path, *a, **k)))
+        monkeypatch.setattr(os, "fstat", lambda descriptor: root_metadata(original_fstat(descriptor)))
+        monkeypatch.setattr(os, "readlink", descriptor_path)
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+    request.getfixturevalue("ready_host")
+    if mutation == "owner":
+        original_fstat = os.fstat
+        original_stat = Path.stat
+        target = original_stat(account_file).st_ino
+        def wrong_owner(metadata):
+            if metadata.st_ino == target:
+                fields = list(metadata)
+                fields[4] = 12345
+                return os.stat_result(fields)
+            return metadata
+        monkeypatch.setattr(os, "fstat", lambda descriptor: wrong_owner(original_fstat(descriptor)))
+        monkeypatch.setattr(Path, "stat", lambda path, *a, **k: wrong_owner(original_stat(path, *a, **k)))
+    args = installer._parser().parse_args(["install", "--root", str(root), "--resume", "--non-interactive"])
+    installer._saved_node_arguments(args, root)
+    return root, args, account_file
+
+
+@pytest.mark.parametrize("managed", [False, True])
+@pytest.mark.parametrize("mutation", ["symlink", "mode", "owner", "malformed", "empty", "oversized", "invalid-utf8", "v3", "hash", "no-admin", "directory", "fifo"])
+def test_saved_account_preflight_rejects_unsafe_or_invalid_store_before_commands(tmp_path, request, monkeypatch, managed, mutation):
+    root, args, account_file = synthetic_saved_account_preflight(tmp_path, request, monkeypatch, managed=managed, mutation=mutation)
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("invalid saved account reached a runtime command"))
+    monkeypatch.setattr(installer, "_provision", lambda *a, **k: pytest.fail("invalid saved account reached provisioning"))
+    result = installer._collect_preflight("none", args, needs_model_staging=False)
+    assert not result.ready
+    assert checks_by_name(result)["saved-node"].state == "fail"
+    assert str(account_file) not in json.dumps(result.payload())
+    with pytest.raises(RuntimeError, match="prerequisites"):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+
+
+@pytest.mark.parametrize("root_style", [False, True])
+@pytest.mark.parametrize("managed,version,expected", [(False, 1, True), (False, 2, True), (True, 1, False), (True, 2, True)])
+def test_saved_account_preflight_requires_v2_only_for_browser_management(tmp_path, request, monkeypatch, capsys, managed, version, expected, root_style):
+    root, args, account_file = synthetic_saved_account_preflight(tmp_path, request, monkeypatch, managed=managed, mutation="v1" if version == 1 else None, root_style=root_style)
+    before = account_file.read_bytes()
+    result = installer._collect_preflight("none", args, needs_model_staging=False)
+    assert result.ready is expected
+    assert checks_by_name(result)["saved-node"].state == ("pass" if expected else "fail")
+    capsys.readouterr()
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("standalone preflight issued a runtime command"))
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(root), "--resume", "--non-interactive", "--json"])
+    assert installer.main() == (0 if expected else 1)
+    assert json.loads(capsys.readouterr().out)["ready"] is expected
+    assert account_file.read_bytes() == before
+
+
+@pytest.mark.parametrize("display,expected", [("Synthetic\x7fAdmin", False), ("Synthetic\x85Admin", False),
+    ("Synthetic\u202eAdmin", False), ("Synthetic\u200dAdmin", False), ("e\u0301" * 160, True)])
+def test_initial_administrator_preflight_uses_shared_unicode_display_rules(tmp_path, ready_host, monkeypatch, display, expected):
+    args = preflight_args(tmp_path, "--auth", "local", "--non-interactive", "--password-stdin", "--admin-display-name", display)
+    result = installer._collect_preflight("none", args)
+    assert result.ready is expected
+    assert checks_by_name(result)["admin-identity"].state == ("pass" if expected else "fail")
+    if not expected:
+        monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("invalid display name reached writes"))
+        monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--models", "none", "--auth", "local", "--non-interactive", "--password-stdin", "--admin-display-name", display])
+        assert installer.main() == 1
+        assert not args.root.exists()
+
+
+def test_ready_host_keeps_no_follow_path_and_descriptor_identity_consistent(tmp_path, ready_host):
+    path = tmp_path / "synthetic-owner"
+    path.write_text("synthetic metadata")
+    path.chmod(0o600)
+    link = tmp_path / "synthetic-link"
+    link.symlink_to(path)
+    assert path.stat().st_uid == path.lstat().st_uid == os.geteuid()
+    assert stat.S_ISLNK(link.lstat().st_mode)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        assert os.fstat(descriptor).st_uid == path.stat().st_uid
+    finally:
+        os.close(descriptor)
+
+
+def test_saved_account_preflight_allows_missing_leaf_with_initial_password_input(tmp_path, request, monkeypatch, capsys):
+    root, args, account_file = synthetic_saved_account_preflight(tmp_path, request, monkeypatch)
+    account_file.unlink()
+    capsys.readouterr()
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("standalone preflight issued a runtime command"))
+    monkeypatch.setattr(installer, "_password", lambda *a, **k: pytest.fail("preflight read a password"))
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(root), "--resume", "--non-interactive", "--password-stdin", "--json"])
+    assert installer.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ready"]
+    assert next(row for row in result["checks"] if row["name"] == "admin-password-input")["state"] == "pass"
+    assert not account_file.exists()

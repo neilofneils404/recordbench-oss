@@ -29,6 +29,14 @@ def test_shared_and_runtime_parsers_preserve_supported_accounts(payload, version
     assert PasswordHasher().verify(account.password_hash, "synthetic-format-password")
 
 
+@pytest.mark.parametrize("display_name", ["Synthetic\u202eReviewer", "Synthetic\x7fReviewer"])
+def test_runtime_and_backup_reject_display_names_unsupported_by_principals(payload, display_name):
+    payload["accounts"][0]["display_name"] = display_name
+    for parse in (parse_accounts, _parse):
+        with pytest.raises(RuntimeError, match="Display name"):
+            parse(payload)
+
+
 @pytest.mark.parametrize("encoded", [
     "$argon2id$v=19$m=0,t=0,p=0$c3ludGhldGlj$c3ludGhldGlj",
     "$argon2id$v=19$m=7,t=1,p=1$c3ludGhldGlj$c3ludGhldGlj",

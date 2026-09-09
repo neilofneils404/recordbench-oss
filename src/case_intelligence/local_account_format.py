@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 _USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{2,127}$")
@@ -25,10 +26,10 @@ class LocalAccount:
 
 def normalized_account(username: str, display_name: str) -> tuple[str, str]:
     login = (username or "").strip().casefold()
-    display = (display_name or "").strip()
+    display = unicodedata.normalize("NFC", (display_name or "").replace("\r\n", "\n").replace("\r", "\n")).strip()
     if _USERNAME.fullmatch(login) is None:
         raise RuntimeError("Username must be 3-128 lowercase letters, numbers, dots, dashes, underscores, or @")
-    if not display or len(display) > 160 or any(ord(value) < 32 for value in display):
+    if not display or len(display) > 160 or any(unicodedata.category(value) in {"Cc", "Cf"} for value in display):
         raise RuntimeError("Display name is missing or invalid")
     return login, display
 

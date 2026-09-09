@@ -222,6 +222,60 @@ def test_display_name_refresh_preserves_session_and_new_accounts_are_live(tmp_pa
     assert not context.is_administrator
 
 
+def test_relocation_rollback_denies_pre_move_and_moved_sessions_without_intervening_requests(tmp_path):
+    repo = repository(tmp_path)
+    original = identity(tmp_path, repo)
+    _, before_cookie = original.login_local("alice.admin", PASSWORD)
+    before = repo.read()["alice.admin"]
+    destination = tmp_path / "dedicated/local-accounts.json"
+    backup = tmp_path / "recovery/accounts.json"
+    repo.relocate(destination, backup, actor=ACTOR, writers_stopped=True)
+    moved = identity(tmp_path, LocalAccountRepository(destination))
+    _, moved_cookie = moved.login_local("alice.admin", PASSWORD)
+    # Restore the old path with the original database and signing key. Neither
+    # cookie has been resolved since its account snapshot was replaced.
+    shutil.copy2(backup, repo.path)
+    restored = identity(tmp_path, repo)
+    assert restored.resolve(before_cookie) is None
+    assert restored.resolve(moved_cookie) is None
+    context, fresh = restored.login_local("alice.admin", PASSWORD)
+    assert context.is_administrator and restored.resolve(fresh)
+    after = repo.read()["alice.admin"]
+    assert (after.username, after.display_name, after.password_hash, after.roles, after.enabled) == (
+        before.username, before.display_name, before.password_hash, before.roles, before.enabled)
+    assert len({before.session_revision, moved.local_settings.accounts["alice.admin"].session_revision,
+                after.session_revision}) == 3
+    assert backup.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("display_name", ["Synthetic\u202eReviewer", "Synthetic\x7fReviewer", "Synthetic\x85Reviewer", "Synthetic\u200dReviewer"])
+@pytest.mark.parametrize("operation", ["create", "rename"])
+def test_invalid_display_names_do_not_change_account_snapshot(tmp_path, display_name, operation):
+    repo = repository(tmp_path)
+    before = repo.path.read_bytes()
+    with pytest.raises(RuntimeError, match="Display name"):
+        if operation == "create":
+            repo.create("new.reviewer", display_name, PASSWORD, actor=ACTOR)
+        else:
+            repo.change_display_name("alice.admin", display_name, actor=ACTOR)
+    assert repo.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("display_name, normalized", [("  Jose\u0301 審査 🙂  ", "José 審査 🙂"), ("e\u0301" * 160, "é" * 160)], ids=["multilingual", "normalized-limit"])
+def test_unicode_display_names_normalize_before_create_and_rename(tmp_path, display_name, normalized):
+    repo = repository(tmp_path)
+    repo.create("new.reviewer", display_name, PASSWORD, actor=ACTOR)
+    service = identity(tmp_path, repo)
+    context, cookie = service.login_local("new.reviewer", PASSWORD)
+    assert context.display_name == normalized
+    assert repo.read()["new.reviewer"].display_name == normalized
+    _, admin_cookie = service.login_local("alice.admin", PASSWORD)
+    repo.change_display_name("alice.admin", display_name, actor=ACTOR)
+    assert repo.read()["alice.admin"].display_name == normalized
+    assert service.resolve(admin_cookie).display_name == normalized
+    assert service.resolve(cookie).display_name == normalized
+
+
 def test_invalid_live_file_denies_existing_session_and_sign_in_safely(tmp_path):
     repo = repository(tmp_path)
     service = identity(tmp_path, repo)
@@ -517,10 +571,11 @@ def test_account_move_syncs_each_new_parent_before_canonical_change(tmp_path, mo
         else:
             change()
             assert not pending and len(synced) == (2 if operation == "migrate" else 4)
-            assert backup.read_bytes() == before
             if operation == "relocate":
+                assert backup.read_bytes() != before
                 assert not repo.path.exists() and destination.exists()
             else:
+                assert backup.read_bytes() == before
                 assert json.loads(repo.path.read_bytes())["format_version"] == 2
 
 
