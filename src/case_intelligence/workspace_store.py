@@ -1,6 +1,8 @@
 """Persistent development matters and conversations for Milestone A."""
 from __future__ import annotations
 
+from .review_budget import budget_metadata, budget_description
+
 import hashlib
 import json
 import random
@@ -680,6 +682,15 @@ class ResearchJobRecord:
     last_claimed_at: str | None
     finished_at: str | None
     updated_at: str
+
+
+    @property
+    def review_budget(self) -> dict:
+        return budget_metadata(self.result, self.plan)
+
+    @property
+    def review_budget_description(self) -> str:
+        return budget_description(self.review_budget)
 
 
 @dataclass(frozen=True)
@@ -9436,7 +9447,7 @@ class WorkspaceStore:
         now = self._now()
         with self._lock, self.connection:
             rows = self.connection.execute(
-                "SELECT job_id,cancellation_requested,total_steps,completed_steps "
+                "SELECT job_id,cancellation_requested,total_steps,completed_steps,result_json "
                 "FROM workbench_research_job WHERE state='running' ORDER BY created_at,job_id"
             ).fetchall()
             for row in rows:
@@ -9447,10 +9458,14 @@ class WorkspaceStore:
                     "Cancelled during restart recovery." if cancelled
                     else "Queued again after the workbench restarted. Completed evidence is preserved."
                 )
+                result = json.loads(row["result_json"] or "{}")
+                if cancelled:
+                    result["stop_reason"] = "cancelled"
+                encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
                 self.connection.execute(
-                    "UPDATE workbench_research_job SET state=?,stage=?,message=?,worker_id=NULL,"
+                    "UPDATE workbench_research_job SET result_json=?,state=?,stage=?,message=?,worker_id=NULL,"
                     "started_at=NULL,finished_at=?,updated_at=? WHERE job_id=? AND state='running'",
-                    (state, stage, message, now if cancelled else None, now, row["job_id"]),
+                    (encoded, state, stage, message, now if cancelled else None, now, row["job_id"]),
                 )
                 self._append_research_event_locked(
                     row["job_id"], state=state, stage=stage, message=message,
@@ -9744,10 +9759,13 @@ class WorkspaceStore:
             cancelled = bool(row["cancellation_requested"]) or value == "Research cancelled."
             state, stage = ("cancelled", "cancelled") if cancelled else ("failed", "failed")
             final_message = "Research cancelled." if cancelled else (value or "Research could not be completed.")
+            result = json.loads(row["result_json"] or "{}")
+            result["stop_reason"] = state
+            encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
             self.connection.execute(
-                "UPDATE workbench_research_job SET state=?,stage=?,message=?,worker_id=NULL,"
+                "UPDATE workbench_research_job SET result_json=?,state=?,stage=?,message=?,worker_id=NULL,"
                 "finished_at=?,updated_at=? WHERE job_id=? AND state='running'",
-                (state, stage, final_message, now, now, job_id),
+                (encoded, state, stage, final_message, now, now, job_id),
             )
             updated = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,)
@@ -9765,6 +9783,7 @@ class WorkspaceStore:
             raise WorkspaceProblem("Only the reviewer who started this run can cancel it.")
         now = self._now()
         with self._lock, self.connection:
+            job = self.research_job(matter_id, actor_id, job_id)
             if job.state == "queued":
                 state, stage, message, finished = "cancelled", "cancelled", "Research cancelled before it started.", now
             elif job.state == "running":
@@ -9773,10 +9792,14 @@ class WorkspaceStore:
                 return job
             else:
                 raise WorkspaceProblem("This research run can no longer be cancelled.")
+            result = dict(job.result)
+            if state == "cancelled":
+                result["stop_reason"] = "cancelled_before_start"
+            encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
             self.connection.execute(
-                "UPDATE workbench_research_job SET state=?,stage=?,message=?,"
+                "UPDATE workbench_research_job SET result_json=?,state=?,stage=?,message=?,"
                 "cancellation_requested=1,finished_at=?,updated_at=? WHERE job_id=?",
-                (state, stage, message, finished, now, job_id),
+                (encoded, state, stage, message, finished, now, job_id),
             )
             self._append_research_event_locked(
                 job_id, state=state, stage=stage, message=message,

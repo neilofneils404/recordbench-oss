@@ -51,6 +51,7 @@
           <progress max="{{ active_research.total_steps or 1 }}" value="{{ active_research.completed_steps }}" data-workflow-progress></progress>
           <small class="workflow-eta" data-workflow-eta>{% if active_research.state == 'queued' %}Waiting for earlier saved work to finish.{% elif active_research.state == 'running' %}Calculating remaining time…{% endif %}</small>
         </div>
+        <p class="workflow-caution" data-workflow-budget>{{ active_research.review_budget_description }}</p>
         <div class="run-counts"><span><strong data-workflow-candidates>{{ active_research.candidate_count }}</strong> Passages considered</span><span><strong data-workflow-evidence>{{ active_research.evidence_count }}</strong> Supporting passages</span></div>
         {% if active_research.state in ('queued','running') %}
         <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Cancel safely</button></form>
