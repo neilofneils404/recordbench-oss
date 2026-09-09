@@ -122,3 +122,7 @@ installation plus interrupted resume, actual source preparation, selected-model
 runtime checks, two-user access, and an installed-node backup/clean-restore drill
 with synthetic data on the intended host. A green PR or loopback browser check
 does not establish those target-host outcomes.
+
+A resumed dry-run can use the verified local model receipt to plan an offline
+restart without requesting a staging token. Real provisioning still verifies the
+selected model artifacts through its runtime image before launch.

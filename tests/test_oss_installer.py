@@ -54,7 +54,7 @@ def test_interrupted_provisioning_resume_retains_canonical_account_profile(tmp_p
     monkeypatch.setattr(installer, "_preflight", lambda *args, **kwargs: ())
     monkeypatch.setattr(installer, "_run", lambda *args, **kwargs: None)
     calls = []
-    monkeypatch.setattr(installer, "_provision", lambda console, args, *rest: calls.append(args.enable_account_management))
+    monkeypatch.setattr(installer, "_provision", lambda console, args, *rest, **kwargs: calls.append(args.enable_account_management))
     args = installer._parser().parse_args(["install", "--resume"])
     assert not args.enable_account_management
     installer._resume_node(installer.Console(color=False, quiet=True), args, root)
@@ -1225,13 +1225,16 @@ def test_completed_diarization_resume_uses_saved_plan_without_new_token(tmp_path
         "0, Synthetic Busy, 24576, 1000, 8.0\n1, Synthetic Selected, 24576, 24000, 8.0"
         if cmd[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
     commands = []
-    monkeypatch.setattr(installer, "_run", lambda console, cmd, **kw: commands.append(cmd))
+    def command(console, cmd, **kw):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(installer, "_run", command)
     monkeypatch.setattr(installer, "_hf_token", lambda *a: pytest.fail("completed resume must remain offline"))
-    provisions = []
-    monkeypatch.setattr(installer, "_provision", lambda *a, **kw: provisions.append(a[1]))
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     args = installer._parser().parse_args(["install", "--root", str(root), "--resume", "--non-interactive", "--dry-run"])
     installer._resume_node(installer.Console(color=False, quiet=True), args, root)
-    assert len(commands) == 1 and "config" in commands[0]
-    assert provisions == [args]
+    assert "config" in commands[0] and "up" in commands[-1]
+    assert not any("stage" in command for command in commands)
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
     assert args.transcription_gpu == "1" and args.transcription_languages == "en,es"
     assert args.transcription_min_free_vram_mib == 16000

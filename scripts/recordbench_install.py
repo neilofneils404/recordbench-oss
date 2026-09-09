@@ -1876,6 +1876,7 @@ def _provision(
     models: str,
     admin_username: str | None,
     admin_display: str | None,
+    *, model_cache_verified: bool = False,
 ) -> None:
     profiles = ["tools"]
     if not args.dry_run:
@@ -1964,7 +1965,9 @@ def _provision(
         )
         verification = _run(console, [*compose, "run", "--rm", "--no-deps", "-T", "model-stager", "verify",
             "--groups", groups, "--review-profile", args.review_model_profile], check=False, capture=True, dry_run=args.dry_run)
-        verified = not args.dry_run and verification.returncode == 0
+        # A dry-run may reuse the launcher's read-only receipt verification.
+        # Real provisioning always rechecks through the selected runtime image.
+        verified = model_cache_verified if args.dry_run else verification.returncode == 0
         if verified:
             console.ok("Existing model selection verified offline; staging and token entry skipped")
         else:
@@ -2268,7 +2271,8 @@ def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None
         console.warn("Prior boot stopped before the provisioning seal; validating and continuing existing state")
     else:
         console.note("Prepared phase receipt found; revalidating storage, accounts and the offline model selection")
-    _provision(console, args, root, auth, models, args.admin_username, args.admin_display_name)
+    _provision(console, args, root, auth, models, args.admin_username, args.admin_display_name,
+               model_cache_verified=not needs_model_staging)
 
 
 def _backup_tool(root: Path) -> Path:
