@@ -101,7 +101,8 @@ For missing prerequisites:
 - Have an administrator create only the dedicated node and matter-storage paths
   and assign them to the non-root service account. The account's primary group
   must also be non-root. Do not use a home directory, symlink, or shared export
-  root. Existing selected directories must belong to that account.
+  root. Existing selected directories must belong to that account. A first-install
+  node root must be empty; use `--resume` only for the intended existing node.
 - Leave more than the installer's 100 GiB storage safety reserve free on the
   selected filesystems. The larger profile targets above are advisory alpha
   planning figures, not validated minimums. Container-engine image storage may
@@ -113,7 +114,8 @@ For missing prerequisites:
 - For AI tasks, install the NVIDIA driver and
   [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
   The checklist checks registered Docker runtime support and the selected model
-  plan against currently reported GPU capability and free memory. It neither
+  plan against currently reported GPU capability and free memory. It also
+  validates supported transcription languages and the diarization/profile combination. It neither
   pulls a test image nor proves container/device or offline model readiness.
 
 Directory writability is a metadata/access check with no write attempt; NAS

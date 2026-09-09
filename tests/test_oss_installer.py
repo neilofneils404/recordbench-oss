@@ -651,3 +651,38 @@ def test_preflight_supplied_lan_tls_pair_is_read_only(tmp_path, ready_host):
     assert check.state == "pass"
     assert "trust must be verified" in check.observed
     assert not args.root.exists()
+
+
+@pytest.mark.parametrize("options", [
+    ["--models", "none", "--enable-diarization"],
+    ["--models", "review", "--enable-diarization"],
+    ["--models", "transcription", "--transcription-languages", "fr"],
+    ["--models", "all", "--transcription-languages", ""],
+])
+def test_preflight_rejects_invalid_model_option_combinations(tmp_path, ready_host, options):
+    args = preflight_args(tmp_path, *options)
+    result = installer._collect_preflight(args.models, args)
+    assert not result.ready
+    assert checks_by_name(result)["model-options"].state == "fail"
+    assert not args.root.exists()
+
+
+def test_preflight_nonempty_root_requires_explicit_resume(tmp_path, ready_host, monkeypatch):
+    args = preflight_args(tmp_path)
+    args.root.mkdir()
+    (args.root / "existing.txt").write_text("synthetic existing data")
+    monkeypatch.setattr(installer.os, "geteuid", installer.os.getuid)
+    blocked = installer._collect_preflight("none", args)
+    assert not blocked.ready
+    assert checks_by_name(blocked)["node-empty"].state == "fail"
+    args.resume = True
+    assert installer._collect_preflight("none", args).ready
+    assert (args.root / "existing.txt").read_text() == "synthetic existing data"
+
+
+def test_invalid_model_options_stop_install_before_state_creation(tmp_path, ready_host, monkeypatch):
+    node = tmp_path.resolve() / "uncreated node"
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none",
+                                     "--enable-diarization", "--non-interactive"])
+    assert installer.main() == 1
+    assert not node.exists()

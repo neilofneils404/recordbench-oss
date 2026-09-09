@@ -1017,6 +1017,17 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
         "Prepare HTTPS", "Install the distribution OpenSSL package; retain HTTPS and secure cookies.")
 
     if args is not None:
+        try:
+            languages = _transcription_languages(args.transcription_languages)
+            _model_stage_groups(models, transcription_languages=languages,
+                                diarization=bool(args.enable_diarization))
+            model_options_ok = True
+        except RuntimeError:
+            model_options_ok = False
+        add("model-options", model_options_ok,
+            "Selected model options are compatible" if model_options_ok else "Selected model options conflict or use an unsupported language",
+            "Stage the selected AI capabilities",
+            "Choose --transcription-languages en, es, or en,es. Enable diarization only with --models transcription or all.")
         for name, path in (("node-storage", args.root), ("matter-storage", args.storage_root or args.root / "matter-storage")):
             path = path.expanduser()
             try:
@@ -1029,6 +1040,12 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
                 if path.exists():
                     safe = safe and path.is_dir() and path.stat().st_uid == os.geteuid()
                 writable = safe and os.access(ancestor, os.W_OK | os.X_OK)
+                if name == "node-storage" and safe and path.is_dir():
+                    empty_or_resume = args.resume or not any(path.iterdir())
+                    add("node-empty", empty_or_resume,
+                        "Existing root can be prepared" if empty_or_resume else "Installation root already contains files",
+                        "Prepare a dedicated installation root",
+                        "Choose a new empty node directory. Use --resume only when this directory belongs to the RecordBench node being resumed.")
                 add(name, writable, "Directory access checks pass (no write attempted)" if writable else "Unsafe path, ownership, or directory access",
                     "Create private application state" if name == "node-storage" else "Store and process admitted sources",
                     "Choose a dedicated absolute directory without symlinks, owned by the service account. Have an administrator grant that account narrow write and search access; do not use a home directory or shared export root.")
