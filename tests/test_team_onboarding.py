@@ -139,3 +139,29 @@ def test_seeded_preview_identities_do_not_claim_observed_signin(tmp_path, monkey
         assert page.status_code == 200
         assert 'Another eligible person has signed in' not in page.text
         assert 'Preview identities are available; teammate sign-in is not verified.' in page.text
+
+
+def test_people_recovery_guidance_uses_installed_release_documents(tmp_path):
+    app, repo = configured_app(tmp_path, enabled=False)
+    with TestClient(app, base_url=ORIGIN) as admin:
+        login(admin)
+        page = admin.get("/admin/people/setup")
+        assert page.status_code == 200
+        assert "reviewed release currently running" in page.text
+        assert "docs/LOCAL_ACCOUNT_BROWSER.md" in page.text
+        assert "blob/main" not in page.text
+
+
+def test_people_qa_clears_deployment_settings_before_runtime_import(monkeypatch, tmp_path):
+    import runpy
+    import os
+    namespace = runpy.run_path(str(__import__('pathlib').Path(__file__).parents[1] / 'scripts/qa-people-browser.py'))
+    for key in ("CASE_INTELLIGENCE_POSTGRES_DSN", "CASE_INTELLIGENCE_MANAGED_STORAGE_ROOT", "CASE_INTELLIGENCE_SOURCE_REGISTRY", "CASE_INTELLIGENCE_TRANSCRIPTION_URL", "CASE_INTELLIGENCE_CLAMAV_HOST", "RECORDBENCH_LOCAL_ACCOUNT_ROOT"):
+        monkeypatch.setenv(key, "synthetic-inherited-value")
+    monkeypatch.setenv("PLAYWRIGHT_MODULE", "synthetic-browser-package")
+    monkeypatch.setenv("RECORDBENCH_QA_BROWSER_CHANNEL", "chrome")
+    namespace["_isolate_environment"]()
+    assert not any(key.startswith("CASE_INTELLIGENCE_") for key in os.environ)
+    assert "RECORDBENCH_LOCAL_ACCOUNT_ROOT" not in os.environ
+    assert os.environ["PLAYWRIGHT_MODULE"] == "synthetic-browser-package"
+    assert os.environ["RECORDBENCH_QA_BROWSER_CHANNEL"] == "chrome"
