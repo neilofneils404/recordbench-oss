@@ -4,6 +4,7 @@ import runpy
 
 
 def test_synthetic_browser_environment_removes_host_backends(monkeypatch):
+    monkeypatch.setattr(os, "environ", os.environ.copy())
     namespace = runpy.run_path(str(Path(__file__).parents[1] / "scripts/synthetic_browser_environment.py"))
     for key in ("CASE_INTELLIGENCE_POSTGRES_DSN", "CASE_INTELLIGENCE_POSTGRES_DSN_FILE",
                 "CASE_INTELLIGENCE_MANAGED_STORAGE_ROOT", "CASE_INTELLIGENCE_TRANSCRIPTION_URL",
