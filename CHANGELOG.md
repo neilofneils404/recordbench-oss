@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 2026-09-09: Assemble selected final-acceptance contributions: export readiness,
+  preserved Report review basis, explicit investigation accounting and isolated
+  candidate-history validation. Record exact component heads and deferred work.
+  No schema, dependency, installer, account or model-selection change.
+
 - 2026-09-08: Add **Check export** to Work product and the final-export step.
   Reuse complete-bundle preparation, show inspection time and links to Reports
   needing attention, and validate again on download. Preserve saved work,
