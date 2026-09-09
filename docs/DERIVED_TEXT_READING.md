@@ -17,7 +17,9 @@ it, and charge decoded text and unit counts before retaining each yielded unit.
 Budgeted file-backed documents require the streaming reader bound by
 `PilotStore`; they fail closed if only a legacy whole-file loader is available.
 Unbudgeted callers retain the legacy fallback. Inline units receive the same
-per-unit deadline checks. Malformed containers, versions, trailing content,
+per-unit deadline checks. A file-backed document with neither reader bound is
+unavailable for every iterator caller; it cannot be classified as empty without reading
+its derived text. Malformed containers, versions, trailing content,
 excessive nesting and oversized records remain explicit failures.
 
 These are cooperative limits: one bounded file read or JSON decode cannot be

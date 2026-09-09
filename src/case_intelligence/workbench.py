@@ -59,6 +59,7 @@ from .identity import (
     OidcSettings,
 )
 from .full_text_review import FullTextReviewLedger, iter_text_export
+from .text_ledger_response import TextLedgerStreamingResponse
 from .generation import (
     EvidenceItem,
     GenerationGroundingRejected,
@@ -9378,10 +9379,12 @@ def create_workbench_app(
                 run_id,
                 administrator_override=administrator_override,
             )
+            text_coverage = FullTextReviewLedger(bench.workspace).coverage(
+                matter.matter_id, actor, run.run_id, administrator_override=administrator_override)
         except KeyError as exc:
             raise HTTPException(404, "Review run not found") from exc
         payload = review_status_projection(matter, run)
-        payload["text_review"] = FullTextReviewLedger(bench.workspace).coverage(matter.matter_id, matter.owner_id if administrator_override else actor, run.run_id)
+        payload["text_review"] = text_coverage
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     @app.get("/matters/{slug}/full-review/{run_id}/text")
@@ -9389,13 +9392,14 @@ def create_workbench_app(
         context = auth_context(request)
         try:
             matter = authorized_matter(request, slug)
-            actor = matter.owner_id if getattr(request.state, "administrator_matter_override", None) == matter.matter_id else context.principal_id
-            run = bench.workspace.review_run(matter.matter_id, actor, run_id)
+            actor = context.principal_id
+            override = getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+            run = bench.workspace.review_run(matter.matter_id, actor, run_id, administrator_override=override)
             ledger = FullTextReviewLedger(bench.workspace)
-            coverage = ledger.coverage(matter.matter_id, actor, run_id)
+            coverage = ledger.coverage(matter.matter_id, actor, run_id, administrator_override=override)
             if coverage is None:
                 raise KeyError(run_id)
-            rows = ledger.rows(matter.matter_id, actor, run_id, after=after, limit=100)
+            rows = ledger.rows(matter.matter_id, actor, run_id, after=after, limit=100, administrator_override=override)
             for row in rows:
                 from .full_text_review import read_locator
                 try:
@@ -9403,7 +9407,7 @@ def create_workbench_app(
                 except WorkspaceProblem as exc:
                     row["citation"] = {}
                     row["locator_error"] = str(exc)
-            sources = ledger.extraction_rows(matter.matter_id, actor, run_id)
+            sources = ledger.extraction_rows(matter.matter_id, actor, run_id, administrator_override=override)
         except KeyError as exc:
             raise HTTPException(404, "Text review not found") from exc
         audit(request, "full_review.text_open", "success", context=context, matter=matter,
@@ -9428,11 +9432,11 @@ def create_workbench_app(
             object_type="review_run", object_id=run_id)
         return RedirectResponse(_query_url(f"/matters/{slug}/full-review", criterion=run.criterion_id), status_code=303)
 
-    @app.get("/matters/{slug}/full-review/{run_id}/text/export")
+    @app.get("/matters/{slug}/full-review/{run_id}/text/export", dependencies=[Depends(require_matter_response_lease)])
     def export_full_text_ledger(request: Request, slug: str, run_id: str, format_name: str = Query("json", alias="format", pattern="^(json|csv)$")):
         context = auth_context(request)
         try:
-            matter = authorized_matter(request, slug)
+            matter = response_lease_matter(request, slug)
             override = getattr(request.state, "administrator_matter_override", None) == matter.matter_id
             bench.workspace.review_run(matter.matter_id, context.principal_id, run_id, administrator_override=override)
             if not FullTextReviewLedger(bench.workspace).enabled(run_id):
@@ -9441,9 +9445,11 @@ def create_workbench_app(
             raise HTTPException(404, "Text review not found") from exc
         audit(request, "full_review.text_export", "success", context=context, matter=matter,
             object_type="review_run", object_id=run_id, details={"format": format_name})
-        return StreamingResponse(iter_text_export(bench.workspace, matter.matter_id, context.principal_id, run_id,
+        response = TextLedgerStreamingResponse(iter_text_export(bench.workspace, matter.matter_id, context.principal_id, run_id,
             format_name, administrator_override=override), media_type="application/json" if format_name == "json" else "text/csv",
+            release_lease=lambda: bench.finish_matter_response(matter.matter_id, request.state.matter_response_lease["lease_id"]),
             headers={"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="full-text-review.{format_name}"'})
+        return transfer_matter_response_lease(request, response)
 
     @app.post(
         "/matters/{slug}/full-review/{run_id}/cancel",
