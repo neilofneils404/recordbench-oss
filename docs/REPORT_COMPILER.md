@@ -36,7 +36,9 @@ not return a partial human record set as a completed draft.
   review. A response with omitted, invalid, or repeated classification claims
   cannot prove the other records irrelevant. Generation verification retains a
   separate duplicate-claim count so normalization cannot hide consumed output
-  slots; it does not label duplicate claims as unsupported statements.
+  slots; it does not label duplicate claims as unsupported statements. A classifier
+  limitation also leaves the batch incomplete: an ambiguous relevance assessment
+  cannot exclude an unreturned human note.
 - A note longer than the model's per-item input limit is never marked completely
   classified from its prefix. Its full original text remains available, and
   `truncated_review_material_ids` identifies the affected records alongside the
@@ -62,7 +64,9 @@ not return a partial human record set as a completed draft.
   complete source coverage either.
 - Repeated generated claims with the same text and evidence set occupy one
   section per category regardless of evidence order. The first claim's citation
-  order is preserved for display; distinct evidence sets remain separate.
+  order is preserved for display; distinct evidence sets remain separate. The
+  verifier counts these duplicates by text and an order-independent evidence set
+  before source-completeness decisions, including non-saturated outputs.
 - Verified limitations and evidence notices stay in each generated finding's
   readable body, before its review basis. Source-supported limitations include
   their citations and identify the corresponding section-local source numbers.
@@ -74,7 +78,12 @@ not return a partial human record set as a completed draft.
   `Verification notice` paragraph. A source-supported limitation never attributes
   verifier behavior to its source. Legacy conversation answer fields and display
   remain compatible; this compiler uses the explicitly separated metadata.
-- Compiler version 7 changes the fingerprint so earlier previews cannot share
+- Timeline headings and sort keys consider the source-supported limitation as
+  well as the claim. Common date hedges such as may, might, approximate, estimated,
+  circa, uncertain, and unconfirmed retain the date wording without claiming an
+  exact date, including saved records with a supplied date label. A limitation
+  cannot introduce an event date missing from the claim.
+- Compiler version 8 changes the fingerprint so earlier previews cannot share
   an identity with the corrected allocation, relevance, citation, and
   qualification policy.
 - This work does not resolve #44's separate finding about distinct machine
@@ -90,8 +99,10 @@ empty and topic-excluded notes, and initially available model failure. Mixed
 classification/source outcomes, partial entity classification, exact citation
 persistence limits, reversed-evidence duplicates, classifier output capacity,
 matches beyond a truncated note prefix, and persisted/exported limitations and
-transcript notices have focused regressions. Existing
-compiler tests also exercise grounding, coverage, cancellation, export text
+transcript notices have focused regressions. Additional real-service regressions
+cover qualified timeline ordering, ambiguous relevance limitations, and reversed
+evidence order in duplicate output; exact-date and distinct-claim controls remain.
+Existing compiler tests also exercise grounding, coverage, cancellation, export text
 limits, current Report storage compatibility, and source snapshot fingerprints.
 
 No schema, storage, authentication, dependency, model revision, or deployment

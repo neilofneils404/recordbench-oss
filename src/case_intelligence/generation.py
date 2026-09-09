@@ -1203,6 +1203,7 @@ class GroundedGenerationService:
                 elapsed_ms,
             )
         accepted: list[VerifiedClaim] = []
+        accepted_keys: set[tuple[str, frozenset[str]]] = set()
         omitted = 0
         duplicates = 0
         for value in claims:
@@ -1212,10 +1213,13 @@ class GroundedGenerationService:
             claim = _verify_text(value.get("text"), value.get("evidence_ids"), evidence_map)
             if claim is None:
                 omitted += 1
-            elif claim not in accepted:
-                accepted.append(claim)
             else:
-                duplicates += 1
+                key = (claim.text, frozenset(claim.evidence_ids))
+                if key in accepted_keys:
+                    duplicates += 1
+                else:
+                    accepted_keys.add(key)
+                    accepted.append(claim)
         limitation_value = raw.get("limitation")
         limitation: VerifiedClaim | None = None
         if limitation_value is not None:

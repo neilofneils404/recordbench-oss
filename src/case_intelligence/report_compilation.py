@@ -22,7 +22,7 @@ from .generation import (
     MAX_EVIDENCE_ITEMS, MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEM_CHARS, MAX_ANSWER_CLAIMS,
 )
 
-COMPILATION_VERSION = 7
+COMPILATION_VERSION = 8
 KINDS = frozenset({"timeline", "entities", "topic"})
 HUMAN_ORIGINS = frozenset({"human", "notebook", "human_review", "review_decision", "source_review"})
 UNRESOLVED_STATES = frozenset({"disputed", "needs_review", "needs_attention", "flagged", "unreviewed"})
@@ -161,7 +161,8 @@ def _generated_basis(items: Sequence[CompilationMaterial], claim_text: str) -> t
 def _exact_date(text: str, label: str = "") -> str:
     """Only sort explicit unqualified ISO dates; preserve every other date phrase."""
     candidate = label.strip()
-    if re.search(r"\b(?:about|around|approximately|before|after|between|possibly|perhaps|or|until|since)\b", text, re.I):
+    if re.search(r"\b(?:about|around|approximate(?:ly)?|estimated?|circa|may|might|uncertain(?:ty)?|unconfirmed|"
+                 r"before|after|between|possibly|perhaps|or|until|since)\b", text, re.I):
         return ""
     if not candidate:
         matches = set(re.findall(r"\b\d{4}-\d{2}-\d{2}\b", text))
@@ -350,7 +351,10 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             if not isinstance(classified, VerifiedAnswer):
                 raise CompilationProblem("Review classification requires independently verified model answers.")
             rejected += classified.omitted_claims
-            complete_classification = not (classified.omitted_claims or classified.duplicate_claims)
+            # A qualified relevance answer cannot establish that any omitted
+            # review record is unrelated. Preserve the batch as unchecked.
+            complete_classification = not (classified.omitted_claims or classified.duplicate_claims
+                                           or classified.limitation or classified.source_limitation)
             returned_review_ids: set[str] = set()
             for claim in classified.claims if classified.answerable else ():
                 if len(set(claim.evidence_ids)) != 1 or any(identifier not in note_lookup for identifier in claim.evidence_ids):
@@ -451,8 +455,6 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 cited = tuple(source_rows[key] for key in all_keys)
                 origins = {item.material_id: item for key in all_keys for item in source_materials[key]}
                 items = tuple(origins.values())
-                date_key = _exact_date(claim.text) if kind == "timeline" else ""
-                heading = f"{category} — {date_key or 'dates as stated'}" if kind == "timeline" else f"{category} — source-linked finding"
                 # Qualifications travel with every finding so section capacity
                 # cannot retain an assertion while dropping its caveat. Source
                 # numbers match the attached citations in Report and export.
@@ -462,6 +464,12 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                     if limitation_keys:
                         support = ", ".join(f"Source {all_keys.index(key) + 1}" for key in limitation_keys)
                         qualified_text += "\nLimitation source support: " + support + "."
+                # A limitation can qualify a claim's date, but cannot introduce
+                # an event date into a claim that did not state one itself.
+                date_key = _exact_date(claim.text) if kind == "timeline" else ""
+                if date_key:
+                    date_key = _exact_date(qualified_text, date_key)
+                heading = f"{category} — {date_key or 'dates as stated'}" if kind == "timeline" else f"{category} — source-linked finding"
                 if answer.evidence_notice.strip():
                     qualified_text += "\n\nEvidence notice: " + answer.evidence_notice
                 if answer.verification_notice.strip():
