@@ -105,6 +105,14 @@ For missing prerequisites:
   must also be non-root. Do not use a home directory, symlink, or shared export
   root. Existing selected directories must belong to that account. A first-install
   node root must be empty; use `--resume` only for the intended existing node.
+  Both preflight and installation require absolute storage paths; relative paths
+  are rejected before creating state.
+- For unattended local installation, supply `--password-stdin`. Preflight checks
+  the input choice and administrator username/display-name syntax without reading
+  a password. Unattended OIDC and Kerberos installation require their credential
+  source files; preflight checks readable, nonempty regular-file metadata without
+  reading the contents. Kerberos also requires the host SSSD and Kerberos paths.
+  These checks do not verify credentials or a working identity-provider exchange.
 - Leave more than the installer's 100 GiB storage safety reserve free on the
   selected filesystems. The larger profile targets above are advisory alpha
   planning figures, not validated minimums. Container-engine image storage may
@@ -225,10 +233,12 @@ recovery copy against the [backup consistency requirements](STORAGE_AND_BACKUP.m
 It skips the bundled requirement; it does not validate an external backup or
 ignore a configured bundled backup's failed/deferred receipt.
 Resume and update validate the saved model profile, selected GPU devices,
-generator memory reservation and transcription free-memory threshold against the
+generator precision, memory reservation and transcription free-memory threshold against the
 current hardware before running provisioning, backup or release commands. They
 do not substitute an automatically chosen GPU or a smaller model to pass the
-check. A completed offline resume or update does not require a new diarization
+check. Saved `bfloat16` precision requires compute capability 8.0 or newer on
+every selected generator GPU, even when a new automatic plan could use `half`.
+A completed offline resume or update does not require a new diarization
 token; an unfinished resume that must stage models still checks its staging
 options before continuing.
 

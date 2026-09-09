@@ -317,6 +317,19 @@ def _private_write(path: Path, value: str, *, replace: bool = False) -> None:
     os.chmod(path, 0o600)
 
 
+def _credential_source_available(source: Path | None) -> bool:
+    """Check credential-file metadata without opening or retaining its contents."""
+    if source is None:
+        return False
+    try:
+        source = source.expanduser()
+        metadata = source.lstat()
+        return (stat.S_ISREG(metadata.st_mode) and 0 < metadata.st_size <= 1024 * 1024
+                and os.access(source, os.R_OK))
+    except OSError:
+        return False
+
+
 def _private_copy(source: Path, target: Path) -> None:
     metadata = source.lstat()
     if source.is_symlink() or not source.is_file() or metadata.st_size > 1024 * 1024:
@@ -740,6 +753,7 @@ def _review_model_plan(
     gpu_plan: GpuPlan,
     *,
     requested_profile: str = "auto",
+    requested_dtype: str | None = None,
     gpu_utilization: float | None = None,
     transcription_min_free_vram_mib: int | None = None,
 ) -> ReviewModelPlan:
@@ -848,6 +862,16 @@ def _review_model_plan(
         )
         else "half"
     )
+    if requested_dtype is not None and models in {"review", "all"}:
+        if requested_dtype not in {"half", "bfloat16"}:
+            raise RuntimeError("saved generator dtype must be half or bfloat16")
+        if requested_dtype == "bfloat16" and dtype != "bfloat16":
+            raise RuntimeError(
+                "saved bfloat16 generator dtype requires compute capability "
+                "8.0 or newer on every selected generator GPU; restore compatible "
+                "hardware or explicitly reconfigure the saved runtime precision"
+            )
+        dtype = requested_dtype
     return ReviewModelPlan(
         profile=profile,
         model_id=model_id,
@@ -902,6 +926,7 @@ def _resolve_gpu_plans(
                     devices,
                     gpu_plan,
                     requested_profile=profile,
+                    requested_dtype=getattr(args, "generator_dtype", None),
                     gpu_utilization=args.generator_gpu_utilization,
                     transcription_min_free_vram_mib=(
                         args.transcription_min_free_vram_mib
@@ -1067,6 +1092,42 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 "Authorize one-time gated model staging without retaining credentials",
                 "Pass --hf-token-stdin and supply a read-only token through controlled standard input when staging runs.")
     if args is not None:
+        existing_resume = args.resume and (args.root / "installation.json").is_file()
+        if not existing_resume and args.auth in {None, "local"}:
+            # Keep the dependency-free launcher aligned with account-admin's
+            # normalization; names are reported only as valid/invalid.
+            login = (args.admin_username or "recordbench.admin").strip().casefold()
+            display = (args.admin_display_name or "RecordBench Administrator").strip()
+            identity_ok = (re.fullmatch(r"[a-z0-9][a-z0-9._@-]{2,127}", login) is not None
+                           and bool(display) and len(display) <= 160
+                           and not any(ord(character) < 32 for character in display))
+            add("admin-identity", identity_ok,
+                "Initial administrator identity is valid" if identity_ok else "Initial administrator identity is invalid",
+                "Create the initial local administrator account",
+                "Choose --admin-username with 3-128 letters, numbers, dots, dashes, underscores or @, starting with a letter or number. Choose a nonempty --admin-display-name of at most 160 characters without control characters.")
+        if (args.non_interactive and not args.dry_run and not existing_resume
+                and args.auth in {None, "local"}):
+            add("admin-password-input", bool(args.password_stdin),
+                "Password input selected; no password read" if args.password_stdin else "Initial administrator password input not selected",
+                "Create the initial local administrator account",
+                "Pass --password-stdin and supply the initial administrator password through controlled standard input when installation runs.")
+        if not existing_resume:
+            for auth, source, name, option in (
+                ("oidc", args.oidc_client_secret_file, "oidc-secret-input", "--oidc-client-secret-file"),
+                ("kerberos", args.kerberos_keytab, "kerberos-keytab-input", "--kerberos-keytab"),
+            ):
+                if args.auth == auth and (source is not None or (args.non_interactive and not args.dry_run)):
+                    available = _credential_source_available(source)
+                    add(name, available,
+                        "Credential source metadata is available; contents not read" if available else "Required credential source is missing or unsafe",
+                        "Configure the selected identity provider",
+                        f"Supply {option} as a readable nonempty regular file no larger than 1 MiB, without a symbolic link.")
+            if args.auth == "kerberos" and not args.dry_run:
+                host_join = Path("/var/lib/sss/pipes").is_dir() and Path("/etc/krb5.conf").is_file()
+                add("kerberos-host", host_join,
+                    "Host SSSD and Kerberos configuration paths are present" if host_join else "Host SSSD or Kerberos configuration is missing",
+                    "Connect the Kerberos gateway to the host identity service",
+                    "Complete the host SSSD/NSS join and Kerberos configuration before installation. Presence checks do not prove a working identity exchange.")
         for name, path in (("node-storage", args.root), ("matter-storage", args.storage_root or args.root / "matter-storage")):
             entered_path = path.expanduser()
             try:
@@ -1165,7 +1226,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
             add("gpu", False, "Selected GPU/model plan unavailable, incompatible, or short of free memory",
                 "Generate cited answers" if models == "review" else "Transcribe recordings" if models == "transcription" else "Generate cited answers and transcribe recordings",
-                "Install the NVIDIA driver and Container Toolkit; provide compute capability 7.5 or newer and sufficient free VRAM for the selected model/GPU options. Stop competing GPU work or choose a smaller model. Use --models none for CPU evaluation.")
+                "Install the NVIDIA driver and Container Toolkit; provide compute capability 7.5 or newer and sufficient free VRAM for the selected model/GPU options. Saved bfloat16 precision requires 8.0 or newer on every generator GPU. Stop competing GPU work or choose a smaller model. Use --models none for CPU evaluation.")
         # Check the engine configuration without pulling an image or launching a
         # container. Actual offline model/container readiness is a later gate.
         try:
@@ -1817,7 +1878,7 @@ def _provision(
                 console.warn("Community-1 is gated and CC-BY-4.0; accept its upstream terms before continuing")
                 if input("Type ACCEPT after reviewing the linked model terms: ").strip() != "ACCEPT":
                     raise RuntimeError("model terms were not accepted")
-            token = _hf_token(args)
+            token = "dry-run-token-placeholder" if args.dry_run else _hf_token(args)
         command = [
             *compose,
             "run",
@@ -1982,6 +2043,8 @@ def _restore_model_options(
     args.review_model_profile = str(installation.get("review_model_profile", "portable"))
     args.gpu_layout = compose_env.get("RECORDBENCH_GPU_LAYOUT", str(installation.get("gpu_layout", "shared")))
     args.generator_gpus = compose_env.get("RECORDBENCH_GENERATOR_GPU", ",".join(generator)) or None
+    # Match Compose's default when an older environment omits this setting.
+    args.generator_dtype = compose_env.get("RECORDBENCH_GENERATOR_DTYPE") or "bfloat16"
     args.transcription_gpu = compose_env.get("RECORDBENCH_TRANSCRIPTION_GPU", topology.get("transcription"))
     args.retrieval_device = compose_env.get("RECORDBENCH_RETRIEVAL_DEVICE", str(topology.get("retrieval_device", "cpu")))
     args.retrieval_gpu = (compose_env.get("RECORDBENCH_RETRIEVAL_GPU", topology.get("retrieval_gpu"))
@@ -2341,7 +2404,7 @@ def main() -> int:
             args.server_name = _ask(
                 "RecordBench hostname", "recordbench.example.test", non_interactive=args.non_interactive
             )
-        args.root = args.root.expanduser().absolute()
+        args.root = args.root.expanduser()
         # Resolve storage, TLS and the complete hardware plan before creating
         # state. Dry-run discovery uses the same read-only prerequisite checks.
         gpu_devices = _preflight(console, models=models, dry_run=args.dry_run, args=args)
