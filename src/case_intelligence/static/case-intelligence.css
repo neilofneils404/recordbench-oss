@@ -7984,3 +7984,103 @@ body.activity-open .activity-drawer { transform: translateX(0); }
 .people-main pre { max-width: 100%; overflow-x: auto; padding: 14px; background: var(--canvas); border: 1px solid var(--line); border-radius: var(--radius-sm); }
 @media (max-width: 1050px) { .people-columns, .people-checklist { grid-template-columns: minmax(0, 1fr); } .people-checklist { gap: 18px; } }
 @media (max-width: 600px) { .people-main { padding: 26px 18px 48px; } .people-main .administrator-heading { flex-direction: column; gap: 16px; } .people-list li { align-items: flex-start; } .people-list .button { min-height: 44px; } .people-form .button { width: 100%; } }
+/* Find sources keeps the record itself at the center of the search. */
+.find-sources-shell { max-width: 1080px; padding: 36px 44px 56px; margin: 0 auto; }
+.find-sources-heading { display: flex; justify-content: space-between; gap: 24px; align-items: center; margin-bottom: 25px; }
+.find-matter-link { color: var(--ink-soft); font-size: 13px; }
+.find-matter-link:hover { text-decoration: underline; }
+.find-sources-heading h1 { margin: 9px 0 7px; font-family: var(--font-reading); font-size: 34px; font-weight: 600; letter-spacing: -.025em; }
+.find-sources-heading p { margin: 0; color: var(--ink-soft); font-size: 14px; }
+.find-conversation-link { color: var(--ink-soft); font-size: 13px; white-space: nowrap; }
+.find-conversation-link span { margin-left: 5px; color: var(--accent); }
+.find-conversation-link:hover { color: var(--ink); text-decoration: underline; }
+.find-sources-shell > .matter-section-tabs { margin-bottom: 30px; }
+.find-search-panel { padding: 25px 28px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 34px; }
+.find-sources-form > label { display: block; font-size: 17px; font-weight: 650; margin-bottom: 12px; }
+.find-input-row { display: flex; gap: 10px; align-items: stretch; }
+.find-input-wrap { display: flex; align-items: center; min-width: 0; flex: 1; background: var(--canvas); border: 1px solid var(--line-strong); border-radius: 7px; }
+.find-input-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
+.find-input-wrap > svg { margin-left: 15px; color: var(--ink-faint); flex: 0 0 20px; }
+.find-input-wrap > input { width: 100%; min-width: 0; min-height: 50px; padding: 12px; border: 0; background: transparent; font-size: 16px; color: var(--ink); outline: 0; box-shadow: none; }
+.find-input-row > .button { min-height: 50px; padding: 12px 20px; white-space: nowrap; }
+.find-help { margin: 10px 0 18px; color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+.find-refinements > summary, .find-advanced > summary { width: fit-content; cursor: pointer; color: var(--ink-soft); font-size: 13px; padding: 7px 0; }
+.find-refinements > summary:hover, .find-advanced > summary:hover { color: var(--ink); }
+.find-refinements-active { color: var(--accent-dark); font-size: 11px; font-weight: 650; margin-left: 10px; }
+.find-refinement-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 20px; padding: 14px 0 18px; }
+.find-refinement-grid label, .find-advanced-fields > label { display: block; margin-bottom: 7px; font-size: 12px; font-weight: 650; }
+.find-refinement-grid input, .find-refinement-grid select, .find-advanced input:not([type="hidden"]) { box-sizing: border-box; width: 100%; min-width: 0; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--canvas); color: var(--ink); font: inherit; font-size: 13px; }
+.find-refinement-grid small { display: block; margin-top: 6px; font-size: 11px; line-height: 1.5; color: var(--ink-soft); }
+.find-clear-link { display: inline-block; margin: 0 0 15px; font-size: 12px; color: var(--ink-soft); text-decoration: underline; }
+.find-advanced { margin-top: 3px; }
+.find-advanced > summary { font-size: 11px; color: var(--ink-faint); }
+.find-advanced[open] { padding-top: 9px; border-top: 1px solid var(--line); }
+.find-advanced-fields { padding: 12px 0 5px; }
+.find-advanced-fields > p { color: var(--ink-soft); font-size: 12px; }
+.find-results-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.find-results-heading h2 { margin: 0 0 5px; font-size: 19px; font-weight: 650; letter-spacing: -.02em; }
+.find-results-heading p, .find-results-heading > span { margin: 0; font-size: 12px; color: var(--ink-soft); }
+.find-results-heading > span { white-space: nowrap; }
+.find-coverage-note { display: flex; gap: 11px; align-items: flex-start; padding: 14px 0; border-bottom: 1px solid var(--line); color: var(--ink-soft); }
+.find-coverage-note > svg { width: 18px; flex: 0 0 18px; color: var(--accent-dark); }
+.find-coverage-note p { margin: 0 0 3px; font-size: 12px; font-weight: 600; }
+.find-coverage-note span { font-size: 12px; }
+.find-coverage-note a { text-decoration: underline; }
+.find-document { display: flex; gap: 16px; padding: 25px 0; border-bottom: 1px solid var(--line); }
+.find-document-icon { display: grid; place-items: center; width: 38px; height: 46px; flex: 0 0 38px; border-radius: 5px 11px 5px 5px; background: var(--surface-strong); color: var(--ink-soft); }
+.find-document-icon svg { width: 22px; height: 25px; stroke-width: 1.4; }
+.find-document-content { flex: 1; min-width: 0; }
+.find-document-title { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; }
+.find-document-title h3 { margin: 0 0 7px; font-size: 15px; line-height: 1.45; font-weight: 650; overflow-wrap: anywhere; }
+.find-document-title h3 a:hover { text-decoration: underline; }
+.find-open-source { flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+.find-open-source span { color: var(--accent); margin-left: 3px; }
+.find-open-source:hover { color: var(--accent-dark); }
+.find-location { display: inline-block; font-size: 11px; font-weight: 600; color: var(--ink-soft); }
+.find-location:hover { text-decoration: underline; }
+.find-excerpt { margin: 9px 0 0; max-width: 760px; font-family: var(--font-reading); font-size: 16px; line-height: 1.6; color: var(--ink); overflow-wrap: anywhere; }
+.find-more-passages { margin-top: 13px; color: var(--ink-soft); font-size: 12px; }
+.find-more-passages > summary { cursor: pointer; }
+.find-more-passages > summary span { color: var(--ink-faint); margin-left: 5px; font-size: 11px; }
+.find-more-passages > div { margin-top: 15px; padding-left: 14px; border-left: 2px solid var(--line); }
+.find-pagination { display: flex; justify-content: center; gap: 24px; align-items: center; padding-top: 25px; }
+.find-pagination > span { font-size: 12px; color: var(--ink-soft); }
+.find-empty, .find-start { padding: 40px 20px; text-align: center; color: var(--ink-soft); }
+.find-empty > svg, .find-start > svg { width: 30px; height: 30px; color: var(--ink-faint); stroke-width: 1.25; margin-bottom: 9px; }
+.find-empty h3, .find-start h2 { margin: 8px 0; color: var(--ink); font-size: 18px; font-weight: 600; }
+.find-empty p, .find-start p { margin: 9px auto 20px; max-width: 440px; font-size: 14px; line-height: 1.7; }
+@media (max-width: 760px) {
+  .find-sources-shell { padding: 22px 20px 40px; }
+  .find-sources-heading { display: block; }
+  .find-sources-heading h1 { font-size: 29px; }
+  .find-conversation-link { display: inline-block; margin-top: 15px; }
+  .find-search-panel { padding: 20px 18px 14px; }
+  .find-input-row { flex-direction: column; }
+  .find-input-row > .button { width: 100%; min-height: 44px; }
+  .find-refinement-grid { grid-template-columns: 1fr; }
+  .find-document { gap: 12px; }
+  .find-document-title { display: block; }
+  .find-open-source { display: inline-block; margin: 0 0 9px; }
+  .find-location { display: block; }
+  .find-more-passages > summary span { display: block; margin: 5px 0; }
+  .find-pagination { gap: 12px; }
+  .find-pagination .button { padding: 10px; }
+}
+.find-excerpt mark { padding: 1px 2px; border-radius: 2px; background: var(--highlight); color: inherit; }
+@media (max-width: 760px) {
+  .find-sources-shell { padding-top: 18px; }
+  .find-sources-heading { margin-bottom: 15px; }
+  .find-sources-heading h1 { margin: 5px 0; font-size: 27px; }
+  .find-sources-heading p { font-size: 13px; }
+  .find-conversation-link { margin-top: 8px; }
+  .find-sources-shell > .matter-section-tabs { margin-bottom: 20px; }
+  .find-search-panel { padding: 16px 17px 10px; margin-bottom: 25px; }
+  .find-sources-form > label { margin-bottom: 9px; font-size: 16px; }
+  .find-input-wrap > input { min-height: 44px; padding-top: 9px; padding-bottom: 9px; }
+  .find-input-row { gap: 8px; }
+  .find-help { margin: 8px 0; }
+  .find-refinements > summary { min-height: 44px; display: flex; align-items: center; gap: 5px; }
+  .find-refinements > summary::before { content: '▸'; }
+  .find-refinements[open] > summary::before { content: '▾'; }
+  .find-document { padding: 20px 0; }
+}

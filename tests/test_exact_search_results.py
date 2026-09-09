@@ -1,0 +1,202 @@
+import json
+import html
+import re
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from case_intelligence.exact_search_results import (
+    ExactSearchChanged, ExactSearchUnavailable, ExactScanPolicy,
+    ReferenceExactSearchBackend, search_documents,
+    build_search_query, passage_preview,
+)
+from case_intelligence.pilot_uploads import PilotDocument
+from case_intelligence.workbench import create_workbench_app
+
+
+def document(index, *texts, state="ready", name=None):
+    return PilotDocument(
+        document_id=f"{index:032x}", display_name=name or f"Synthetic {index:04}.txt",
+        stored_name="", media_type="text/plain", size=0, state=state, message="",
+        units=[{"number": n, "text": text} for n, text in enumerate(texts, 1)],
+        version_id=f"version-{index}",
+    )
+
+
+def scan(documents, query="red", **kwargs):
+    return search_documents(documents, query, scope=("synthetic-matter", "", ""), **kwargs)
+
+
+def test_complete_population_and_stable_pagination_beyond_ranked_limits():
+    documents = [document(n, "red bicycle") for n in range(137)]
+    documents += [document(200, "red", "blue"), document(201, "red", state="processing"), document(202, "")]
+    first = scan(reversed(documents), "red NOT blue")
+    assert first.total == 137 and first.population == 140 and first.eligible == 138
+    assert first.exclusions == {"Not ready": 1, "No searchable text": 1}
+    found = []
+    for page in range(1, first.pages + 1):
+        result = scan(documents, "red NOT blue", page=page, expected_fingerprint=first.fingerprint)
+        assert result.total == 137
+        found.extend(item.document_id for item in result.items)
+    assert found == [item.document_id for item in documents[:137]]
+    assert len(set(found)) == 137
+
+
+def test_document_scope_phrases_negation_and_explanations():
+    documents = [document(1, "red", "bicycle"), document(2, "red bicycle", "blue"), document(3, "red bicycle")]
+    assert scan(documents, "red AND bicycle").total == 3
+    result = scan(documents, '"red bicycle" NOT blue')
+    assert [item.document_id for item in result.items] == [documents[2].document_id]
+    assert result.items[0].matching_unit_count == 1
+    assert scan([document(4, "neutral")], "NOT red").items[0].passages == ()
+
+
+@pytest.mark.parametrize("change", ["text", "version", "state", "name", "membership"])
+def test_source_mutation_rejects_old_page(change):
+    documents = [document(1, "red")]
+    first = scan(documents)
+    if change == "text":
+        documents[0].units[0]["text"] = "blue"
+    elif change == "version":
+        documents[0].version_id = "replacement"
+    elif change == "state":
+        documents[0].state = "processing"
+    elif change == "name":
+        documents[0].display_name = "renamed.txt"
+    else:
+        documents.append(document(2, "red"))
+    with pytest.raises(ExactSearchChanged):
+        scan(documents, expected_fingerprint=first.fingerprint)
+
+
+@pytest.mark.parametrize("limits", [{"max_documents": 1}, {"max_characters": 1}, {"max_seconds": -1}])
+def test_budget_failure_never_returns_partial_results_or_exact_total(limits):
+    with pytest.raises(ExactSearchUnavailable, match="No exact total or partial results"):
+        scan([document(1, "red"), document(2, "red")], **limits)
+
+
+def test_reference_backend_uses_configurable_product_policy():
+    backend = ReferenceExactSearchBackend(ExactScanPolicy(max_documents=1))
+    with pytest.raises(ExactSearchUnavailable):
+        backend.search([document(1, "red"), document(2, "red")], "red", scope=("synthetic",))
+
+
+def test_frozen_known_answer_corpus_runs_through_result_service():
+    corpus = json.loads((Path(__file__).parent / "fixtures/synthetic/product-foundation/v1/corpus.json").read_text())
+    documents = []
+    for index, item in enumerate(corpus["documents"]):
+        if item["matter_id"] == corpus["matter_id"]:
+            source = document(index, *(unit["text"] for unit in item["units"]), state=item["state"])
+            source.document_id = item["document_id"]
+            documents.append(source)
+    for case in corpus["exact_search_cases"]:
+        assert {item.document_id for item in scan(documents, case["query"]).items} == set(case["expected_document_ids"])
+
+
+def test_route_authorizes_before_scan_and_never_uses_ranked_retriever(tmp_path, monkeypatch):
+    app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
+    with TestClient(app) as client:
+        response = client.post("/matters", data={"name": "Synthetic exact matter", "descriptor": "Synthetic"}, follow_redirects=False)
+        slug = response.headers["location"].split("/")[2]
+        bench = app.state.workbench
+        matter = bench.matter(slug, "development-taylor-morgan")
+        store = bench.source_store(matter)
+        sources = [document(n, "red bicycle") for n in range(31)]
+        sources.append(document(40, "red", state="processing"))
+        store.documents.update({item.document_id: item for item in sources})
+        bench.workspace.reconcile_source_organizations(matter.matter_id,
+            tuple((item.document_id, "upload", item.display_name) for item in sources))
+        selected = bench.workspace.create_source_set(matter.matter_id, "Synthetic subset",
+            [sources[0].document_id], matter.owner_id)
+        collection = bench.workspace.create_source_collection(matter.matter_id,
+            "Synthetic collection", "upload", matter.owner_id)
+        bench.workspace.move_sources_to_collection(matter.matter_id,
+            [sources[1].document_id], collection.collection_id, matter.owner_id)
+        outsider = bench.workspace.upsert_principal("preview", "synthetic-outsider",
+            "Synthetic Outsider", "outsider@example.test")
+        foreign = bench.create_matter("Synthetic foreign matter", "Synthetic canary", outsider.principal_id)
+        foreign_document = document(100, "red SECRET-CANARY")
+        bench.source_store(foreign).documents[foreign_document.document_id] = foreign_document
+        monkeypatch.setattr(bench, "_retriever", lambda *args, **kwargs: pytest.fail("exact search called ranked retrieval"))
+        result = client.get(f"/matters/{slug}/exact-search", params={"q": "red"})
+        assert result.status_code == 200
+        assert "31 sources found" in result.text and "1 still preparing or need attention" in result.text
+        assert "Next →</a>" in result.text
+        plain = client.get(f"/matters/{slug}/exact-search", params={"words": "red bicycle", "search": "1"})
+        assert plain.status_code == 200 and "31 sources found" in plain.text
+        assert 'value="red bicycle"' in plain.text and '<mark>red</mark>' in plain.text
+        assert "open" not in re.search(r'<details class="find-advanced"([^>]*)>', plain.text).group(1)
+        next_href = html.unescape(re.search(r'href="([^"]+)">Next →</a>', plain.text).group(1))
+        assert "words=red+bicycle" in next_href
+        assert "Page 2 of 2" in client.get(next_href).text
+        empty = client.get(f"/matters/{slug}/exact-search", params={"search": "1"})
+        assert empty.status_code == 400 and "Enter a name, word, or phrase" in empty.text
+        advanced = client.get(f"/matters/{slug}/exact-search", params={"search": "1", "advanced": "1",
+            "q": "red", "words": "missing", "source_set": selected.source_set_id})
+        assert advanced.status_code == 200 and "1 source found" in advanced.text
+        simple_again = client.get(f"/matters/{slug}/exact-search", params={"search": "1", "advanced": "0",
+            "q": "missing", "words": "red"})
+        assert simple_again.status_code == 200 and "31 sources found" in simple_again.text
+        scoped = client.get(f"/matters/{slug}/exact-search", params={"q": "red", "source_set": selected.source_set_id})
+        assert scoped.status_code == 200 and "1 source found" in scoped.text
+        intersection = client.get(f"/matters/{slug}/exact-search", params={"q": "red",
+            "source_set": selected.source_set_id, "collection": collection.collection_id})
+        assert intersection.status_code == 200 and "0 sources found" in intersection.text
+        assert "SECRET-CANARY" not in result.text
+        assert client.get(f"/matters/{foreign.slug}/exact-search", params={"q": "red"}).status_code == 404
+        assert client.get(f"/matters/{foreign.slug}/exact-search", params={"q": "red",
+            "source_set": selected.source_set_id}).status_code == 404
+        invalid = client.get(f"/matters/{slug}/exact-search", params={"q": "red AND"})
+        assert invalid.status_code == 400 and "character" in invalid.text
+        assert "0 sources found" not in invalid.text
+        missing = client.get(f"/matters/{slug}/exact-search", params={"q": "red", "source_set": "missing"})
+        assert missing.status_code == 404
+        assert client.get("/matters/m-000000000000/exact-search", params={"q": "red"}).status_code == 404
+        fingerprint = bench.exact_search(matter, "red").fingerprint
+        store.documents[sources[0].document_id].units[0]["text"] = "blue"
+        changed = client.get(f"/matters/{slug}/exact-search", params={"q": "red", "page": 2, "fingerprint": fingerprint})
+        assert changed.status_code == 409 and "Search again" in changed.text
+
+
+def test_unreadable_ready_source_invalidates_the_whole_scan():
+    broken = document(2)
+    broken.units_file = "synthetic-units.json"
+    def fail(_):
+        raise RuntimeError("synthetic unavailable source")
+    broken._units_loader = fail
+    with pytest.raises(ExactSearchUnavailable, match="No exact total"):
+        scan([document(1, "red"), broken])
+
+
+def test_matching_checks_deadline_inside_long_units(monkeypatch):
+    from case_intelligence.exact_search import parse_query
+    checks = 0
+    def stop():
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            raise ExactSearchUnavailable("synthetic deadline")
+    with pytest.raises(ExactSearchUnavailable):
+        parse_query('"red bicycle"').matches_units(["neutral " * 10000], budget_check=stop)
+    assert checks == 3
+
+
+def test_plain_search_fields_do_not_require_or_interpret_boolean_syntax():
+    documents = [document(1, "red bicycle", "returned to the depot"),
+                 document(2, "red bicycle", "cancelled"), document(3, "and or not")]
+    result = scan(documents, build_search_query("red bicycle", "returned to the depot", "cancelled blue"))
+    assert [item.document_id for item in result.items] == [documents[0].document_id]
+    literal = scan(documents, build_search_query("AND OR NOT"))
+    assert [item.document_id for item in literal.items] == [documents[2].document_id]
+    assert scan(documents, build_search_query(exclude="cancelled")).total == 2
+
+
+def test_preview_finds_late_words_preserves_text_and_keeps_markup_inert():
+    from case_intelligence.exact_search import parse_query
+    unit = document(1, "neutral " * 100 + '<script>depot</script> nearby').parsed_units()[0]
+    preview = passage_preview(unit, parse_query("depot"))
+    text = "".join(piece for piece, _ in preview["pieces"])
+    assert '<script>depot</script>' in text
+    assert ("depot", True) in preview["pieces"]
+    assert text.startswith("…")
