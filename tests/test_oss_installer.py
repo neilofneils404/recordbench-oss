@@ -14,6 +14,53 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import recordbench_install as installer  # noqa: E402
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_account_management_configuration_and_update_overlay(tmp_path, enabled):
+    args = installer._parser().parse_args(["install", "--auth", "local", "--models", "none", "--non-interactive"] + (["--enable-account-management"] if enabled else []))
+    console = installer.Console(color=False)
+    paths = installer._prepare_directories(console, tmp_path / "node", storage_root=None, resume=False, dry_run=False)
+    root = tmp_path / "node"
+    cert, key = paths["tls"] / "synthetic.crt", paths["tls"] / "synthetic.key"
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic private key")
+    args.tls_cert, args.tls_key = cert, key
+    installer._configure(console, args, root, paths, "synthetic-release", ROOT, ())
+    application = (paths["config"] / "recordbench.env").read_text()
+    record = json.loads((root / "installation.json").read_text())
+    assert record["local_account_management"] is enabled
+    if enabled:
+        assert "/var/lib/recordbench-accounts/local-accounts.json" in application
+        assert "CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT" in application
+    else:
+        assert "/run/recordbench-secrets/local-accounts.json" in application
+        assert "CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT" not in application
+    for release in (None, ROOT):
+        command = installer._compose(root, (), release=release)
+        assert (str(ROOT / "compose.local-accounts.yaml") in command) is enabled
+
+
+@pytest.mark.parametrize("arguments", [["install", "--auth", "oidc"], ["resume", "--auth", "local"], ["install"]])
+def test_management_flag_rejects_ambiguous_or_existing_node_before_writes(tmp_path, arguments):
+    root = tmp_path / "node"
+    response = subprocess.run([sys.executable, str(ROOT / "scripts/recordbench_install.py"), *arguments,
+                               "--root", str(root), "--enable-account-management"], capture_output=True, text=True)
+    assert response.returncode != 0
+    assert not root.exists()
+
+
+def test_interrupted_provisioning_resume_retains_canonical_account_profile(tmp_path, monkeypatch):
+    from tests.test_first_run_handoff import configured_node
+    root, _, _ = configured_node(tmp_path)
+    monkeypatch.setattr(installer, "_preflight", lambda *args, **kwargs: ())
+    monkeypatch.setattr(installer, "_run", lambda *args, **kwargs: None)
+    calls = []
+    monkeypatch.setattr(installer, "_provision", lambda console, args, *rest: calls.append(args.enable_account_management))
+    args = installer._parser().parse_args(["install", "--resume"])
+    assert not args.enable_account_management
+    installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert calls == [True]
+
+
 def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path, ready_host, monkeypatch, capsys) -> None:
     node = tmp_path.resolve() / "node"
     monkeypatch.setattr(sys, "argv", [
@@ -40,12 +87,13 @@ def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path, ready_ho
         "FORGE RUNTIME",
         "SEAL CONTROL PLANE",
         "NODE ARMED",
-        "ACCESS GRANTED",
+        "PLAN COMPLETE",
     ):
         assert marker in output
     assert not node.exists()
     assert "password=" not in output.casefold()
     assert "token=" not in output.casefold()
+    assert "ACCESS GRANTED" not in output
 
 
 def test_capability_profiles_have_conservative_gpu_contracts() -> None:
