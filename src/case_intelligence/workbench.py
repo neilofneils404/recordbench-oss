@@ -6969,6 +6969,7 @@ def create_workbench_app(
             "answer_jobs": bench.workspace.answer_counts(),
             "research_jobs": bench.workspace.research_counts(),
             "review_runs": bench.workspace.review_counts(),
+            "report_compilation_jobs": bench.report_compilation.jobs.counts(),
             "maintenance": maintenance,
             "storage": {
                 "status": "ready" if storage["ready"] else "degraded",

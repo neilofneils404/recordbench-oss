@@ -298,3 +298,45 @@ def test_read_only_administrator_is_not_offered_report_creation(tmp_path):
         assert "Compile saved work" not in page.text and "Make your first report" not in page.text
         assert f'href="/matters/{slug}/reports/new"' not in page.text
         assert client.get(f"/matters/{slug}/reports/new", headers=_headers(ADMIN)).status_code == 403
+
+
+def test_editor_reserves_compilation_basis_capacity_and_preserves_rejected_draft(workspace):
+    client, bench, matter = workspace
+    basis = "Synthetic immutable basis."
+    report = bench.workspace.create_report_from_sections(matter.matter_id, ACTOR, "Capacity", "",
+        origin_id="report-compilation-" + "a" * 32,
+        sections=[{"heading": "Note", "body": "Opening\n\nReview basis:\n" + basis, "compilation_basis": basis}])
+    section = bench.workspace.report_sections(matter.matter_id, report.report_id)[0]
+    assert section.prose_limit == 50_000 - len("\n\nReview basis:\n" + basis)
+    edit = client.get(f"/matters/{matter.slug}/reports?report={report.report_id}&edit=true")
+    assert f'maxlength="{section.prose_limit}"' in edit.text
+    path = f"/matters/{matter.slug}/reports/{report.report_id}/sections/{section.section_id}"
+    data = {"heading": section.heading, "body": "x" * section.prose_limit,
+            "expected_updated_at": section.updated_at, "expected_status": report.status}
+    assert client.post(path, data=data, follow_redirects=False).status_code == 303
+    saved = bench.workspace.report_sections(matter.matter_id, report.report_id)[0]
+    assert len(saved.body) == 50_000 and saved.compilation_basis == basis
+    data.update(body="y" * (section.prose_limit + 1), expected_updated_at=saved.updated_at)
+    rejected = client.post(path, data=data, follow_redirects=False)
+    assert rejected.status_code == 400 and data["body"] in rejected.text
+    assert f'maxlength="{section.prose_limit}"' in rejected.text
+    assert bench.workspace.report_sections(matter.matter_id, report.report_id)[0].body == saved.body
+
+
+def test_compilation_health_and_close_page_track_active_jobs(workspace):
+    import re
+    client, bench, matter = workspace
+    bench.report_compilation.coordinator.close()
+    job_id = queue(client, matter, ["notes:active"])
+    counts = client.get("/health").json()["report_compilation_jobs"]
+    assert counts["queued"] == 1 and counts["running"] == 0
+    page = client.get(f"/matters/{matter.slug}/close")
+    assert "1 report compilation" in page.text
+    assert re.search(r'<button class="button button-danger"[^>]+type="submit"[^>]+disabled', page.text)
+    client.post(f"/matters/{matter.slug}/close", data={"confirmed_name": matter.display_name, "acknowledge": "yes"})
+    assert bench.workspace.matter_lifecycle(matter.matter_id).state == "active"
+    bench.report_compilation.jobs.cancel(matter.matter_id, ACTOR, job_id)
+    counts = client.get("/health").json()["report_compilation_jobs"]
+    assert counts["queued"] == 0 and counts["cancelled"] == 1
+    page = client.get(f"/matters/{matter.slug}/close")
+    assert not re.search(r'<button class="button button-danger"[^>]+type="submit"[^>]+disabled', page.text)

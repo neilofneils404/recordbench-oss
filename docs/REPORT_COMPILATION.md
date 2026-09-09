@@ -235,3 +235,14 @@ identifier even after the Report is deleted. Failed worker outcomes, explicit
 cancellation and retry are also recorded. Read-only administrator overrides do
 not advertise report creation or editing. Matter purge deletes terminal
 compilation requests in the same cleanup transaction as the remaining work.
+
+Section editors reserve capacity for immutable review-basis text and display the
+remaining prose limit. Matter closure and backup both wait for queued or running
+report compilation; closure displays those jobs before offering deletion.
+
+The synthetic speaker-review acceptance test now accepts either transient refresh
+state and checks the eventual persisted summary against the current speaker basis.
+Its frozen node/file digests and aggregate fingerprint are refreshed explicitly;
+case selection, synthetic fixtures, and all other node digests are unchanged.
+Offline focused compilation counts selected saved works before expanding their
+findings and labels included text as unfiltered with relevance not checked.

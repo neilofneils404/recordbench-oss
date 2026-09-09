@@ -88,6 +88,15 @@ class ReportCompilationJobs:
             "AND m.state='active' AND p.active=1 AND l.state='active'", (matter_id, actor_id)
         ).fetchone() is not None
 
+    def counts(self) -> dict[str, int]:
+        with self.workspace._lock:
+            rows = self.workspace.connection.execute(
+                "SELECT state,COUNT(*) AS count FROM workbench_report_compilation_job GROUP BY state"
+            ).fetchall()
+        counts = {state: 0 for state in ("queued", "running", "succeeded", "failed", "cancelled")}
+        counts.update({row["state"]: int(row["count"]) for row in rows})
+        return counts
+
     def get(self, matter_id: str, actor_id: str, job_id: str) -> CompilationJobRecord:
         with self.workspace._lock:
             connection = self.workspace.connection

@@ -30,6 +30,7 @@ ACTIVE_JOB_KEYS = (
     "answer_jobs",
     "research_jobs",
     "review_runs",
+    "report_compilation_jobs",
 )
 SAFE_RETENTION = re.compile(r"^[1-9][0-9]{0,3}[dhmwy]$")
 
