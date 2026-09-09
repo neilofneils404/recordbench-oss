@@ -22,22 +22,33 @@
       </div>
       <p id="find-help" class="find-help">We'll find sources that include all the words you enter.</p>
     </form>
-      <details class="find-refinements" {% if query or phrase or exclude or selected_source_set or selected_collection %}open{% endif %}>
-        <summary>Narrow your search{% if phrase or exclude or selected_source_set or selected_collection %}<span class="find-refinements-active">Filters on</span>{% endif %}</summary>
+      <details class="find-refinements" {% if query or phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}open{% endif %}>
+        <summary>Narrow your search{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<span class="find-refinements-active">Filters on</span>{% endif %}</summary>
         <div class="find-refinement-grid">
           <div><label for="find-phrase">Include this exact phrase</label><input id="find-phrase" form="find-basic-form" name="phrase" value="{{ phrase }}" maxlength="512" placeholder="e.g. returned to the depot"><small>Keep these words together.</small></div>
           <div><label for="find-exclude">Leave out these words</label><input id="find-exclude" form="find-basic-form" name="exclude" value="{{ exclude }}" maxlength="512" placeholder="e.g. cancelled"><small>Skip sources containing any of these words.</small></div>
           <div><label for="find-collection">Look in a collection</label><select id="find-collection" form="find-basic-form" name="collection"><option value="">All collections</option>{% for item in collections %}<option value="{{ item.collection_id }}" {% if selected_collection == item.collection_id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
           <div><label for="find-source-set">Use a saved source set</label><select id="find-source-set" form="find-basic-form" name="source_set"><option value="">All sources</option>{% for item in source_sets %}<option value="{{ item.source_set_id }}" {% if selected_source_set == item.source_set_id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
         </div>
-        {% if phrase or exclude or selected_source_set or selected_collection %}<a class="find-clear-link" href="{{ clear_refinements_url }}">Clear filters</a>{% endif %}
+        <fieldset class="find-proximity">
+          <legend>Find two details close together</legend>
+          <p id="find-proximity-help" class="find-help">Match both on the same extracted page or section. A detail can be a word or a phrase.</p>
+          <div class="find-refinement-grid">
+            <div><label for="find-proximity-first">First detail</label><input id="find-proximity-first" form="find-basic-form" name="proximity_first" value="{{ proximity_first }}" maxlength="256" placeholder="e.g. red bicycle" aria-describedby="find-proximity-help"></div>
+            <div><label for="find-proximity-second">Second detail</label><input id="find-proximity-second" form="find-basic-form" name="proximity_second" value="{{ proximity_second }}" maxlength="256" placeholder="e.g. depot" aria-describedby="find-proximity-help"></div>
+            <div><label for="find-proximity-gap">At most this many words between</label><input id="find-proximity-gap" form="find-basic-form" name="proximity_gap" type="number" min="0" max="100" step="1" value="{{ proximity_gap }}"><small>0 means adjacent; up to 100. Punctuation adds no words.</small></div>
+            <div><label for="find-proximity-order">Order of the details</label><select id="find-proximity-order" form="find-basic-form" name="proximity_order"><option value="either" {% if proximity_order == 'either' %}selected{% endif %}>In either order</option><option value="first" {% if proximity_order == 'first' %}selected{% endif %}>First detail before second</option></select></div>
+          </div>
+        </fieldset>
+        <div class="find-filter-actions"><button class="button button-secondary" type="submit" form="find-basic-form" name="advanced" value="0">Apply filters</button>
+        {% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<a class="find-clear-link" href="{{ clear_refinements_url }}">Clear filters</a>{% endif %}</div>
     <details class="find-advanced" {% if query %}open{% endif %}>
       <summary>Advanced search</summary>
       <form class="find-advanced-fields" id="find-expression-form" method="get" action="/matters/{{ matter.slug }}/exact-search">
         <input type="hidden" name="search" value="1">
         <input type="hidden" name="advanced" value="1">
         <label for="find-query">Search expression</label>
-        <p id="find-advanced-help">Use AND, OR, NOT, parentheses, or quoted phrases. Excluded words apply to the whole source; a phrase stays within one extracted page or section.</p>
+        <p id="find-advanced-help">Use AND, OR, NOT, parentheses, or quoted phrases. Use NEAR/n for either order and BEFORE/n for first-then-second, with n from 0 to 100 words between two details. Phrases and proximity stay within one extracted page or section; excluded words apply to the whole source.</p>
         <div class="find-input-row"><input id="find-query" name="q" value="{{ query }}" maxlength="512" aria-describedby="find-advanced-help" placeholder='e.g. bicycle AND (red OR blue)'><button class="button button-secondary" type="submit">Run expression</button></div>
         <div class="find-refinement-grid">
           <div><label for="expression-collection">Look in a collection</label><select id="expression-collection" name="collection"><option value="">All collections</option>{% for item in collections %}<option value="{{ item.collection_id }}" {% if selected_collection == item.collection_id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
@@ -75,7 +86,7 @@
         {% else %}<p class="find-excerpt">This source matches the exclusions in your search.</p>{% endif %}
       </div>
     </article>
-    {% else %}<div class="find-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><h3>No sources found</h3><p>Try a shorter name or fewer words.{% if phrase or exclude or selected_source_set or selected_collection %} You can also clear your filters to look more broadly.{% endif %}</p>{% if phrase or exclude or selected_source_set or selected_collection %}<a class="button button-secondary" href="{{ clear_refinements_url }}">Search without filters</a>{% endif %}</div>{% endfor %}
+    {% else %}<div class="find-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><h3>No sources found</h3><p>Try a shorter name or fewer words.{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %} You can also clear your filters to look more broadly.{% endif %}</p>{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<a class="button button-secondary" href="{{ clear_refinements_url }}">Search without filters</a>{% endif %}</div>{% endfor %}
     {% if results.pages > 1 %}<nav class="find-pagination" aria-label="Source result pages">{% if links.previous %}<a class="button button-secondary" href="{{ links.previous }}">← Previous</a>{% endif %}<span>Page {{ results.page }} of {{ results.pages }}</span>{% if links.next %}<a class="button button-secondary" href="{{ links.next }}">Next →</a>{% endif %}</nav>{% endif %}
   </section>
   {% elif not error %}

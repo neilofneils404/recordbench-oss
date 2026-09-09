@@ -14,7 +14,7 @@ import unicodedata
 import time
 from typing import Iterable, Protocol
 
-from .exact_search import And, Literal, Not, Or, ParsedQuery, parse_query, tokenize_text
+from .exact_search import And, Literal, Not, Or, ParsedQuery, Proximity, matching_spans, parse_query, tokenize_text
 from .pilot_uploads import PilotDocument, PilotStore, PilotUnit
 
 
@@ -26,7 +26,9 @@ class ExactSearchChanged(ExactSearchUnavailable):
     pass
 
 
-def build_search_query(words: str = "", phrase: str = "", exclude: str = "") -> str:
+def build_search_query(words: str = "", phrase: str = "", exclude: str = "", *,
+                       proximity_first: str = "", proximity_second: str = "",
+                       proximity_gap: str = "5", proximity_order: str = "either") -> str:
     """Plain form fields are literal words, never implicit operator syntax."""
     included = tokenize_text(words)
     phrase_words = tokenize_text(phrase)
@@ -34,6 +36,16 @@ def build_search_query(words: str = "", phrase: str = "", exclude: str = "") -> 
     parts = [f'"{word}"' for word in included]
     if phrase_words:
         parts.append('"' + " ".join(phrase_words) + '"')
+    if proximity_first.strip() or proximity_second.strip():
+        first, second = tokenize_text(proximity_first), tokenize_text(proximity_second)
+        if not first or not second:
+            raise ValueError("Enter both details to find them close together.")
+        if not str(proximity_gap).isascii() or not str(proximity_gap).isdecimal() or not 0 <= int(proximity_gap) <= 100:
+            raise ValueError("Choose between 0 and 100 words between the two details.")
+        if proximity_order not in {"either", "first"}:
+            raise ValueError("Choose either order or first detail before second.")
+        operator = "NEAR" if proximity_order == "either" else "BEFORE"
+        parts.append(f'"{" ".join(first)}" {operator}/{int(proximity_gap)} "{" ".join(second)}"')
     if excluded:
         parts.append('NOT (' + ' OR '.join(f'"{word}"' for word in excluded) + ')')
     if not parts:
@@ -94,11 +106,11 @@ class ReferenceExactSearchBackend:
             max_characters=self.policy.max_characters, max_seconds=self.policy.max_seconds)
 
 
-def _positive_literals(query: ParsedQuery) -> tuple[Literal, ...]:
-    result: list[Literal] = []
+def _positive_literals(query: ParsedQuery) -> tuple[Literal | Proximity, ...]:
+    result: list[Literal | Proximity] = []
 
     def visit(node, negated=False):
-        if isinstance(node, Literal):
+        if isinstance(node, (Literal, Proximity)):
             if not negated:
                 result.append(node)
         elif isinstance(node, Not):
@@ -130,11 +142,10 @@ def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600) -> di
                 tokens.append((token, word_start, index))
             word_start = None
     hits = []
+    token_words = tuple(item[0] for item in tokens)
     for literal in _positive_literals(query):
-        size = len(literal.words)
-        for index in range(len(tokens) - size + 1):
-            if tuple(item[0] for item in tokens[index:index + size]) == literal.words:
-                hits.append((tokens[index][1], tokens[index + size - 1][2]))
+        for start_token, end_token in matching_spans(token_words, literal):
+            hits.append((tokens[start_token][1], tokens[end_token - 1][2]))
     # Merge overlapping term/phrase spans so source text is rendered once.
     merged = []
     for left, right in sorted(hits):
@@ -145,18 +156,30 @@ def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600) -> di
     hits = merged
     start = max(0, hits[0][0] - 90) if hits else 0
     end = min(len(unit.text), start + limit)
+    windows = [(start, end)]
+    if hits and hits[0][1] > end:
+        left, right = hits[0]
+        if right - left <= limit:
+            windows = [(max(0, right - limit), right)]
+        else:
+            # Long proximity spans retain both matching ends, with an explicit
+            # omission, instead of hiding the second operand beyond the limit.
+            half = limit // 2
+            windows = [(left, left + half), (right - (limit - half), right)]
     pieces: list[tuple[str, bool]] = []
-    cursor = start
-    if start:
-        pieces.append(("…", False))
-    for left, right in hits:
-        if left < start or right > end:
-            continue
-        pieces.append((unit.text[cursor:left], False))
-        pieces.append((unit.text[left:right], True))
-        cursor = right
-    pieces.append((unit.text[cursor:end], False))
-    if end < len(unit.text):
+    for window_index, (start, end) in enumerate(windows):
+        cursor = start
+        if start or window_index:
+            pieces.append(("…", False))
+        for left, right in hits:
+            left, right = max(left, start), min(right, end)
+            if left >= right:
+                continue
+            pieces.append((unit.text[cursor:left], False))
+            pieces.append((unit.text[left:right], True))
+            cursor = right
+        pieces.append((unit.text[cursor:end], False))
+    if windows[-1][1] < len(unit.text):
         pieces.append(("…", False))
     return {"number": unit.number, "location": unit.location, "pieces": tuple(pieces)}
 

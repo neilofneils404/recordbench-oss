@@ -1,14 +1,16 @@
 # Exact document search
 
 The matter's **Find sources** route enumerates documents using
-`recordbench-exact-v1`. The existing **Semantic passage search** continues to
+`recordbench-exact-v2`. The existing **Semantic passage search** continues to
 select ranked passages for discovery and answering; its candidate limit does
 not constrain exact results. Exact search requires no embedding service,
 reranker, model, or PostgreSQL retrieval index.
 
 The default form asks for names, places, or details. Optional refinements let
 reviewers include an exact phrase, leave out words, and choose a collection or
-saved source set. These fields treat words literally, including words such as
+saved source set. [Nearby-detail controls](EXACT_SEARCH_PROXIMITY.md) add two
+words or phrases, a maximum count of intervening words, and either/first-before
+order. These fields treat words literally, including words such as
 "and"; reviewers do not need Boolean syntax. A separate collapsed **Advanced
 search** form accepts the grammar directly. Results lead with source names,
 original-text excerpts with safely escaped highlights, page/section links,
