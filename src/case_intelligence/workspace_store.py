@@ -9372,7 +9372,7 @@ class WorkspaceStore:
         now = self._now()
         with self._lock, self.connection:
             rows = self.connection.execute(
-                "SELECT job_id,cancellation_requested,total_steps,completed_steps "
+                "SELECT job_id,cancellation_requested,total_steps,completed_steps,result_json "
                 "FROM workbench_research_job WHERE state='running' ORDER BY created_at,job_id"
             ).fetchall()
             for row in rows:
@@ -9383,10 +9383,14 @@ class WorkspaceStore:
                     "Cancelled during restart recovery." if cancelled
                     else "Queued again after the workbench restarted. Completed evidence is preserved."
                 )
+                result = json.loads(row["result_json"] or "{}")
+                if cancelled:
+                    result["stop_reason"] = "cancelled"
+                encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
                 self.connection.execute(
-                    "UPDATE workbench_research_job SET state=?,stage=?,message=?,worker_id=NULL,"
+                    "UPDATE workbench_research_job SET result_json=?,state=?,stage=?,message=?,worker_id=NULL,"
                     "started_at=NULL,finished_at=?,updated_at=? WHERE job_id=? AND state='running'",
-                    (state, stage, message, now if cancelled else None, now, row["job_id"]),
+                    (encoded, state, stage, message, now if cancelled else None, now, row["job_id"]),
                 )
                 self._append_research_event_locked(
                     row["job_id"], state=state, stage=stage, message=message,

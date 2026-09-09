@@ -501,7 +501,7 @@ class OllamaGenerator:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "options": {"temperature": 0.1, "num_ctx": 8192},
+                "options": {"temperature": 0.1, "num_ctx": 8192, "num_predict": DEFAULT_REVIEW_BUDGET.output_tokens},
                 "keep_alive": "5m",
             },
             timeout=self.timeout,

@@ -463,6 +463,7 @@ def test_ollama_gateway_uses_loopback_structured_chat_contract():
         answer = GroundedGenerationService(client).answer("When did Daniels see the bag?", EVIDENCE)
         assert answer.answerable is True and answer.model_called is True
         assert len(requests) == 1
+        assert requests[0]["options"]["num_predict"] == 1_200
         assert requests[0]["model"] == "fixture-generator"
         assert requests[0]["format"]["required"] == [
             "answerable", "claims", "limitation", "missing_information"
