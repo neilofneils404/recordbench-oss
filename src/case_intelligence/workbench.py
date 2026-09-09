@@ -9665,8 +9665,7 @@ def create_workbench_app(
                 "collections": bench.workspace.source_collections(matter.matter_id),
                 "selected_source_set": source_set, "selected_collection": collection,
                 "results": results, "links": links, "error": action_error,
-                "previews": {item.document_id: tuple({**passage_preview(unit, results.query), "position": position}
-                    for position, unit in zip(item.passage_positions, item.passages)) for item in results.items} if results else {},
+                "previews": {item.document_id: item.previews for item in results.items} if results else {},
             })
 
     @app.get("/matters/{slug}", response_class=HTMLResponse)

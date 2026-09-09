@@ -89,7 +89,7 @@ Route tests preserve proximity fields in pagination, enforce source-set scope,
 fail incomplete plain input, and keep the ranked retriever out of exact search.
 
 A generated local measurement scanned 300 documents containing 1,932,000
-characters and found all 300 matches in 0.69 seconds. A separate 100,000-token
+characters and found all 300 matches in 0.72 seconds, including displayed-page previews. A separate 100,000-token
 repetition case matched in 0.07 seconds. These are observations on the development
 host, not latency guarantees for another machine or a concurrent workload.
 Browser validation covers plain controls with keyboard submission, the order
