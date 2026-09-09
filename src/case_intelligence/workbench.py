@@ -1,6 +1,8 @@
 """Milestone A staff workbench: matters, uploads, retrieval, generation, support."""
 from __future__ import annotations
 
+from .review_budget import DEFAULT_REVIEW_BUDGET, validate_primary_limit
+
 import argparse
 import hashlib
 import json
@@ -2641,7 +2643,7 @@ class CaseIntelligenceWorkbench:
                 self.search(
                     matter,
                     query,
-                    limit=min(max(int(primary_limit), 1), 30),
+                    limit=validate_primary_limit(primary_limit),
                     stage_callback=stage_callback if index == 0 else None,
                     document_ids=document_ids,
                 )
@@ -2673,7 +2675,7 @@ class CaseIntelligenceWorkbench:
                         self.search(
                             matter,
                             retrieval_query,
-                            limit=12,
+                            limit=DEFAULT_REVIEW_BUDGET.supplemental_candidates_per_kind,
                             document_ids=scoped,
                         )
                     )
@@ -4707,8 +4709,12 @@ class CaseIntelligenceWorkbench:
         if not queries:
             plan = self._research_plan(job.question, job.title)
             queries = tuple(str(item) for item in plan["queries"])
+        budget = DEFAULT_REVIEW_BUDGET
+        if len(queries) > budget.passes:
+            raise WorkflowFailure("This investigation exceeds the five-pass review budget. Start a new investigation.")
+        plan["budget"] = budget.metadata()
         total_steps = len(queries) + 2
-        if not job.plan or job.total_steps != total_steps:
+        if not job.plan or job.total_steps != total_steps or "budget" not in job.plan:
             self.workspace.set_research_plan(job.job_id, plan, total_steps)
 
         checkpoint = dict(job.result) if job.result else {}
@@ -4718,7 +4724,7 @@ class CaseIntelligenceWorkbench:
         ]
         citations: list[WorkbenchCitation] = []
         seen_tokens: set[str] = set()
-        checkpoint_stale = False
+        checkpoint_stale = bool(passes and "budget" not in checkpoint)
         for value in evidence_values:
             try:
                 checkpoint_citation = self._workflow_citation(value)
@@ -4751,6 +4757,30 @@ class CaseIntelligenceWorkbench:
             citations = []
             seen_tokens = set()
             candidate_count = 0
+        candidate_documents = set(checkpoint.get("candidate_document_ids", [])) if not checkpoint_stale else set()
+        analyzed_units = sum(int(item.get("analyzed_units", 0)) for item in passes)
+        truncated_chars = int((checkpoint.get("budget") or {}).get("counts", {}).get("truncated_chars", 0)) if not checkpoint_stale else 0
+
+        def packet_for(evidence):
+            nonlocal truncated_chars
+            excerpts, omitted = budget.bound_excerpts(tuple(citation.excerpt for citation in evidence.values()))
+            truncated_chars += omitted
+            return tuple(
+                EvidenceItem(identifier, citation.source_name, citation.location,
+                             excerpt, citation.evidence_kind, document_id=citation.document_id)
+                for (identifier, citation), excerpt in zip(evidence.items(), excerpts)
+                if excerpt
+            )
+
+        def accounting(synthesis_inputs=0, stop_reason="running"):
+            value = budget.metadata(completed_passes=len(passes), candidate_occurrences=candidate_count,
+                                    unique_evidence=len(citations), synthesis_inputs=synthesis_inputs,
+                                    truncated_chars=truncated_chars,
+                                    candidate_sources=len(candidate_documents), analyzed_unit_occurrences=analyzed_units,
+                                    unavailable_sources=max(0, readiness.total_count - readiness.searchable_count))
+            value["stop_reason"] = stop_reason
+            return value
+
         intent = classify_question(job.question)
 
         for index, query in enumerate(queries[len(passes):], len(passes) + 1):
@@ -4763,34 +4793,25 @@ class CaseIntelligenceWorkbench:
                     query,
                     document_ids=scoped_document_ids,
                     expand_broad_summary=False,
-                    primary_limit=30,
+                    primary_limit=budget.primary_candidates,
                     retrieval_boundary=retrieval_boundary,
                 )
             except RetrievalUnavailable:
                 found = ()
             candidate_count += len(found)
+            candidate_documents.update(item.document_id for item in found)
             selected = self._answer_evidence_citations(
                 matter,
                 found,
-                maximum=12,
+                maximum=budget.selected_per_pass,
                 required_kinds=intent.required_evidence_kinds,
             )
             for citation in selected:
-                if citation.support_token not in seen_tokens and len(citations) < 72:
+                if citation.support_token not in seen_tokens and len(citations) < budget.unique_evidence:
                     citations.append(citation)
                     seen_tokens.add(citation.support_token)
             evidence = {f"S{ordinal}": citation for ordinal, citation in enumerate(selected, 1)}
-            packet = tuple(
-                EvidenceItem(
-                    identifier,
-                    citation.source_name,
-                    citation.location,
-                    citation.excerpt[:6_000],
-                    citation.evidence_kind,
-                    document_id=citation.document_id,
-                )
-                for identifier, citation in evidence.items()
-            )
+            packet = packet_for(evidence)
             if packet:
                 try:
                     answer = self.generator.answer(
@@ -4831,8 +4852,13 @@ class CaseIntelligenceWorkbench:
                     "candidate_passages": 0,
                     "candidate_sources": 0,
                 }
+            analyzed_units += len(packet)
+            pass_result["selected_passages"] = len(selected)
+            pass_result["analyzed_units"] = len(packet)
             passes.append(pass_result)
             checkpoint = {
+                "candidate_document_ids": sorted(candidate_documents),
+                "budget": accounting(),
                 "passes": passes,
                 "evidence": [self._workflow_citation_payload(item) for item in citations],
                 "candidate_count": candidate_count,
@@ -4842,7 +4868,7 @@ class CaseIntelligenceWorkbench:
             if not self.workspace.update_research_progress(
                 job.job_id,
                 stage="searching",
-                message=f"Completed evidence pass {index:,} of {len(queries):,}.",
+                message=f"Completed evidence pass {index:,} of {len(queries):,}; {candidate_count:,} candidate occurrences, {len(citations):,} unique selected passages.",
                 completed_steps=index,
                 candidate_count=candidate_count,
                 evidence_count=len(citations),
@@ -4855,7 +4881,7 @@ class CaseIntelligenceWorkbench:
         final_citations = self._answer_evidence_citations(
             matter,
             citations,
-            maximum=12,
+            maximum=budget.synthesis_inputs,
             required_kinds=intent.required_evidence_kinds,
         )
         self.workspace.update_research_progress(
@@ -4869,17 +4895,7 @@ class CaseIntelligenceWorkbench:
         final_evidence = {
             f"S{ordinal}": citation for ordinal, citation in enumerate(final_citations, 1)
         }
-        final_packet = tuple(
-            EvidenceItem(
-                identifier,
-                citation.source_name,
-                citation.location,
-                citation.excerpt[:6_000],
-                citation.evidence_kind,
-                document_id=citation.document_id,
-            )
-            for identifier, citation in final_evidence.items()
-        )
+        final_packet = packet_for(final_evidence)
         try:
             final_answer = self.generator.answer(
                 research_synthesis_question(job.question),
@@ -4931,6 +4947,8 @@ class CaseIntelligenceWorkbench:
         ) if part)
         return {
             "_retrieval_source_fingerprint": retrieval_boundary.get("source_fingerprint", ""),
+            "budget": accounting(len(final_packet), "completed_bounded_plan"),
+            "stop_reason": "completed_bounded_plan",
             "summary": final_answer.text,
             "answer": final_answer_payload,
             "passes": passes,
@@ -8723,6 +8741,8 @@ def create_workbench_app(
             "completed_steps": job.completed_steps,
             "total_steps": job.total_steps,
             "progress_percent": progress,
+            "review_budget": job.review_budget,
+            "review_budget_description": job.review_budget_description,
             "candidate_count": job.candidate_count,
             "evidence_count": job.evidence_count,
             **eta,

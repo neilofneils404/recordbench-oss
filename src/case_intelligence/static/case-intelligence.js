@@ -3564,6 +3564,10 @@
           state.className = `workflow-state-badge state-${status.state || "running"}`;
         }
         if (stage) stage.textContent = status.message || "Working…";
+        const budget = panel.querySelector("[data-workflow-budget]");
+        if (budget && status.review_budget_description) {
+          budget.textContent = status.review_budget_description;
+        }
         const completed = status.completed_steps ?? status.reviewed_count ?? 0;
         const total = status.total_steps ?? status.snapshot_count ?? 0;
         if (label) {
