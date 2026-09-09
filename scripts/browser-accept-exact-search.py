@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -23,6 +24,7 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+from case_intelligence.generation import UnavailableGenerator
 from case_intelligence.workbench import create_workbench_app
 
 ACTOR = "development-taylor-morgan"
@@ -35,8 +37,14 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
+    # This acceptance process must not inherit deployed storage, source mounts,
+    # PostgreSQL, or worker endpoints from the host's RecordBench environment.
+    for name in tuple(os.environ):
+        if name.startswith(("CASE_INTELLIGENCE_", "CASE_REVIEW_")):
+            os.environ.pop(name)
     with tempfile.TemporaryDirectory(prefix="recordbench-exact-search-") as temporary:
-        app = create_workbench_app(Path(temporary).resolve() / "runtime", auth_mode="test")
+        app = create_workbench_app(Path(temporary).resolve() / "runtime", auth_mode="test",
+            generator=UnavailableGenerator(), learned_retrieval=False, background_ingestion=False)
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         base = f"http://127.0.0.1:{listener.getsockname()[1]}"
@@ -74,8 +82,11 @@ def main():
                 return element
 
             def expect_count(number):
-                wait.until(EC.text_to_be_present_in_element((By.ID, "find-results-heading"), f"{number} sources found"))
-                assert driver.find_element(By.ID, "find-results-heading").text == f"{number} sources found"
+                # Read within one browser command so a navigation cannot detach
+                # an element between Selenium's lookup and text extraction.
+                wait.until(lambda d: d.execute_script(
+                    "return document.getElementById('find-results-heading')?.textContent.trim() === arguments[0]",
+                    f"{number} sources found"))
 
             def screenshot(name, width):
                 driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
@@ -136,6 +147,7 @@ def main():
             receipt = {
                 "provenance": "temporary synthetic sources; no model or live backend required",
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+                "working_tree_clean": not subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip(),
                 "checks": ["plain first-use form", "primary Enter search and complete pagination",
                     "plain ordered proximity Enter returns 29 of 31", "either-order Apply filters returns 30 of 31",
                     "proximity fields retained on page 2", "advanced Enter overrides retained basic words",
