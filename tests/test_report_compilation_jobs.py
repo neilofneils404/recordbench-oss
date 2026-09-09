@@ -346,3 +346,73 @@ def test_late_previous_heartbeat_cannot_cancel_the_next_job(tmp_path, monkeypatc
         release_second.set()
         coordinator.close()
         store.close()
+
+
+@pytest.mark.parametrize("validation_phase", ["snapshot", "final"])
+def test_locked_source_validation_outlasting_lease_keeps_worker_owned(tmp_path, validation_phase):
+    path = tmp_path / "control.sqlite"
+    store, matter = setup_store(path)
+    competing_store = WorkspaceStore(path)
+    policy = CompilationJobPolicy(lease_seconds=0.6)
+    jobs = ReportCompilationJobs(store, policy=policy)
+    competitor = ReportCompilationJobs(competing_store, policy=policy)
+    queued = queue(jobs, matter)
+    validating = threading.Event()
+    release = threading.Event()
+
+    def validate_sources():
+        # Snapshot and final citation validation hold this lock but do not open
+        # a write transaction. Another process must see live lease renewals.
+        with store._lock:
+            validating.set()
+            assert release.wait(5)
+
+    def process(job, cancelled):
+        if validation_phase == "snapshot":
+            validate_sources()
+        jobs.record_input_fingerprint(job, FINGERPRINT)
+        assert not cancelled()
+        return "synthetic-draft"
+
+    def finish(job, draft):
+        if validation_phase == "final":
+            validate_sources()
+        return jobs.complete(job, lambda: build_report(store, matter), fingerprint=FINGERPRINT)
+
+    coordinator = ReportCompilationCoordinator(jobs, process=process, finish=finish)
+    try:
+        assert validating.wait(5)
+        time.sleep(policy.lease_seconds * 2)
+        assert not release.is_set()
+        assert competitor.claim("synthetic-competing-worker") is None
+        active = competitor.get(matter.matter_id, ACTOR, queued.job_id)
+        assert active.state == "running" and active.attempts == 1
+        assert active.lease_expires_at > time.time()
+        release.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and competitor.get(matter.matter_id, ACTOR, queued.job_id).state == "running":
+            time.sleep(0.01)
+        assert competitor.get(matter.matter_id, ACTOR, queued.job_id).state == "succeeded"
+        assert competing_store.connection.execute("SELECT COUNT(*) FROM workbench_report").fetchone()[0] == 1
+    finally:
+        release.set()
+        coordinator.close()
+        competing_store.close()
+        store.close()
+
+
+@pytest.mark.parametrize("reason", ["cancelled", "revoked"])
+def test_independent_heartbeat_does_not_renew_cancelled_or_revoked_work(tmp_path, reason):
+    store, matter = setup_store(tmp_path / "control.sqlite")
+    jobs = ReportCompilationJobs(store)
+    queued = queue(jobs, matter)
+    claimed = jobs.claim("synthetic-worker")
+    before = claimed.lease_expires_at
+    if reason == "cancelled":
+        jobs.cancel(matter.matter_id, ACTOR, queued.job_id)
+    else:
+        with store.connection:
+            store.connection.execute("UPDATE workbench_matter_membership SET state='revoked' WHERE matter_id=? AND principal_id=?", (matter.matter_id, ACTOR))
+    assert jobs.heartbeat(claimed) is False
+    assert store.connection.execute("SELECT lease_expires_at FROM workbench_report_compilation_job WHERE job_id=?", (queued.job_id,)).fetchone()[0] == before
+    store.close()
