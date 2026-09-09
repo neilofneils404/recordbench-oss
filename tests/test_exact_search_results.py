@@ -90,7 +90,8 @@ def _file_backed_source(tmp_path, texts):
     source, _ = store.store_stream('Synthetic file-backed.txt', 'text/plain', io.BytesIO(b'Synthetic'))
     path = store.derived / source.units_file
     with path.open('w', encoding='utf-8') as stream:
-        json.dump({'version': 1, 'units': [{'number': index, 'text': text}
+        json.dump({'version': 1, 'units': [{'number': index, 'text': text,
+                  'line_start': (index - 1) * 20 + 1, 'line_end': index * 20}
                   for index, text in enumerate(texts, 1)]}, stream, ensure_ascii=False)
     source.page_count = len(texts) * 20
     source.completed_units = source.total_units = len(texts)
@@ -1100,3 +1101,21 @@ def test_production_txt_rejects_invalid_original_line_count(tmp_path, line_count
     source.page_count = line_count
     with pytest.raises(ExactSearchUnavailable, match='No exact total'):
         scan([source], 'NOT cancelled')
+
+
+@pytest.mark.parametrize('query', ['red', 'NOT missing'])
+@pytest.mark.parametrize('index,start,end', [(0, 999, 1000), (1, 1, 20), (0, 2, 20), (0, 1, 19), (2, 41, 42), (0, None, None)])
+def test_production_txt_rejects_impossible_retained_line_ranges(tmp_path, query, index, start, end):
+    import io
+    from case_intelligence.pilot_uploads import PilotStore
+    from tests.test_review_tools import CleanScanner
+    store = PilotStore(tmp_path / 'synthetic-line-ranges', malware_scanner=CleanScanner())
+    source, _ = store.store_stream('Synthetic ranges.txt', 'text/plain', io.BytesIO(('red\n' * 41).encode()))
+    assert source.total_units == 3 and source.page_count == 41
+    assert scan([source], query).total == 1
+    path = store.derived / source.units_file
+    payload = json.loads(path.read_text())
+    payload['units'][index].update(line_start=start, line_end=end)
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([source], query)
