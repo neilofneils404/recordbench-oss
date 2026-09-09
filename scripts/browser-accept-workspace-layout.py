@@ -61,7 +61,7 @@ def main():
     for name in tuple(os.environ):
         if name.startswith(("CASE_INTELLIGENCE_", "CASE_REVIEW_")):
             os.environ.pop(name)
-    checks, alignment = [], {}
+    checks, alignment, conversation_layouts = [], {}, {}
     with tempfile.TemporaryDirectory(prefix="recordbench-layout-") as temporary:
         app = create_workbench_app(Path(temporary).resolve() / "runtime", auth_mode="test",
             generator=UnavailableGenerator(), learned_retrieval=False, background_ingestion=False,
@@ -178,6 +178,45 @@ def main():
             checks.append("37-matter rail scrolls independently, remains fixed and keeps its bottom control reachable")
             for width in (761, 820, 900):
                 viewport(width, 900)
+                go(paths["review"])
+                pane = find(".workspace-main")
+                wheel(width - 30, 300, 1900)
+                wait.until(lambda _: scroll(pane) > 1000)
+                history, active = find(".conversation-history"), find(".conversation-active")
+                composer = find(".composer-wrap")
+                history_bounds, active_bounds = rect(history), rect(active)
+                assert history_bounds["right"] + 16 <= active_bounds["left"]
+                assert history_bounds["bottom"] <= rect(composer)["top"] - 5
+                assert js("const r=arguments[0].getBoundingClientRect(); return arguments[0].contains(document.elementFromPoint(r.left+r.width/2, arguments[1]))", active, history_bounds["top"] + 100)
+                conversation_layouts[str(width)] = {
+                    "columns": js("return getComputedStyle(arguments[0]).gridTemplateColumns", find(".conversation-workspace")),
+                    "history_right": history_bounds["right"], "active_left": active_bounds["left"],
+                    "history_bottom": history_bounds["bottom"], "composer_top": rect(composer)["top"],
+                }
+                nav = find("[data-conversation-list]")
+                previous_pane, bounds = scroll(pane), rect(nav)
+                wheel(bounds["right"] - 8, (bounds["top"] + bounds["bottom"]) / 2, 700)
+                wait.until(lambda _: scroll(nav) > 0)
+                nav.send_keys(Keys.END)
+                wait.until(lambda _: js("return arguments[0].scrollTop + arguments[0].clientHeight >= arguments[0].scrollHeight - 2", nav))
+                assert abs(scroll(pane) - previous_pane) <= 1
+                screenshot(f"review-support-closed-{width}")
+            viewport(760, 900)
+            go(paths["review"])
+            pane, history, active, nav = find(".workspace-main"), find(".conversation-history"), find(".conversation-active"), find("[data-conversation-list]")
+            assert js("return getComputedStyle(arguments[0]).position", history) == "static"
+            assert js("return getComputedStyle(arguments[0]).maxHeight", nav) == "250px"
+            assert rect(history)["bottom"] <= rect(active)["top"]
+            assert abs(rect(history)["left"] - rect(active)["left"]) <= 1
+            wheel(730, 300, 1900)
+            wait.until(lambda _: scroll(pane) > 1000)
+            assert rect(history)["bottom"] <= rect(find(".topbar"))["bottom"]
+            assert js("const r=arguments[0].getBoundingClientRect(); return arguments[0].contains(document.elementFromPoint(r.left+r.width/2, 200))", active)
+            conversation_layouts["760"] = {"history_position": "static", "list_max_height": "250px", "history_bottom_after_scroll": rect(history)["bottom"]}
+            screenshot("review-support-closed-760-stacked")
+            checks.append("Without support, 761/820/900px history stays beside clickable active content and scrolls independently; at760px capped static history scrolls away above the conversation")
+            for width in (761, 820, 900):
+                viewport(width, 900)
                 go(paths["review"] + f"&support={support}")
                 pane = find(".workspace-main")
                 # Scroll the review itself, above the open support drawer.
@@ -215,7 +254,7 @@ def main():
             checks.append("Resizing open support to 820x650 keeps the whole history scrollable and its final link clickable above the composer")
             receipt = {"provenance": "temporary synthetic records; no model or live storage", "commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(), "working_tree_clean": not bool(subprocess.check_output(
-                ["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()), "checks": checks, "left_edges": alignment}
+                ["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()), "checks": checks, "left_edges": alignment, "conversation_layouts": conversation_layouts}
             (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
             print(json.dumps(receipt))
         finally:
