@@ -237,3 +237,72 @@ def test_scan_releases_workspace_lock_after_capturing_scope(tmp_path):
             if reader.ident is not None:
                 reader.join(5)
         assert not errors
+
+
+def test_phrase_preview_anchors_on_complete_phrase_and_preserves_unicode():
+    from case_intelligence.exact_search import parse_query
+    for prefix, phrase in [("red", "red bicycle"), ("cafe\u0301", "cafe\u0301 bicycle"), ("İ", "İ bicycle")]:
+        unit = document(1, prefix + " isolated. " + "neutral " * 100 + phrase + " nearby").parsed_units()[0]
+        preview = passage_preview(unit, parse_query('"' + phrase + '"'))
+        text = "".join(piece for piece, _ in preview["pieces"])
+        assert phrase in text and "isolated" not in text
+        assert (phrase, True) in preview["pieces"]
+
+
+def test_skipped_pdf_pages_link_to_matching_extracted_unit_position(tmp_path):
+    app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
+    with TestClient(app) as client:
+        response = client.post("/matters", data={"name": "Synthetic skipped page", "descriptor": ""}, follow_redirects=False)
+        slug = response.headers["location"].split("/")[2]
+        bench = app.state.workbench
+        matter = bench.matter(slug, "development-taylor-morgan")
+        source = document(1, "opening", "target bicycle", "following extracted page")
+        source.units[1]["number"] = 3
+        source.units[2]["number"] = 4
+        bench.source_store(matter).documents[source.document_id] = source
+        result = bench.exact_search(matter, "bicycle")
+        assert result.items[0].passages[0].number == 3
+        assert result.items[0].passage_positions == (2,)
+        page = client.get(f"/matters/{slug}/exact-search", params={"words": "bicycle"})
+        match = re.search(r'<a class="find-location" href="([^"]+)">', page.text)
+        assert match and match.group(1).endswith("?unit=2")
+
+
+def test_advanced_form_keyboard_submission_has_its_own_explicit_mode(tmp_path):
+    from html.parser import HTMLParser
+    class FormParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.forms = {}
+            self.active = None
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "form":
+                assert self.active is None, "Forms must not be nested"
+                self.active = {**attrs, "inputs": []}
+                self.forms[attrs.get("id")] = self.active
+            elif tag == "input" and self.active is not None:
+                self.active["inputs"].append(attrs)
+        def handle_endtag(self, tag):
+            if tag == "form":
+                self.active = None
+    app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
+    with TestClient(app) as client:
+        response = client.post("/matters", data={"name": "Synthetic expression keyboard", "descriptor": ""}, follow_redirects=False)
+        slug = response.headers["location"].split("/")[2]
+        bench = app.state.workbench
+        matter = bench.matter(slug, "development-taylor-morgan")
+        source = document(1, "red bicycle")
+        bench.source_store(matter).documents[source.document_id] = source
+        page = client.get(f"/matters/{slug}/exact-search", params={"words": "missing"})
+        parser = FormParser()
+        parser.feed(page.text)
+        expression = parser.forms["find-expression-form"]
+        assert any(item.get("id") == "find-query" for item in expression["inputs"])
+        assert expression["id"] == "find-expression-form"
+        # Enter submits successful controls without requiring a clicked button.
+        params = {item["name"]: item.get("value", "") for item in expression["inputs"]}
+        params["q"] = "red AND bicycle"
+        result = client.get(expression["action"], params=params)
+        assert result.status_code == 200 and "1 source found" in result.text
+        assert "words" not in params and params["advanced"] == "1"

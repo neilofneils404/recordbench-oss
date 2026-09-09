@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
-import re
+import unicodedata
 import time
 from typing import Iterable, Protocol
 
@@ -49,6 +49,7 @@ class ExactDocumentResult:
     source_version: str
     passages: tuple[PilotUnit, ...]
     matching_unit_count: int
+    passage_positions: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -112,9 +113,36 @@ def _positive_literals(query: ParsedQuery) -> tuple[Literal, ...]:
 
 def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600) -> dict[str, object]:
     """Display-only highlights; preserve original text and never emit HTML."""
-    words = {word for literal in _positive_literals(query) for word in literal.words}
-    hits = [match.span() for match in re.finditer(r"\w+(?:['’‘-]\w+)*", unit.text)
-            if any(word in words for word in tokenize_text(match.group()))]
+    # Track original spans while applying the same canonical tokenizer used by
+    # matching. Combining marks belong to their word and punctuation separates
+    # consecutive phrase tokens without changing the displayed source text.
+    tokens = []
+    word_start = None
+    for index, char in enumerate(unit.text + " "):
+        attached_mark = word_start is not None and unicodedata.category(char).startswith("M")
+        joiner = (word_start is not None and char in "'’‘-" and index + 1 < len(unit.text)
+                  and unit.text[index + 1].isalnum())
+        if char.isalnum() or attached_mark or joiner:
+            if word_start is None:
+                word_start = index
+        elif word_start is not None:
+            for token in tokenize_text(unit.text[word_start:index]):
+                tokens.append((token, word_start, index))
+            word_start = None
+    hits = []
+    for literal in _positive_literals(query):
+        size = len(literal.words)
+        for index in range(len(tokens) - size + 1):
+            if tuple(item[0] for item in tokens[index:index + size]) == literal.words:
+                hits.append((tokens[index][1], tokens[index + size - 1][2]))
+    # Merge overlapping term/phrase spans so source text is rendered once.
+    merged = []
+    for left, right in sorted(hits):
+        if merged and left <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(right, merged[-1][1]))
+        else:
+            merged.append((left, right))
+    hits = merged
     start = max(0, hits[0][0] - 90) if hits else 0
     end = min(len(unit.text), start + limit)
     pieces: list[tuple[str, bool]] = []
@@ -189,12 +217,13 @@ def search_documents(
             continue
         eligible += 1
         if parsed.matches_units((unit.text for unit in units), budget_check=check_budget):
-            matching_units = tuple(unit for unit in units if any(
+            matching_units = tuple((position, unit) for position, unit in enumerate(units, 1) if any(
                 ParsedQuery("", literal).matches_units([unit.text], budget_check=check_budget) for literal in positives
             ))
             matches.append(ExactDocumentResult(
                 document.document_id, PilotStore.action_token(document), document.display_name, document.version_id,
-                matching_units[:3], len(matching_units),
+                tuple(unit for _, unit in matching_units[:3]), len(matching_units),
+                tuple(position for position, _ in matching_units[:3]),
             ))
         check_budget()
     fingerprint = hashlib.sha256(json.dumps(
