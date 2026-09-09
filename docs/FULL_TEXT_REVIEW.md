@@ -173,3 +173,17 @@ full-text mode or budgets and must never resume those runs. Retain an upgraded
 backup for a later compatible reader. No model revision, model download or
 deployment configuration changes are included. Local synthetic tests do not establish model
 recall, Linux/GPU capacity, PostgreSQL execution or confidential-workload acceptance.
+
+Every extracted unit's actual SHA-256 must match its stored excerpt digest during
+inventory and again before classification. A mismatch invalidates the source and
+leaves an explicit needs-attention outcome without sending altered text to the
+classifier. A digest computed from already-corrupt text is not source validation.
+
+Source-check CSV, JSON, Markdown and Word exports hydrate saved compact locators
+against the frozen source version and content basis. Complete bundles use the
+same hydration for their source-check exports. Cited excerpts remain complete,
+including units longer than the narrower Report citation limit; compact stored
+locators are unchanged. The existing portable export byte bound applies to the
+hydrated support, and unresolved, changed or oversized support refuses the export
+rather than emitting empty or truncated cited passages. Uncited attention and
+coverage outcomes remain exportable.
