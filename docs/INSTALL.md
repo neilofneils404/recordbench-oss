@@ -148,6 +148,13 @@ synthetic acceptance steps below remain necessary.
 
 ## Interactive installation
 
+The launcher collects the selected identity mode, local administrator names or
+provider configuration, and any required Kerberos keytab path before preflight.
+It validates those exact choices and reuses them during configuration without
+asking again. These initial questions collect no passwords, tokens or credential
+file contents; secret entry remains in the later provisioning steps. Standalone
+`preflight` remains non-prompting and checks the options supplied on its command line.
+
 ```bash
 ./install
 ```

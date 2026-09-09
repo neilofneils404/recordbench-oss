@@ -21,6 +21,7 @@ def configured_node(tmp_path, *, storage_root=None):
     console = installer.Console(color=False)
     args = installer._parser().parse_args(["install", "--auth", "local", "--enable-account-management",
         "--models", "none", "--non-interactive", "--prepare-only", "--admin-username", "alice.admin", "--admin-display-name", "Alice Administrator"])
+    installer._collect_identity_choices(args)
     paths = installer._prepare_directories(console, root, storage_root=storage_root, resume=False, dry_run=False)
     cert, key = paths["tls"] / "synthetic.crt", paths["tls"] / "synthetic.key"
     cert.write_text("synthetic certificate")
