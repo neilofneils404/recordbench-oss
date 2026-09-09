@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from typing import Callable, Sequence, TYPE_CHECKING
 
@@ -174,7 +175,15 @@ class ReportCompilationJobs:
         return row
 
     def heartbeat(self, job: CompilationJobRecord) -> bool:
-        with self._transaction() as connection:
+        # Source validation holds the workspace lock while reading potentially
+        # large selections. Lease renewal must progress independently of that
+        # Python lock. SQLite still serializes this short transaction with
+        # cancellation, recovery and completion, and _owned fences old workers.
+        # mode=rw avoids creating a replacement database after removal.
+        with closing(sqlite3.connect(self.workspace.path.resolve().as_uri() + "?mode=rw", uri=True,
+                                     timeout=min(5.0, self.policy.lease_seconds / 3))) as connection, connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("BEGIN IMMEDIATE")
             try:
                 self._owned(connection, job)
             except CompilationLeaseLost:
