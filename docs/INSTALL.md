@@ -117,13 +117,21 @@ For missing prerequisites:
   valid RecordBench installation record and available release capsule; it does
   not claim unrelated directories. A missing or empty root still follows fresh
   installation prerequisites when `--resume` is supplied.
-  Both preflight and installation require absolute storage paths; relative paths
-  are rejected before creating state.
+  Both preflight and installation require absolute storage paths without control
+  characters; invalid paths are rejected before creating state. Matter storage
+  cannot equal or contain the node root, or occupy its configuration, secrets,
+  runtime, transcription, state, model, TLS, account or release paths. This also
+  excludes `compose.env` and `installation.json`, including their descendants.
+  The default nested `matter-storage` and custom children outside those reserved
+  paths remain supported, as do separate dedicated storage directories.
 - For unattended local installation, supply `--password-stdin`. Preflight checks
   the input choice and administrator username/display-name syntax without reading
   a password. Unattended OIDC and Kerberos installation require their credential
   source files; preflight checks readable, nonempty regular-file metadata without
-  reading the contents. Kerberos also requires the host SSSD and Kerberos paths.
+  reading the contents. OIDC secret files are conservatively limited to 4,096
+  bytes including line endings so an ASCII value cannot exceed the runtime's
+  4,096-character limit. Kerberos keytabs retain the separate 1 MiB limit.
+  Kerberos also requires the host SSSD and Kerberos paths.
   Non-secret OIDC settings require an HTTPS issuer, non-loopback external server
   name, and a nonempty client ID of at most 512 characters. OIDC group names can
   contain at most 256 characters. Kerberos requires a dotted realm, valid group
@@ -262,19 +270,31 @@ recovery copy against the [backup consistency requirements](STORAGE_AND_BACKUP.m
 It skips the bundled requirement; it does not validate an external backup or
 ignore a configured bundled backup's failed/deferred receipt.
 Resume and update validate the saved model profile, selected GPU devices,
-generator precision, memory reservation and transcription free-memory threshold against the
-current hardware before running provisioning, backup or release commands. They
-do not substitute an automatically chosen GPU or a smaller model to pass the
-check. Saved `bfloat16` precision requires compute capability 8.0 or newer on
+generator precision, memory reservation and transcription free-memory threshold.
+They do not substitute an automatically chosen GPU or a smaller model to pass
+these checks. Resume requires sufficient current free memory before provisioning.
+Update first checks compatibility and physical total capacity before backup or
+release commands; its running models may still occupy their existing allocation. Saved `bfloat16` precision requires compute capability 8.0 or newer on
 every selected generator GPU, even when a new automatic plan could use `half`.
 A completed offline resume or update does not require a new diarization
 token; an unfinished resume that must stage models still checks its staging
 options before continuing.
 
-The new capsule is built without overwriting
-the prior image set. If startup acceptance fails, configuration is returned to
-the previous release and its images are relaunched. Old releases and images are
-retained for deliberate operator cleanup; the updater never prunes them.
+The new capsule is built without overwriting the prior image set while the old
+runtime remains available. After a successful build and Compose configuration
+validation, GPU updates stop only this node's Compose project, allow up to 120
+seconds for graceful shutdown, and check actual free GPU memory again before
+starting replacement services. This maintenance interruption releases the node's
+own model allocation without treating other workloads' memory as available.
+Competing allocations, an unavailable GPU probe, or a failed stop prevent the
+replacement from starting and invoke the existing rollback. No volumes are deleted.
+An update dry run previews this sequence using physical capacity; it never stops
+the node and explicitly defers the actual free-memory check.
+
+If replacement admission or startup acceptance fails, configuration is returned
+to the previous release and its images are relaunched. A rollback that cannot
+restore health is reported separately for operator recovery. Old releases and
+images are retained for deliberate operator cleanup; the updater never prunes them.
 
 
 Before fresh managed-storage initialization, the reserved names `matters`,

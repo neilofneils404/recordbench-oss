@@ -23,7 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -359,14 +359,14 @@ def _private_write(path: Path, value: str, *, replace: bool = False) -> None:
     os.chmod(path, 0o600)
 
 
-def _credential_source_available(source: Path | None) -> bool:
+def _credential_source_available(source: Path | None, *, maximum_bytes: int = 1024 * 1024) -> bool:
     """Check credential-file metadata without opening or retaining its contents."""
     if source is None:
         return False
     try:
         source = source.expanduser()
         metadata = source.lstat()
-        return (stat.S_ISREG(metadata.st_mode) and 0 < metadata.st_size <= 1024 * 1024
+        return (stat.S_ISREG(metadata.st_mode) and 0 < metadata.st_size <= maximum_bytes
                 and os.access(source, os.R_OK))
     except OSError:
         return False
@@ -1087,6 +1087,8 @@ def _storage_ancestors_safe(ancestor: Path) -> bool:
 def _storage_path_status(path: Path) -> tuple[Path, Path, bool]:
     """Check the entered and canonical path without issuing runtime commands."""
     entered_path = path.expanduser()
+    if not _storage_path_text_valid(entered_path):
+        raise RuntimeError("storage paths cannot contain control characters")
     lexical_path = Path(os.path.abspath(entered_path))
     safe = entered_path.is_absolute() and not any(
         part.is_symlink()
@@ -1189,9 +1191,30 @@ def _matter_storage_layout_valid(path: Path) -> bool:
         return False
 
 
+def _storage_path_text_valid(path: Path) -> bool:
+    return not any(ord(character) < 32 or ord(character) == 127 for character in str(path))
+
+
+def _storage_roots_compatible(node: Path, storage: Path) -> bool:
+    """Keep managed sources out of installer-owned state and control paths."""
+    if not _storage_path_text_valid(node) or not _storage_path_text_valid(storage):
+        return False
+    try:
+        node = node.expanduser().resolve(strict=False)
+        storage = storage.expanduser().resolve(strict=False)
+        if node.is_relative_to(storage):
+            return False
+        controls = [path for name, path in _paths(node).items() if name != "storage"]
+        controls.extend(node / name for name in ("compose.env", "installation.json", "releases", "accounts"))
+        return not any(storage.is_relative_to(control) for control in controls)
+    except (OSError, ValueError):
+        return False
+
+
 def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                        model_args: argparse.Namespace | None = None,
-                       needs_model_staging: bool = True) -> PreflightResult:
+                       needs_model_staging: bool = True,
+                       defer_gpu_free_check: bool = False) -> PreflightResult:
     checks: list[PreflightCheck] = []
     devices: tuple[GpuDevice, ...] = ()
 
@@ -1296,18 +1319,25 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 ("kerberos", args.kerberos_keytab, "kerberos-keytab-input", "--kerberos-keytab"),
             ):
                 if args.auth == auth and (source is not None or (args.non_interactive and not args.dry_run)):
-                    available = _credential_source_available(source)
+                    maximum_bytes = 4096 if auth == "oidc" else 1024 * 1024
+                    available = _credential_source_available(source, maximum_bytes=maximum_bytes)
                     add(name, available,
                         "Credential source metadata is available; contents not read" if available else "Required credential source is missing or unsafe",
                         "Configure the selected identity provider",
-                        f"Supply {option} as a readable nonempty regular file no larger than 1 MiB, without a symbolic link.")
+                        f"Supply {option} as a readable nonempty regular file no larger than {maximum_bytes} bytes including line endings, without a symbolic link. Contents are not validated by this metadata check.")
             if args.auth == "kerberos" and not args.dry_run:
                 host_join = Path("/var/lib/sss/pipes").is_dir() and Path("/etc/krb5.conf").is_file()
                 add("kerberos-host", host_join,
                     "Host SSSD and Kerberos configuration paths are present" if host_join else "Host SSSD or Kerberos configuration is missing",
                     "Connect the Kerberos gateway to the host identity service",
                     "Complete the host SSSD/NSS join and Kerberos configuration before installation. Presence checks do not prove a working identity exchange.")
-        for name, path in (("node-storage", args.root), ("matter-storage", args.storage_root or args.root / "matter-storage")):
+        storage_root = args.storage_root or args.root / "matter-storage"
+        compatible = _storage_roots_compatible(args.root, storage_root)
+        add("storage-separation", compatible,
+            "Managed storage is separate from node control paths" if compatible else "Managed storage overlaps node control paths or uses an invalid path",
+            "Keep source storage separate from installation configuration",
+            "Use the default matter-storage directory, a separate dedicated directory, or a custom child outside config, secrets, runtime, transcription, state, models, tls, accounts, releases, compose.env and installation.json. Matter storage cannot equal or contain the node root.")
+        for name, path in (("node-storage", args.root), ("matter-storage", storage_root)):
             try:
                 path, ancestor, safe = _storage_path_status(path)
                 writable = safe and os.access(ancestor, os.W_OK | os.X_OK)
@@ -1319,7 +1349,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                         "Choose a new empty node directory. Use --resume only when this directory belongs to the RecordBench node being resumed.")
                 add(name, writable, "Directory access checks pass (no write attempted)" if writable else "Unsafe path, ownership, or directory access",
                     "Create private application state" if name == "node-storage" else "Store and process admitted sources",
-                    "Choose a dedicated absolute directory without symlinks, owned by the service account. Use an existing service-owned creation directory without group or other write access, beneath root-owned or service-owned protected parents. The service account needs read and search access to every ancestor; do not use a home directory or shared export root.")
+                    "Choose a dedicated absolute directory without symlinks or control characters, owned by the service account. Use an existing service-owned creation directory without group or other write access, beneath root-owned or service-owned protected parents. The service account needs read and search access to every ancestor; do not use a home directory or shared export root.")
                 if name == "matter-storage" and writable:
                     layout_ok = _matter_storage_layout_valid(path)
                     add("matter-storage-layout", layout_ok,
@@ -1337,7 +1367,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                         f"Alpha evaluation target: {target} GiB before matter data",
                         "Leave headroom for images and selected models",
                         "Plan additional SSD capacity for the selected profile. These evaluation targets are not validated minimums.", blocking=False)
-            except (OSError, RuntimeError, KeyError):
+            except (OSError, RuntimeError, KeyError, ValueError):
                 add(name, False, "Directory metadata unavailable", "Inspect storage before installation",
                     "Ask the storage administrator to restore directory access, then rerun preflight.")
         try:
@@ -1395,8 +1425,16 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
             if not devices or any(device.compute_capability is None for device in devices):
                 raise RuntimeError("GPU inventory or compute capability unavailable")
             plan_args = options or _parser().parse_args(["--models", models])
-            _resolve_gpu_plans(plan_args, models, devices)
-            add("gpu", True, "Selected GPU and model plan fits current reported hardware",
+            # An update has not stopped its current models yet. Check physical
+            # compatibility here, retaining the real inventory in the result.
+            # Actual free-memory admission remains mandatory after its own
+            # runtime stops; this internal option is never a CLI bypass.
+            planning_devices = (tuple(replace(device, free_mib=device.total_mib) for device in devices)
+                                if defer_gpu_free_check else devices)
+            _resolve_gpu_plans(plan_args, models, planning_devices)
+            add("gpu", True,
+                "Saved GPU plan fits physical capacity; actual free-memory admission is deferred until this node stops"
+                if defer_gpu_free_check else "Selected GPU and model plan fits current reported hardware",
                 "Run the selected local AI tasks", "")
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
             add("gpu", False, "Selected GPU/model plan unavailable, incompatible, or short of free memory",
@@ -1431,9 +1469,11 @@ def _render_preflight(console: Console, result: PreflightResult) -> None:
 def _preflight(console: Console, *, models: str, dry_run: bool,
                args: argparse.Namespace | None = None,
                model_args: argparse.Namespace | None = None,
-               needs_model_staging: bool = True) -> tuple[GpuDevice, ...]:
+               needs_model_staging: bool = True,
+               defer_gpu_free_check: bool = False) -> tuple[GpuDevice, ...]:
     result = _collect_preflight(models, args, model_args=model_args,
-                                needs_model_staging=needs_model_staging)
+                                needs_model_staging=needs_model_staging,
+                                defer_gpu_free_check=defer_gpu_free_check)
     _render_preflight(console, result)
     if not result.ready:
         raise RuntimeError("installation prerequisites are incomplete; see the checklist above")
@@ -2585,7 +2625,9 @@ def _build_targets(auth: str, models: str) -> list[str]:
 def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
     installation, old_release = _saved_node_arguments(args, root)
     auth, models, profiles = args.auth, args.models, installation["profiles"]
-    _preflight(console, models=models, dry_run=args.dry_run, args=args, needs_model_staging=False)
+    _preflight(console, models=models, dry_run=args.dry_run, args=args,
+               needs_model_staging=False, defer_gpu_free_check=True)
+    old_compose = _compose(root, profiles, release=old_release, auth=auth)
     console.phase(2, "SNAPSHOT BEFORE MUTATION", "Requiring a recoverable checkpoint before swapping release capsules")
     backup_configured = (root / "config" / "backup.json").is_file()
     if backup_configured:
@@ -2635,7 +2677,18 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
     console.phase(4, "FORGE REPLACEMENT RUNTIME", "Building versioned images without overwriting the rollback image set")
     try:
         _run(console, [*compose, "build", *_build_targets(auth, models)], dry_run=args.dry_run)
+        _run(console, [*compose, "config", "--quiet"], dry_run=args.dry_run)
         console.phase(5, "ATOMIC NODE SWAP", "Starting the new capsule and waiting for application and storage consensus")
+        if _required_gpu_count(models):
+            console.note("Stopping this node to release its model allocation before checking actual free GPU memory")
+            _run(console, [*old_compose, "stop", "--timeout", "120"], dry_run=args.dry_run)
+            if args.dry_run:
+                console.note("Dry run: actual free-memory admission is deferred until the node is stopped during update")
+            else:
+                # Never assume that all used VRAM belongs to this node: after
+                # its scoped stop, competing allocations remain in this probe.
+                _preflight(console, models=models, dry_run=False, model_args=args,
+                           needs_model_staging=False)
         _run(console, [*compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
         if not args.dry_run:
             _wait_health(console, root)
@@ -2693,6 +2746,8 @@ def main() -> int:
                     non_interactive=args.non_interactive,
                 )
             )
+        if not _storage_path_text_valid(args.root):
+            raise RuntimeError("installation root cannot contain control characters")
         root = args.root.expanduser().resolve(strict=False)
         if args.command == "doctor":
             _doctor(console, args, root)
