@@ -75,6 +75,7 @@ jobs:
           EXPECTED_PUBLICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_PUBLICATION_SHA"
       - name: Scan exact candidate tree and complete reachable history
+        if: ${{ !github.event.deleted }}
         working-directory: _publication_head
         env:
           EXPECTED_PUBLICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
