@@ -79,7 +79,7 @@ jobs:
         working-directory: _publication_head
         env:
           EXPECTED_PUBLICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          PUBLICATION_REF: ${{ github.ref }}
+          PUBLICATION_REF: ${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
         run: |
           ../.venv/bin/python scripts/check-publication-candidate.py \
             --expected-head "$EXPECTED_PUBLICATION_SHA" \
