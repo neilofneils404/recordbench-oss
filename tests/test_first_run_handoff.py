@@ -184,6 +184,68 @@ def test_model_receipt_binds_snapshot_links_as_well_as_blob_bytes(tmp_path, muta
         module._verify_stage(root, catalog, groups, "portable")
 
 
+@pytest.mark.parametrize("added", ["file", "nested-file", "file-link", "broken-link", "directory-link"])
+@pytest.mark.parametrize("scope", ["snapshot", "tokenizer"])
+def test_model_receipt_rejects_unrecorded_snapshot_artifacts(tmp_path, monkeypatch, added, scope):
+    spec = importlib.util.spec_from_file_location("synthetic_inventory_stager", ROOT / "scripts/stage-models.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"schema_version": 1, "models": []}')
+    root = tmp_path / "models"
+    snapshot = (root / "huggingface/hub/models--synthetic--model/snapshots" / ("c" * 40)
+                if scope == "snapshot" else root / "nltk_data/tokenizers/punkt_tab/en")
+    snapshot.mkdir(parents=True)
+    artifact = snapshot / "weights.bin"
+    artifact.write_bytes(b"synthetic pinned bytes")
+    groups = frozenset({"review"})
+    module._stage_receipt(root, catalog, groups, "portable", [artifact])
+    module._verify_stage(root, catalog, groups, "portable")
+    candidate = snapshot / "unrecorded.json"
+    if added == "file":
+        candidate.write_text('{"synthetic": "configuration"}')
+    elif added == "nested-file":
+        (snapshot / "tokenizer").mkdir()
+        (snapshot / "tokenizer/unrecorded.json").write_text('{"synthetic": "tokenizer"}')
+    elif added == "file-link":
+        candidate.symlink_to(artifact.name)
+    elif added == "broken-link":
+        candidate.symlink_to("missing-artifact")
+    else:
+        extra_directory = root / "unselected-content"
+        extra_directory.mkdir()
+        (extra_directory / "config.json").write_text('{"synthetic": "extra"}')
+        candidate.symlink_to(extra_directory)
+    before = (root / ".recordbench-stage-receipt.json").read_bytes()
+    monkeypatch.setattr(module.urllib.request, "urlopen", lambda *a, **k: pytest.fail("inventory verification must stay offline"))
+    with pytest.raises(RuntimeError, match="inventory|unrecorded|linked directory"):
+        module._verify_stage(root, catalog, groups, "portable")
+    assert (root / ".recordbench-stage-receipt.json").read_bytes() == before
+
+
+def test_model_receipt_limits_inventory_to_selected_snapshot(tmp_path):
+    spec = importlib.util.spec_from_file_location("synthetic_selected_inventory", ROOT / "scripts/stage-models.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"schema_version": 1, "models": []}')
+    root = tmp_path / "models"
+    snapshots = root / "repo/snapshots"
+    selected = snapshots / ("a" * 40)
+    selected.mkdir(parents=True)
+    artifact = selected / "weights.bin"
+    artifact.write_bytes(b"synthetic selected bytes")
+    groups = frozenset({"review"})
+    module._stage_receipt(root, catalog, groups, "portable", [artifact])
+    unselected = snapshots / ("b" * 40)
+    unselected.mkdir()
+    (unselected / "config.json").write_text('{"synthetic": "unselected"}')
+    module._verify_stage(root, catalog, groups, "portable")
+    (selected / "unrecorded.json").write_text('{"synthetic": "selected"}')
+    with pytest.raises(RuntimeError, match="inventory"):
+        module._stage_receipt(root, catalog, groups, "portable", [artifact])
+
+
 @pytest.mark.parametrize("command", ["resume", "update"])
 @pytest.mark.parametrize("boundary", ["node", "storage"])
 def test_resume_and_update_refuse_changed_storage_ancestry_before_any_compose(tmp_path, monkeypatch, command, boundary):
@@ -335,7 +397,7 @@ def test_resume_refuses_conflicting_or_replaced_saved_mounts_before_external_com
         installer._resume_node(installer.Console(color=False, quiet=True), args, root)
 
 
-@pytest.mark.parametrize("receipt_state", ["missing", "broken-link", "valid"])
+@pytest.mark.parametrize("receipt_state", ["missing", "broken-link", "unrecorded-file", "valid"])
 def test_unattended_resume_requires_staging_inputs_only_when_cache_is_not_verified(tmp_path, monkeypatch, receipt_state):
     root, _, paths = configured_node(tmp_path)
     installation = json.loads((root / "installation.json").read_text())
@@ -347,12 +409,16 @@ def test_unattended_resume_requires_staging_inputs_only_when_cache_is_not_verifi
         spec.loader.exec_module(module)
         artifact = paths["models"] / "synthetic-blob"
         artifact.write_bytes(b"synthetic cached speaker model")
-        link = paths["models"] / "snapshot.bin"
-        link.symlink_to("synthetic-blob")
+        snapshot = paths["models"] / "repo/snapshots" / ("a" * 40)
+        snapshot.mkdir(parents=True)
+        link = snapshot / "snapshot.bin"
+        link.symlink_to("../../../synthetic-blob")
         module._stage_receipt(paths["models"], ROOT / "config/models.json",
             frozenset({"transcription-asr", "transcription-alignment-en", "transcription-diarization"}), "portable", [link])
         if receipt_state == "broken-link":
             link.unlink()
+        elif receipt_state == "unrecorded-file":
+            (snapshot / "config.json").write_text('{"synthetic": "unrecorded"}')
     before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     calls = []
 

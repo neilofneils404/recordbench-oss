@@ -181,6 +181,35 @@ def _receipt_artifact(root: Path, path: Path) -> tuple[str, dict[str, object]]:
     return candidate.relative_to(root).as_posix(), metadata
 
 
+def _verify_snapshot_inventory(root: Path, names: Iterable[str]) -> None:
+    """Require complete inventories for selected snapshots and tokenizer data."""
+    recorded = set(names)
+    directories: set[Path] = set()
+    for name in recorded:
+        candidate = root / name
+        for parent in candidate.parents:
+            if parent == root:
+                break
+            if parent.parent.name == "snapshots":
+                directories.add(parent)
+        if candidate.is_relative_to(root / "nltk_data"):
+            directories.add(root / "nltk_data")
+
+    def unavailable(error: OSError) -> None:
+        raise RuntimeError("Staged model snapshot inventory is unavailable; resume staging") from error
+
+    for directory in directories:
+        expected = {name for name in recorded if (root / name).is_relative_to(directory)}
+        observed: set[str] = set()
+        for parent, children, files in os.walk(directory, followlinks=False, onerror=unavailable):
+            base = Path(parent)
+            if any((base / child).is_symlink() for child in children):
+                raise RuntimeError("Staged model snapshot inventory contains a linked directory")
+            observed.update((base / name).relative_to(root).as_posix() for name in files)
+        if observed != expected:
+            raise RuntimeError("Staged model snapshot inventory contains missing or unrecorded artifacts; resume staging")
+
+
 def _stage_receipt(root: Path, catalog: Path, groups: frozenset[str], profile: str,
                    files: Iterable[Path]) -> None:
     root = root.resolve(strict=True)
@@ -190,6 +219,7 @@ def _stage_receipt(root: Path, catalog: Path, groups: frozenset[str], profile: s
         inventory[relative] = metadata
     if not inventory:
         raise RuntimeError("Staged model receipt has no artifacts")
+    _verify_snapshot_inventory(root, inventory)
     payload = {"format_version": 2, "catalog_sha256": _sha256(catalog), "groups": sorted(groups),
                "review_profile": profile, "files": inventory}
     descriptor, temporary_name = tempfile.mkstemp(prefix=".stage-receipt-", dir=root)
@@ -225,6 +255,7 @@ def _verify_stage(root: Path, catalog: Path, groups: frozenset[str], profile: st
                 raise RuntimeError("Staged model artifact relationship or bytes changed")
         except (OSError, RuntimeError, ValueError) as exc:
             raise RuntimeError("A staged model artifact is missing or changed; resume staging") from exc
+    _verify_snapshot_inventory(root, value["files"])
 
 
 def main() -> int:

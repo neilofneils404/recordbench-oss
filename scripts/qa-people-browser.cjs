@@ -17,7 +17,7 @@ const changedPassword = 'synthetic-reset-password';
     async function login(page, username, value = password) {
       await page.goto(origin + '/auth/login');
       await page.getByRole('textbox', {name: 'Username', exact: true}).fill(username);
-      await page.getByRole('textbox', {name: 'Password', exact: true}).fill(value);
+      await page.getByLabel('Password', {exact: true}).fill(value);
       await page.getByRole('button', {name: 'Open RecordBench'}).click();
       await page.waitForURL(url => !url.pathname.startsWith('/auth/'));
     }

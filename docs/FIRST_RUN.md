@@ -33,8 +33,12 @@ selected groups, review profile, snapshot pathnames, file sizes and artifact
 hashes. Each file symlink also retains its literal target and resolved blob path;
 removing, repointing or replacing a snapshot link invalidates verification even
 when the original blob still exists. Directory symlinks and artifacts outside the
-approved cache are refused. Before resumed staging, `stage-models.py verify` checks that receipt and all recorded bytes
-offline, without writing files or accepting a token. A matching selection skips
+approved cache are refused. Before resumed staging, `stage-models.py verify` checks
+that receipt, all recorded bytes, and the complete current file inventory within
+each selected snapshot and the staged tokenizer directory. Added configuration,
+tokenizer files or links invalidate verification; unrelated cached revisions are
+outside the selected inventory. Verification remains offline, without writing
+files or accepting a token. A matching selection skips
 staging and gated-token entry. Missing, changed or older version 1/unreceipted
 selections run the normal pinned staging path. The model catalog, revisions and licenses
 are unchanged by this feature. Hash verification establishes retained artifact
