@@ -126,3 +126,9 @@ matter authorization plus reset/disable revocation, then removes the node. Its
 certificate exception applies only to that isolated browser context. It never
 connects to an existing installation and does not establish production browser
 trust, model readiness or installed-node recovery.
+
+
+When relocation creates a destination or recovery directory, each new parent
+entry is synced before account files are written or the previous canonical file
+is removed. Directory persistence errors stop the change with the original
+account file retained. The same guarantee applies to migration recovery paths.

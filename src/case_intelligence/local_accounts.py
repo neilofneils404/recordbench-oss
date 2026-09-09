@@ -124,6 +124,9 @@ def _parent(path: Path, *, create: bool = False) -> Iterator[int]:
                     os.mkdir(component, 0o700, dir_fd=descriptor)
                 except FileExistsError:
                     pass
+                # Persist the new child entry before descending or removing
+                # an older canonical store after migration or relocation.
+                os.fsync(descriptor)
                 child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
