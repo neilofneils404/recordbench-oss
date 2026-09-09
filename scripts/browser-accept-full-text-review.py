@@ -81,7 +81,7 @@ def main():
             run = bench.workspace.review_runs(matter.matter_id, actor)[0]
             wait.until(lambda _: bench.workspace.review_run(matter.matter_id, actor, run.run_id).state == 'succeeded')
             driver.get(base + f'/matters/{matter.slug}/full-review/{run.run_id}/text')
-            assert '14</strong> units fully processed' in driver.page_source and '1</strong> units with failed ranges' in driver.page_source
+            assert '14</strong> units fully processed' in driver.page_source and '1</strong> unit with failed ranges' in driver.page_source
             assert 'The amber bicycle arrived at noon.' in driver.page_source
             collapse = driver.find_elements(By.CSS_SELECTOR, '[data-assistant-collapse]')
             if collapse:
