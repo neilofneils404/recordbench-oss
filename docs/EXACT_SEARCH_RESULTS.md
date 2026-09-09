@@ -118,8 +118,11 @@ answer backend is configured. Large-population latency, concurrent-user load,
 and persisted-search restore acceptance require the future adapter and separate
 evidence. No deployment or confidential-workload acceptance is implied.
 
-Concurrent browser searches use non-queuing asynchronous admission before the
-synchronous worker pool: one active request per matter and at most four per app
-instance. Extra requests receive HTTP 429 with a short retry hint. This keeps
-waiting scans from occupying every shared request worker; the scan/preview
-deadline and matter source-version lock remain independent controls.
+Concurrent browser searches first check membership in a short synchronous
+dependency, keeping storage work off the async event loop. Authorized requests
+then use non-queuing asynchronous admission before expensive scan dispatch:
+one active request per authorized matter ID and at most four per app instance.
+Extra authorized requests receive HTTP 429 with a short retry hint; inaccessible
+matters return the same 404 whether idle or busy. This keeps waiting scans from
+occupying every shared request worker; the scan/preview deadline and matter
+source-version lock remain independent controls.

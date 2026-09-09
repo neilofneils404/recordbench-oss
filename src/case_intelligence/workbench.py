@@ -9672,22 +9672,26 @@ def create_workbench_app(
     exact_search_active: set[str] = set()
     exact_search_admission_lock = threading.Lock()
 
-    async def exact_search_admission(slug: str):
-        # Async dependency admission happens before the synchronous route gets a
-        # shared worker thread. Never queue work behind a matter's source lock.
+    def exact_search_matter(request: Request, slug: str) -> MatterRecord:
+        # Membership storage can block; use FastAPI's short synchronous
+        # dependency dispatch rather than blocking the async event loop.
+        return authorized_matter(request, slug)
+
+    async def exact_search_admission(matter: MatterRecord = Depends(exact_search_matter)):
+        # Authorize before exposing or claiming admission state. Only the
+        # expensive scan dispatch is gated; authorization uses a short worker.
         with exact_search_admission_lock:
-            if slug in exact_search_active or len(exact_search_active) >= 4:
+            if matter.matter_id in exact_search_active or len(exact_search_active) >= 4:
                 raise HTTPException(429, "Search is busy. Please try again shortly.",
                                     headers={"Retry-After": "1"})
-            exact_search_active.add(slug)
+            exact_search_active.add(matter.matter_id)
         try:
-            yield
+            yield matter
         finally:
             with exact_search_admission_lock:
-                exact_search_active.discard(slug)
+                exact_search_active.discard(matter.matter_id)
 
-    @app.get("/matters/{slug}/exact-search", response_class=HTMLResponse,
-             dependencies=[Depends(exact_search_admission)])
+    @app.get("/matters/{slug}/exact-search", response_class=HTMLResponse)
     def exact_search_page(
         request: Request, slug: str,
         q: str = Query("", max_length=512),
@@ -9705,8 +9709,8 @@ def create_workbench_app(
         page: int = Query(1, ge=1),
         page_size: int = Query(25),
         fingerprint: str = Query("", max_length=64),
+        matter: MatterRecord = Depends(exact_search_admission),
     ):
-        matter = authorized_matter(request, slug)
         results = None
         action_error = ""
         status = 200

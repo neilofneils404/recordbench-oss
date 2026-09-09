@@ -419,3 +419,54 @@ def test_concurrent_exact_requests_are_rejected_before_worker_dispatch(tmp_path,
             assert first.result(timeout=3).status_code == 200
         assert client.get(f"/matters/{slug}/exact-search?q=red").status_code == 200
         assert len(calls) == 2
+
+
+def test_foreign_matter_admission_stays_private_after_membership_revocation(tmp_path, monkeypatch):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
+    with TestClient(app) as client:
+        bench = app.state.workbench
+        owner = bench.workspace.upsert_principal("preview", "synthetic-owner",
+            "Synthetic Owner", "owner@example.test")
+        matter = bench.create_matter("Synthetic restricted matter", "", owner.principal_id)
+        actor = "development-taylor-morgan"
+        url = f"/matters/{matter.slug}/exact-search?q=red"
+        entered, release = threading.Event(), threading.Event()
+        original_search, original_matter = bench.exact_search, bench.matter
+        calls = []
+
+        def authorize(*args, **kwargs):
+            # Synchronous membership lookup must remain off the event loop.
+            with pytest.raises(RuntimeError, match="no running event loop"):
+                asyncio.get_running_loop()
+            return original_matter(*args, **kwargs)
+
+        def blocked(*args, **kwargs):
+            calls.append(1)
+            entered.set()
+            assert release.wait(5)
+            return original_search(*args, **kwargs)
+
+        monkeypatch.setattr(bench, "matter", authorize)
+        monkeypatch.setattr(bench, "exact_search", blocked)
+        idle = client.get(url)
+        assert idle.status_code == 404
+        bench.workspace.add_member(matter.matter_id, actor, owner.principal_id)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = pool.submit(client.get, url)
+            assert entered.wait(3)
+            try:
+                bench.workspace.revoke_member(matter.matter_id, actor, owner.principal_id)
+                for _ in range(4):
+                    busy = client.get(url)
+                    assert busy.status_code == idle.status_code == 404
+                    assert busy.content == idle.content
+                    assert "Retry-After" not in busy.headers
+                assert len(calls) == 1 and not first.done()
+                assert client.get("/health").status_code == 200
+            finally:
+                release.set()
+            assert first.result(timeout=3).status_code == 200
+        assert client.get(url).status_code == 404
+        assert len(calls) == 1
