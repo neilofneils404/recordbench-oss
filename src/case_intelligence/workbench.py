@@ -3521,32 +3521,37 @@ class CaseIntelligenceWorkbench:
         )
 
     def _assert_current_report_section_citations(self, matter, sections) -> None:
-        """Validate only copied source passages; caller holds the source guard."""
+        """Validate exact copied passages with one stream per cited source."""
         store = self.source_store(matter)
-        resolved = {}
+        grouped = {}
         for section in sections:
             for value in section["citations"]:
-                document_id = str(value.get("document_id", ""))
-                if document_id not in resolved:
-                    try:
-                        document = store.get(document_id)
-                    except KeyError as exc:
-                        raise WorkspaceProblem("A copied decision source is unavailable. Reopen the original check.") from exc
-                    resolved[document_id] = (document, document.parsed_units())
-                document, units = resolved[document_id]
-                matched = False
-                if document.state == "ready" and document.version_id == value.get("source_version_id"):
-                    for ordinal, unit in enumerate(units, 1):
-                        candidate = self._candidate(matter, document, unit, ordinal)
-                        if (value.get("support_token") in self._support_tokens(candidate)
-                            and value.get("source_name") == document.display_name
-                            and value.get("location") == candidate.citation
-                            and value.get("excerpt") == unit.text
-                            and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source")):
-                            matched = True
-                            break
-                if not matched:
-                    raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
+                grouped.setdefault(str(value.get("document_id", "")), []).append(value)
+        for document_id, pending in grouped.items():
+            try:
+                document = store.get(document_id)
+            except KeyError as exc:
+                raise WorkspaceProblem("A copied decision source is unavailable. Reopen the original check.") from exc
+            if document.state != "ready":
+                raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
+            # The optional streaming API is supplied by the full-text slice.
+            # Older source stores remain supported without importing it.
+            iterator = getattr(document, "iter_parsed_units", None)
+            units = iterator() if iterator is not None else iter(document.parsed_units())
+            for ordinal, unit in enumerate(units, 1):
+                candidate = self._candidate(matter, document, unit, ordinal)
+                tokens = self._support_tokens(candidate)
+                pending = [value for value in pending if not (
+                    document.version_id == value.get("source_version_id")
+                    and value.get("support_token") in tokens
+                    and value.get("source_name") == document.display_name
+                    and value.get("location") == candidate.citation
+                    and value.get("excerpt") == unit.text
+                    and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source"))]
+                if not pending:
+                    break
+            if pending:
+                raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
 
     def export_research_work_product(
         self,

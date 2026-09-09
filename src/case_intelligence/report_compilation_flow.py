@@ -21,8 +21,9 @@ def _positive_setting(name: str, default: int) -> int:
 
 
 class ReportCompilationFlow:
-    def __init__(self, bench):
+    def __init__(self, bench, *, full_text_support_resolver=None):
         self.bench = bench
+        self.full_text_support_resolver = full_text_support_resolver
         self.jobs = ReportCompilationJobs(bench.workspace)
         self.budget = CompilationBudget(
             max_materials=_positive_setting("CASE_INTELLIGENCE_REPORT_MAX_MATERIALS", 200),
@@ -42,7 +43,8 @@ class ReportCompilationFlow:
         matter = self.bench._matter_by_id(job.matter_id)
         if self.bench.workspace.matter_lifecycle(matter.matter_id).state != "active":
             raise CompilationProblem("This matter is no longer open for review.")
-        materials = snapshot_report_materials(self.bench, matter, job.actor_id, job.selections)
+        materials = snapshot_report_materials(self.bench, matter, job.actor_id, job.selections,
+            full_text_support_resolver=self.full_text_support_resolver)
         return matter, materials
 
     def process(self, job, cancelled):

@@ -16,7 +16,7 @@ from typing import Mapping
 
 from .report_compilation import CompilationMaterial
 from .work_product_exports import MAX_EXPORT_TEXT_CHARS, validate_research_basis
-from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, WorkspaceProblem
+from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, MAX_REPORT_SECTION_CITATIONS, WorkspaceProblem
 
 MAX_SELECTIONS = 20
 MAX_MATERIALS = 500
@@ -168,11 +168,22 @@ class _References:
             raise WorkspaceProblem(_STALE)
 
 
-def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, ...]) -> tuple[CompilationMaterial, ...]:
+def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, ...], *,
+                             full_text_support_resolver=None) -> tuple[CompilationMaterial, ...]:
+    """Resolve saved work under both caller-owned source and workspace guards.
+
+    The optional full-text adapter returns canonical citations for a fully
+    validated frozen decision source, or None for a selected-passage run. It
+    must validate the source even when the decision has no citations. The
+    adapter runs again when compilation finishes, before the fingerprint and
+    atomic save. This module has no dependency on full-text storage or jobs.
+    """
     bench.workspace.membership(matter.matter_id, actor)
     if not selections or len(selections) > MAX_SELECTIONS or len(set(selections)) != len(selections):
         raise WorkspaceProblem("Choose between 1 and 20 items of saved work.")
     materials = {}
+    full_text_material_ids = set()
+    full_text_citation_chars = full_text_reference_count = 0
     validation_references = []
     resolver = _References(bench, matter)
 
@@ -326,40 +337,88 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
                 raise WorkspaceProblem("Choose a source check that has finished.")
             counts = Counter()
             reviewed = total = 0
+            full_text = False
             for item in bench.workspace.iter_review_decisions_for_report(matter.matter_id, actor, run.run_id):
                 total += 1
                 counts[item.machine_decision] += 1
-                resolver.validate_decision_source(item)
+                verified_citations = (full_text_support_resolver(matter, run, item)
+                    if full_text_support_resolver is not None else None)
+                if verified_citations is None:
+                    if any(value.get("locator_kind") for value in item.citations):
+                        raise WorkspaceProblem("This saved full-text check needs its source resolver before it can be copied into a Report.")
+                    resolver.validate_decision_source(item)
+                else:
+                    if not isinstance(verified_citations, (tuple, list)) or len(verified_citations) > MAX_REPORT_SECTION_CITATIONS:
+                        raise WorkspaceProblem("A report section can cite up to 100 passages.")
+                    if len(verified_citations) != len(item.citations):
+                        raise WorkspaceProblem("The saved review citation resolver did not preserve every selected passage.")
+                    for value in verified_citations:
+                        excerpt = value.get("excerpt") if isinstance(value, Mapping) else None
+                        if not isinstance(excerpt, str) or not excerpt.strip():
+                            raise WorkspaceProblem("A resolved full-text citation needs its complete source passage.")
+                        if len(excerpt) > MAX_CITATION_CHARS:
+                            raise WorkspaceProblem("A selected source passage exceeds the 6,000-character report limit. Export the original full-text ledger or select smaller supported work.")
+                    # Full-text hydration returns workflow locator fields.
+                    # Normalize to the same Report identity shape as the legacy
+                    # resolver so mixed selections retain evidence-kind notices.
+                    verified_citations = tuple({
+                        **{key: value.get(key, "") for key in (
+                            "matter_id", "document_id", "source_version_id", "source_name", "location",
+                            "unit_number", "chunk_id", "excerpt_digest", "excerpt", "support_token")},
+                        "kind": "transcript" if value.get("evidence_kind") == "transcript" or value.get("kind") == "transcript" else "source",
+                    } for value in verified_citations)
+                    full_text = True
                 human = bool(item.human_decision)
                 reviewed += human
                 reviewer = bench.workspace.get_principal(item.reviewed_by).display_name if item.reviewed_by else "Team reviewer"
                 text = f"Machine screening: {item.machine_decision}.\n{item.rationale}"
+                if verified_citations is not None:
+                    text = "Saved full extracted-text screening summary; the complete reviewed ranges remain in the original ledger.\n" + text
                 if item.error_message:
                     text += f"\nSaved screening limitation: {item.error_message}"
                 if human:
                     text += f"\nHuman decision: {item.human_decision}.\nHuman note: {item.human_note or 'None saved.'}"
                 else:
                     text += "\nThis saved machine decision has not been reviewed by a person."
-                add(material_id=f"{run.run_id}:{item.document_id}", origin="human" if human else "source_review_ai",
-                    title=item.source_name, text=text, citations=references(list(item.citations)),
+                material_id = f"{run.run_id}:{item.document_id}"
+                if verified_citations is not None and material_id not in materials:
+                    full_text_citation_chars += sum(len(value["excerpt"]) for value in verified_citations)
+                    full_text_reference_count += len(verified_citations)
+                    if full_text_citation_chars > MAX_TOTAL_CITATION_CHARS:
+                        raise WorkspaceProblem("The selected source passages exceed the report's total citation-text limit. Choose fewer items of saved work.")
+                    if full_text_reference_count > MAX_REFERENCES:
+                        raise WorkspaceProblem("That selection has too many source references. Choose fewer items of saved work.")
+                add(material_id=material_id, origin="human" if human else "source_review_ai",
+                    title=item.source_name, text=text, citations=references(list(item.citations if verified_citations is None else verified_citations)),
                     review_status="disputed" if (item.machine_decision, item.human_decision) in {("included", "exclude"), ("excluded", "include")} else "needs_review",
                     revision=item.updated_at, author=reviewer if human else "AI screening",
-                    category="decision" if human else "gap")
+                    category="decision" if human else "gap",
+                    review_details=f"Frozen source-content basis: {item.source_basis_digest}" if verified_citations is not None else "")
+                if verified_citations is not None:
+                    full_text_material_ids.add(material_id)
             if total != run.snapshot_count:
                 raise WorkspaceProblem("The saved source check is incomplete. Reopen it before compiling.")
             add(material_id=f"{run.run_id}:coverage", origin="source_review_ai", title="Saved source-check coverage",
-                text=f"Saved decisions: {total}. Human-reviewed: {reviewed}. Awaiting human review: {total - reviewed}.\n" +
+                text=("Full extracted-text check: this Report copies saved source summaries and bounded supporting passages, not the complete range ledger.\n" if full_text else "") +
+                     f"Saved decisions: {total}. Human-reviewed: {reviewed}. Awaiting human review: {total - reviewed}.\n" +
                      "; ".join(f"{key}: {count}" for key, count in sorted(counts.items())),
                 revision=run.updated_at, category="coverage", author="AI screening")
         else:
             raise WorkspaceProblem("Choose saved work from this matter.")
     if not materials:
         raise WorkspaceProblem("There are no saved findings in that selection yet. Save an AI answer or add a review note first.")
-    all_references = validation_references + [ref for item in materials.values() for ref in item.citations]
+    # Trusted adapters have already streamed and frozen-validated their source
+    # population. Do not reload it through the legacy materializing resolver.
+    verified_references = [ref for item in materials.values() if item.material_id in full_text_material_ids for ref in item.citations]
+    resolver.citation_chars = full_text_citation_chars
+    all_references = validation_references + [ref for item in materials.values() if item.material_id not in full_text_material_ids for ref in item.citations]
+    if len(all_references) + len(verified_references) > MAX_REFERENCES:
+        raise WorkspaceProblem("That selection has too many source references. Choose fewer items of saved work.")
     resolver.prepare(all_references)
     for value in validation_references:
         resolver.resolve(value)
-    return tuple(replace(item, citations=tuple(resolver.resolve(ref) for ref in item.citations)) for item in materials.values())
+    return tuple(item if item.material_id in full_text_material_ids else
+                 replace(item, citations=tuple(resolver.resolve(ref) for ref in item.citations)) for item in materials.values())
 
 
 def material_snapshot_fingerprint(matter_id: str, selections: tuple[str, ...], materials) -> str:

@@ -258,3 +258,37 @@ limit, so they cannot hide an older request needing attention. Deleted-result
 status links return to the request's retry screen. Queued cancellation is immediately
 terminal and says `Compilation cancelled`; running cancellation remains in progress
 until the worker stops or its lease is fenced, including during shutdown.
+
+## Optional full-text Report adapter
+
+The Report workflow runs without full-text storage. When that feature is present,
+`ReportCompilationFlow(bench, full_text_support_resolver=...)` accepts a callback
+`(matter, run, decision) -> canonical_citations | None`. `None` uses the existing
+selected-passage resolver. A tuple, including an empty tuple, identifies a
+full-text decision whose entire frozen source was validated by the adapter.
+The callback must check source identity, name, readiness, version, actual unit
+digests, and the complete frozen source-content basis, including excluded and
+uncited decisions. It raises `WorkspaceProblem` for a user-facing refusal. The
+full-text integration must translate its own `WorkflowFailure` to that exception.
+
+The callback runs under the source mutation guard and workspace lock both before
+model work and again before atomic save. Canonical citations, frozen source basis,
+decision revisions, and the bounded-summary scope participate in the compilation
+fingerprint. Verified adapter citations share the existing aggregate citation
+budget with legacy selections and retain the 100-citation section limit. Sources
+with a selected full unit over 6,000 characters fail explicitly; no prefix is
+silently substituted. The original full-text ledger remains available. This
+adapter does not yet convert range offsets into a different Report citation
+format, and the copied source summaries are not a comprehensive range ledger.
+
+`review_sections(..., review_mode="full_text", citation_resolver=...)` supports
+the direct saved-check summary. Its callback receives `(decision,
+selected_locators)` and returns the same number of canonical full citations.
+The caller must validate every decision's frozen source before yielding it to
+`review_sections`, including decisions omitted by the 50-detail display bound,
+and hold both guards through section construction and Report creation. The
+existing complete-population counts, human disagreements, and 100-citation
+summary bound remain unchanged. Full-text wording distinguishes recorded range
+screening from complete preservation of that ledger. Final copied-citation
+validation uses the optional streaming source API and preserves exact source
+name, version, location, token, excerpt, and evidence-kind comparisons.
