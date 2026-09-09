@@ -299,4 +299,9 @@ def parse_query(query: str) -> ParsedQuery:
     expression = parser.disjunction()
     if parser.kind != "end":
         raise QuerySyntaxError("Remove the unmatched closing parenthesis", parser.position)
-    return ParsedQuery(query, expression)
+    parsed = ParsedQuery(query, expression)
+    if len(parsed.normalized) > MAX_QUERY_CHARS:
+        raise QuerySyntaxError(
+            f"Keep the normalized query within {MAX_QUERY_CHARS} characters", len(query)
+        )
+    return parsed

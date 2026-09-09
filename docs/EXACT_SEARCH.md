@@ -38,7 +38,7 @@ negation, proximity, wildcards, fuzzy search, and field syntax are unsupported
 and return a position-bearing error. Inside quoted phrases, only quote and
 backslash may be escaped. Control/hidden-format characters are rejected.
 
-Limits are 512 query characters, 128 grammar tokens, and 16 nested parentheses
+Limits are 512 query characters before and after normalization, 128 grammar tokens, and 16 nested parentheses
 or NOT levels. Parse errors contain an explanation and character location,
 without echoing matter query text. The serialized plan records original text,
 normalized expression, grammar version, and a typed operator tree. This is a
