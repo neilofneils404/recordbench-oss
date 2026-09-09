@@ -176,6 +176,8 @@ def test_workbench_full_text_finds_late_unit_and_records_failure_without_search(
         assert response.status_code == 200 and 'Review all extracted text' in response.text and 'Check selected passages' in response.text
         response = client.get(f'/matters/{matter.slug}/full-review/{run.run_id}/text')
         assert response.status_code == 200 and '14</strong> units fully processed' in response.text
+        assert 'Review finished with gaps' in response.text
+        assert '1</strong> unit with failed ranges' in response.text
         response = client.get(f'/matters/{matter.slug}/full-review/{run.run_id}/text/export?format=json')
         assert response.status_code == 200
         records = response.json()['records']
