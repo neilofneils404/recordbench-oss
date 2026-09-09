@@ -386,3 +386,36 @@ def test_boolean_preview_diversifies_support_for_each_required_positive_term():
     item = scan([source], "red AND bicycle").items[0]
     assert item.passage_positions[:2] == (1, 4)
     assert item.matching_unit_count == 4
+
+
+def test_concurrent_exact_requests_are_rejected_before_worker_dispatch(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
+    with TestClient(app) as client:
+        created = client.post("/matters", data={"name": "Synthetic admission", "descriptor": ""}, follow_redirects=False)
+        slug = created.headers["location"].split("/")[2]
+        entered, release = threading.Event(), threading.Event()
+        bench = app.state.workbench
+        original = bench.exact_search
+        calls = []
+        def blocked(*args, **kwargs):
+            calls.append(1)
+            entered.set()
+            assert release.wait(5)
+            return original(*args, **kwargs)
+        monkeypatch.setattr(bench, "exact_search", blocked)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(client.get, f"/matters/{slug}/exact-search?q=red")
+            assert entered.wait(3)
+            try:
+                for _ in range(8):
+                    rejected = client.get(f"/matters/{slug}/exact-search?q=red")
+                    assert rejected.status_code == 429
+                    assert rejected.headers["Retry-After"] == "1"
+                assert client.get("/health").status_code == 200
+                assert len(calls) == 1 and not first.done()
+            finally:
+                release.set()
+            assert first.result(timeout=3).status_code == 200
+        assert client.get(f"/matters/{slug}/exact-search?q=red").status_code == 200
+        assert len(calls) == 2
