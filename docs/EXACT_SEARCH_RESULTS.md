@@ -115,3 +115,9 @@ exact adapter is claimed. The same authoritative scan is used when a PostgreSQL
 answer backend is configured. Large-population latency, concurrent-user load,
 and persisted-search restore acceptance require the future adapter and separate
 evidence. No deployment or confidential-workload acceptance is implied.
+
+Concurrent browser searches use non-queuing asynchronous admission before the
+synchronous worker pool: one active request per matter and at most four per app
+instance. Extra requests receive HTTP 429 with a short retry hint. This keeps
+waiting scans from occupying every shared request worker; the scan/preview
+deadline and matter source-version lock remain independent controls.
