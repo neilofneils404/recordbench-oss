@@ -3513,6 +3513,34 @@ class CaseIntelligenceWorkbench:
             ),
         )
 
+    def _assert_current_report_section_citations(self, matter, sections) -> None:
+        """Validate only copied source passages; caller holds the source guard."""
+        store = self.source_store(matter)
+        resolved = {}
+        for section in sections:
+            for value in section["citations"]:
+                document_id = str(value.get("document_id", ""))
+                if document_id not in resolved:
+                    try:
+                        document = store.get(document_id)
+                    except KeyError as exc:
+                        raise WorkspaceProblem("A copied decision source is unavailable. Reopen the original check.") from exc
+                    resolved[document_id] = (document, document.parsed_units())
+                document, units = resolved[document_id]
+                matched = False
+                if document.state == "ready" and document.version_id == value.get("source_version_id"):
+                    for ordinal, unit in enumerate(units, 1):
+                        candidate = self._candidate(matter, document, unit, ordinal)
+                        if (value.get("support_token") in self._support_tokens(candidate)
+                            and value.get("source_name") == document.display_name
+                            and value.get("location") == candidate.citation
+                            and value.get("excerpt") == unit.text
+                            and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source")):
+                            matched = True
+                            break
+                if not matched:
+                    raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
+
     def export_research_work_product(
         self,
         matter: MatterRecord,
@@ -9471,36 +9499,22 @@ def create_workbench_app(
             version = bench.workspace.review_criterion_version(
                 matter.matter_id, run.criterion_version_id
             )
-            decisions = bench.workspace.review_decisions_for_export(
+            decisions = bench.workspace.iter_review_decisions_for_report(
                 matter.matter_id, context.principal_id, run.run_id
             )
-            reviewer_names = {}
-            for reviewer_id in {item.reviewed_by for item in decisions if item.reviewed_by}:
+            def reviewer_name(reviewer_id):
                 try:
-                    reviewer_names[reviewer_id] = bench.workspace.get_principal(reviewer_id).display_name
+                    return bench.workspace.get_principal(reviewer_id).display_name
                 except KeyError:
-                    pass
+                    return "Not recorded"
             sections = review_sections(
                 run, decisions, criterion_title=criterion.title,
                 criterion_version=version.version_number, instructions=version.instructions,
                 ledger_path=_query_url(f"/matters/{slug}/full-review", run=run_id),
-                reviewer_names=reviewer_names,
+                reviewer_name=reviewer_name,
             )
-            copied_tokens = {
-                str(citation["support_token"])
-                for section in sections for citation in section["citations"]
-            }
             with bench.source_store(matter).mutation_guard():
-                for decision in decisions:
-                    for value in decision.citations:
-                        if str(value.get("support_token", "")) not in copied_tokens:
-                            continue
-                        try:
-                            current = bench._current_workflow_citation(matter, bench._workflow_citation(value))
-                        except (KeyError, TypeError, ValueError):
-                            current = None
-                        if current is None:
-                            raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
+                bench._assert_current_report_section_citations(matter, sections)
                 report = bench.workspace.create_report_from_sections(
                     matter.matter_id,
                     context.principal_id,

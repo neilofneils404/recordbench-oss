@@ -12,6 +12,8 @@ that section. The saved summary and pass text are checked against their answer
 records, and the exact evidence ledger and nested citations are revalidated
 before creation. Stale or inconsistent support returns to the original run with
 an error; it does not produce an apparently supported Report.
+Abstentions retain their potential source matches in separately labeled sections:
+these passages need direct review and are not promoted to verified findings.
 
 Every-source Reports separately record the frozen criterion, machine counts,
 human review counts, uncertainty, and opposing machine/human inclusion labels.
@@ -19,6 +21,9 @@ Counts derive from one retrieved decision population, not independently updated
 aggregate metrics. Decision details prioritize disagreements and attention
 items, then frozen order. They retain rationale, human notes, reviewer display
 name when available, review time, source version, and decision revision.
+The decision population streams through one database read cursor in batches;
+only the selected detail records stay in memory. It is not limited by the
+100,000-row export-page boundary.
 
 At most 50 decision details and 100 citation entries are reproduced. The Report
 states exactly how many are included and omitted and gives the original ledger

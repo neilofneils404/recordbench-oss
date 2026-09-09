@@ -10703,6 +10703,23 @@ class WorkspaceStore:
             ).fetchall()
         return tuple(self._review_decision(row) for row in rows)
 
+    def iter_review_decisions_for_report(self, matter_id: str, actor_id: str, run_id: str):
+        """Stream one SQLite read snapshot without an export-page population cap.
+
+        A single live cursor preserves the read snapshot across fetch batches;
+        callers consume it fully before starting Report writes.
+        """
+        self.review_run(matter_id, actor_id, run_id)
+        with self._lock:
+            cursor = self.connection.execute(
+                "SELECT * FROM workbench_review_decision WHERE run_id=? ORDER BY ordinal", (run_id,)
+            )
+            try:
+                while rows := cursor.fetchmany(1_000):
+                    yield from (self._review_decision(row) for row in rows)
+            finally:
+                cursor.close()
+
     def _review_decision_time(self, previous: str) -> str:
         earlier = datetime.fromisoformat(previous.replace("Z", "+00:00"))
         return self._timestamp(max(self.current_time(), earlier + timedelta(microseconds=1)))

@@ -30,7 +30,7 @@ def workspace(tmp_path, monkeypatch):
         yield client, bench, matter
 
 
-def saved_research(bench, matter, *, answerable=True):
+def saved_research(bench, matter, *, answerable=True, potential_sources=False):
     document, _ = bench.source_store(matter).store_stream(
         "synthetic-arrival.txt", "text/plain", io.BytesIO(b"The blue bicycle arrived at noon.")
     )
@@ -45,6 +45,8 @@ def saved_research(bench, matter, *, answerable=True):
     answer = {"answerable": answerable, "claims": [
         {"text": candidate.text, "citations": [citation.staff_payload()]}
     ] if answerable else [], "missing_information": "The gate log was unavailable."}
+    if potential_sources:
+        answer["source_matches"] = [citation.staff_payload()]
     result = {
         "summary": candidate.text if answerable else "The gate log was unavailable.",
         "answer": answer,
@@ -95,6 +97,20 @@ def test_abstention_does_not_become_verified_synthesis(workspace):
     assert sections[1].heading == "Investigation outcome: needs review"
     assert "did not record an answerable" in sections[1].body
     assert all("Verified research synthesis" not in section.heading for section in sections)
+
+
+def test_abstention_retains_explicitly_unverified_source_matches(workspace):
+    client, bench, matter = workspace
+    job, _ = saved_research(bench, matter, answerable=False, potential_sources=True)
+    report = convert(client, bench, matter, job)
+    sections = bench.workspace.report_sections(matter.matter_id, report.report_id)
+    potential = [item for item in sections if item.heading.startswith("Potential sources")]
+    assert len(potential) == 2
+    for section in potential:
+        assert "not verified as findings" in section.body
+        assert len(bench.workspace.report_citations(matter.matter_id, report.report_id, section.section_id)) == 1
+    response = client.get(f"/matters/{matter.slug}/reports/{report.report_id}/export?format=markdown")
+    assert response.status_code == 200 and "Potential sources requiring review" in response.text
 
 
 def test_export_formats_bundle_and_edits_preserve_converted_basis(workspace):
@@ -226,3 +242,54 @@ def test_machine_and_human_counts_disagreements_and_explicit_detail_caps():
     with pytest.raises(WorkspaceProblem, match="complete frozen"):
         review_sections(run, decisions, criterion_title="Criterion", criterion_version=2,
             instructions="Rule", ledger_path="/matters/synthetic/full-review")
+
+
+def test_large_stream_keeps_late_disagreement_without_export_page_ceiling():
+    count = 100_001
+    def decisions():
+        for ordinal in range(1, count + 1):
+            yield SimpleNamespace(ordinal=ordinal, machine_decision="included",
+                human_decision="exclude" if ordinal == count else "", validation_sample=0,
+                citations=(), source_name="Synthetic source", source_version_id="synthetic-v1",
+                rationale="Machine rationale", human_note="Late disagreement" if ordinal == count else "",
+                reviewed_at=None, updated_at="synthetic-revision", error_message="")
+    run = SimpleNamespace(snapshot_count=count, run_id="synthetic-run",
+                          criterion_version_id="synthetic-criterion", state="succeeded")
+    sections = review_sections(run, decisions(), criterion_title="Large synthetic population",
+        criterion_version=1, instructions="Include bicycle records", ledger_path="/synthetic/ledger")
+    assert sections[3]["heading"] == "Decision detail 100001"
+    assert "Late disagreement" in sections[3]["body"]
+    assert "50 of 100,001" in sections[-1]["body"]
+
+
+def test_http_conversion_streams_more_than_one_export_page(workspace):
+    client, bench, matter = workspace
+    bench.full_review.close()
+    saved_research(bench, matter)
+    criterion, version = bench.workspace.create_review_criterion(matter.matter_id, ACTOR,
+        title="Large synthetic check", instructions="Include bicycle records.")
+    run = bench.workspace.queue_review_run(matter.matter_id, ACTOR, version.criterion_version_id, run_kind="full")
+    bench.workspace.claim_review_run("synthetic-large-worker")
+    count = 100_001
+    with bench.workspace.connection:
+        bench.workspace.connection.execute("DELETE FROM workbench_review_decision WHERE run_id=?", (run.run_id,))
+        bench.workspace.connection.execute(
+            "WITH RECURSIVE sequence(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM sequence WHERE n<?) "
+            "INSERT INTO workbench_review_decision(run_id,matter_id,ordinal,document_id,source_version_id,"
+            "action_token,source_name,source_kind,machine_decision,human_decision,human_note,created_at,updated_at) "
+            "SELECT ?,?,n,printf('%032x',n),'synthetic-v1','synthetic-token','Synthetic source','document',"
+            "'included',CASE WHEN n=? THEN 'exclude' ELSE '' END,"
+            "CASE WHEN n=? THEN 'Late conflicting account' ELSE '' END,'synthetic-time','synthetic-revision' FROM sequence",
+            (count, run.run_id, matter.matter_id, count, count),
+        )
+        bench.workspace.connection.execute(
+            "UPDATE workbench_review_run SET snapshot_count=?,state='succeeded',stage='complete' WHERE run_id=?",
+            (count, run.run_id),
+        )
+    response = client.post(f"/matters/{matter.slug}/full-review/{run.run_id}/report", follow_redirects=False)
+    assert response.status_code == 303 and "/reports?report=" in response.headers["location"]
+    report = bench.workspace.reports(matter.matter_id, ACTOR)[0]
+    sections = bench.workspace.report_sections(matter.matter_id, report.report_id)
+    assert sections[3].heading == "Decision detail 100001"
+    assert "Late conflicting account" in sections[3].body
+    assert "50 of 100,001" in sections[-1].body

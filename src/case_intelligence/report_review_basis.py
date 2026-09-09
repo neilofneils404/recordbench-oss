@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Mapping, Sequence
+from typing import Callable, Iterable, Mapping
 
 from .workspace_store import ResearchJobRecord, ReviewDecisionRecord, ReviewRunRecord, WorkspaceProblem
 
@@ -59,6 +59,20 @@ def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
             raise WorkspaceProblem("This finding exceeds the Report citation limit. Export the original investigation.")
         return tuple(report_citation(by_token[token]) for token in tokens)
 
+    def potential_sources(answer: object, heading: str):
+        matches = _rows(_mapping(answer).get("source_matches"))
+        if not matches:
+            return ()
+        citations = []
+        for match in matches:
+            token = str(match.get("support_token", ""))
+            if token not in by_token:
+                raise WorkspaceProblem("A potential source is missing from the saved investigation ledger.")
+            citations.append(report_citation(by_token[token]))
+        return (_section(heading,
+            "These passages matched the search but were not verified as findings. Review the source material directly.",
+            citations),)
+
     answer = _mapping(result.get("answer"))
     supported = answer.get("answerable") is True
     sections = [
@@ -71,6 +85,7 @@ def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
             citations_for(answer),
         ),
     ]
+    sections.extend(potential_sources(answer, "Potential sources requiring review"))
     for index, item in enumerate(_rows(result.get("passes")), 1):
         if index > 100:
             raise WorkspaceProblem("This investigation has too many passes for one Report. Export the original run.")
@@ -81,6 +96,7 @@ def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
             f"{item.get('text') or 'No finding was saved for this pass.'}",
             citations_for(item.get("answer")),
         ))
+        sections.extend(potential_sources(item.get("answer"), f"Potential sources from evidence pass {index}"))
     gaps = [
         f"Search: {item.get('query', '')}\n{item.get('note') or 'Unresolved in the saved run.'}"
         for item in _rows(result.get("gaps"))
@@ -128,24 +144,35 @@ def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
 
 def review_sections(
     run: ReviewRunRecord,
-    decisions: Sequence[ReviewDecisionRecord],
+    decisions: Iterable[ReviewDecisionRecord],
     *,
     criterion_title: str,
     criterion_version: int,
     instructions: str,
     ledger_path: str,
     reviewer_names: Mapping[str, str] | None = None,
+    reviewer_name: Callable[[str], str] | None = None,
 ) -> tuple[dict[str, object], ...]:
-    if len(decisions) != run.snapshot_count:
-        raise WorkspaceProblem("The complete frozen decision population is unavailable. Export or repair the original run.")
-    machine = Counter(item.machine_decision for item in decisions)
-    human = Counter(item.human_decision for item in decisions)
-    sampled = tuple(item for item in decisions if item.validation_sample)
-
     def disagrees(item: ReviewDecisionRecord) -> bool:
         return (item.machine_decision, item.human_decision) in {("included", "exclude"), ("excluded", "include")}
 
-    disagreements = sum(disagrees(item) for item in decisions)
+    machine, human = Counter(), Counter()
+    selected = []
+    total = sampled_count = sampled_reviewed = disagreements = available_citations = 0
+    rank = lambda item: (not disagrees(item), item.machine_decision != "needs_attention", item.ordinal)
+    for item in decisions:
+        total += 1
+        machine[item.machine_decision] += 1
+        human[item.human_decision] += 1
+        sampled_count += bool(item.validation_sample)
+        sampled_reviewed += bool(item.validation_sample and item.human_decision)
+        disagreements += disagrees(item)
+        available_citations += len(item.citations)
+        selected.append(item)
+        selected.sort(key=rank)
+        del selected[MAX_DETAIL_DECISIONS:]
+    if total != run.snapshot_count:
+        raise WorkspaceProblem("The complete frozen decision population is unavailable. Export or repair the original run.")
     sections = [
         _section("Criterion and frozen scope",
             f"{criterion_title}\nCriterion version {criterion_version}: {instructions}\n\n"
@@ -158,19 +185,15 @@ def review_sections(
             f"Needs attention: {machine['needs_attention']:,}\nPending: {machine['pending']:,}\n\n"
             "These labels are machine screening outcomes, separate from team validation."),
         _section("Team validation and disagreements",
-            f"Decisions with a saved human review: {len(decisions) - human['']:,} of {len(decisions):,}\n"
+            f"Decisions with a saved human review: {total - human['']:,} of {total:,}\n"
             f"No saved human review: {human['']:,}\n"
             f"Agreed with machine: {human['agree']:,}\nHuman include: {human['include']:,}\n"
             f"Human exclude: {human['exclude']:,}\nHuman uncertain: {human['uncertain']:,}\n"
             f"Opposing machine/human inclusion labels: {disagreements:,}\n"
-            f"Validation sample reviewed: {sum(bool(item.human_decision) for item in sampled):,} of {len(sampled):,}\n\n"
+            f"Validation sample reviewed: {sampled_reviewed:,} of {sampled_count:,}\n\n"
             "Counts describe the decision snapshot copied into this Report. Later reviews do not rewrite it."),
     ]
-    selected = sorted(decisions, key=lambda item: (
-        not disagrees(item), item.machine_decision != "needs_attention", item.ordinal,
-    ))[:MAX_DETAIL_DECISIONS]
     citation_count = 0
-    available_citations = sum(len(item.citations) for item in decisions)
     for item in selected:
         available = max(0, MAX_DETAIL_CITATIONS - citation_count)
         citations = tuple(report_citation(value) for value in item.citations[:available])
@@ -180,7 +203,7 @@ def review_sections(
             f"Machine: {item.machine_decision.replace('_', ' ')}\n"
             f"Machine rationale: {item.rationale or 'Not recorded'}\n"
             f"Human decision: {item.human_decision or 'Not reviewed'}\n"
-            f"Reviewer: {(reviewer_names or {}).get(getattr(item, 'reviewed_by', None), 'Not recorded')}\n"
+            f"Reviewer: {reviewer_name(item.reviewed_by) if reviewer_name and getattr(item, 'reviewed_by', None) else (reviewer_names or {}).get(getattr(item, 'reviewed_by', None), 'Not recorded')}\n"
             f"Human note: {item.human_note or 'None recorded'}\n"
             f"Human review saved: {item.reviewed_at or 'Not reviewed'}\n"
             f"Decision revision: {item.updated_at}"
@@ -192,8 +215,8 @@ def review_sections(
         sections.append(_section(f"Decision detail {item.ordinal}", detail, citations))
     sections.append(_section(
         "Detail limits and original ledger",
-        f"Decision details included: {len(selected):,} of {len(decisions):,}. "
-        f"{len(decisions) - len(selected):,} decision details are not reproduced.\n"
+        f"Decision details included: {len(selected):,} of {total:,}. "
+        f"{total - len(selected):,} decision details are not reproduced.\n"
         f"Citation entries included: {citation_count:,} of {available_citations:,}. "
         f"{available_citations - citation_count:,} citation entries are not reproduced.\n"
         "Details prioritize opposing human/machine labels and sources needing attention, then frozen source order.\n"
