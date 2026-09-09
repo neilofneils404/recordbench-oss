@@ -15,13 +15,17 @@ import re
 from typing import Mapping
 
 from .report_compilation import CompilationMaterial
-from .work_product_exports import validate_research_basis
+from .work_product_exports import MAX_EXPORT_TEXT_CHARS, validate_research_basis
 from .workspace_store import WorkspaceProblem
 
 MAX_SELECTIONS = 20
 MAX_MATERIALS = 500
 MAX_REFERENCES = 10_000
 MAX_CITATION_CHARS = 50_000
+# Bound the canonical snapshot before hashing or serialization. Reserve half
+# the export capacity for report prose, headings, attribution and generated
+# findings. The final rendered report must also respect the export limit.
+MAX_TOTAL_CITATION_CHARS = MAX_EXPORT_TEXT_CHARS // 2
 _STALE = "Some selected source support changed or lacks an exact saved text version. Reopen that saved work before compiling a report."
 
 
@@ -33,6 +37,8 @@ class _References:
         self.resolved = {}
         self.bases = {}
         self.digests = {}
+        self.reference_counts = Counter()
+        self.citation_chars = 0
 
     def digest(self, document_id, chunk_id, unit):
         key = (document_id, chunk_id)
@@ -59,6 +65,14 @@ class _References:
         for ordinal, unit in enumerate(units, 1):
             candidate = self.bench._candidate(self.matter, document, unit, ordinal)
             for token in self.bench._support_tokens(candidate) & wanted:
+                if token not in self.resolved:
+                    if len(unit.text) > MAX_CITATION_CHARS:
+                        raise WorkspaceProblem("A selected source passage exceeds the 50,000-character report limit. Choose a smaller supported passage.")
+                    # Repeated citations render repeatedly. Charge occurrences,
+                    # including frozen ledger checks, rather than unique text.
+                    self.citation_chars += len(unit.text) * self.reference_counts[token]
+                    if self.citation_chars > MAX_TOTAL_CITATION_CHARS:
+                        raise WorkspaceProblem("The selected source passages exceed the report's total citation-text limit. Choose fewer items of saved work; source passages cannot be shortened safely.")
                 self.resolved[token] = (document, unit, candidate)
             if wanted <= self.resolved.keys():
                 break
@@ -74,6 +88,7 @@ class _References:
             token = value.get("support_token", "")
             if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{40}", token):
                 raise WorkspaceProblem(_STALE)
+            self.reference_counts[token] += 1
             if value.get("matter_id") not in (None, "", self.matter.matter_id):
                 raise WorkspaceProblem(_STALE)
             document_id = value.get("document_id")
