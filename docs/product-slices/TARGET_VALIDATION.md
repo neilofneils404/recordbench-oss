@@ -1,6 +1,8 @@
 # Validate the unmerged integration candidate
 
 The target Linux machine can test this work before any pull request is merged.
+[Integration PR #46](https://github.com/neilofneils404/recordbench-oss/pull/46)
+is the combined test surface.
 Use a separate OSS checkout of the integration branch and a separate synthetic
 installation. The branch is a review/test candidate, not an accepted release.
 Its component PRs remain independently reviewable.
@@ -103,7 +105,9 @@ reproductions and generalized corrections.
 After target validation, finish code/security reviews and CI on the final PR
 heads, then obtain the full-commit maintainer acceptance required by
 [the public-alpha gate](../PUBLIC_ALPHA.md#merge-and-automation-boundary).
-Merge accepted component PRs in dependency order. Recheck the assembled tree and
+Use the component PRs as the default merge path; the integration PR exists for
+combined validation and should be closed after its component changes land. Do not
+merge both paths independently. Merge accepted component PRs in dependency order. Recheck the assembled tree and
 required CI after conflict resolution or default-branch advances. Deployment
 adoption is a later explicit step against the accepted revision; testing this
 branch alone does not update or validate an existing deployment.

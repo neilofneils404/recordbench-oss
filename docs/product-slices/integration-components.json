@@ -38,7 +38,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/installer-preflight-20260908",
-      "headRefOid": "59a7f860fadd803303bd14e955e6304b3651faaf",
+      "headRefOid": "8dc967063dc19237be5de41cd4f51555810c599b",
       "number": 39,
       "title": "Make first-run installer prerequisites actionable",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/39"
@@ -62,7 +62,7 @@
     {
       "baseRefName": "codex/exact-search-foundation-20260908",
       "headRefName": "codex/exact-search-results-20260908",
-      "headRefOid": "471dd1bd910af4fdb01796d8370980e9ebe10218",
+      "headRefOid": "5f4abf0ec16a970bfb82320f7827b50f37c875c3",
       "number": 42,
       "title": "Add complete document search with a guided Find sources flow",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/42"
@@ -70,7 +70,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/browser-local-accounts-20260908",
-      "headRefOid": "f8e3f7e44d21ae9450926b55426520d65af35aa0",
+      "headRefOid": "26b215a8ebed2ac06f8e24c068dc82efb8996e89",
       "number": 43,
       "title": "feat: browser account management and first-use People entry",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/43"
@@ -78,7 +78,7 @@
     {
       "baseRefName": "codex/report-review-basis-20260908",
       "headRefName": "codex/guided-reports-20260908",
-      "headRefOid": "acc0258b6d08a5bc637cf7dd3bfadb8e9b7e0778",
+      "headRefOid": "d26f8fb506e6ea184034e649e378d6944feff652",
       "number": 44,
       "title": "Compile saved AI work and human review into usable report drafts",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/44"
@@ -86,10 +86,26 @@
     {
       "baseRefName": "codex/exact-search-results-20260908",
       "headRefName": "codex/search-proximity-20260908",
-      "headRefOid": "4090547088fdcd8c467984c6a914b898b51973fa",
+      "headRefOid": "43f2e03864ab079f6e9724df03370be16fb2f3d0",
       "number": 45,
       "title": "Find nearby words and phrases with exact proximity",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/45"
+    },
+    {
+      "baseRefName": "codex/investigation-budgets-20260908",
+      "headRefName": "codex/full-text-review-20260908",
+      "headRefOid": "b00ce593fd1981d06e8e88fc2d94bc5245980fd2",
+      "number": 47,
+      "title": "Review all extracted text with durable coverage and resumable findings",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/47"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/first-run-handoff-20260908",
+      "headRefOid": "9611d2c388607fc37126baefe5cc067ece208c49",
+      "number": 48,
+      "title": "Guide resumable installation and first team setup",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/48"
     }
   ],
   "assembly": "Patch-equivalent changes combined in one branch. Resolve the candidate commit from the handoff or git rev-parse HEAD; this manifest cannot name its own containing commit.",

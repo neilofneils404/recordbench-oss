@@ -44,6 +44,8 @@ Current implementation PRs (unmerged):
 | [#43](https://github.com/neilofneils404/recordbench-oss/pull/43) | Browser People administration and first-use entry | 05 |
 | [#44](https://github.com/neilofneils404/recordbench-oss/pull/44) | Automatically compile selected saved work into usable drafts | 15 |
 | [#45](https://github.com/neilofneils404/recordbench-oss/pull/45) | Nearby words/phrases with guided proximity controls | 09, proximity family |
+| [#47](https://github.com/neilofneils404/recordbench-oss/pull/47) | Review every extracted text range with durable coverage | 12 |
+| [#48](https://github.com/neilofneils404/recordbench-oss/pull/48) | Resumable installer handoff and guided first team setup | 02, 03 |
 
 [CI candidate isolation #37](https://github.com/neilofneils404/recordbench-oss/pull/37)
 is a validation dependency, not a product slice. It inspects intended ancestry
@@ -56,8 +58,7 @@ should validate a combined candidate in a separate synthetic checkout and
 installation before deployment-sensitive changes are accepted. No default-branch
 merge is needed for that test.
 
-Installer handoff/onboarding (02/03) and all-extracted-text review (12) are being
-implemented separately. Adaptive investigation (11), hierarchy (13), reusable
+Adaptive investigation (11), hierarchy (13), reusable
 team groups (06), remaining advanced operators, and the entity workspace and
 relationship slices remain proposed. The report's People/Places/Things format
 does not claim to implement the persistent entity workspace or identity resolution.
