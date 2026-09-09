@@ -22,7 +22,7 @@ from .generation import (
     MAX_EVIDENCE_ITEMS, MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEM_CHARS, MAX_ANSWER_CLAIMS,
 )
 
-COMPILATION_VERSION = 9
+COMPILATION_VERSION = 10
 KINDS = frozenset({"timeline", "entities", "topic"})
 HUMAN_ORIGINS = frozenset({"human", "notebook", "human_review", "review_decision", "source_review"})
 UNRESOLVED_STATES = frozenset({"disputed", "needs_review", "needs_attention", "flagged", "unreviewed"})
@@ -165,8 +165,11 @@ def _exact_date(text: str, label: str = "", *, citations: Sequence[Mapping] = ()
     if any(citation.get("kind") in {"transcript", "media_clip"} for citation in citations):
         return ""
     candidate = label.strip()
-    if re.search(r"\b(?:about|around|approximate(?:ly)?|estimated?|circa|may|might|uncertain(?:ty)?|unconfirmed|"
+    if re.search(r"\b(?:about|around|roughly|approx|approximate(?:ly)?|estimated?|circa|may|might|uncertain(?:ty)?|unconfirmed|"
                  r"before|after|between|possibly|perhaps|or|until|since)\b", text, re.I):
+        return ""
+    if re.search(r"\b(?:(?:later|earlier)\s+than|at\s+(?:the\s+)?(?:latest|earliest)|"
+                 r"as\s+(?:late|early)\s+as|prior\s+to|up\s+to)\b|\bby\s+\d{4}-\d{2}-\d{2}\b", text, re.I):
         return ""
     if not candidate:
         matches = set(re.findall(r"\b\d{4}-\d{2}-\d{2}\b", text))
@@ -293,9 +296,9 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     model_available = bool(generator is not None and generator.available)
     human_materials = tuple(item for item in selected if item.origin in HUMAN_ORIGINS)
     classification_items = tuple(item for item in selected
-        if (focused and (item.origin in HUMAN_ORIGINS or item.category == "gap"))
+        if item.text.strip() and ((focused and (item.origin in HUMAN_ORIGINS or item.category == "gap"))
         or (kind == "entities" and item.origin in HUMAN_ORIGINS
-            and item.category not in {"person", "place", "thing", "gap", "coverage"}))
+            and item.category not in {"person", "place", "thing", "gap", "coverage"})))
     classified_ids: set[str] = set()
     classified_categories: dict[str, set[str]] = {}
     relevant_note_ids: set[str] = set()

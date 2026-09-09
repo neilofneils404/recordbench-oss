@@ -28,8 +28,12 @@ not return a partial human record set as a completed draft.
 - A complete relevance check may exclude unrelated review records. Unavailable,
   rejected, or incomplete checks preserve human records with an explicit
   unconfirmed-relevance note, even when source generation succeeds. Empty records
-  do not reserve slots. `retained_unclassified_review_material_ids` identifies
-  the unchecked records actually retained in the draft.
+  do not reserve slots. Fully blank review records are also excluded from the
+  classification denominator, unchecked IDs, and truncated-note counts, so they
+  cannot leave otherwise complete analysis marked incomplete. Records with
+  nonblank text after a truncated blank prefix remain unchecked and retained.
+  `retained_unclassified_review_material_ids` identifies the unchecked records
+  actually retained in the draft.
 - Relevance batches contain at most eight records, matching the shared answer
   schema and verifier claim capacity. Smaller batches still share the configured
   model-call budget; unchecked later records remain available as unconfirmed
@@ -86,12 +90,14 @@ not return a partial human record set as a completed draft.
 - Timeline headings and sort keys consider the source-supported limitation as
   well as the claim. Common date hedges such as may, might, approximate, estimated,
   circa, uncertain, and unconfirmed retain the date wording without claiming an
-  exact date, including saved records with a supplied date label. A limitation
-  cannot introduce an event date missing from the claim. Transcript and media-clip
+  exact date, including saved records with a supplied date label. Bounds such as
+  no later/earlier than, by an ISO date, at the latest/earliest, as late/early as,
+  prior to, and up to also remain non-exact, as do roughly and approx. wording.
+  A limitation cannot introduce an event date missing from the claim. Transcript and media-clip
   citations keep generated and saved timeline dates non-exact regardless of the
   phrasing or a supplied date label. This decision follows the finding's own
   support: document-only findings in a mixed source answer can retain exact dates.
-- Compiler version 9 changes the fingerprint so earlier previews cannot share
+- Compiler version 10 changes the fingerprint so earlier previews cannot share
   an identity with the corrected allocation, relevance, citation, and
   qualification policy.
 - This work does not resolve #44's separate finding about distinct machine
@@ -111,7 +117,9 @@ transcript notices have focused regressions. Additional real-service regressions
 cover qualified timeline ordering, ambiguous relevance limitations, and reversed
 evidence order in duplicate output; exact-date and distinct-claim controls remain.
 Transcript-date regressions exercise real verification and mixed source packets;
-citation-count boundaries verify full persistence and Markdown export.
+citation-count boundaries verify full persistence and Markdown export. Date-bound
+regressions cover saved text, generated claims, and verified limitations; blank
+review-record regressions verify the coverage denominator and completion status.
 Existing compiler tests also exercise grounding, coverage, cancellation, export text
 limits, current Report storage compatibility, and source snapshot fingerprints.
 
