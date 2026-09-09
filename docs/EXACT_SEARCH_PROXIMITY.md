@@ -102,3 +102,12 @@ PYTHONPATH=src python -m pytest -q tests/test_exact_search.py tests/test_exact_s
 
 No schema, stored-source format, model, deployment, wildcard, or metadata-field
 behavior changes are included.
+
+The portable browser acceptance script starts a loopback-only app with temporary
+synthetic sources and writes screenshots plus a receipt containing the tested
+checkout commit. Install Selenium and supply matching Chrome/ChromeDriver
+binaries for the host; run from the checkout under test:
+
+```console
+python scripts/browser-accept-exact-search.py --chrome-binary /path/to/chrome --chromedriver /path/to/chromedriver --output /tmp/exact-search-acceptance
+```
