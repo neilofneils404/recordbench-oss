@@ -1964,3 +1964,190 @@ def test_cli_preflight_invalid_saved_state_is_blocking_json(tmp_path, request, m
     assert not payload["ready"] and payload["checks"][0]["name"] == "saved-node"
     assert payload["checks"][0]["blocking"] is True
     assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_relative_tls_paths_keep_launch_location_in_staged_configuration(tmp_path, ready_host, monkeypatch):
+    launch = tmp_path.resolve() / "launch"
+    launch.mkdir()
+    cert, key = launch / "synthetic certificate.crt", launch / "synthetic key.pem"
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic key")
+    monkeypatch.chdir(launch)
+    root = tmp_path.resolve() / "node"
+    args = installer._parser().parse_args(["install", "--root", str(root), "--auth", "local", "--models", "none", "--non-interactive", "--password-stdin", "--tls-cert", cert.name, "--tls-key", key.name])
+    result = installer._collect_preflight("none", args)
+    assert result.ready
+    assert args.tls_cert == cert and args.tls_key == key
+    paths = installer._paths(root)
+    for path in paths.values():
+        path.mkdir(parents=True, exist_ok=True)
+    release = tmp_path.resolve() / "staged-release"
+    release.mkdir()
+    (release / "compose.yaml").write_text("services: {}\n")
+    monkeypatch.chdir(release)
+    installer._collect_identity_choices(args)
+    installer._configure(installer.Console(color=False, quiet=True), args, root, paths, "synthetic-release", release, ())
+    values = installer._dotenv(root / "compose.env")
+    assert values["RECORDBENCH_TLS_CERT"] == str(cert)
+    assert values["RECORDBENCH_TLS_KEY"] == str(key)
+
+
+@pytest.mark.parametrize("field", ["--tls-cert", "--tls-key"])
+def test_relative_tls_symlink_remains_rejected_after_absolutizing(tmp_path, ready_host, monkeypatch, field):
+    launch = tmp_path.resolve()
+    cert, key = launch / "synthetic.crt", launch / "synthetic.key"
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic key")
+    link = launch / "synthetic-link"
+    link.symlink_to(cert if field == "--tls-cert" else key)
+    monkeypatch.chdir(launch)
+    args = preflight_args(tmp_path, "--tls-cert", cert.name, "--tls-key", key.name, field, link.name)
+    assert checks_by_name(installer._collect_preflight("none", args))["tls"].state == "fail"
+    assert not args.root.exists()
+
+
+def synthetic_late_gpu_resume(tmp_path, monkeypatch, request, *, after_free=47000,
+                              running="app\ngateway\ngenerator\npostgres\ntranscription-worker\n",
+                              failure=None, dry_run=False, live_free=8000):
+    root, installation, environment = saved_gpu_node(tmp_path)
+    request.getfixturevalue("ready_host")
+    events = []
+    commands = []
+    state = {"stopped": False, "initial": True}
+    args = installer._parser().parse_args(["install", "--root", str(root), "--resume",
+        "--non-interactive", *(["--dry-run"] if dry_run else [])])
+    installer._saved_node_arguments(args, root)
+    def probe(command):
+        if command[0] == "nvidia-smi":
+            events.append("probe-stopped" if state["stopped"] else "probe-live")
+            if state["stopped"] and after_free is None:
+                raise OSError("synthetic unavailable GPU probe")
+            free = after_free if state["stopped"] else live_free
+            return subprocess.CompletedProcess(command, 0, f"0, Synthetic GPU, 49152, {free}, 8.9", "")
+        return subprocess.CompletedProcess(command, 0, '{"nvidia": {}}', "")
+    def run(console, command, **kwargs):
+        commands.append((command, kwargs.get("dry_run", False)))
+        assert "down" not in command and "--volumes" not in command
+        verb = next((value for value in ("build", "config", "ps", "stop", "start", "up", "run") if value in command), "other")
+        events.append(verb)
+        if verb == "stop" and not kwargs.get("dry_run"):
+            state["stopped"] = True
+        if not state["initial"] and (verb == failure or (failure == "stop-and-start" and verb in {"stop", "start"})):
+            raise subprocess.CalledProcessError(1, command)
+        if verb == "config" and "--services" in command:
+            return subprocess.CompletedProcess(command, 0, "app\ngateway\ngenerator\npostgres\nretrieval\n", "")
+        if verb == "ps":
+            assert "--orphans=false" in command and "--status" in command and "running" in command
+            return subprocess.CompletedProcess(command, 0, running, "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+    def health(*a, **k):
+        events.append("health")
+        if state["initial"] or failure == "health":
+            raise RuntimeError("synthetic health timeout after model startup")
+    monkeypatch.setattr(installer, "_probe", probe)
+    monkeypatch.setattr(installer, "_run", run)
+    monkeypatch.setattr(installer, "_wait_health", health)
+    monkeypatch.setattr(installer, "_saved_models_verified", lambda *a, **k: True)
+    # Reproduce an actual interruption boundary: provisioning seals its receipt,
+    # starts the runtime, then fails to observe health consensus.
+    args.dry_run = False
+    with pytest.raises(RuntimeError, match="health timeout"):
+        installer._provision(installer.Console(color=False, quiet=True), args, root,
+            args.auth, args.models, None, None)
+    assert installer._provisioning_complete(root, installation)
+    args.dry_run = dry_run
+    state["initial"] = False
+    events.clear()
+    commands.clear()
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    return root, args, events, commands, before
+
+
+def test_late_gpu_resume_releases_only_observed_node_services_before_actual_free_admission(tmp_path, monkeypatch, request):
+    root, args, events, commands, before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request)
+    installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert events.index("probe-live") < events.index("ps") < events.index("stop")
+    assert events.index("stop") < events.index("probe-stopped") < events.index("build") < events.index("up") < events.index("health")
+    stop = next(command for command, _ in commands if "stop" in command)
+    assert stop[stop.index("stop") + 1:] == ["--timeout", "120", "app", "gateway", "generator", "postgres"]
+    assert "start" not in events
+    assert (root / "compose.env").read_bytes() == before[Path("compose.env")]
+    account_file = args.account_root / "local-accounts.json"
+    assert account_file.read_bytes() == before[account_file.relative_to(root)]
+
+
+@pytest.mark.parametrize("after_free", [1000, 35000, None])
+def test_late_gpu_resume_restores_previous_services_when_actual_free_admission_fails(tmp_path, monkeypatch, request, after_free):
+    root, args, events, commands, before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request, after_free=after_free)
+    with pytest.raises(RuntimeError, match="resume failed"):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert events.index("stop") < events.index("probe-stopped") < events.index("start")
+    assert "build" not in events and "up" not in events
+    start = next(command for command, _ in commands if "start" in command)
+    assert start[start.index("start") + 1:] == ["app", "gateway", "generator", "postgres"]
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("failure", ["stop", "build", "health", "stop-and-start"])
+def test_late_gpu_resume_restores_scoped_services_after_partial_stop_or_provision_failure(tmp_path, monkeypatch, request, failure):
+    root, args, events, commands, _before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request, failure=failure)
+    with pytest.raises(RuntimeError, match="restoration also failed" if failure == "stop-and-start" else "resume failed"):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert events.index("stop") < events.index("start")
+    start = next(command for command, _ in commands if "start" in command)
+    assert start[start.index("start") + 1:] == ["app", "gateway", "generator", "postgres"]
+    if failure.startswith("stop"):
+        assert "probe-stopped" not in events and "build" not in events
+
+
+@pytest.mark.parametrize("running", ["", "app\ngateway\npostgres\n", "app\ntranscription-worker\n"])
+def test_late_gpu_resume_without_running_models_still_requires_actual_free_memory(tmp_path, monkeypatch, request, running):
+    root, args, events, _commands, before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request, running=running)
+    with pytest.raises(RuntimeError, match="prerequisites"):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert events.count("probe-live") == 2 and "ps" in events
+    assert all(event not in events for event in ["stop", "start", "build", "up"])
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_late_gpu_resume_with_free_capacity_and_no_running_models_can_continue(tmp_path, monkeypatch, request):
+    root, args, events, _commands, _before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request, running="", live_free=47000)
+    installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert events.count("probe-live") == 2 and "ps" in events
+    assert "stop" not in events and "start" not in events
+    assert events.index("build") < events.index("up") < events.index("health")
+
+
+def test_late_gpu_resume_prepare_only_keeps_strict_admission_and_does_not_stop_services(tmp_path, monkeypatch, request):
+    root, args, events, _commands, before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request)
+    args.prepare_only = True
+    with pytest.raises(RuntimeError, match="prerequisites"):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert events == ["probe-live"]
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_late_gpu_resume_rejects_invalid_observed_service_names_before_mutations(tmp_path, monkeypatch, request):
+    root, args, events, _commands, before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request, running="generator\n--all\n")
+    with pytest.raises(RuntimeError, match="safely identify"):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert "ps" in events and all(event not in events for event in ["stop", "start", "build", "up"])
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_late_gpu_resume_service_probe_failure_blocks_before_mutations(tmp_path, monkeypatch, request):
+    root, args, events, _commands, before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request, failure="ps")
+    with pytest.raises(subprocess.CalledProcessError):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert "ps" in events and all(event not in events for event in ["stop", "start", "build", "up"])
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_late_gpu_resume_dry_run_defers_actual_admission_without_runtime_changes(tmp_path, monkeypatch, request, capsys):
+    root, args, events, commands, before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request, dry_run=True)
+    installer._resume_node(installer.Console(color=False), args, root)
+    assert "actual free-memory admission is deferred" in capsys.readouterr().out
+    assert events.count("probe-live") == 1 and "probe-stopped" not in events
+    assert "ps" not in events and "stop" not in events and "start" not in events
+    assert all(dry_run for _command, dry_run in commands)
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before

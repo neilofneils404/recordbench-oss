@@ -1196,6 +1196,14 @@ def _storage_path_text_valid(path: Path) -> bool:
     return not any(ord(character) < 32 or ord(character) == 127 for character in str(path))
 
 
+def _absolute_tls_path(path: Path | None) -> Path | None:
+    # Retain invalid text for the blocking preflight check, and preserve lexical
+    # symlinks so making a path absolute cannot bypass their rejection.
+    if path is None or not _storage_path_text_valid(path):
+        return path
+    return path.expanduser().absolute()
+
+
 def _storage_roots_compatible(node: Path, storage: Path) -> bool:
     """Keep managed sources out of installer-owned state and control paths."""
     if not _storage_path_text_valid(node) or not _storage_path_text_valid(storage):
@@ -1392,6 +1400,8 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
             "Bind address is an IP literal" if bind_ok else "Bind address is invalid",
             "Bind the private HTTPS gateway",
             "Use --bind-address with an IPv4 or unbracketed, unscoped IPv6 literal, without a hostname, port or control characters. Set the port separately with --https-port.")
+        args.tls_cert = _absolute_tls_path(args.tls_cert)
+        args.tls_key = _absolute_tls_path(args.tls_key)
         pair = bool(args.tls_cert) == bool(args.tls_key)
         supplied = bool(args.tls_cert and args.tls_key)
         readable = supplied and all(_storage_path_text_valid(path) and path.is_file()
@@ -1675,8 +1685,8 @@ def _configure(
         if not dsn_path.exists():
             _private_write(dsn_path, dsn)
 
-    tls_cert = args.tls_cert
-    tls_key = args.tls_key
+    tls_cert = _absolute_tls_path(args.tls_cert)
+    tls_key = _absolute_tls_path(args.tls_key)
     if bool(tls_cert) != bool(tls_key):
         raise RuntimeError("--tls-cert and --tls-key must be supplied together")
     if tls_cert is None:
@@ -2473,20 +2483,60 @@ def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None
     if (needs_model_staging and args.non_interactive and args.enable_diarization
             and not (args.accept_model_terms and args.hf_token_stdin)):
         raise RuntimeError("resumed model staging requires --accept-model-terms and --hf-token-stdin before runtime checks")
+    prepared = _provisioning_complete(root, installation)
+    recover_running_gpu = prepared and models != "none" and not args.prepare_only
     _preflight(console, models=models, dry_run=args.dry_run, args=args,
-               needs_model_staging=needs_model_staging)
+               needs_model_staging=needs_model_staging,
+               defer_gpu_free_check=recover_running_gpu)
     console.phase(2, "REJOIN NODE", "Using sealed identity, storage, model, and release coordinates")
     compose = _compose(root, profiles)
     _run(console, [*compose, "config", "--quiet"], dry_run=args.dry_run)
-    if not args.dry_run:
-        _install_phase(root, "configuration", "complete")
-    console.ok(f"release capsule :: {installation.get('release_id', 'legacy')}")
-    if not _provisioning_complete(root, installation):
-        console.warn("Prior boot stopped before the provisioning seal; validating and continuing existing state")
-    else:
-        console.note("Prepared phase receipt found; revalidating storage, accounts and the offline model selection")
-    _provision(console, args, root, auth, models, args.admin_username, args.admin_display_name,
-               model_cache_verified=not needs_model_staging)
+    running: list[str] = []
+    if recover_running_gpu:
+        if args.dry_run:
+            console.note("Dry run: observe this node's running services, stop them if a selected model is running, then recheck GPU capacity; actual free-memory admission is deferred")
+        else:
+            enabled = set(_run(console, [*compose, "config", "--services"], capture=True).stdout.splitlines())
+            observed = set(_run(console, [*compose, "ps", "--status", "running", "--services", "--orphans=false"], capture=True).stdout.splitlines())
+            if any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", service) is None for service in enabled | observed):
+                raise RuntimeError("could not safely identify this node's running services")
+            model_services = set()
+            if models in {"review", "all"}:
+                model_services.add("generator")
+                if args.retrieval_device == "cuda":
+                    model_services.add("retrieval")
+            if models in {"transcription", "all"}:
+                model_services.add("transcription-worker")
+            if enabled & observed & model_services:
+                running = sorted(enabled & observed)
+    stop_attempted = False
+    try:
+        if running:
+            console.note("Stopping this node's observed running services to release its model allocation")
+            stop_attempted = True
+            _run(console, [*compose, "stop", "--timeout", "120", *running])
+        if recover_running_gpu and not args.dry_run:
+            # Deferral never authorizes provisioning: even an empty running
+            # model set must pass admission using actual free device memory.
+            _preflight(console, models=models, dry_run=False, args=args,
+                       needs_model_staging=needs_model_staging)
+        if not args.dry_run:
+            _install_phase(root, "configuration", "complete")
+        console.ok(f"release capsule :: {installation.get('release_id', 'legacy')}")
+        if not prepared:
+            console.warn("Prior boot stopped before the provisioning seal; validating and continuing existing state")
+        else:
+            console.note("Prepared phase receipt found; revalidating storage, accounts and the offline model selection")
+        _provision(console, args, root, auth, models, args.admin_username, args.admin_display_name,
+                   model_cache_verified=not needs_model_staging)
+    except Exception as resume_error:
+        if not stop_attempted:
+            raise
+        try:
+            _run(console, [*compose, "start", *running])
+        except Exception as restore_error:
+            raise RuntimeError("resume failed and restoration also failed; inspect this node's service status before retrying") from restore_error
+        raise RuntimeError("resume failed; previously running services were restarted, but health is not confirmed") from resume_error
 
 
 def _backup_tool(root: Path) -> Path:
