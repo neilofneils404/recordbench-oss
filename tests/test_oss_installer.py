@@ -952,3 +952,26 @@ def test_prepare_resume_does_not_follow_replaced_internal_directory(tmp_path):
         installer._prepare_directories(installer.Console(color=False, quiet=True), node,
             storage_root=None, resume=True, dry_run=False)
     assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("blocker", ["capacity", "creation-parent"])
+def test_preflight_json_reports_real_host_blockers_without_creating_state(tmp_path, ready_host, monkeypatch, capsys, blocker):
+    parent = tmp_path.resolve() / "creation-parent"
+    parent.mkdir(mode=0o700)
+    root = parent / "uncreated node"
+    if blocker == "capacity":
+        monkeypatch.setattr(installer.shutil, "disk_usage", lambda path: type("Disk", (), {"free": 99 * 1024**3})())
+        blocked_check = "node-storage-reserve"
+    else:
+        parent.chmod(0o1777)
+        blocked_check = "node-storage"
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(root), "--models", "none", "--json"])
+    assert installer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert payload["schema_version"] == 1
+    check = next(row for row in payload["checks"] if row["name"] == blocked_check)
+    assert check["blocking"] is True and check["state"] == "fail" and check["remedy"]
+    assert all(row["remedy"] for row in payload["checks"] if row["blocking"] and row["state"] != "pass")
+    assert not root.exists()
+    assert list(parent.iterdir()) == []

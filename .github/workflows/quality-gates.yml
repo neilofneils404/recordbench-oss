@@ -128,9 +128,26 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"
       - name: Validate standard and Kerberos Compose graphs
         run: ./scripts/compose-check.sh
-      - name: Exercise automation-safe installer output
-        run: >-
-          ./install install --root /tmp/recordbench-ci-node --auth local
-          --models none --server-name recordbench.example.test
-          --bind-address 127.0.0.1 --https-port 18443 --non-interactive
-          --prepare-only --dry-run --no-color
+      - name: Exercise read-only installer diagnostics
+        run: |
+          python3 - <<'PYCODE'
+          import json
+          import pathlib
+          import subprocess
+          import tempfile
+
+          with tempfile.TemporaryDirectory() as temporary:
+              root = pathlib.Path(temporary) / "uncreated node"
+              result = subprocess.run(
+                  ["./install", "preflight", "--root", str(root), "--models", "none", "--json"],
+                  capture_output=True, text=True, timeout=90,
+              )
+              payload = json.loads(result.stdout)
+              assert payload["schema_version"] == 1
+              assert payload["checks"]
+              blocked = any(row["blocking"] and row["state"] != "pass" for row in payload["checks"])
+              assert payload["ready"] is (not blocked)
+              assert result.returncode == (1 if blocked else 0)
+              assert all(row["remedy"] for row in payload["checks"] if row["blocking"] and row["state"] != "pass")
+              assert not root.exists()
+          PYCODE
