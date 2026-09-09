@@ -272,11 +272,12 @@ def test_restore_receipt_counts_control_and_managed_stores(node_factory):
     assert _version(node.registry) == "live"
 
 
-def test_active_work_still_defers_without_stopping_services(node_factory, monkeypatch):
+@pytest.mark.parametrize("active_key,state", [("research_jobs", "queued"), ("report_compilation_jobs", "queued"), ("report_compilation_jobs", "running")])
+def test_active_work_still_defers_without_stopping_services(node_factory, monkeypatch, active_key, state):
     node = node_factory()
     monkeypatch.setattr(backup, "_health", lambda _: {
         "product": "RecordBench",
-        **{key: {"queued": int(key == "research_jobs"), "running": 0} for key in backup.ACTIVE_JOB_KEYS},
+        **{key: {"queued": int(key == active_key and state == "queued"), "running": int(key == active_key and state == "running")} for key in backup.ACTIVE_JOB_KEYS},
     })
     assert node.backup() == 0
     assert node.events == []

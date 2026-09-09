@@ -27,7 +27,7 @@
         <input type="hidden" name="expected_updated_at" value="{{ section_revision }}">
         <input type="hidden" name="expected_status" value="{{ report.status if report else '' }}">
         <label>Heading<input name="heading" value="{{ draft.heading }}" maxlength="200" required></label>
-        <label>Section text<textarea name="body" maxlength="50000" rows="12">{{ draft.body }}</textarea></label>
+        <label>Section text<textarea name="body" maxlength="{{ section.prose_limit if mode == 'section' and section else 50000 }}" rows="12">{{ draft.body }}</textarea></label>
         {% endif %}
         {% if can_save %}<button class="button button-primary" type="submit">{{ 'Save details' if mode == 'header' else ('Add section' if mode == 'append' else 'Save section') }}</button>{% endif %}
       </form>
