@@ -61,10 +61,17 @@ def main() -> None:
             matter = bench.workspace.create_matter("Synthetic Report review", "Browser acceptance", ACTOR)
             job, _ = saved_research(bench, matter)
             driver.get(base + f"/matters/{matter.slug}/research?job={job.job_id}")
+            for details in driver.find_elements(By.CSS_SELECTOR, 'details'):
+                if details.find_elements(By.CSS_SELECTOR, 'form[action$="/report"]'):
+                    driver.execute_script("arguments[0].open = true", details)
             button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'form[action$="/report"] button')))
             driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", button)
             button.click()
             wait.until(lambda d: "/reports?report=" in d.current_url)
+            edit_link = wait.until(EC.element_to_be_clickable((By.LINK_TEXT, 'Edit this draft')))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", edit_link)
+            wait.until(lambda d: d.execute_script("const r=arguments[0].getBoundingClientRect(); return r.top >= 56 && r.bottom < innerHeight;", edit_link))
+            edit_link.click()
             wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".report-section-card")) == 7)
             heading = driver.find_element(By.CSS_SELECTOR, 'input[value="Gaps and unresolved questions"]')
             form = heading.find_element(By.XPATH, "ancestor::form")
@@ -77,8 +84,12 @@ def main() -> None:
             driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", save)
             save.click()
             wait.until(EC.staleness_of(save))
+            edit_link = wait.until(EC.element_to_be_clickable((By.LINK_TEXT, 'Edit this draft')))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", edit_link)
+            wait.until(lambda d: d.execute_script("const r=arguments[0].getBoundingClientRect(); return r.top >= 56 && r.bottom < innerHeight;", edit_link))
+            edit_link.click()
             assert any(marker in element.get_attribute("value") for element in driver.find_elements(By.CSS_SELECTOR, 'textarea[name="body"]'))
-            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-assistant-collapse]'))).click()
+
             for width, name in ((1440, "desktop"), (390, "mobile")):
                 driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
                     "width": width, "height": 1000, "deviceScaleFactor": 1, "mobile": False,

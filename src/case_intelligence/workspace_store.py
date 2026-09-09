@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import unicodedata
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from importlib import resources
@@ -1005,6 +1006,7 @@ class WorkspaceStore:
             "migrations/sqlite/0024_review_source_content_basis.sql",
             "migrations/sqlite/0025_intake_receipts.sql",
             "migrations/sqlite/0026_source_byte_matches.sql",
+            "migrations/sqlite/0027_report_compilation.sql",
         ):
             migration = resources.files("case_intelligence").joinpath(name).read_text(encoding="utf-8")
             self.connection.executescript(migration)
@@ -2535,6 +2537,10 @@ class WorkspaceStore:
             ),
             "research": (
                 "workbench_research_job",
+                "state IN ('queued','running')",
+            ),
+            "reports": (
+                "workbench_report_compilation_job",
                 "state IN ('queued','running')",
             ),
             "reviews": (
@@ -6928,6 +6934,7 @@ class WorkspaceStore:
         *,
         origin_id: str,
         sections: Sequence[Mapping[str, object]],
+        transaction_owned: bool = False,
     ) -> ReportRecord:
         """Save a complete converted review atomically, or leave no new Report."""
 
@@ -6958,8 +6965,12 @@ class WorkspaceStore:
 
         report_id = f"report-{uuid.uuid4().hex}"
         now = self._now()
-        with self._lock, self.connection:
-            self.connection.execute("BEGIN IMMEDIATE")
+        with self._lock, (nullcontext() if transaction_owned else self.connection):
+            if transaction_owned:
+                if not self.connection.in_transaction:
+                    raise RuntimeError("Report creation requires the caller's active transaction")
+            else:
+                self.connection.execute("BEGIN IMMEDIATE")
             self.membership(matter_id, actor)
             self.connection.execute(
                 "INSERT INTO workbench_report("
@@ -7235,7 +7246,7 @@ class WorkspaceStore:
             self._safe_text(
                 str(value.get("excerpt", "")),
                 label="Report citation excerpt",
-                maximum=6_000,
+                maximum=50_000,
                 required=False,
                 multiline=True,
             ),
@@ -7396,6 +7407,13 @@ class WorkspaceStore:
                                                           expected_status=expected_status)
             current_section = self._report_section_for_edit_locked(matter_id, report_id, section_id,
                                                                    expected_updated_at)
+            basis_marker = "\n\nReview basis:\n"
+            if (current_section.origin_id.startswith("report-compilation-")
+                    and basis_marker in current_section.body and basis_marker not in content):
+                content = self._safe_text(
+                    content + basis_marker + current_section.body.split(basis_marker, 1)[1],
+                    label="Section text", maximum=50_000, required=False, multiline=True,
+                )
             now = self._report_edit_time(current_report, current_section)
             changed = self.connection.execute(
                 "UPDATE workbench_report_section SET heading=?,body=?,updated_by=?,updated_at=? "

@@ -31,6 +31,44 @@ supported content fails with an actionable message instead of producing empty
 outline sections. This fallback is not an entity-resolution or topic-relevance
 engine.
 
+## Reviewer workflow
+
+Open Reports and choose **Compile saved work**, or choose **Make a report** while
+reviewing an AI answer, investigation, source check, or team note. Choose a
+Timeline, People/Places/Things report, or Topic brief. Saved team notes and the
+latest available AI work provide an editable starting selection. A topic brief
+requires a focus; the other formats accept an optional focus.
+
+The request queues durable background work and opens its progress page. Reviewers
+can stop it, leave the page, or retry a failed request from Reports. Completion
+opens the document as readable prose with source links. **Edit this draft** exposes
+section editing and ordering; ordinary prose edits preserve the saved compilation
+basis under the same revision check. Word and Markdown exports retain that basis,
+human edits, gaps, and source support. Blank documents remain available as an
+explicit secondary option.
+
+The default selection is saved review work, not every source in a matter. Work
+that changed while compiling causes a visible failure before any report is saved.
+Stale or unresolved source support also fails explicitly. Full canonical source
+units up to 50,000 characters can be preserved even when the prior notebook showed
+only a shorter excerpt; the frozen digest must match. Larger units fail rather
+than silently losing the end of their support.
+
+The UI uses the shared server policy, with configurable positive integers
+`CASE_INTELLIGENCE_REPORT_MAX_MATERIALS`, `CASE_INTELLIGENCE_REPORT_MAX_MODEL_CALLS`,
+`CASE_INTELLIGENCE_REPORT_MAX_SECTIONS`, and `CASE_INTELLIGENCE_REPORT_WORKERS`.
+These are capacity controls, not claims about pages reviewed. The selection adapter
+accepts at most 20 collections/records, 500 material records and 10,000 references;
+overlarge selections ask the reviewer to narrow the draft. The compiler records
+any smaller policy omissions in its coverage section.
+
+`tests/test_guided_reports.py` exercises all three HTTP-to-background-to-document
+flows, human editing, exports, idempotent requests, changed inputs, retry,
+cancellation, authorization and CSRF. `scripts/browser-accept-compiled-reports.py`
+walks the same flow in real Chrome at desktop and 390-pixel widths, saves synthetic
+screenshots, and downloads Word and Markdown. Its deterministic source-echo client
+validates the product workflow; it is not representative model-quality evidence.
+
 ## Integration and concurrency
 
 1. Resolve all selected material and exact citations under the source/workspace
