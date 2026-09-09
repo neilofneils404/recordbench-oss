@@ -1178,6 +1178,8 @@ def export_research(
                     "synthesis": _plain(result.get("summary")),
                     "answer": safe_answer,
                     "coverage": safe_coverage,
+                    "review_budget": job.review_budget,
+                    "review_budget_description": job.review_budget_description,
                     "findings": findings,
                     "supporting_sources": supporting_sources,
                 },
@@ -1195,6 +1197,7 @@ def export_research(
         ExportBlock("Research question", "heading1"),
         ExportBlock(job.question),
     ]
+    blocks.append(ExportBlock(job.review_budget_description, "note"))
     summary = _plain(result.get("summary"))
     if summary:
         blocks.extend((ExportBlock("Verified synthesis", "heading1"), ExportBlock(summary)))

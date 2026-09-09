@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .review_budget import validate_primary_limit
+
 import hashlib
 import math
 import os
@@ -476,6 +478,7 @@ class HybridRetriever:
         *,
         stage_callback: Callable[[str], None] | None = None,
     ) -> tuple[Candidate, ...]:
+        limit = validate_primary_limit(limit)
         if not _tokens(query):
             return ()
         if stage_callback is not None:
@@ -546,7 +549,7 @@ class HybridRetriever:
             reranked,
             matter_id=matter_id,
         )
-        return tuple(reranked[: min(max(limit, 1), 20)])
+        return tuple(reranked[:limit])
 
 
 class PostgresMigrator:

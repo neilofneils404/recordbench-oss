@@ -13,13 +13,14 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Protocol, Sequence
 from urllib.parse import urlparse
 
+from .review_budget import DEFAULT_REVIEW_BUDGET
 from .review_quality import answer_advances_objective, classify_question
 from .service_endpoints import validate_service_endpoint
 
 MAX_QUESTION_CHARS = 2_000
-MAX_EVIDENCE_ITEMS = 12
-MAX_EVIDENCE_CHARS = 48_000
-MAX_EVIDENCE_ITEM_CHARS = 6_000
+MAX_EVIDENCE_ITEMS = DEFAULT_REVIEW_BUDGET.synthesis_inputs
+MAX_EVIDENCE_CHARS = DEFAULT_REVIEW_BUDGET.evidence_chars
+MAX_EVIDENCE_ITEM_CHARS = DEFAULT_REVIEW_BUDGET.evidence_item_chars
 MAX_HISTORY_CHARS = 6_000
 MAX_WORKING_CONTEXT_CHARS = 12_000
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -591,7 +592,7 @@ class OpenAICompatibleGenerator:
         request = {
             "model": self.model,
             "temperature": 0.1,
-            "max_tokens": 1_200,
+            "max_tokens": DEFAULT_REVIEW_BUDGET.output_tokens,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
