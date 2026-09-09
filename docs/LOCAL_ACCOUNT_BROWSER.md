@@ -111,3 +111,18 @@ replacement; completion is recorded afterward. A completion-audit failure is
 reported without pretending the account change was rolled back. Storage errors
 require a fresh read before retrying. Neither event includes passwords, hashes,
 session revisions or submitted form bodies.
+
+## Portable synthetic browser acceptance
+
+With the checkout's Python dependencies, Node, OpenSSL and Playwright Chromium
+available, run `python scripts/qa-people-browser.py`. Set `PLAYWRIGHT_MODULE` to
+an installed `playwright` package if Node cannot resolve it. For installed Chrome,
+set `RECORDBENCH_QA_BROWSER_CHANNEL=chrome`. Optional `--artifacts` retains desktop
+and narrow screenshots in a directory outside the checkout.
+
+The runner creates a temporary loopback HTTPS node with synthetic accounts and
+a test-only zero storage reserve, drives actual browser forms, checks two-user
+matter authorization plus reset/disable revocation, then removes the node. Its
+certificate exception applies only to that isolated browser context. It never
+connects to an existing installation and does not establish production browser
+trust, model readiness or installed-node recovery.
