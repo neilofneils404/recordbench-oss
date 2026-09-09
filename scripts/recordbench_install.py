@@ -8,16 +8,18 @@ import getpass
 import hashlib
 import json
 import os
+import platform
 import re
 import secrets
 import shutil
 import ssl
+import stat
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -173,7 +175,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("install", "doctor", "update", "backup", "restore"),
+        choices=("install", "preflight", "doctor", "update", "backup", "restore"),
         default="install",
     )
     parser.add_argument("--root", type=Path, help="exact installation state directory")
@@ -237,6 +239,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--json", action="store_true", help="emit a structured preflight result (preflight command only)")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--no-backup", action="store_true", help="allow an update without a configured recovery snapshot")
     parser.add_argument("--repository", type=Path, help="encrypted restic repository for backup initialization")
@@ -945,57 +948,243 @@ def _model_stage_groups(
     return tuple(groups)
 
 
-def _preflight(
-    console: Console, *, models: str, dry_run: bool
-) -> tuple[GpuDevice, ...]:
-    console.phase(1, "HOST HANDSHAKE", "Interrogating kernel, container runtime, disk, and accelerators")
-    if os.geteuid() == 0 and not dry_run:
-        raise RuntimeError(
-            "run the installer as a dedicated non-root service account; "
-            "pre-create and assign its node and storage directories first"
-        )
-    _require("docker")
-    _require("openssl")
-    _run(console, ["docker", "info", "--format", "{{.ServerVersion}}"], capture=True, dry_run=dry_run)
-    _run(console, ["docker", "compose", "version"], capture=True, dry_run=dry_run)
-    console.ok("Docker engine and Compose plugin answered the challenge")
-    required_gpus = _required_gpu_count(models)
+@dataclass(frozen=True)
+class PreflightCheck:
+    name: str
+    state: str
+    observed: str
+    required_capability: str
+    blocking: bool
+    remedy: str
+
+
+@dataclass(frozen=True)
+class PreflightResult:
+    checks: tuple[PreflightCheck, ...]
     devices: tuple[GpuDevice, ...] = ()
-    if required_gpus:
-        _require("nvidia-smi")
-        result = _run(
-            console,
-            [
-                "nvidia-smi",
-                "--query-gpu=index,name,memory.total,memory.free,compute_cap",
-                "--format=csv,noheader,nounits",
-            ],
-            capture=True,
-            # GPU discovery is read-only and remains authoritative during a
-            # dry run; fabricating a card would produce an unsafe plan.
-            dry_run=False,
-        )
-        if result.stdout:
-            devices = _parse_gpu_inventory(result.stdout)
-            if not dry_run and any(
-                device.compute_capability is None for device in devices
-            ):
-                raise RuntimeError(
-                    "nvidia-smi did not report GPU compute capability; "
-                    "the CUDA compatibility check cannot complete safely"
+
+    @property
+    def ready(self) -> bool:
+        return not any(check.blocking and check.state != "pass" for check in self.checks)
+
+    def payload(self) -> dict[str, object]:
+        return {"schema_version": 1, "ready": self.ready,
+                "checks": [asdict(check) for check in self.checks]}
+
+
+def _probe(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    # Diagnostic commands never print arbitrary runtime output (which may contain
+    # operator topology) and cannot hang an unattended first-run check forever.
+    return subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
+
+
+def _storage_ancestors_safe(ancestor: Path) -> bool:
+    """Require a private creation point and a non-replaceable parent chain."""
+    uid = os.geteuid()
+    # The portable no-follow descriptor walk opens directories read-only, so
+    # check its read/search requirements before reporting a usable path.
+    if not os.access(ancestor, os.R_OK | os.X_OK):
+        return False
+    creation = ancestor.stat()
+    if not stat.S_ISDIR(creation.st_mode) or creation.st_uid != uid or creation.st_mode & 0o022:
+        return False
+    for parent in ancestor.parents:
+        if not os.access(parent, os.R_OK | os.X_OK):
+            return False
+        metadata = parent.stat()
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid not in {0, uid}:
+            return False
+        # A trusted sticky system directory protects each owned child from
+        # replacement, e.g. an existing private test directory beneath /tmp.
+        # It is never itself accepted as the writable creation point above.
+        if metadata.st_mode & 0o022 and not metadata.st_mode & stat.S_ISVTX:
+            return False
+    return True
+
+
+def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> PreflightResult:
+    checks: list[PreflightCheck] = []
+    devices: tuple[GpuDevice, ...] = ()
+
+    def add(name: str, passed: bool, observed: str, capability: str, remedy: str,
+            *, blocking: bool = True) -> None:
+        checks.append(PreflightCheck(name, "pass" if passed else "fail", observed,
+                                     capability, blocking, "" if passed else remedy))
+
+    supported = platform.system() == "Linux" and platform.machine().lower() in {"x86_64", "amd64"}
+    add("host", supported, "Linux x86-64" if supported else "Unsupported operating system or architecture",
+        "Run the Linux application node", "Use a dedicated x86-64 Linux host; this launcher does not provision other platforms.")
+    if not supported:
+        return PreflightResult(tuple(checks))
+    add("ownership", os.geteuid() != 0 and os.getegid() != 0,
+        "Non-root account and primary group" if os.geteuid() != 0 and os.getegid() != 0 else "Root account or primary group",
+        "Own application state without running containers as root",
+        "Run as a dedicated non-root service account with a non-root primary group. Have an administrator assign only the dedicated node and storage directories to it.")
+    docker = shutil.which("docker") is not None
+    add("docker", docker, "Docker CLI available" if docker else "Docker CLI missing",
+        "Build and run application containers", "Install Docker Engine and the Compose v2 plugin using the Docker Linux installation instructions in docs/INSTALL.md.")
+    for name, command, capability, remedy in (
+        ("docker-access", ["docker", "info", "--format", "{{.ServerVersion}}"], "Access the container engine",
+         "Start Docker and arrange approved engine access for the service account. Do not make the Docker socket world-writable; engine access is privileged."),
+        ("compose", ["docker", "compose", "version", "--short"], "Run the application service definition",
+         "Install the Docker Compose v2 plugin, then rerun this command as the service account."),
+    ):
+        if not docker:
+            checks.append(PreflightCheck(name, "unknown", "Docker CLI is required to check this", capability, True, remedy))
+            continue
+        try:
+            passed = _probe(command).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            passed = False
+        add(name, passed, "Available" if passed else "Unavailable or diagnostic timed out", capability, remedy)
+    openssl = shutil.which("openssl") is not None
+    add("openssl", openssl, "OpenSSL available" if openssl else "OpenSSL missing",
+        "Prepare HTTPS", "Install the distribution OpenSSL package; retain HTTPS and secure cookies.")
+
+    if args is not None:
+        try:
+            languages = _transcription_languages(args.transcription_languages)
+            _model_stage_groups(models, transcription_languages=languages,
+                                diarization=bool(args.enable_diarization))
+            model_options_ok = True
+        except RuntimeError:
+            model_options_ok = False
+        add("model-options", model_options_ok,
+            "Selected model options are compatible" if model_options_ok else "Selected model options conflict or use an unsupported language",
+            "Stage the selected AI capabilities",
+            "Choose --transcription-languages en, es, or en,es. Enable diarization only with --models transcription or all.")
+        for name, path in (("node-storage", args.root), ("matter-storage", args.storage_root or args.root / "matter-storage")):
+            entered_path = path.expanduser()
+            try:
+                lexical_path = Path(os.path.abspath(entered_path))
+                safe = entered_path.is_absolute() and not any(
+                    part.is_symlink()
+                    for part in (entered_path, *entered_path.parents, lexical_path, *lexical_path.parents)
                 )
-            for device in devices:
-                console.ok(
-                    f"GPU lane :: {device.index}, {device.name}, "
-                    f"{device.total_mib} MiB total, {device.free_mib} MiB free, "
-                    f"compute {device.compute_capability or 'unknown'}"
-                )
-        if len(devices) < required_gpus:
-            raise RuntimeError(
-                f"the {models} profile requires at least {required_gpus} "
-                f"visible NVIDIA GPU(s); detected {len(devices)}"
-            )
-    return devices
+                # Match the canonical path installation will actually use while
+                # retaining the refusal of symlinks in the entered path.
+                path = entered_path.resolve(strict=False)
+                # HOME may be inherited through sudo; consult the effective
+                # service account too before accepting either storage root.
+                import pwd
+                effective_home = Path(pwd.getpwuid(os.geteuid()).pw_dir).resolve(strict=False)
+                safe = safe and path not in {Path("/"), Path.home().resolve(strict=False), effective_home}
+                ancestor = path
+                while not ancestor.exists() and ancestor != ancestor.parent:
+                    ancestor = ancestor.parent
+                safe = safe and _storage_ancestors_safe(ancestor)
+                if path.exists():
+                    safe = safe and path.is_dir() and path.stat().st_uid == os.geteuid()
+                writable = safe and os.access(ancestor, os.W_OK | os.X_OK)
+                if name == "node-storage" and safe and path.is_dir():
+                    empty_or_resume = args.resume or not any(path.iterdir())
+                    add("node-empty", empty_or_resume,
+                        "Existing root can be prepared" if empty_or_resume else "Installation root already contains files",
+                        "Prepare a dedicated installation root",
+                        "Choose a new empty node directory. Use --resume only when this directory belongs to the RecordBench node being resumed.")
+                add(name, writable, "Directory access checks pass (no write attempted)" if writable else "Unsafe path, ownership, or directory access",
+                    "Create private application state" if name == "node-storage" else "Store and process admitted sources",
+                    "Choose a dedicated absolute directory without symlinks, owned by the service account. Use an existing service-owned creation directory without group or other write access, beneath root-owned or service-owned protected parents. The service account needs read and search access to every ancestor; do not use a home directory or shared export root.")
+                free = shutil.disk_usage(ancestor).free / (1024 ** 3) if safe else None
+                add(name + "-reserve", free is not None and free > 100,
+                    f"{free:.1f} GiB free" if free is not None else "Capacity could not be checked safely",
+                    "Admit sources above the configured 100 GiB storage reserve",
+                    "Provide more than 100 GiB free on this filesystem, plus capacity for images, models and matter data. See profile targets in docs/INSTALL.md.")
+                target = {"none": 150, "review": 200, "transcription": 300, "all": 300}[models]
+                if name == "node-storage":
+                    add("capacity-target", free is not None and free >= target,
+                        f"Alpha evaluation target: {target} GiB before matter data",
+                        "Leave headroom for images and selected models",
+                        "Plan additional SSD capacity for the selected profile. These evaluation targets are not validated minimums.", blocking=False)
+            except (OSError, RuntimeError, KeyError):
+                add(name, False, "Directory metadata unavailable", "Inspect storage before installation",
+                    "Ask the storage administrator to restore directory access, then rerun preflight.")
+        try:
+            _valid_host(args.server_name or "recordbench.example.test")
+            server_name_ok = True
+        except RuntimeError:
+            server_name_ok = False
+        add("server-name", server_name_ok,
+            "Server name is valid" if server_name_ok else "Server name is invalid",
+            "Configure the HTTPS gateway identity",
+            "Choose --server-name using letters, digits, dots and hyphens, starting and ending with a letter or digit.")
+        bind = args.bind_address or "127.0.0.1"
+        pair = bool(args.tls_cert) == bool(args.tls_key)
+        supplied = bool(args.tls_cert and args.tls_key)
+        readable = supplied and all(path.is_file() and not path.is_symlink() and os.access(path, os.R_OK)
+                                    for path in (args.tls_cert, args.tls_key))
+        tls_ok = pair and (readable if supplied else bind in {"127.0.0.1", "::1"})
+        add("tls", tls_ok, "Readable supplied TLS pair; trust must be verified" if readable else
+            "Loopback smoke certificate will be generated during installation" if tls_ok else "TLS choice incomplete or files unavailable",
+            "Reach the private HTTPS gateway with secure sessions",
+            "Supply both --tls-cert and --tls-key as readable regular files. LAN binding requires an organization-trusted pair; use the default loopback bind for local evaluation.")
+        add("https-port", 1 <= args.https_port <= 65535, "Valid port" if 1 <= args.https_port <= 65535 else "Invalid port",
+            "Bind the HTTPS gateway", "Choose --https-port between 1 and 65535.")
+
+    if not _required_gpu_count(models):
+        try:
+            _resolve_gpu_plans(args or _parser().parse_args(["--models", models]), models, ())
+            gpu_options_ok = True
+        except RuntimeError:
+            gpu_options_ok = False
+        add("gpu-options", gpu_options_ok,
+            "GPU option syntax is valid for CPU evaluation" if gpu_options_ok else "GPU option values or selections conflict",
+            "Configure the selected CPU evaluation profile",
+            "Remove GPU overrides when using --models none, or choose values accepted by the GPU/model options. CPU evaluation does not require a GPU.")
+        checks.append(PreflightCheck("gpu", "pass", "GPU optional for CPU evaluation",
+            "Intake, extraction, OCR, word search, source review and exports; no generated answers or transcription",
+            False, ""))
+    else:
+        try:
+            if shutil.which("nvidia-smi") is None:
+                raise RuntimeError("NVIDIA driver diagnostic unavailable")
+            inventory = _probe(["nvidia-smi", "--query-gpu=index,name,memory.total,memory.free,compute_cap", "--format=csv,noheader,nounits"])
+            if inventory.returncode:
+                raise RuntimeError("NVIDIA driver diagnostic failed")
+            devices = _parse_gpu_inventory(inventory.stdout)
+            if not devices or any(device.compute_capability is None for device in devices):
+                raise RuntimeError("GPU inventory or compute capability unavailable")
+            plan_args = args or _parser().parse_args(["--models", models])
+            _resolve_gpu_plans(plan_args, models, devices)
+            add("gpu", True, "Selected GPU and model plan fits current reported hardware",
+                "Run the selected local AI tasks", "")
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
+            add("gpu", False, "Selected GPU/model plan unavailable, incompatible, or short of free memory",
+                "Generate cited answers" if models == "review" else "Transcribe recordings" if models == "transcription" else "Generate cited answers and transcribe recordings",
+                "Install the NVIDIA driver and Container Toolkit; provide compute capability 7.5 or newer and sufficient free VRAM for the selected model/GPU options. Stop competing GPU work or choose a smaller model. Use --models none for CPU evaluation.")
+        # Check the engine configuration without pulling an image or launching a
+        # container. Actual offline model/container readiness is a later gate.
+        try:
+            runtime_probe = _probe(["docker", "info", "--format", "{{json .Runtimes}}"] ) if docker else None
+            runtimes = json.loads(runtime_probe.stdout) if runtime_probe and runtime_probe.returncode == 0 else None
+            registered = isinstance(runtimes, dict) and "nvidia" in runtimes
+        except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+            registered = False
+        add("gpu-runtime", bool(registered), "NVIDIA runtime registered" if registered else "NVIDIA runtime registration not confirmed",
+            "Make NVIDIA devices available to model containers",
+            "Install and configure NVIDIA Container Toolkit for Docker using docs/INSTALL.md, then restart Docker through the approved operator procedure.")
+    return PreflightResult(tuple(checks), devices)
+
+
+def _render_preflight(console: Console, result: PreflightResult) -> None:
+    console.phase(1, "HOST HANDSHAKE", "Read-only prerequisites; no state created or services started")
+    for check in result.checks:
+        marker = "OK" if check.state == "pass" else "BLOCK" if check.blocking else "NOTE"
+        console.line(f"  [{marker}] {check.name}: {check.observed}")
+        console.line(f"          Enables: {check.required_capability}")
+        if check.remedy:
+            console.line(f"          Next: {check.remedy}")
+    console.line("  Prerequisites pass; installation and acceptance are still required." if result.ready else
+                 "  Resolve blocking items and rerun ./install preflight with the same options.")
+
+
+def _preflight(console: Console, *, models: str, dry_run: bool,
+               args: argparse.Namespace | None = None) -> tuple[GpuDevice, ...]:
+    result = _collect_preflight(models, args)
+    _render_preflight(console, result)
+    if not result.ready:
+        raise RuntimeError("installation prerequisites are incomplete; see the checklist above")
+    return result.devices
 
 
 def _paths(root: Path, storage_root: Path | None = None) -> dict[str, Path]:
@@ -1009,6 +1198,51 @@ def _paths(root: Path, storage_root: Path | None = None) -> dict[str, Path]:
         "models": root / "models",
         "tls": root / "tls",
     }
+
+
+def _create_private_directory(path: Path) -> None:
+    """Walk held, non-symlink directory descriptors and create each component privately.
+
+    No path-based chmod can follow a replacement symlink. Existing ancestors are
+    revalidated at use, and only the selected leaf is tightened to owner-only.
+    """
+    uid = os.geteuid()
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    descriptor = os.open("/", flags)
+    try:
+        components = path.parts[1:]
+        for index, component in enumerate(components):
+            parent = os.fstat(descriptor)
+            if parent.st_uid not in {0, uid} or (
+                parent.st_mode & 0o022 and not parent.st_mode & stat.S_ISVTX
+            ):
+                raise RuntimeError("storage parent is replaceable by another account")
+            try:
+                child = os.open(component, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                if parent.st_uid != uid or parent.st_mode & 0o022:
+                    raise RuntimeError("storage creation directory must be service-owned and protected")
+                # mode applies to this component even when the process umask is 000.
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass  # Revalidate a concurrently created entry below.
+                child = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+            metadata = os.fstat(descriptor)
+            if metadata.st_uid not in {0, uid} or (
+                metadata.st_mode & 0o022 and not metadata.st_mode & stat.S_ISVTX
+            ):
+                raise RuntimeError("storage directory is replaceable by another account")
+            if index == len(components) - 1:
+                if metadata.st_uid != uid or metadata.st_mode & 0o022:
+                    raise RuntimeError("selected storage must be service-owned and protected")
+                os.fchmod(descriptor, 0o700)
+    except OSError as exc:
+        raise RuntimeError("storage directory changed or could not be prepared safely") from exc
+    finally:
+        os.close(descriptor)
 
 
 def _prepare_directories(
@@ -1026,7 +1260,11 @@ def _prepare_directories(
         raise RuntimeError("installation root cannot be a symbolic link")
     if root.exists() and any(root.iterdir()) and not resume:
         raise RuntimeError("installation root is not empty; use --resume only for this RecordBench node")
-    selected_storage = storage_root.expanduser().resolve(strict=False) if storage_root else None
+    selected_storage = storage_root.expanduser() if storage_root else None
+    for selected in (root, selected_storage):
+        if selected is not None and any(part.is_symlink() for part in (selected, *selected.parents)):
+            raise RuntimeError("storage paths cannot contain symbolic links")
+    selected_storage = selected_storage.resolve(strict=False) if selected_storage else None
     if selected_storage is not None and (
         not selected_storage.is_absolute() or selected_storage == Path("/")
     ):
@@ -1035,11 +1273,9 @@ def _prepare_directories(
         raise RuntimeError("matter storage root cannot be a symbolic link")
     paths = _paths(root, selected_storage)
     if not dry_run:
-        root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(root, 0o700)
+        _create_private_directory(root)
         for value in paths.values():
-            value.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.chmod(value, 0o700)
+            _create_private_directory(value)
     for name, value in paths.items():
         console.ok(f"{name:13s} -> {value}")
     return paths
@@ -1966,6 +2202,16 @@ def main() -> int:
         color=sys.stdout.isatty() and not args.no_color and os.getenv("NO_COLOR") is None,
         quiet=args.quiet,
     )
+    if args.json and args.command != "preflight":
+        _parser().error("--json is only supported by the preflight command")
+    if args.command == "preflight":
+        args.root = (args.root or Path("/srv/recordbench")).expanduser()
+        result = _collect_preflight(args.models or "none", args)
+        if args.json:
+            print(json.dumps(result.payload(), indent=2))
+        else:
+            _render_preflight(console, result)
+        return 0 if result.ready else 1
     console.banner(args.command)
     try:
         if args.root is None:
@@ -2006,11 +2252,6 @@ def main() -> int:
                 non_interactive=args.non_interactive,
             )
         models = args.models
-        gpu_devices = _preflight(console, models=models, dry_run=args.dry_run)
-        # Resolve the complete hardware plan before creating node directories or
-        # staging a release. Unsupported or currently oversubscribed devices
-        # leave no partial installation state behind.
-        _resolve_gpu_plans(args, models, gpu_devices)
         if args.storage_root is None and not args.non_interactive:
             args.storage_root = Path(
                 _ask(
@@ -2019,6 +2260,16 @@ def main() -> int:
                     non_interactive=False,
                 )
             )
+        if args.bind_address is None and not args.non_interactive:
+            args.bind_address = _ask("HTTPS bind address", "127.0.0.1", non_interactive=False)
+        if not args.server_name:
+            args.server_name = _ask(
+                "RecordBench hostname", "recordbench.example.test", non_interactive=args.non_interactive
+            )
+        args.root = args.root.expanduser().absolute()
+        # Resolve storage, TLS and the complete hardware plan before creating
+        # state. Dry-run discovery uses the same read-only prerequisite checks.
+        gpu_devices = _preflight(console, models=models, dry_run=args.dry_run, args=args)
         paths = _prepare_directories(
             console,
             root,

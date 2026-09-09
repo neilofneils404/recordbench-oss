@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,10 +14,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import recordbench_install as installer  # noqa: E402
 
 
-def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path) -> None:
-    node = tmp_path / "node"
-    result = subprocess.run(
-        [
+def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path, ready_host, monkeypatch, capsys) -> None:
+    node = tmp_path.resolve() / "node"
+    monkeypatch.setattr(sys, "argv", [
             str(ROOT / "install"),
             "install",
             "--root",
@@ -29,12 +29,9 @@ def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path) -> None:
             "--prepare-only",
             "--dry-run",
             "--no-color",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
+        ])
+    assert installer.main() == 0
+    output = capsys.readouterr().out
     for marker in (
         "HOST HANDSHAKE",
         "CLAIM NODE STORAGE",
@@ -45,10 +42,10 @@ def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path) -> None:
         "NODE ARMED",
         "ACCESS GRANTED",
     ):
-        assert marker in result.stdout
+        assert marker in output
     assert not node.exists()
-    assert "password=" not in result.stdout.casefold()
-    assert "token=" not in result.stdout.casefold()
+    assert "password=" not in output.casefold()
+    assert "token=" not in output.casefold()
 
 
 def test_capability_profiles_have_conservative_gpu_contracts() -> None:
@@ -298,10 +295,9 @@ def test_selected_profile_cannot_accept_missing_ai_capabilities() -> None:
     assert not installer._selected_capabilities_ready(missing, "all")
 
 
-def test_plain_noninteractive_install_defaults_to_cpu_evaluation(tmp_path) -> None:
-    node = tmp_path / "node"
-    result = subprocess.run(
-        [
+def test_plain_noninteractive_install_defaults_to_cpu_evaluation(tmp_path, ready_host, monkeypatch, capsys) -> None:
+    node = tmp_path.resolve() / "node"
+    monkeypatch.setattr(sys, "argv", [
             str(ROOT / "install"),
             "install",
             "--root",
@@ -312,14 +308,11 @@ def test_plain_noninteractive_install_defaults_to_cpu_evaluation(tmp_path) -> No
             "--prepare-only",
             "--dry-run",
             "--no-color",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    assert "model payload   :: none" in result.stdout
-    assert "nvidia-smi" not in result.stdout
+        ])
+    assert installer.main() == 0
+    output = capsys.readouterr().out
+    assert "model payload   :: none" in output
+    assert "nvidia-smi" not in output
     assert not node.exists()
 
 
@@ -493,3 +486,571 @@ def test_partial_local_resume_requires_explicit_bootstrap_identity(tmp_path, mon
             None,
             None,
         )
+
+
+@pytest.fixture
+def ready_host(monkeypatch, tmp_path):
+    actual_uid = os.geteuid()
+    original_stat = Path.stat
+    def synthetic_owner(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if result.st_uid == actual_uid and (actual_uid != 0 or path == tmp_path or tmp_path in path.parents):
+            fields = list(result)
+            fields[4] = 1000
+            return os.stat_result(fields)
+        return result
+    monkeypatch.setattr(Path, "stat", synthetic_owner)
+    import pwd
+    from types import SimpleNamespace
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir="/home/synthetic-service"))
+    monkeypatch.setattr(installer.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(installer.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(installer.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(installer.os, "getegid", lambda: 1000)
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(installer.shutil, "disk_usage", lambda path: type("Disk", (), {"free": 400 * 1024**3})())
+    monkeypatch.setattr(installer, "_probe", lambda command: subprocess.CompletedProcess(command, 0, '{"nvidia": {}}' if "{{json .Runtimes}}" in command else "1.0", ""))
+
+
+def preflight_args(tmp_path, *extra):
+    return installer._parser().parse_args(["preflight", "--root", str(tmp_path.resolve() / "new node with spaces"), *extra])
+
+
+def checks_by_name(result):
+    return {check.name: check for check in result.checks}
+
+
+def test_preflight_cpu_has_optional_gpu_and_never_writes(tmp_path, ready_host, monkeypatch):
+    args = preflight_args(tmp_path)
+    monkeypatch.setattr(installer.Path, "mkdir", lambda *a, **kw: pytest.fail("preflight attempted a write"))
+    result = installer._collect_preflight("none", args)
+    assert result.ready
+    assert checks_by_name(result)["gpu"].blocking is False
+    assert not args.root.exists()
+    assert result.payload()["schema_version"] == 1
+    assert set(result.payload()["checks"][0]) == {"name", "state", "observed", "required_capability", "blocking", "remedy"}
+
+
+@pytest.mark.parametrize("system,machine", [("Darwin", "arm64"), ("Linux", "aarch64"), ("Windows", "AMD64")])
+def test_preflight_unsupported_host_stops_before_other_probes(tmp_path, ready_host, monkeypatch, system, machine):
+    monkeypatch.setattr(installer.platform, "system", lambda: system)
+    monkeypatch.setattr(installer.platform, "machine", lambda: machine)
+    monkeypatch.setattr(installer, "_probe", lambda command: pytest.fail("unsupported host reached runtime"))
+    result = installer._collect_preflight("none", preflight_args(tmp_path))
+    assert not result.ready
+    assert [check.name for check in result.checks] == ["host"]
+
+
+@pytest.mark.parametrize("missing", ["docker", "openssl"])
+def test_preflight_missing_tools_are_actionable(tmp_path, ready_host, monkeypatch, missing):
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None if name == missing else "/usr/bin/" + name)
+    result = installer._collect_preflight("none", preflight_args(tmp_path))
+    check = checks_by_name(result)[missing]
+    assert not result.ready and check.blocking and check.remedy
+
+
+@pytest.mark.parametrize("failed", ["docker-access", "compose"])
+def test_preflight_runtime_failure_never_echoes_output(tmp_path, ready_host, monkeypatch, failed):
+    def probe(command):
+        failure = ("compose" in command) == (failed == "compose")
+        return subprocess.CompletedProcess(command, int(failure), "synthetic-private-output", "synthetic-private-output")
+    monkeypatch.setattr(installer, "_probe", probe)
+    result = installer._collect_preflight("none", preflight_args(tmp_path))
+    assert checks_by_name(result)[failed].state == "fail"
+    assert "synthetic-private-output" not in json.dumps(result.payload())
+
+
+@pytest.mark.parametrize("uid,gid", [(0, 1000), (1000, 0)])
+def test_preflight_root_identity_blocks_even_dry_run(tmp_path, ready_host, monkeypatch, uid, gid):
+    monkeypatch.setattr(installer.os, "geteuid", lambda: uid)
+    monkeypatch.setattr(installer.os, "getegid", lambda: gid)
+    args = preflight_args(tmp_path, "--dry-run")
+    assert checks_by_name(installer._collect_preflight("none", args))["ownership"].state == "fail"
+
+
+def test_preflight_capacity_and_write_access_are_separate(tmp_path, ready_host, monkeypatch):
+    monkeypatch.setattr(installer.os, "access", lambda *a: False)
+    monkeypatch.setattr(installer.shutil, "disk_usage", lambda path: type("Disk", (), {"free": 99 * 1024**3})())
+    checks = checks_by_name(installer._collect_preflight("none", preflight_args(tmp_path)))
+    assert checks["node-storage"].state == "fail"
+    assert checks["node-storage-reserve"].state == "fail"
+    assert checks["capacity-target"].blocking is False
+
+
+def test_preflight_symlink_and_non_directory_storage_block(tmp_path, ready_host):
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    args = preflight_args(tmp_path, "--storage-root", str(link / "new"))
+    assert checks_by_name(installer._collect_preflight("none", args))["matter-storage"].state == "fail"
+    target.rmdir()
+    target.write_text("synthetic")
+    args.storage_root = target
+    assert checks_by_name(installer._collect_preflight("none", args))["matter-storage"].state == "fail"
+
+
+@pytest.mark.parametrize("options", [["--bind-address", "0.0.0.0"], ["--tls-cert", "/missing/cert"], ["--tls-cert", "/missing/cert", "--tls-key", "/missing/key"]])
+def test_preflight_tls_missing_prerequisites_block(tmp_path, ready_host, options):
+    result = installer._collect_preflight("none", preflight_args(tmp_path, *options))
+    assert checks_by_name(result)["tls"].state == "fail"
+
+
+def test_preflight_selected_gpu_profile_checks_real_plan(tmp_path, ready_host, monkeypatch):
+    def probe(command):
+        output = '{"nvidia": {}}' if "{{json .Runtimes}}" in command else "0, Synthetic GPU, 24576, 24000, 8.0" if command[0] == "nvidia-smi" else "1.0"
+        return subprocess.CompletedProcess(command, 0, output, "")
+    monkeypatch.setattr(installer, "_probe", probe)
+    args = preflight_args(tmp_path, "--models", "review")
+    assert installer._collect_preflight("review", args).ready
+    args.generator_gpus = "9"
+    assert checks_by_name(installer._collect_preflight("review", args))["gpu"].state == "fail"
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None if name == "nvidia-smi" else name)
+    assert not installer._collect_preflight("review", args).ready
+    assert installer._collect_preflight("none", args).ready
+
+
+def test_preflight_json_is_single_document_and_returns_failure(tmp_path, ready_host, monkeypatch, capsys):
+    monkeypatch.setattr(installer.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(tmp_path / "new"), "--json"])
+    assert installer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert not (tmp_path / "new").exists()
+
+
+def test_install_blocking_preflight_does_not_create_state(tmp_path, ready_host, monkeypatch):
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+    node = tmp_path / "new"
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--non-interactive"])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("output,returncode", [('{}', 0), ('[]', 0), ('not-json', 0), ('{"nvidia": {}}', 1)])
+def test_preflight_gpu_runtime_requires_successful_registered_engine(tmp_path, ready_host, monkeypatch, output, returncode):
+    def probe(command):
+        if "{{json .Runtimes}}" in command:
+            return subprocess.CompletedProcess(command, returncode, output, "")
+        return subprocess.CompletedProcess(command, 0, "0, Synthetic GPU, 24576, 24000, 8.0", "")
+    monkeypatch.setattr(installer, "_probe", probe)
+    result = installer._collect_preflight("review", preflight_args(tmp_path))
+    assert checks_by_name(result)["gpu"].state == "pass"
+    assert checks_by_name(result)["gpu-runtime"].state == "fail"
+
+
+def test_preflight_runtime_timeout_is_actionable(tmp_path, ready_host, monkeypatch):
+    def probe(command):
+        raise subprocess.TimeoutExpired(command, 20)
+    monkeypatch.setattr(installer, "_probe", probe)
+    result = installer._collect_preflight("review", preflight_args(tmp_path))
+    assert not result.ready
+    assert checks_by_name(result)["docker-access"].remedy
+    assert checks_by_name(result)["gpu"].remedy
+
+
+def test_preflight_existing_directory_requires_current_owner(tmp_path, ready_host, monkeypatch):
+    args = preflight_args(tmp_path)
+    args.root.mkdir()
+    monkeypatch.setattr(installer.os, "geteuid", lambda: args.root.stat().st_uid + 1)
+    assert checks_by_name(installer._collect_preflight("none", args))["node-storage"].state == "fail"
+
+
+def test_preflight_supplied_lan_tls_pair_is_read_only(tmp_path, ready_host):
+    cert, key = tmp_path / "synthetic.crt", tmp_path / "synthetic.key"
+    cert.write_text("synthetic certificate placeholder")
+    key.write_text("synthetic key placeholder")
+    args = preflight_args(tmp_path, "--bind-address", "0.0.0.0", "--tls-cert", str(cert), "--tls-key", str(key))
+    check = checks_by_name(installer._collect_preflight("none", args))["tls"]
+    assert check.state == "pass"
+    assert "trust must be verified" in check.observed
+    assert not args.root.exists()
+
+
+@pytest.mark.parametrize("options", [
+    ["--models", "none", "--enable-diarization"],
+    ["--models", "review", "--enable-diarization"],
+    ["--models", "transcription", "--transcription-languages", "fr"],
+    ["--models", "all", "--transcription-languages", ""],
+])
+def test_preflight_rejects_invalid_model_option_combinations(tmp_path, ready_host, options):
+    args = preflight_args(tmp_path, *options)
+    result = installer._collect_preflight(args.models, args)
+    assert not result.ready
+    assert checks_by_name(result)["model-options"].state == "fail"
+    assert not args.root.exists()
+
+
+def test_preflight_nonempty_root_requires_explicit_resume(tmp_path, ready_host, monkeypatch):
+    args = preflight_args(tmp_path)
+    args.root.mkdir()
+    (args.root / "existing.txt").write_text("synthetic existing data")
+    original_stat = installer.Path.stat
+    def synthetic_owned(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if path == args_root:
+            fields = list(result)
+            fields[4] = 1000
+            return installer.os.stat_result(fields)
+        return result
+    args_root = args.root
+    monkeypatch.setattr(installer.Path, "stat", synthetic_owned)
+    blocked = installer._collect_preflight("none", args)
+    assert not blocked.ready
+    assert checks_by_name(blocked)["node-empty"].state == "fail"
+    args.resume = True
+    assert installer._collect_preflight("none", args).ready
+    assert (args.root / "existing.txt").read_text() == "synthetic existing data"
+
+
+def test_invalid_model_options_stop_install_before_state_creation(tmp_path, ready_host, monkeypatch):
+    node = tmp_path.resolve() / "uncreated node"
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none",
+                                     "--enable-diarization", "--non-interactive"])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("options", [
+    ["--generator-gpu-utilization", "1"],
+    ["--retrieval-device", "cpu", "--retrieval-gpu", "0"],
+])
+def test_cpu_preflight_validates_gpu_options_without_gpu_probe(tmp_path, ready_host, monkeypatch, options):
+    args = preflight_args(tmp_path, "--models", "none", *options)
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["gpu-options"].state == "fail"
+    assert not args.root.exists()
+
+
+@pytest.mark.parametrize("field", ["root", "storage_root"])
+def test_preflight_rejects_home_directory_dot_dot_alias(tmp_path, ready_host, monkeypatch, field):
+    synthetic_home = tmp_path.resolve() / "synthetic-home"
+    synthetic_home.mkdir()
+    monkeypatch.setattr(installer.Path, "home", classmethod(lambda cls: synthetic_home))
+    args = preflight_args(tmp_path, "--resume")
+    setattr(args, field, synthetic_home / "missing" / "..")
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    check = "node-storage" if field == "root" else "matter-storage"
+    assert checks_by_name(result)[check].state == "fail"
+    assert list(synthetic_home.iterdir()) == []
+
+
+
+def test_preflight_dot_dot_cannot_hide_a_symlink_component(tmp_path, ready_host):
+    target = tmp_path.resolve() / "separate-target"
+    target.mkdir()
+    (tmp_path / "linked").symlink_to(target)
+    args = preflight_args(tmp_path)
+    args.root = tmp_path.resolve() / "missing" / ".." / "linked" / "node"
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["node-storage"].state == "fail"
+    assert list(target.iterdir()) == []
+
+
+@pytest.mark.parametrize("storage", [False, True])
+def test_preflight_refuses_effective_service_home_when_home_is_inherited(tmp_path, ready_host, monkeypatch, storage):
+    import pwd
+    from types import SimpleNamespace
+    service_home = tmp_path / "service-home"
+    service_home.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "inherited-operator-home"))
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(service_home)))
+    args = preflight_args(tmp_path, "--resume")
+    if storage:
+        args.storage_root = service_home
+    else:
+        args.root = service_home
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["matter-storage" if storage else "node-storage"].state == "fail"
+
+
+@pytest.mark.parametrize("storage", [False, True])
+@pytest.mark.parametrize("kind", ["shared", "group-writable", "nonowned", "unsafe-grandparent"])
+def test_preflight_refuses_replaceable_creation_ancestors(tmp_path, ready_host, monkeypatch, storage, kind):
+    parent = tmp_path / "synthetic-parent"
+    parent.mkdir(mode=0o700)
+    if kind == "shared":
+        parent.chmod(0o777)
+    elif kind == "group-writable":
+        parent.chmod(0o770)
+    elif kind == "unsafe-grandparent":
+        parent.chmod(0o777)
+        parent = parent / "private-child"
+        parent.mkdir(mode=0o700)
+    else:
+        original = Path.stat
+        def foreign_owner(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            if path == parent:
+                fields = list(result)
+                fields[4] = 2000
+                return os.stat_result(fields)
+            return result
+        monkeypatch.setattr(Path, "stat", foreign_owner)
+    args = preflight_args(tmp_path)
+    target = parent / "new-private-node"
+    if storage:
+        args.storage_root = target
+    else:
+        args.root = target
+    result = installer._collect_preflight("none", args)
+    assert checks_by_name(result)["matter-storage" if storage else "node-storage"].state == "fail"
+    assert not result.ready and not target.exists()
+
+
+def test_storage_chain_accepts_protected_root_parent_and_sticky_system_parent(tmp_path, ready_host, monkeypatch):
+    system = tmp_path / "synthetic-system"
+    system.mkdir(mode=0o755)
+    creation = system / "service-owned"
+    creation.mkdir(mode=0o700)
+    original = Path.stat
+    def root_owner(path, *args, **kwargs):
+        result = original(path, *args, **kwargs)
+        if path == system:
+            fields = list(result)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return result
+    monkeypatch.setattr(Path, "stat", root_owner)
+    assert installer._storage_ancestors_safe(creation)
+    system.chmod(0o1777)
+    assert installer._storage_ancestors_safe(creation)
+    assert not installer._storage_ancestors_safe(system)
+    system.chmod(0o777)
+    assert not installer._storage_ancestors_safe(creation)
+
+
+@pytest.mark.parametrize("command", ["preflight", "install"])
+def test_invalid_server_name_blocks_before_state_creation(tmp_path, ready_host, monkeypatch, command):
+    node = tmp_path.resolve() / "absent-node"
+    monkeypatch.setattr(sys, "argv", ["install", command, "--root", str(node),
+                                     "--models", "none", "--server-name", "bad_name",
+                                     "--non-interactive", "--json"] if command == "preflight" else
+                                    ["install", command, "--root", str(node),
+                                     "--models", "none", "--server-name", "bad_name",
+                                     "--non-interactive"])
+    monkeypatch.setattr(installer, "_stage_release", lambda *a, **kw: pytest.fail("invalid hostname reached release staging"))
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+def test_prepare_protects_all_missing_storage_components_under_permissive_umask(tmp_path):
+    import stat
+    base = tmp_path.resolve()
+    node = base / "new-node-parent" / "nested" / "node"
+    storage = base / "new-storage-parent" / "nested" / "matters"
+    old_umask = os.umask(0)
+    try:
+        paths = installer._prepare_directories(installer.Console(color=False, quiet=True), node,
+                    storage_root=storage, resume=False, dry_run=False)
+    finally:
+        os.umask(old_umask)
+    for leaf in (node, *paths.values()):
+        for directory in (leaf, *leaf.parents):
+            if directory == base:
+                break
+            assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize("name", ["recordbench.example.test", "recordbench-2", "LOCALHOST"])
+def test_preflight_accepts_configurable_server_name(tmp_path, ready_host, name):
+    result = installer._collect_preflight("none", preflight_args(tmp_path, "--server-name", name))
+    assert result.ready
+    assert checks_by_name(result)["server-name"].state == "pass"
+    assert name not in json.dumps(result.payload())
+
+
+@pytest.mark.parametrize("kind", ["symlink", "writable", "foreign-owner"])
+def test_prepare_revalidates_directory_created_during_the_walk(tmp_path, monkeypatch, kind):
+    import stat
+    base = tmp_path.resolve()
+    target = base / "raced" / "node"
+    outside = base / "outside"
+    outside.mkdir(mode=0o755)
+    sentinel = outside / "sentinel.txt"
+    sentinel.write_text("synthetic preserved content")
+    original_mkdir, original_fstat = os.mkdir, os.fstat
+    replaced_inode = None
+
+    def concurrent_creation(path, mode=0o777, *, dir_fd=None):
+        nonlocal replaced_inode
+        if path != "raced":
+            return original_mkdir(path, mode, dir_fd=dir_fd)
+        if kind == "symlink":
+            os.symlink(outside, path, dir_fd=dir_fd)
+        else:
+            original_mkdir(path, 0o700, dir_fd=dir_fd)
+            if kind == "writable":
+                (base / path).chmod(0o777)
+            replaced_inode = (base / path).stat().st_ino
+        raise FileExistsError("synthetic concurrent creation")
+
+    def foreign_owner(descriptor):
+        result = original_fstat(descriptor)
+        if kind == "foreign-owner" and result.st_ino == replaced_inode:
+            fields = list(result)
+            fields[4] = os.geteuid() + 1000
+            return os.stat_result(fields)
+        return result
+
+    monkeypatch.setattr(os, "mkdir", concurrent_creation)
+    monkeypatch.setattr(os, "fstat", foreign_owner)
+    with pytest.raises(RuntimeError, match="storage"):
+        installer._create_private_directory(target)
+    assert not (outside / "node").exists()
+    assert sentinel.read_text() == "synthetic preserved content"
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o755
+    if kind != "symlink":
+        assert not target.exists()
+
+
+@pytest.mark.parametrize("storage", [False, True])
+def test_prepare_refuses_symlink_in_selected_storage_path(tmp_path, storage):
+    base = tmp_path.resolve()
+    outside = base / "outside"
+    outside.mkdir()
+    linked = base / "linked"
+    linked.symlink_to(outside)
+    node = base / "node" if storage else linked / "node"
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        installer._prepare_directories(installer.Console(color=False, quiet=True), node,
+            storage_root=linked / "matters" if storage else None, resume=False, dry_run=False)
+    assert list(outside.iterdir()) == []
+    assert not (base / "node").exists()
+
+
+def test_prepare_revalidates_existing_parent_without_changing_it(tmp_path):
+    import stat
+    parent = tmp_path.resolve() / "parent"
+    parent.mkdir(mode=0o755)
+    node = parent / "node"
+    parent.chmod(0o777)
+    with pytest.raises(RuntimeError, match="replaceable"):
+        installer._prepare_directories(installer.Console(color=False, quiet=True), node,
+            storage_root=None, resume=False, dry_run=False)
+    assert not node.exists()
+    assert stat.S_IMODE(parent.stat().st_mode) == 0o777
+    parent.chmod(0o755)
+    installer._prepare_directories(installer.Console(color=False, quiet=True), node,
+        storage_root=None, resume=False, dry_run=False)
+    assert stat.S_IMODE(parent.stat().st_mode) == 0o755
+    assert stat.S_IMODE(node.stat().st_mode) == 0o700
+
+
+def test_prepare_resume_does_not_follow_replaced_internal_directory(tmp_path):
+    base = tmp_path.resolve()
+    node = base / "node"
+    node.mkdir(mode=0o700)
+    outside = base / "outside"
+    outside.mkdir()
+    (node / "config").symlink_to(outside)
+    with pytest.raises(RuntimeError, match="safely"):
+        installer._prepare_directories(installer.Console(color=False, quiet=True), node,
+            storage_root=None, resume=True, dry_run=False)
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("blocker", ["capacity", "creation-parent"])
+def test_preflight_json_reports_real_host_blockers_without_creating_state(tmp_path, ready_host, monkeypatch, capsys, blocker):
+    parent = tmp_path.resolve() / "creation-parent"
+    parent.mkdir(mode=0o700)
+    root = parent / "uncreated node"
+    if blocker == "capacity":
+        monkeypatch.setattr(installer.shutil, "disk_usage", lambda path: type("Disk", (), {"free": 99 * 1024**3})())
+        blocked_check = "node-storage-reserve"
+    else:
+        parent.chmod(0o1777)
+        blocked_check = "node-storage"
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(root), "--models", "none", "--json"])
+    assert installer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert payload["schema_version"] == 1
+    check = next(row for row in payload["checks"] if row["name"] == blocked_check)
+    assert check["blocking"] is True and check["state"] == "fail" and check["remedy"]
+    assert all(row["remedy"] for row in payload["checks"] if row["blocking"] and row["state"] != "pass")
+    assert not root.exists()
+    assert list(parent.iterdir()) == []
+
+
+def test_interactive_invalid_hostname_blocks_before_storage_and_release(tmp_path, ready_host, monkeypatch):
+    node = tmp_path.resolve() / "uncreated node"
+    prompts = []
+
+    def ask(prompt, default, *, non_interactive):
+        prompts.append(prompt)
+        return "bad_name" if prompt == "RecordBench hostname" else default
+
+    monkeypatch.setattr(installer, "_ask", ask)
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **kw: pytest.fail("invalid interactive hostname reached storage creation"))
+    monkeypatch.setattr(installer, "_stage_release", lambda *a, **kw: pytest.fail("invalid interactive hostname reached release staging"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none", "--auth", "local"])
+    assert installer.main() == 1
+    assert prompts.count("RecordBench hostname") == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("storage", [False, True])
+def test_preflight_rejects_execute_only_ancestor_before_preparing_storage(tmp_path, ready_host, monkeypatch, storage):
+    base = tmp_path.resolve()
+    protected = base / "execute-only-parent"
+    protected.mkdir(mode=0o711)
+    creation = protected / "service-owned"
+    creation.mkdir(mode=0o700)
+    original_stat, original_access = Path.stat, os.access
+
+    def synthetic_root_owner(path, *args, **kwargs):
+        metadata = original_stat(path, *args, **kwargs)
+        if path == protected:
+            fields = list(metadata)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return metadata
+
+    def service_access(path, mode, *args, **kwargs):
+        if Path(path) == protected:
+            return not bool(mode & (os.R_OK | os.W_OK))
+        return original_access(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", synthetic_root_owner)
+    monkeypatch.setattr(os, "access", service_access)
+    args = preflight_args(tmp_path)
+    selected = creation / "uncreated"
+    if storage:
+        args.storage_root = selected
+    else:
+        args.root = selected
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    check = checks_by_name(result)["matter-storage" if storage else "node-storage"]
+    assert check.state == "fail" and check.remedy
+    assert not selected.exists()
+    assert list(creation.iterdir()) == []
+    monkeypatch.setattr(os, "access", original_access)
+    assert installer._collect_preflight("none", args).ready
+    assert not selected.exists()
+
+
+def test_interactive_hostname_is_collected_once_and_used_by_configuration(tmp_path, ready_host, monkeypatch):
+    node = tmp_path.resolve() / "uncreated node"
+    prompts = []
+    original_configure = installer._configure
+
+    def ask(prompt, default, *, non_interactive):
+        prompts.append(prompt)
+        return "synthetic-node.example.test" if prompt == "RecordBench hostname" else default
+
+    def configure(console, args, *positional, **kwargs):
+        assert args.server_name == "synthetic-node.example.test"
+        return original_configure(console, args, *positional, **kwargs)
+
+    monkeypatch.setattr(installer, "_ask", ask)
+    monkeypatch.setattr(installer, "_configure", configure)
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none", "--auth", "local", "--dry-run"])
+    assert installer.main() == 0
+    assert prompts.count("RecordBench hostname") == 1
+    assert not node.exists()
