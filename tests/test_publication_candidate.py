@@ -58,3 +58,15 @@ def test_clean_tag_and_wrong_target_tag_are_distinguished(tmp_path):
     (root / "README.md").write_text("Another synthetic candidate")
     commit(root)
     assert inspect(root, ref="refs/tags/v-synthetic").returncode != 0
+
+
+def test_branch_ref_metadata_is_preserved_and_inspected(tmp_path):
+    root = repository(tmp_path)
+    assert inspect(root, ref="refs/heads/synthetic-clean").returncode == 0
+    assert inspect(root, ref="refs/heads/fixture." + "internal").returncode != 0
+
+
+def test_deleted_ref_events_skip_candidate_inspection():
+    workflow = (ROOT / ".github/workflows/quality-gates.yml").read_text()
+    scan = workflow.split("- name: Scan exact candidate tree and complete reachable history", 1)[1].split("- name:", 1)[0]
+    assert "if: ${{ !github.event.deleted }}" in scan
