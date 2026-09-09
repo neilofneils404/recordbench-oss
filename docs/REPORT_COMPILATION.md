@@ -102,6 +102,39 @@ coverage ledger states skipped materials, model calls, unprocessed passages,
 rejected claims, unavailable calls, omitted sections, and truncated source text.
 These counts describe selected saved work, never an exhaustive matter review.
 
+Saved-work source validation streams derived text and retains only matching
+citation units. Each source is read once per snapshot, combining citation lookup
+with the exact frozen-source hash when a saved source-check decision requires
+it. The complete derived JSON container is checked even when a citation appears
+in its first unit. Uncited text contributes to the scan budget and, for frozen
+decisions, has its actual text digest checked. Sources cannot be substituted or
+silently shortened to fit these limits.
+
+Each snapshot permits at most 50,000,000 decoded source-text characters,
+100,000 source units, and 64,000,000 serialized input characters; any individual
+derived JSON record is limited to 8,000,000 serialized characters before decoding.
+The snapshot also has a five-second cooperative deadline, checked around bounded
+file reads and JSON decoding and while collecting units. This cannot interrupt a
+single blocked operating-system read; it is not a hard I/O timeout. Exceeding a
+bound fails the compilation without saving a partial report and releases the
+source and workspace guards. Choose fewer or smaller sources before retrying.
+These scan bounds are separate from the existing 6,000-character citation,
+100-citation section, and aggregate citation-text limits. The optional full-text
+adapter retains its own source-reader bounds and must validate its frozen sources.
+
+Compilation takes one snapshot before generation and a second before saving.
+While the second snapshot's guards remain held, every draft citation must equal
+a canonical citation from that current selected material, including source
+identity, version, location, digest, text and evidence kind. This final check
+does not reread the sources a third time or admit citations outside the selection.
+
+An explicit human include/exclude matching the machine's binary decision, or a
+human agreement with that binary decision, is retained as confirmed review.
+Opposing binary decisions remain disputed. Human uncertainty, unreviewed
+decisions, and agreement with a nonbinary or failed machine result remain in
+open review. Confirmation records the person's review status; it does not turn
+the saved interpretation into an independently established fact.
+
 Synthetic tests cover grounded chronology, uncertain/conflicting dates, separate
 same-name mentions, topic relevance, foreign citation rejection, human attribution,
 saved gaps, offline labeling, omitted-material budgets, snapshot mutation during

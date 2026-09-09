@@ -5,7 +5,7 @@ import os
 
 from .report_compilation import CompilationBudget, CompilationProblem, compilation_fingerprint, compile_report
 from .report_compilation_jobs import ReportCompilationCoordinator, ReportCompilationJobs
-from .report_materials import snapshot_report_materials
+from .report_materials import snapshot_report_materials, validate_compiled_material_citations
 from .workspace_store import WorkspaceProblem
 from .work_product_exports import ExportProblem
 
@@ -68,7 +68,7 @@ class ReportCompilationFlow:
                 _, current = self._snapshot(job)
                 if compilation_fingerprint(job.kind, job.topic, current, budget=self.budget, selections=job.selections) != draft.fingerprint:
                     raise CompilationProblem("The selected work changed while the report was being compiled. Retry to use the latest review.")
-                self.bench._assert_current_report_section_citations(matter, draft.sections)
+                validate_compiled_material_citations(current, draft.sections)
                 return self.jobs.complete(job, lambda: self.bench.workspace.create_report_from_sections(
                     matter.matter_id, job.actor_id, draft.title, draft.purpose,
                     origin_id=job.job_id, sections=draft.sections, transaction_owned=True,
