@@ -156,9 +156,20 @@ class ReportCompilationJobs:
             raise CompilationProblem("The compilation queue is full. Wait for an active report to finish.")
 
     def _recover(self, connection, now):
-        connection.execute("UPDATE workbench_report_compilation_job SET state=CASE WHEN cancellation_requested=1 THEN 'cancelled' WHEN attempts>=? THEN 'failed' ELSE 'queued' END, message=CASE WHEN cancellation_requested=1 THEN 'Compilation cancelled.' WHEN attempts>=? THEN 'Compilation stopped after repeated worker interruptions. Retry when the service is ready.' ELSE 'Interrupted compilation queued for retry.' END,worker_id=NULL,lease_token=NULL,lease_expires_at=NULL,input_fingerprint='',updated_at=?,finished_at=CASE WHEN cancellation_requested=1 OR attempts>=? THEN ? ELSE NULL END WHERE state='running' AND lease_expires_at<=?",
-                           (self.policy.maximum_attempts, self.policy.maximum_attempts, now, self.policy.maximum_attempts, now, now))
-        connection.execute("UPDATE workbench_report_compilation_job SET state='failed',message='Matter access is no longer active.',lease_token=NULL,worker_id=NULL,lease_expires_at=NULL,updated_at=?,finished_at=? WHERE state IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM workbench_matter_membership m JOIN workbench_principal p ON p.principal_id=m.principal_id JOIN workbench_matter_lifecycle l ON l.matter_id=m.matter_id WHERE m.matter_id=workbench_report_compilation_job.matter_id AND m.principal_id=workbench_report_compilation_job.actor_id AND m.state='active' AND p.active=1 AND l.state='active')", (now, now))
+        expired = connection.execute("UPDATE workbench_report_compilation_job SET state=CASE WHEN cancellation_requested=1 THEN 'cancelled' WHEN attempts>=? THEN 'failed' ELSE 'queued' END, message=CASE WHEN cancellation_requested=1 THEN 'Compilation cancelled.' WHEN attempts>=? THEN 'Compilation stopped after repeated worker interruptions. Retry when the service is ready.' ELSE 'Interrupted compilation queued for retry.' END,worker_id=NULL,lease_token=NULL,lease_expires_at=NULL,input_fingerprint='',updated_at=?,finished_at=CASE WHEN cancellation_requested=1 OR attempts>=? THEN ? ELSE NULL END WHERE state='running' AND lease_expires_at<=? RETURNING job_id,matter_id,actor_id,state",
+                           (self.policy.maximum_attempts, self.policy.maximum_attempts, now, self.policy.maximum_attempts, now, now)).fetchall()
+        revoked = connection.execute("UPDATE workbench_report_compilation_job SET state='failed',message='Matter access is no longer active.',lease_token=NULL,worker_id=NULL,lease_expires_at=NULL,updated_at=?,finished_at=? WHERE state IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM workbench_matter_membership m JOIN workbench_principal p ON p.principal_id=m.principal_id JOIN workbench_matter_lifecycle l ON l.matter_id=m.matter_id WHERE m.matter_id=workbench_report_compilation_job.matter_id AND m.principal_id=workbench_report_compilation_job.actor_id AND m.state='active' AND p.active=1 AND l.state='active') RETURNING job_id,matter_id,actor_id,state", (now, now)).fetchall()
+        # RETURNING captures only transitions made by this recovery transaction.
+        # Terminal rows cannot be selected again on a later scan. A job that was
+        # requeued and then lost access contributes only its terminal transition.
+        for row in (*expired, *revoked):
+            if row["state"] not in {"failed", "cancelled"}:
+                continue
+            self.workspace._append_audit_event_locked(
+                actor_principal_id=row["actor_id"], session_id=None, matter_id=row["matter_id"],
+                request_id=row["job_id"], action="report.compile.recover", outcome="failure",
+                object_type="report_compilation", object_id=row["job_id"], details={"state": row["state"]},
+            )
 
     def recover_expired(self) -> None:
         with self._transaction() as connection:

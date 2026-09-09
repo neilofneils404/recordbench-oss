@@ -416,3 +416,72 @@ def test_independent_heartbeat_does_not_renew_cancelled_or_revoked_work(tmp_path
     assert jobs.heartbeat(claimed) is False
     assert store.connection.execute("SELECT lease_expires_at FROM workbench_report_compilation_job WHERE job_id=?", (queued.job_id,)).fetchone()[0] == before
     store.close()
+
+
+@pytest.mark.parametrize("reason", ["attempt_limit", "cancelled", "revoked_running", "revoked_queued", "inactive_principal", "closed_matter", "cancelled_and_revoked"])
+def test_recovery_terminal_transitions_append_one_attributed_content_free_audit(tmp_path, reason):
+    store, matter = setup_store(tmp_path / "control.sqlite")
+    now = [100.0]
+    jobs = ReportCompilationJobs(store, policy=CompilationJobPolicy(lease_seconds=10, maximum_attempts=1), clock=lambda: now[0])
+    queued = queue(jobs, matter)
+    if reason != "revoked_queued":
+        jobs.claim("synthetic-worker")
+    if reason in {"cancelled", "cancelled_and_revoked"}:
+        jobs.cancel(matter.matter_id, ACTOR, queued.job_id)
+    with store._lock, store.connection:
+        if reason in {"revoked_running", "revoked_queued", "cancelled_and_revoked"}:
+            store.connection.execute("UPDATE workbench_matter_membership SET state='revoked' WHERE matter_id=? AND principal_id=?", (matter.matter_id, ACTOR))
+        elif reason == "inactive_principal":
+            store.connection.execute("UPDATE workbench_principal SET active=0 WHERE principal_id=?", (ACTOR,))
+        elif reason == "closed_matter":
+            store.connection.execute("UPDATE workbench_matter_lifecycle SET state='purging' WHERE matter_id=?", (matter.matter_id,))
+    if reason in {"attempt_limit", "cancelled", "cancelled_and_revoked"}:
+        now[0] = 111.0
+    jobs.recover_expired()
+    expected = "cancelled" if reason in {"cancelled", "cancelled_and_revoked"} else "failed"
+    assert store.connection.execute("SELECT state FROM workbench_report_compilation_job WHERE job_id=?", (queued.job_id,)).fetchone()[0] == expected
+    events = [event for event in store.audit_events(matter.matter_id) if event.action == "report.compile.recover"]
+    assert len(events) == 1
+    event = events[0]
+    assert (event.actor_principal_id, event.matter_id, event.object_type, event.object_id, event.request_id) == (ACTOR, matter.matter_id, "report_compilation", queued.job_id, queued.job_id)
+    assert event.outcome == "failure" and event.details == {"state": expected}
+    jobs.recover_expired()
+    assert jobs.claim("synthetic-later-worker") is None
+    assert [event for event in store.audit_events(matter.matter_id) if event.action == "report.compile.recover"] == events
+    store.close()
+
+
+def test_recovery_requeue_does_not_emit_a_terminal_audit(tmp_path):
+    store, matter = setup_store(tmp_path / "control.sqlite")
+    now = [100.0]
+    jobs = ReportCompilationJobs(store, policy=CompilationJobPolicy(lease_seconds=10), clock=lambda: now[0])
+    queued = queue(jobs, matter)
+    jobs.claim("synthetic-first-worker")
+    now[0] = 111.0
+    jobs.recover_expired()
+    assert jobs.get(matter.matter_id, ACTOR, queued.job_id).state == "queued"
+    assert not [event for event in store.audit_events(matter.matter_id) if event.action == "report.compile.recover"]
+    store.close()
+
+
+def test_recovery_state_and_audit_roll_back_together_on_audit_failure(tmp_path, monkeypatch):
+    store, matter = setup_store(tmp_path / "control.sqlite")
+    now = [100.0]
+    jobs = ReportCompilationJobs(store, policy=CompilationJobPolicy(lease_seconds=10, maximum_attempts=1), clock=lambda: now[0])
+    queued = queue(jobs, matter)
+    jobs.claim("synthetic-worker")
+    now[0] = 111.0
+    append = store._append_audit_event_locked
+    def fail_audit(**kwargs):
+        append(**kwargs)
+        raise RuntimeError("Synthetic interrupted audit")
+    monkeypatch.setattr(store, "_append_audit_event_locked", fail_audit)
+    with pytest.raises(RuntimeError, match="Synthetic interrupted audit"):
+        jobs.recover_expired()
+    assert jobs.get(matter.matter_id, ACTOR, queued.job_id).state == "running"
+    assert not [event for event in store.audit_events(matter.matter_id) if event.action == "report.compile.recover"]
+    monkeypatch.setattr(store, "_append_audit_event_locked", append)
+    jobs.recover_expired()
+    assert jobs.get(matter.matter_id, ACTOR, queued.job_id).state == "failed"
+    assert len([event for event in store.audit_events(matter.matter_id) if event.action == "report.compile.recover"]) == 1
+    store.close()
