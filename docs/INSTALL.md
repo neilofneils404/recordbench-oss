@@ -59,6 +59,71 @@ organization-trusted certificate.
 6. Decide where the encrypted restic repository and independent recovery key
    will live.
 
+## Inspect prerequisites without installing
+
+Run this first as the dedicated non-root service account on the intended Linux
+host. It does not prompt, create directories, write probe files, download models,
+start containers, or change permissions:
+
+```bash
+./install preflight --root /srv/recordbench --models none --no-color
+./install preflight --root /srv/recordbench --models review --json
+```
+
+Supply the same `--storage-root`, `--bind-address`, TLS, model and GPU-selection
+options you intend to use for installation. Quote paths containing spaces.
+Omitted options select `/srv/recordbench`, storage beneath it, CPU evaluation,
+and loopback HTTPS. `none` enables intake, extraction, OCR, word search, direct
+source review and exports. `review` adds learned search and cited generated
+answers; `transcription` adds recording transcription; `all` selects both AI
+workflows. CPU evaluation does not require NVIDIA hardware.
+
+Each checklist row reports what was observed, which task it enables, whether it
+blocks installation, and a next action. Resolve every `BLOCK` and rerun the same
+command. `NOTE` rows are capacity planning advice. Exit status is 0 when no
+blocking prerequisite fails, 1 otherwise. An unsupported OS/architecture stops
+before any runtime or storage probe. The Linux launcher currently targets x86-64;
+this is its deployment contract, independent of the contributor's computer.
+
+`--json` emits only one versioned document with `schema_version`, `ready`, and
+`checks`. Every check has `name`, `state` (`pass`, `fail`, or `unknown`),
+`observed`, `required_capability`, `blocking`, and `remedy`. An unknown blocking
+check also prevents readiness. Consumers should use these fields, tolerate new
+check names, and reject unsupported schema versions. JSON output excludes paths,
+account names, device names and raw Docker/driver output.
+
+For missing prerequisites:
+
+- Install [Docker Engine](https://docs.docker.com/engine/install/) and the
+  [Compose plugin](https://docs.docker.com/compose/install/linux/) for the host
+  distribution. Arrange approved service-account engine access; Docker access is
+  privileged. Never make its socket world-writable to pass a check.
+- Have an administrator create only the dedicated node and matter-storage paths
+  and assign them to the non-root service account. The account's primary group
+  must also be non-root. Do not use a home directory, symlink, or shared export
+  root. Existing selected directories must belong to that account. A first-install
+  node root must be empty; use `--resume` only for the intended existing node.
+- Leave more than the installer's 100 GiB storage safety reserve free on the
+  selected filesystems. The larger profile targets above are advisory alpha
+  planning figures, not validated minimums. Container-engine image storage may
+  be on a different filesystem and needs separate capacity planning.
+- Retain loopback HTTPS for evaluation, or supply a readable certificate/key
+  pair trusted by the organization for explicit LAN access. Preflight checks the
+  choice, server-name syntax and file access; it does not certify the pair's matching keys, identity,
+  expiry or trust chain. Verify those before staff access.
+- For AI tasks, install the NVIDIA driver and
+  [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+  The checklist checks registered Docker runtime support and the selected model
+  plan against currently reported GPU capability and free memory. It also
+  validates supported transcription languages and the diarization/profile combination. It neither
+  pulls a test image nor proves container/device or offline model readiness.
+
+Directory writability is a metadata/access check with no write attempt; NAS
+ACLs, quotas, read-only mounts and later capacity changes can still prevent
+installation. A passing preflight is permission to attempt installation, not a
+successful install or confidential-workload acceptance. The `doctor` and
+synthetic acceptance steps below remain necessary.
+
 ## Interactive installation
 
 ```bash
@@ -83,9 +148,10 @@ The phases are deliberately explicit:
 
 Use `--prepare-only` to build and configure without starting services. Use
 `--dry-run --no-color` to inspect the exact command sequence without writes.
-Dry-run GPU discovery is real and read-only: it will reject missing,
-incompatible, undersized, or currently occupied hardware rather than inventing
-a successful topology.
+Dry-run prerequisite discovery is real and read-only: it rejects unsupported
+hosts, missing runtime access, unsafe storage/TLS choices, and missing,
+incompatible, undersized or currently occupied selected GPU hardware. Use
+`preflight` to inspect prerequisites without going through configuration prompts.
 
 ## Unattended local-account example
 
@@ -157,3 +223,29 @@ The new capsule is built without overwriting
 the prior image set. If startup acceptance fails, configuration is returned to
 the previous release and its images are relaunched. Old releases and images are
 retained for deliberate operator cleanup; the updater never prunes them.
+
+
+Storage preflight requires the nearest existing creation directory to belong to
+the service account and deny group/other writes. Every parent must belong to
+root or that service account and prevent replacement of its child. A trusted
+sticky system directory may contain an existing private service-owned directory;
+it is never accepted as the creation directory itself. Root-owned protected
+parents such as `/srv` are supported when the operator first creates the
+service-owned directory beneath them. Non-sticky shared writable ancestors and
+parents owned by another non-root account are refused before installation.
+Installation creates each missing directory component with mode `0700`, even
+with a permissive process umask. It rechecks ownership and replacement protection
+while walking held directory descriptors, refuses symbolic links, and applies
+owner-only permissions to the selected node and storage directories without
+changing existing ancestor modes. If those paths change after preflight,
+preparation stops before following an unsafe replacement. Only newly created
+protected directories may remain after such a failure; inspect them before
+resuming.
+
+Synthetic regression tests cover invalid server names stopping before state
+creation, nested node and separate matter-storage paths under umask `000`, and
+concurrent symlink, writable-directory and foreign-owner replacements. The
+backup suite also round-trips synthetic control and managed SQLite stores from
+these prepared nested directories into a clean restore target. That regression
+uses simulated service/backup commands; an operator still needs the real encrypted
+backup and isolated recovery acceptance in [Storage and backup](STORAGE_AND_BACKUP.md).

@@ -33,10 +33,11 @@ def _version(path: Path) -> str:
 
 
 class SyntheticNode:
-    def __init__(self, root: Path, monkeypatch, *, wal: bool = False):
+    def __init__(self, root: Path, monkeypatch, *, wal: bool = False,
+                 node_path: Path | None = None, storage_path: Path | None = None):
         self.root = root
-        self.node = root / "node"
-        self.storage = root / "separate-storage"
+        self.node = node_path or root / "node"
+        self.storage = storage_path or root / "separate-storage"
         self.archive = root / "archive"
         self.events: list[str] = []
         self.corrupt_at_stop = False
@@ -45,7 +46,7 @@ class SyntheticNode:
         self.connections = []
         for name in ("runtime", "config", "secrets", "state"):
             (self.node / name).mkdir(parents=True, exist_ok=True)
-        self.storage.mkdir()
+        self.storage.mkdir(exist_ok=storage_path is not None)
         (self.storage / ".recordbench-managed-storage.json").write_text("{}")
         repository = root / "repository"
         repository.mkdir()
@@ -514,3 +515,36 @@ def test_exact_byte_comparisons_restore_and_rebuild_from_received_registry(node_
         assert bench.source_library(matter, same_content=token).total == 2
         assert store.source_path(saved[0][0]).read_bytes() == store.source_path(saved[1][0]).read_bytes()
         assert store.source_path(saved[0][0]).read_bytes() != store.source_path(saved[2][0]).read_bytes()
+
+
+def test_installer_prepared_nested_storage_round_trips_to_clean_target(tmp_path, node_factory):
+    import stat
+    import recordbench_install as installer
+
+    base = tmp_path.resolve()
+    node_path = base / "created-node-parent" / "nested" / "node"
+    storage_path = base / "created-storage-parent" / "nested" / "matters"
+    old_umask = os.umask(0)
+    try:
+        paths = installer._prepare_directories(installer.Console(color=False, quiet=True),
+            node_path, storage_root=storage_path, resume=False, dry_run=False)
+    finally:
+        os.umask(old_umask)
+    for leaf in (node_path, *paths.values()):
+        for directory in (leaf, *leaf.parents):
+            if directory == base:
+                break
+            assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+    node = node_factory(wal=True, node_path=node_path, storage_path=storage_path)
+    assert node.backup() == 0
+    target = node.root / "restored"
+    assert not target.exists()
+    assert node.restore() == 0
+    receipt = json.loads((target / "RESTORE_DRILL_VERIFIED.json").read_text())
+    assert receipt["sqlite_stores"] == 2
+    assert receipt["managed_sqlite_stores"] == 1
+    assert _version(target / "payload/runtime/workbench.sqlite") == "frozen"
+    assert _version(target / "managed-storage" / node.registry.relative_to(node.storage)) == "frozen"
+    assert (target / "payload/postgres/review-index.dump").read_text() == "frozen"
+    assert _version(node.control) == "live"
+    assert _version(node.registry) == "live"
