@@ -1338,8 +1338,11 @@ def test_saved_bfloat16_blocks_older_replacement_gpu_before_commands(
     assert {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
 
 
-@pytest.mark.parametrize("command", ["resume", "update"])
-@pytest.mark.parametrize("shortage", ["explicit-device", "quality-model", "utilization", "transcription"])
+@pytest.mark.parametrize("command,shortage", [
+    (command, shortage) for command in ("resume", "update")
+    for shortage in ("explicit-device", "quality-model", "utilization", "transcription")
+    if command != "update" or shortage not in {"explicit-device", "utilization"}
+])
 def test_saved_gpu_preflight_blocks_resume_update_before_commands(
     tmp_path, ready_host, monkeypatch, command, shortage,
 ):
@@ -1542,3 +1545,196 @@ def test_preflight_nonsecret_settings_match_identity_runtime(tmp_path, ready_hos
     result = installer._collect_preflight("none", args)
     assert (checks_by_name(result)["identity-options"].state == "pass") is runtime_valid
     assert not args.root.exists()
+
+@pytest.mark.parametrize("relative", ["compose.env", "installation.json", "config/recordbench.env", "releases/capsule", "state"])
+def test_matter_storage_control_path_overlap_stops_before_writes(tmp_path, ready_host, monkeypatch, relative):
+    node = tmp_path.resolve() / "new-node"
+    flags = ["--root", str(node), "--storage-root", str(node / relative), "--models", "none", "--non-interactive", "--password-stdin"]
+    args = installer._parser().parse_args(["preflight", *flags])
+    assert not installer._collect_preflight("none", args).ready
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("overlap reached writes"))
+    monkeypatch.setattr(sys, "argv", ["install", *flags])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("field", ["--root", "--storage-root"])
+@pytest.mark.parametrize("control", ["\n", "\r", "\t", "\x7f", "\x00"])
+def test_storage_control_characters_stop_before_writes(tmp_path, ready_host, monkeypatch, field, control):
+    node = tmp_path.resolve() / "new-node"
+    malformed = str(tmp_path.resolve() / ("synthetic" + control + "path"))
+    flags = ["--root", str(node), field, malformed, "--models", "none", "--non-interactive", "--password-stdin"]
+    args = installer._parser().parse_args(["preflight", *flags])
+    assert not installer._collect_preflight("none", args).ready
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("invalid path reached writes"))
+    monkeypatch.setattr(sys, "argv", ["install", *flags])
+    assert installer.main() == 1
+    assert not node.exists() and not Path(malformed).exists()
+
+
+def test_oversized_oidc_secret_stops_before_writes_without_reading(tmp_path, ready_host, monkeypatch):
+    source = tmp_path / "synthetic-secret"
+    source.write_text("x" * 4097)
+    args = preflight_args(tmp_path, "--auth", "oidc", "--non-interactive", "--oidc-client-secret-file", str(source))
+    monkeypatch.setattr(Path, "read_text", lambda *a, **k: pytest.fail("read credential contents"))
+    monkeypatch.setattr(Path, "read_bytes", lambda *a, **k: pytest.fail("read credential contents"))
+    assert not installer._collect_preflight("none", args).ready
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("oversized secret reached writes"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--models", "none", "--auth", "oidc", "--oidc-client-secret-file", str(source), "--non-interactive"])
+    assert installer.main() == 1
+    assert not args.root.exists()
+
+
+def synthetic_live_update(tmp_path, monkeypatch, *, after_free=47000, fail_command=None, dry_run=False, utilization="0.72"):
+    root, installation, environment = saved_gpu_node(tmp_path)
+    environment["RECORDBENCH_GENERATOR_GPU_UTILIZATION"] = utilization
+    environment["RECORDBENCH_COMPOSE_PROJECT"] = "recordbench-synthetic-upgrade"
+    (root / "compose.env").write_text(installer._env_text(environment, "synthetic current runtime"))
+    old_release = Path(installation["release_path"])
+    new_release = tmp_path.resolve() / "new-release"
+    new_release.mkdir()
+    (new_release / "compose.yaml").write_text("services: {}\n")
+    events = []
+    state = {"stopped": False}
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    def probe(command):
+        if command[0] == "nvidia-smi":
+            events.append("probe-stopped" if state["stopped"] else "probe-live")
+            if state["stopped"] and after_free is None:
+                raise OSError("synthetic GPU probe failed")
+            free = after_free if state["stopped"] else 8000
+            return subprocess.CompletedProcess(command, 0, f"0, Synthetic GPU, 49152, {free}, 8.9", "")
+        return subprocess.CompletedProcess(command, 0, '{"nvidia": {}}', "")
+    def run(console, command, **kwargs):
+        verb = next((value for value in ("build", "config", "stop", "up") if value in command), "other")
+        release = Path(command[command.index("-f") + 1]).parent if "-f" in command else None
+        events.append(f"{verb}-{'old' if release == old_release else 'new'}")
+        assert "down" not in command and "--volumes" not in command
+        if verb == "stop":
+            assert command[command.index("--env-file") + 1] == str(root / "compose.env")
+            assert installer._dotenv(root / "compose.env")["RECORDBENCH_COMPOSE_PROJECT"] == "recordbench-synthetic-upgrade"
+            assert release == old_release
+            if not kwargs.get("dry_run"):
+                state["stopped"] = True
+        if verb == fail_command:
+            raise subprocess.CalledProcessError(1, command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+    def stage(*a, **k):
+        events.append("stage")
+        return "synthetic-new", new_release
+    monkeypatch.setattr(installer, "_probe", probe)
+    monkeypatch.setattr(installer, "_run", run)
+    monkeypatch.setattr(installer, "_stage_release", stage)
+    monkeypatch.setattr(installer, "_wait_health", lambda *a, **k: events.append("health"))
+    monkeypatch.setattr(installer, "_seal_provisioning", lambda *a, **k: events.append("seal"))
+    args = installer._parser().parse_args(["update", "--root", str(root), "--non-interactive", "--no-backup", *(["--dry-run"] if dry_run else [])])
+    return root, args, events, before
+
+
+def test_live_gpu_update_checks_freed_capacity_after_own_runtime_stops(tmp_path, ready_host, monkeypatch):
+    root, args, events, _before = synthetic_live_update(tmp_path, monkeypatch)
+    installer._update(installer.Console(color=False, quiet=True), args, root)
+    assert events.index("probe-live") < events.index("build-new")
+    assert events.index("build-new") < events.index("config-new") < events.index("stop-old")
+    assert events.index("stop-old") < events.index("probe-stopped") < events.index("up-new")
+    assert json.loads((root / "installation.json").read_text())["release_id"] == "synthetic-new"
+
+@pytest.mark.parametrize("after_free,utilization", [(1000, "0.72"), (35000, "0.72"), (43000, "0.90"), (None, "0.72")])
+def test_live_update_preserves_competing_usage_and_rolls_back(tmp_path, ready_host, monkeypatch, after_free, utilization):
+    root, args, events, before = synthetic_live_update(tmp_path, monkeypatch, after_free=after_free, utilization=utilization)
+    args.generator_gpus = "1"
+    args.review_model_profile = "portable"
+    with pytest.raises(RuntimeError, match="update failed and rollback was attempted"):
+        installer._update(installer.Console(color=False, quiet=True), args, root)
+    assert events.index("stop-old") < events.index("probe-stopped") < events.index("up-old")
+    assert "up-new" not in events and events[-1] == "health"
+    assert args.generator_gpus == "0" and args.review_model_profile == "quality"
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("failed", ["build", "config", "stop"])
+def test_update_failure_keeps_or_restores_old_node(tmp_path, ready_host, monkeypatch, failed):
+    root, args, events, before = synthetic_live_update(tmp_path, monkeypatch, fail_command=failed)
+    with pytest.raises(RuntimeError, match="update failed and rollback was attempted"):
+        installer._update(installer.Console(color=False, quiet=True), args, root)
+    assert "up-new" not in events and "up-old" in events
+    if failed != "stop":
+        assert "stop-old" not in events
+    assert "probe-stopped" not in events
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_live_gpu_update_dry_run_defers_post_stop_probe(tmp_path, ready_host, monkeypatch, capsys):
+    root, args, events, before = synthetic_live_update(tmp_path, monkeypatch, dry_run=True)
+    installer._update(installer.Console(color=False), args, root)
+    output = capsys.readouterr().out
+    assert "actual free-memory admission is deferred" in output
+    assert events.count("probe-live") == 1 and "probe-stopped" not in events
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_deferred_update_check_preserves_real_inventory_and_strict_default(tmp_path, ready_host, monkeypatch):
+    root, args, events, _before = synthetic_live_update(tmp_path, monkeypatch)
+    installation, _release = installer._installed_release(root)
+    installer._restore_model_options(args, installation, installer._dotenv(root / "compose.env"), {})
+    strict = installer._collect_preflight("review", model_args=args, needs_model_staging=False)
+    assert not strict.ready and checks_by_name(strict)["gpu"].state == "fail"
+    deferred = installer._collect_preflight("review", model_args=args, needs_model_staging=False, defer_gpu_free_check=True)
+    assert deferred.ready and deferred.devices[0].free_mib == 8000
+    assert "deferred" in checks_by_name(deferred)["gpu"].observed
+    assert events == ["probe-live", "probe-live"]
+
+
+@pytest.mark.parametrize("relative", ["matter-storage", "custom-sources", "custom-sources/nested"])
+def test_safe_nested_source_storage_remains_allowed(tmp_path, ready_host, relative):
+    node = tmp_path.resolve() / "node"
+    args = preflight_args(tmp_path, "--root", str(node), "--storage-root", str(node / relative))
+    assert installer._collect_preflight("none", args).ready
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("selection", ["same", "parent"])
+def test_source_storage_cannot_equal_or_contain_node(tmp_path, ready_host, monkeypatch, selection):
+    node = tmp_path.resolve() / "node"
+    storage = node if selection == "same" else node.parent
+    args = preflight_args(tmp_path, "--root", str(node), "--storage-root", str(storage))
+    result = installer._collect_preflight("none", args)
+    assert not result.ready and checks_by_name(result)["storage-separation"].state == "fail"
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("overlap reached writes"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--storage-root", str(storage), "--models", "none", "--non-interactive", "--password-stdin"])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("auth,size,expected", [("oidc", 4096, True), ("oidc", 4097, False), ("kerberos", 4097, True), ("kerberos", 1024 * 1024, True), ("kerberos", 1024 * 1024 + 1, False)])
+def test_provider_metadata_limits_keep_larger_keytabs(tmp_path, ready_host, monkeypatch, auth, size, expected):
+    source = tmp_path / "synthetic-credential"
+    source.write_bytes(b"x" * size)
+    monkeypatch.setattr(Path, "read_bytes", lambda *a, **k: pytest.fail("read secret contents"))
+    monkeypatch.setattr(Path, "read_text", lambda *a, **k: pytest.fail("read secret contents"))
+    option = "--oidc-client-secret-file" if auth == "oidc" else "--kerberos-keytab"
+    args = preflight_args(tmp_path, "--auth", auth, "--dry-run", option, str(source))
+    result = installer._collect_preflight("none", args)
+    assert result.ready is expected
+    assert not args.root.exists()
+
+@pytest.mark.parametrize("state", ["failed", "deferred"])
+def test_gpu_update_requires_successful_backup_before_stopping(tmp_path, ready_host, monkeypatch, state):
+    root, args, events, _before = synthetic_live_update(tmp_path, monkeypatch)
+    (root / "config" / "backup.json").write_text("{}")
+    (root / "state").mkdir()
+    (root / "state" / "backup-status.json").write_text(json.dumps({"state": state}))
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    with pytest.raises(RuntimeError, match="newly succeeded backup"):
+        installer._update(installer.Console(color=False, quiet=True), args, root)
+    assert not any(event.startswith(("stop-", "up-", "build-")) for event in events)
+    assert "stage" not in events
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_failed_post_stop_admission_reports_failed_rollback(tmp_path, ready_host, monkeypatch):
+    root, args, events, before = synthetic_live_update(tmp_path, monkeypatch, after_free=1000, fail_command="up")
+    with pytest.raises(RuntimeError, match="rollback also failed"):
+        installer._update(installer.Console(color=False, quiet=True), args, root)
+    assert "up-new" not in events and events[-1] == "up-old"
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
