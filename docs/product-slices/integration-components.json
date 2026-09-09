@@ -1,0 +1,97 @@
+{
+  "format_version": 1,
+  "purpose": "Unmerged portable target-validation candidate; not a release or maintainer acceptance.",
+  "baseline_commit": "26f5ece14871ba9312c9aeaf87d42b47edff3022",
+  "components": [
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/portable-product-slices-20260908",
+      "headRefOid": "c4261579881904a0ecb877a6ced7c08449082f94",
+      "number": 35,
+      "title": "Plan portable installation, search, review, and work-product slices",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/35"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/exact-search-foundation-20260908",
+      "headRefOid": "25455cdb9a61b67bc09adf45f8f2c2b5ab308a73",
+      "number": 36,
+      "title": "Define strict exact-search grammar and known-answer corpus",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/36"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/publication-candidate-isolation-20260908",
+      "headRefOid": "5155a418b58dfe3e8d0d7e3546a1a875ccc7bdaf",
+      "number": 37,
+      "title": "Check complete candidate history without unrelated fetched branches",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/37"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/report-review-basis-20260908",
+      "headRefOid": "1de30e5eb43164e11c8dffc04f1a3c2d1ebcda08",
+      "number": 38,
+      "title": "Preserve findings, gaps, and human review in Reports",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/38"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/installer-preflight-20260908",
+      "headRefOid": "59a7f860fadd803303bd14e955e6304b3651faaf",
+      "number": 39,
+      "title": "Make first-run installer prerequisites actionable",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/39"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/investigation-budgets-20260908",
+      "headRefOid": "04632b83d90473660bf89202f8223cde0f24d45e",
+      "number": 40,
+      "title": "Make investigation budgets and coverage limits explicit",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/40"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/local-account-lifecycle-20260908",
+      "headRefOid": "1b6459d04bd9c79e2353677ae9908c1dc1b88937",
+      "number": 41,
+      "title": "Add shared local account lifecycle and live session revocation",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/41"
+    },
+    {
+      "baseRefName": "codex/exact-search-foundation-20260908",
+      "headRefName": "codex/exact-search-results-20260908",
+      "headRefOid": "471dd1bd910af4fdb01796d8370980e9ebe10218",
+      "number": 42,
+      "title": "Add complete document search with a guided Find sources flow",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/42"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/browser-local-accounts-20260908",
+      "headRefOid": "f8e3f7e44d21ae9450926b55426520d65af35aa0",
+      "number": 43,
+      "title": "feat: browser account management and first-use People entry",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/43"
+    },
+    {
+      "baseRefName": "codex/report-review-basis-20260908",
+      "headRefName": "codex/guided-reports-20260908",
+      "headRefOid": "acc0258b6d08a5bc637cf7dd3bfadb8e9b7e0778",
+      "number": 44,
+      "title": "Compile saved AI work and human review into usable report drafts",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/44"
+    },
+    {
+      "baseRefName": "codex/exact-search-results-20260908",
+      "headRefName": "codex/search-proximity-20260908",
+      "headRefOid": "4090547088fdcd8c467984c6a914b898b51973fa",
+      "number": 45,
+      "title": "Find nearby words and phrases with exact proximity",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/45"
+    }
+  ],
+  "assembly": "Patch-equivalent changes combined in one branch. Resolve the candidate commit from the handoff or git rev-parse HEAD; this manifest cannot name its own containing commit.",
+  "target_validation": "Not run. Use TARGET_VALIDATION.md and TARGET_VALIDATION_RECEIPT.md."
+}

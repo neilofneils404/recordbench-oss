@@ -19,6 +19,14 @@ the shared behavior in this OSS repository, then validate it on applicable
 deployment profiles. Host-specific launchers may adapt the shared contract;
 they must not become the only place where product behavior is implemented.
 
+## Test the combined candidate
+
+Use the [target validation walkthrough](TARGET_VALIDATION.md) to fetch the
+unmerged integration branch into a separate OSS checkout. The
+[component manifest](integration-components.json) pins the assembled PR heads;
+the [receipt template](TARGET_VALIDATION_RECEIPT.md) records what the target
+machine actually exercised. This candidate is not an accepted release.
+
 ## Buildable queue
 
 IDs identify work, not an obligation to execute everything in numeric order.
