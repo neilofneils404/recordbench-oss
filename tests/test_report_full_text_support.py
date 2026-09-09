@@ -189,3 +189,64 @@ def test_flow_calls_adapter_again_before_save_and_refuses_changed_frozen_source(
     assert len(calls) == 2 and all(calls)
     assert not bench.workspace.reports(matter.matter_id, principal)
 
+
+@pytest.mark.parametrize("tail", [
+    None,
+    "],\"version\":1",
+    ", {\"number\":",
+    "],\"version\":2}",
+    "],\"version\":1} trailing content",
+])
+def test_direct_review_report_requires_valid_derived_container_tail(workspace, tail):
+    import json
+    from tests.test_report_review_basis import ACTOR as principal, saved_research
+    client, bench, matter = workspace
+    bench.full_review.close()
+    _, document = saved_research(bench, matter)
+    store = bench.source_store(matter)
+    unit = document.parsed_units()[0]
+    _, version = bench.workspace.create_review_criterion(matter.matter_id, principal,
+        title="Synthetic trailer validation", instructions="Include bicycle records.")
+    run = bench.workspace.queue_review_run(matter.matter_id, principal,
+        version.criterion_version_id, run_kind="full")
+    bench.workspace.claim_review_run("synthetic-trailer-worker")
+    canonical = bench._workflow_citation_payload(bench._citation(
+        matter, bench._candidate(matter, document, unit, 1)))
+    bench.workspace.record_review_decision(run.run_id, document.document_id,
+        decision="included", rationale="Synthetic saved check.", citations=[canonical])
+    bench.workspace.finish_review_run(run.run_id)
+    derived = store.derived / document.units_file
+    record = json.loads(derived.read_text())["units"][0]
+    # The first cited record is valid; only exhaustion can validate its trailer.
+    derived.write_text('{"units":[' + json.dumps(record) + (tail or '],"version":1}'))
+    response = client.post(f"/matters/{matter.slug}/full-review/{run.run_id}/report",
+                           follow_redirects=False)
+    assert response.status_code == 303
+    reports = bench.workspace.reports(matter.matter_id, principal)
+    if tail is None:
+        assert "/reports?report=" in response.headers["location"] and len(reports) == 1
+    else:
+        assert "error=" in response.headers["location"]
+        assert not reports
+
+
+def test_final_report_validator_drains_without_matching_uncited_tail(monkeypatch):
+    document = source(1)
+    bench, _ = bench_for(document)
+    canonical = {**reference(bench, document), "kind": "source"}
+    unit = document.parsed_units()[0]
+    completed = []
+    def stream(self):
+        yield unit
+        for _ in range(200):
+            yield unit
+        completed.append(True)
+    monkeypatch.setattr(PilotDocument, "iter_parsed_units", stream)
+    original = bench._candidate
+    matched = []
+    def candidate(*args):
+        matched.append(True)
+        return original(*args)
+    monkeypatch.setattr(bench, "_candidate", candidate)
+    bench._assert_current_report_section_citations(MATTER, ({"citations": (canonical,)},))
+    assert completed == [True] and len(matched) == 1

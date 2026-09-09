@@ -3537,19 +3537,31 @@ class CaseIntelligenceWorkbench:
             # The optional streaming API is supplied by the full-text slice.
             # Older source stores remain supported without importing it.
             iterator = getattr(document, "iter_parsed_units", None)
-            units = iterator() if iterator is not None else iter(document.parsed_units())
-            for ordinal, unit in enumerate(units, 1):
-                candidate = self._candidate(matter, document, unit, ordinal)
-                tokens = self._support_tokens(candidate)
-                pending = [value for value in pending if not (
-                    document.version_id == value.get("source_version_id")
-                    and value.get("support_token") in tokens
-                    and value.get("source_name") == document.display_name
-                    and value.get("location") == candidate.citation
-                    and value.get("excerpt") == unit.text
-                    and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source"))]
-                if not pending:
-                    break
+            units = None
+            try:
+                units = iterator() if iterator is not None else iter(document.parsed_units())
+                for ordinal, unit in enumerate(units, 1):
+                    # Exhaustion validates the container's trailer and version.
+                    # Once matched, drain without retaining or matching more units.
+                    if not pending:
+                        continue
+                    candidate = self._candidate(matter, document, unit, ordinal)
+                    tokens = self._support_tokens(candidate)
+                    pending = [value for value in pending if not (
+                        document.version_id == value.get("source_version_id")
+                        and value.get("support_token") in tokens
+                        and value.get("source_name") == document.display_name
+                        and value.get("location") == candidate.citation
+                        and value.get("excerpt") == unit.text
+                        and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source"))]
+            except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+                raise WorkspaceProblem(
+                    "A copied decision source could not be fully read. Repair or rerun the original source check."
+                ) from exc
+            finally:
+                close = getattr(units, "close", None)
+                if close is not None:
+                    close()
             if pending:
                 raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
 
