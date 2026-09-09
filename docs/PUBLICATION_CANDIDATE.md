@@ -11,7 +11,8 @@ copy of the explicit candidate object. Every ancestor remains included. Tag
 pushes use the original tag object, verify its peeled commit against expected
 HEAD, and retain annotated/nested-tag inspection. Branch pushes retain the actual
 branch name so ref metadata receives the same scan; only pull-request integration
-refs receive a synthetic branch name. Deleted-ref events skip candidate inspection
+refs receive a synthetic branch name when supplied directly. The pull-request
+workflow passes the source branch name, preserving its published metadata too. Deleted-ref events skip candidate inspection
 because they publish no candidate object. No residue rule is relaxed.
 
 The generic scanner and the installed pre-push hook keep their existing
