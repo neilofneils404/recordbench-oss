@@ -1918,6 +1918,22 @@
   textarea?.addEventListener("input", resizeTextarea);
   resizeTextarea();
 
+  const reviewPane = document.querySelector(".workspace-main");
+  const reviewComposer = reviewPane?.querySelector(".composer-wrap");
+  if (reviewPane && reviewComposer) {
+    // Keep conversation navigation clear of the sticky composer as its text
+    // field, progress notices, or responsive rows change height.
+    const measureReviewComposer = () => {
+      reviewPane.style.setProperty("--review-composer-height", `${Math.ceil(reviewComposer.getBoundingClientRect().height)}px`);
+    };
+    measureReviewComposer();
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(measureReviewComposer).observe(reviewComposer);
+    } else {
+      window.addEventListener("resize", measureReviewComposer);
+    }
+  }
+
   const questionForm = document.querySelector("[data-question-form]");
   const answerWaitStatus = document.querySelector("[data-answer-wait-status]");
   const answerWaitTitle = document.querySelector("[data-answer-wait-title]");
