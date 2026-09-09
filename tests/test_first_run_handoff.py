@@ -350,7 +350,7 @@ def test_resume_and_update_preflight_uses_saved_coordinates_and_model_options(tm
         installer._replace_env(root / "compose.env", key, value)
     calls = []
 
-    def preflight(console, *, models, dry_run, args, needs_model_staging):
+    def preflight(console, *, models, dry_run, args, needs_model_staging, defer_gpu_free_check=False):
         assert args.root == root and args.storage_root == storage
         assert args.auth == "local" and models == args.models == "review"
         assert args.enable_account_management and args.resume
@@ -361,6 +361,7 @@ def test_resume_and_update_preflight_uses_saved_coordinates_and_model_options(tm
         assert args.review_model_profile == "quality" and args.generator_gpus == "7"
         assert args.generator_gpu_utilization == 0.72 and args.transcription_languages == "es"
         assert needs_model_staging is (command == "resume")
+        assert defer_gpu_free_check is (command == "update")
         calls.append("validated")
         return ()
 
