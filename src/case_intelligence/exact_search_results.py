@@ -333,6 +333,8 @@ def search_documents(
                 has_text = has_text or bool(tokenize_text(unit.text, budget_check=check_budget))
             if section_backed and len(units) != document.page_count:
                 raise ValueError('Incomplete derived section coverage')
+            if timed_media and (type(document.page_count) is not int or len(units) != document.page_count):
+                raise ValueError('Incomplete derived transcript coverage')
         except ExactSearchUnavailable:
             raise
         except UnitRecordLimit as exc:
