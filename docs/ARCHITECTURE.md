@@ -160,3 +160,14 @@ reopening quarantined source state. Failed-close Report problems have no edit UR
 and render as plain details with Close matter recovery guidance, because ordinary
 Report routes require an active matter. Download always prepares anew; a check creates
 no stored snapshot, archive, export receipt or authority for a future download.
+
+## Selected review and export improvements
+
+[Investigation budgets](INVESTIGATION_BUDGETS.md) unify retrieval and generation
+limits with saved accounting. [Report review basis](REPORT_REVIEW_BASIS.md)
+converts saved results atomically with validated citations and separate human
+review. [Exact-search grammar](EXACT_SEARCH.md) is an independent reference
+parser, not yet a staff search route. [Export readiness](EXPORT_READINESS.md)
+uses the same bounded preparation as the eventual download. The
+[selected acceptance record](SELECTED_ACCEPTANCE_2026-09-09.md) identifies the
+combined candidate and deferred feature stacks.

@@ -53,6 +53,12 @@ See the [public-alpha boundary](docs/PUBLIC_ALPHA.md) for scope and limitations.
 
 ## What you can explore today
 
+Saved investigations and source checks can become editable Reports retaining
+findings, gaps, source support, and human review. Investigations show their
+recorded work limits; **Check export** identifies saved Reports needing attention
+before a complete bundle download. See the [selected acceptance scope](docs/SELECTED_ACCEPTANCE_2026-09-09.md)
+for the component revisions and deferred contributions.
+
 | Workflow | Current capabilities |
 | --- | --- |
 | **Bring records together** | Review selected files and folders before transfer, retain every confirmed item and skipped reason in a durable selection receipt, then use resumable uploads, malware scanning, text extraction, and bounded OCR. |

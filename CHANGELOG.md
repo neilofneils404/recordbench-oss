@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-09: Assemble selected final-acceptance contributions: export readiness,
+  preserved Report review basis, explicit investigation accounting, exact-search
+  grammar/corpus, contributor briefs and isolated candidate-history validation.
+  Record the exact component heads and deferred work; no installer, account,
+  full-text, automatic compilation or proximity UI feature is included.
+
 - 2026-09-08: Add **Check export** to Work product and the final-export step.
   Reuse complete-bundle preparation, show inspection time and links to Reports
   needing attention, and validate again on download. Preserve saved work,

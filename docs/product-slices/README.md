@@ -23,7 +23,8 @@ they must not become the only place where product behavior is implemented.
 
 IDs identify work, not an obligation to execute everything in numeric order.
 
-Current implementation PRs (unmerged):
+Implementation PR inventory recorded September 8 (historical status; see
+[the September 9 selection](../SELECTED_ACCEPTANCE_2026-09-09.md) and live PR state):
 
 | PR | User outcome | Slices |
 | --- | --- | --- |
