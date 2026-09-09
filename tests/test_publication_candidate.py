@@ -70,3 +70,8 @@ def test_deleted_ref_events_skip_candidate_inspection():
     workflow = (ROOT / ".github/workflows/quality-gates.yml").read_text()
     scan = workflow.split("- name: Scan exact candidate tree and complete reachable history", 1)[1].split("- name:", 1)[0]
     assert "if: ${{ !github.event.deleted }}" in scan
+
+
+def test_pull_request_workflow_passes_actual_source_branch_metadata():
+    workflow = (ROOT / ".github/workflows/quality-gates.yml").read_text()
+    assert "PUBLICATION_REF: ${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}" in workflow
