@@ -542,7 +542,7 @@ def backup(args: argparse.Namespace) -> int:
     )
     if not (managed_storage / ".recordbench-managed-storage.json").is_file():
         raise BackupError("matter storage ownership marker is unavailable")
-    _same_filesystem((node, *sources.values()))
+    _same_filesystem((node, *(source for name, source in sources.items() if name != "accounts")))
     snapshot = Path(tempfile.mkdtemp(prefix=".recordbench-backup-snapshot-", dir=node))
     os.chmod(snapshot, 0o700)
     payload = snapshot / "payload"
@@ -573,7 +573,14 @@ def backup(args: argparse.Namespace) -> int:
         )
 
         for name, source in sources.items():
-            _copy_linked(source, payload / name)
+            if name == "accounts":
+                # The bounded account directory may live on another filesystem.
+                # Copy it during quiescence; preserve symlinks for the subsequent
+                # rejection rather than following them into another boundary.
+                _snapshot_files(source)
+                shutil.copytree(source, payload / name, symlinks=True)
+            else:
+                _copy_linked(source, payload / name)
         _copy_linked(managed_storage, storage_snapshot)
         control = payload / "control"
         control.mkdir()

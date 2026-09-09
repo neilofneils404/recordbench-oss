@@ -164,7 +164,7 @@ def node_factory(tmp_path, monkeypatch):
         node.close()
 
 
-def test_browser_accounts_are_in_snapshot_and_clean_restore(node_factory):
+def test_browser_accounts_are_in_snapshot_and_clean_restore(node_factory, monkeypatch):
     from case_intelligence.identity import LocalAccountSettings
     from case_intelligence.local_accounts import LocalAccountRepository
     node = node_factory()
@@ -176,6 +176,11 @@ def test_browser_accounts_are_in_snapshot_and_clean_restore(node_factory):
     with (node.node / "compose.env").open("a") as stream:
         stream.write(f"RECORDBENCH_LOCAL_ACCOUNT_ROOT={json.dumps(str(repository.path.parent))}\n")
     before = repository.path.read_bytes()
+    same_filesystem = backup._same_filesystem
+    def reject_account_hardlink_boundary(roots):
+        assert repository.path.parent not in roots
+        return same_filesystem(roots)
+    monkeypatch.setattr(backup, "_same_filesystem", reject_account_hardlink_boundary)
     assert node.backup() == 0
     assert (node.archive / "payload/accounts/local-accounts.json").read_bytes() == before
     assert node.restore() == 0

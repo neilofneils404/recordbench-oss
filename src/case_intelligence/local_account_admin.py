@@ -157,7 +157,10 @@ def register_local_account_routes(app, *, identity, bench, templates, auth_conte
             completion_problem = True
         if is_self and action in {"password", "state", "role"}:
             # Do not render another privileged page using the pre-change context.
-            response = RedirectResponse("/auth/login?" + urlencode({"error": "Your account changed. Sign in again to continue."}), status_code=303)
+            message = "Your account changed. Sign in again to continue."
+            if completion_problem:
+                message += " Audit completion needs operator attention; tell the installation operator."
+            response = RedirectResponse("/auth/login?" + urlencode({"error": message}), status_code=303)
             response.delete_cookie(SESSION_COOKIE, path="/")
             return response
         notices = {"create": "Account created. Share the sign-in address and password privately. Have this person sign in once, then add them from the matter’s Case team page.",
