@@ -1680,15 +1680,23 @@ def test_speaker_review_save_updates_every_passage_without_navigation(tmp_path):
             headers={"Accept": "application/json"},
         )
         assert saved.status_code == 200
-        assert saved.json() == {
+        payload = saved.json()
+        # A fast background worker may finish before the JSON response. Check
+        # the eventual refreshed content rather than requiring a transient state.
+        assert isinstance(payload.pop("overview_refreshing"), bool)
+        assert payload == {
             "speaker_cluster": "SPEAKER_00",
             "display_name": "Reviewer supplied label",
             "identity_state": "confirmed",
             "revision": 1,
             "segment_count": 2,
             "message": "Speaker label saved across this transcript.",
-            "overview_refreshing": True,
         }
+        refreshed = _wait_for_summary(bench, matter, document, "ready")
+        current_segments = bench.workspace.transcript_segments(
+            matter.matter_id, document.document_id, document.version_id
+        )
+        assert refreshed.basis_digest == transcript_summary_basis(current_segments)
         matching = [
             item
             for item in bench.workspace.transcript_segments(
