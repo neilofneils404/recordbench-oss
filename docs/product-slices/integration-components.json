@@ -22,7 +22,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/search-cleanup-20260909",
-      "headRefOid": "553b4df76aa8e88e26a68220eb5bf7376102c3e2",
+      "headRefOid": "ab55c2ab457b8dbf6d57968c687e3b80783fdf47",
       "number": 53,
       "title": "Restore complete source search and proximity evidence",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/53"

@@ -198,3 +198,10 @@ allowance across those conditions, including both ends of long proximity spans.
 Ellipses mark omitted text. This remains a bounded reference scan, not an indexed
 or persisted search receipt; all existing coverage exclusions and fingerprint
 checks apply.
+
+Empty media projections with a retained nonzero segment count invalidate the scan,
+even when no timestamped record remains. Nonempty stored excerpt digests must
+match the decoded text before matching; altered projections cannot supply new
+evidence or hide the original text behind an exact total. Legacy units without
+an excerpt digest remain readable. Synthetic regressions truncate a production
+transcript to an empty array and alter text while retaining its stored digest.
