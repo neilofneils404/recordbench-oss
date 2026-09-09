@@ -342,6 +342,15 @@ def search_documents(
             if document.media_type == "text/plain" and (document.units_file or document.page_count or document.total_units or document.completed_units):
                 if type(document.page_count) is not int or document.page_count < 1:
                     raise ValueError('Invalid TXT line count')
+                previous_line_end = 0
+                for unit in units:
+                    start, end = unit.line_start, unit.line_end
+                    if (type(start) is not int or type(end) is not int
+                            or start <= previous_line_end or start > document.page_count
+                            or (start - 1) % TEXT_LINES_PER_CHUNK != 0
+                            or end != min(start + TEXT_LINES_PER_CHUNK - 1, document.page_count)):
+                        raise ValueError('Invalid TXT chunk line range')
+                    previous_line_end = end
                 maximum_chunks = math.ceil(document.page_count / TEXT_LINES_PER_CHUNK)
                 count = document.total_units
                 if (type(count) is not int or count < 0
