@@ -216,6 +216,49 @@ def test_missing_reader_never_becomes_an_empty_source_exclusion():
         scan([document(1, 'red'), source])
 
 
+@pytest.mark.parametrize('index,changes', [
+    (0, {'number': 99}),
+    (0, {'start_ms': 2000, 'end_ms': 1000}),
+    (0, {'end_ms': 1000}),
+    (1, {'start_ms': 500}),
+    (1, {'end_ms': 7001}),
+    (0, {'start_ms': None}),
+    (0, {'end_ms': None}),
+    (1, {'start_ms': None, 'end_ms': None}),
+])
+def test_corrupt_file_backed_media_relationships_are_unavailable(tmp_path, index, changes):
+    source, path = _file_backed_source(tmp_path, ['red bicycle', 'red depot'])
+    source.media_type, source.duration_ms = 'audio/wav', 5000
+    payload = json.loads(path.read_text())
+    for unit, start in zip(payload['units'], (1000, 2000)):
+        unit.update(start_ms=start, end_ms=start + 1000)
+    path.write_text(json.dumps(payload))
+    assert scan([source]).total == 1
+    payload['units'][index].update(changes)
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([document(1, 'red'), source])
+
+
+def test_media_validation_preserves_untimed_legacy_units_and_pdf_page_numbers():
+    legacy = document(1, 'red bicycle')
+    legacy.media_type = 'audio/wav'
+    legacy.units[0]['number'] = 5
+    result = scan([legacy])
+    assert result.total == 1 and result.items[0].previews[0]['start_ms'] is None
+    pdf = document(2, 'red on page two', 'red on page one')
+    pdf.media_type, pdf.page_count = 'application/pdf', 2
+    pdf.units[0]['number'], pdf.units[1]['number'] = 2, 1
+    assert scan([pdf]).total == 1
+    timed = document(3, 'red bicycle', 'red depot')
+    timed.media_type, timed.duration_ms = 'audio/wav', 5000
+    timed.units[0].update(start_ms=1000, end_ms=2000)
+    # Equal starts and overlapping segments remain valid; the producer permits
+    # an endpoint up to and including its two-second duration allowance.
+    timed.units[1].update(start_ms=1000, end_ms=7000)
+    assert scan([timed]).total == 1
+
+
 def test_corrupt_locator_route_returns_unavailable_instead_of_server_error(tmp_path):
     app = create_workbench_app(tmp_path / 'runtime', auth_mode='test')
     with TestClient(app) as client:
@@ -523,6 +566,7 @@ def test_media_timestamp_links_and_partial_page_warning_are_visible(tmp_path):
         matter = bench.matter(slug, "development-taylor-morgan")
         media = document(1, "opening", "red bicycle appears at this moment")
         media.media_type = "audio/wav"
+        media.duration_ms = 46000
         segments = [SimpleNamespace(start_ms=start, end_ms=start + 1000,
             current_text=text, speaker_cluster="speaker-1", speaker_display_name="",
             speaker_identity_state="unconfirmed") for start, text in

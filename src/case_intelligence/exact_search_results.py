@@ -16,7 +16,7 @@ from typing import Iterable, Protocol
 
 from .exact_search import And, Literal, Not, Or, ParsedQuery, Proximity, match_positionals, matching_spans, parse_query, tokenize_text
 from .media_evidence import format_timestamp
-from .pilot_uploads import PilotDocument, PilotStore, PilotUnit
+from .pilot_uploads import PilotDocument, PilotStore, PilotUnit, is_media_type
 from .unit_stream import UnitRecordLimit
 
 
@@ -143,6 +143,16 @@ def _validate_unit(unit: PilotUnit) -> None:
                            (unit.start_ms, 0), (unit.end_ms, 0)):
         if value is not None and (type(value) is not int or value < minimum):
             raise ValueError('Invalid derived unit locator')
+
+
+def _validate_media_locator(document: PilotDocument, unit: PilotUnit,
+                            ordinal: int, previous_start: int) -> None:
+    """Match the locator relationships required by install_media_transcript."""
+    if (type(document.duration_ms) is not int or document.duration_ms < 0
+            or unit.number != ordinal or unit.start_ms is None or unit.end_ms is None
+            or unit.start_ms < previous_start or unit.end_ms <= unit.start_ms
+            or unit.end_ms > document.duration_ms + 2000):
+        raise ValueError('Invalid transcript locator relationships')
 
 
 def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600, *, budget_check=None) -> dict[str, object]:
@@ -286,13 +296,23 @@ def search_documents(
             continue
         # A source loader failure invalidates the scan instead of reporting zero.
         units, has_text = [], False
+        media, timed_media, previous_start = is_media_type(document.media_type), None, -1
         try:
             if document.media_type == 'application/pdf' and (
                     type(document.page_count) is not int or document.page_count < 0):
                 raise ValueError('Invalid derived page count')
-            for unit in document.iter_parsed_units(budget_check=check_budget,
-                    read_check=charge_read, max_record_chars=max_record_chars):
+            for ordinal, unit in enumerate(document.iter_parsed_units(budget_check=check_budget,
+                    read_check=charge_read, max_record_chars=max_record_chars), 1):
                 _validate_unit(unit)
+                if media:
+                    has_timestamps = unit.start_ms is not None or unit.end_ms is not None
+                    if timed_media is None:
+                        timed_media = has_timestamps
+                    elif timed_media != has_timestamps:
+                        raise ValueError('Mixed timed and untimed transcript locators')
+                    if timed_media:
+                        _validate_media_locator(document, unit, ordinal, previous_start)
+                        previous_start = unit.start_ms
                 characters += len(unit.text)
                 check_budget()
                 # Retain only admitted text. A later unit or malformed tail
