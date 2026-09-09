@@ -164,6 +164,26 @@ def node_factory(tmp_path, monkeypatch):
         node.close()
 
 
+def test_browser_accounts_are_in_snapshot_and_clean_restore(node_factory):
+    from case_intelligence.identity import LocalAccountSettings
+    from case_intelligence.local_accounts import LocalAccountRepository
+    node = node_factory()
+    repository = LocalAccountRepository(node.node / "accounts/local-accounts.json")
+    repository.initialize("synthetic.admin", "Synthetic Administrator", "synthetic-backup-password", actor="synthetic-operator")
+    record = json.loads((node.node / "installation.json").read_text())
+    record["local_account_management"] = True
+    _private_json(node.node / "installation.json", record)
+    with (node.node / "compose.env").open("a") as stream:
+        stream.write(f"RECORDBENCH_LOCAL_ACCOUNT_ROOT={json.dumps(str(repository.path.parent))}\n")
+    before = repository.path.read_bytes()
+    assert node.backup() == 0
+    assert (node.archive / "payload/accounts/local-accounts.json").read_bytes() == before
+    assert node.restore() == 0
+    restored = node.root / "restored/payload/accounts/local-accounts.json"
+    settings = LocalAccountSettings(restored, management_root=restored.parent)
+    assert settings.authenticate("synthetic.admin", "synthetic-backup-password") is not None
+
+
 def test_managed_registry_is_frozen_before_restart(node_factory):
     node = node_factory()
     assert node.backup() == 0

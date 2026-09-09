@@ -98,4 +98,9 @@ lock serializes fresh reads, last-enabled-administrator validation and atomic
 replacement. Every local session resolution reads current account state and
 checks its revision binding; password, enabled-state and role changes invalidate
 previous sessions without requiring a process restart. Version 1 migration
-requires an explicit verified backup, and no browser mutation endpoint is added.
+requires an explicit verified backup. The optional
+[browser account profile](LOCAL_ACCOUNT_BROWSER.md) grants writes only to the
+dedicated canonical account directory. Browser mutations require CSRF and fresh
+administrator session validation under the account lock, enforce keyed edit
+preconditions, and audit the actor before replacement. Existing secrets remain
+read-only; provider authentication and trusted-proxy boundaries are unchanged.

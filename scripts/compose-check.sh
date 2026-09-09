@@ -11,6 +11,7 @@ trap cleanup EXIT
 install -d -m 0700 \
   "$scratch/config" \
   "$scratch/secrets" \
+  "$scratch/accounts" \
   "$scratch/runtime" \
   "$scratch/matter-storage" \
   "$scratch/transcription" \
@@ -48,3 +49,12 @@ docker compose \
   config --quiet
 
 printf 'Standard and Kerberos Compose graphs are valid.\n'
+
+RECORDBENCH_LOCAL_ACCOUNT_ROOT="$scratch/accounts" \
+docker compose \
+  --env-file "$project_root/.env.example" \
+  -f "$project_root/compose.yaml" \
+  -f "$project_root/compose.local-accounts.yaml" \
+  config --quiet
+
+printf 'Dedicated local-account Compose graph is valid.\n'

@@ -13,6 +13,40 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import recordbench_install as installer  # noqa: E402
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_account_management_configuration_and_update_overlay(tmp_path, enabled):
+    args = installer._parser().parse_args(["install", "--auth", "local", "--models", "none", "--non-interactive"] + (["--enable-account-management"] if enabled else []))
+    console = installer.Console(color=False)
+    paths = installer._prepare_directories(console, tmp_path / "node", storage_root=None, resume=False, dry_run=False)
+    root = tmp_path / "node"
+    cert, key = paths["tls"] / "synthetic.crt", paths["tls"] / "synthetic.key"
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic private key")
+    args.tls_cert, args.tls_key = cert, key
+    installer._configure(console, args, root, paths, "synthetic-release", ROOT, ())
+    application = (paths["config"] / "recordbench.env").read_text()
+    record = json.loads((root / "installation.json").read_text())
+    assert record["local_account_management"] is enabled
+    if enabled:
+        assert "/var/lib/recordbench-accounts/local-accounts.json" in application
+        assert "CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT" in application
+    else:
+        assert "/run/recordbench-secrets/local-accounts.json" in application
+        assert "CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT" not in application
+    for release in (None, ROOT):
+        command = installer._compose(root, (), release=release)
+        assert (str(ROOT / "compose.local-accounts.yaml") in command) is enabled
+
+
+@pytest.mark.parametrize("arguments", [["install", "--auth", "oidc"], ["resume", "--auth", "local"], ["install"]])
+def test_management_flag_rejects_ambiguous_or_existing_node_before_writes(tmp_path, arguments):
+    root = tmp_path / "node"
+    response = subprocess.run([sys.executable, str(ROOT / "scripts/recordbench_install.py"), *arguments,
+                               "--root", str(root), "--enable-account-management"], capture_output=True, text=True)
+    assert response.returncode != 0
+    assert not root.exists()
+
+
 def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path) -> None:
     node = tmp_path / "node"
     result = subprocess.run(

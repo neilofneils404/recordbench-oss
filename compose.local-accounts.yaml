@@ -1,0 +1,12 @@
+# Explicit local-account profile: only the canonical account directory is writable.
+services:
+  app:
+    volumes:
+      - type: bind
+        source: ${RECORDBENCH_LOCAL_ACCOUNT_ROOT:?set the dedicated owner-only account directory}
+        target: /var/lib/recordbench-accounts
+  account-admin:
+    volumes:
+      - type: bind
+        source: ${RECORDBENCH_LOCAL_ACCOUNT_ROOT:?set the dedicated owner-only account directory}
+        target: /var/lib/recordbench-accounts

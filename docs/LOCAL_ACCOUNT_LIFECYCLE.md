@@ -1,25 +1,27 @@
 # Local account lifecycle
 
 Local-account changes use one owner-authorized repository shared by the operator
-CLI and future authenticated handlers. This release adds the persistence and
-session foundation; browser account editing is a separate product step.
+CLI and authenticated browser handlers. See [Browser account management](LOCAL_ACCOUNT_BROWSER.md)
+for the optional dedicated account-directory profile and first-use People flow.
 
 ## Persistence and authority
 
-Keep `local-accounts.json` in the existing secrets directory, owned by the
+By default, keep `local-accounts.json` in the existing secrets directory, owned by the
 application service account with mode `0600`. Its directory must belong to that
 account and cannot be writable by other users. Use a local POSIX filesystem
 with reliable advisory locks, atomic rename and durable file/directory sync.
 The web application's secrets mount remains read-only. Only the operator's
-existing tools container can mutate accounts. No web route, write mount, proxy
-exception, default account or authentication bypass is introduced.
+existing tools container can mutate accounts. The optional browser profile
+explicitly relocates that same canonical file into a dedicated writable account
+directory; the original secrets mount remains read-only. It adds no proxy
+exception, default account or authentication bypass.
 
 `LocalAccountRepository` provides initialize, create, display-name change,
 password change, enable/disable and administrator-role change operations.
 The caller supplies an action attribution; the CLI identifies its effective
 service-account UID and prints a content-minimized completion receipt. Receipts
 contain action, account name and actor, never passwords, hashes or session
-revisions. A future browser caller must first authorize an administrator,
+revisions. The browser caller must first authorize an administrator,
 validate CSRF and record its authenticated principal in the existing audit
 system. Possessing a repository object does not supply that authorization.
 
