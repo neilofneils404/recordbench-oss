@@ -70,11 +70,13 @@ start containers, or change permissions:
 ./install preflight --root /srv/recordbench --models review --json
 ```
 
-Supply the same `--storage-root`, `--bind-address`, TLS, model and GPU-selection
-options you intend to use for installation. Quote paths containing spaces.
+Supply the same `--storage-root`, `--server-name`, `--bind-address`, TLS, model
+and GPU-selection options you intend to use for installation. Quote paths
+containing spaces.
 Omitted options select `/srv/recordbench`, storage beneath it, CPU evaluation,
-and loopback HTTPS. `none` enables intake, extraction, OCR, word search, direct
-source review and exports. `review` adds learned search and cited generated
+and loopback HTTPS. Interactive installation collects the hostname before running
+these checks, so invalid answers also stop before creating node state. `none`
+enables intake, extraction, OCR, word search, direct source review and exports. `review` adds learned search and cited generated
 answers; `transcription` adds recording transcription; `all` selects both AI
 workflows. CPU evaluation does not require NVIDIA hardware.
 
@@ -227,7 +229,11 @@ retained for deliberate operator cleanup; the updater never prunes them.
 
 Storage preflight requires the nearest existing creation directory to belong to
 the service account and deny group/other writes. Every parent must belong to
-root or that service account and prevent replacement of its child. A trusted
+root or that service account and prevent replacement of its child. The service
+account also needs read and search access to the existing creation directory and
+every ancestor, matching the portable descriptor walk used during preparation.
+Execute-only ancestors are rejected by preflight; select an accessible dedicated
+path or arrange the required service-account access before retrying. A trusted
 sticky system directory may contain an existing private service-owned directory;
 it is never accepted as the creation directory itself. Root-owned protected
 parents such as `/srv` are supported when the operator first creates the

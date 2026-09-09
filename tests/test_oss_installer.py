@@ -975,3 +975,82 @@ def test_preflight_json_reports_real_host_blockers_without_creating_state(tmp_pa
     assert all(row["remedy"] for row in payload["checks"] if row["blocking"] and row["state"] != "pass")
     assert not root.exists()
     assert list(parent.iterdir()) == []
+
+
+def test_interactive_invalid_hostname_blocks_before_storage_and_release(tmp_path, ready_host, monkeypatch):
+    node = tmp_path.resolve() / "uncreated node"
+    prompts = []
+
+    def ask(prompt, default, *, non_interactive):
+        prompts.append(prompt)
+        return "bad_name" if prompt == "RecordBench hostname" else default
+
+    monkeypatch.setattr(installer, "_ask", ask)
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **kw: pytest.fail("invalid interactive hostname reached storage creation"))
+    monkeypatch.setattr(installer, "_stage_release", lambda *a, **kw: pytest.fail("invalid interactive hostname reached release staging"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none", "--auth", "local"])
+    assert installer.main() == 1
+    assert prompts.count("RecordBench hostname") == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("storage", [False, True])
+def test_preflight_rejects_execute_only_ancestor_before_preparing_storage(tmp_path, ready_host, monkeypatch, storage):
+    base = tmp_path.resolve()
+    protected = base / "execute-only-parent"
+    protected.mkdir(mode=0o711)
+    creation = protected / "service-owned"
+    creation.mkdir(mode=0o700)
+    original_stat, original_access = Path.stat, os.access
+
+    def synthetic_root_owner(path, *args, **kwargs):
+        metadata = original_stat(path, *args, **kwargs)
+        if path == protected:
+            fields = list(metadata)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return metadata
+
+    def service_access(path, mode, *args, **kwargs):
+        if Path(path) == protected:
+            return not bool(mode & (os.R_OK | os.W_OK))
+        return original_access(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", synthetic_root_owner)
+    monkeypatch.setattr(os, "access", service_access)
+    args = preflight_args(tmp_path)
+    selected = creation / "uncreated"
+    if storage:
+        args.storage_root = selected
+    else:
+        args.root = selected
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    check = checks_by_name(result)["matter-storage" if storage else "node-storage"]
+    assert check.state == "fail" and check.remedy
+    assert not selected.exists()
+    assert list(creation.iterdir()) == []
+    monkeypatch.setattr(os, "access", original_access)
+    assert installer._collect_preflight("none", args).ready
+    assert not selected.exists()
+
+
+def test_interactive_hostname_is_collected_once_and_used_by_configuration(tmp_path, ready_host, monkeypatch):
+    node = tmp_path.resolve() / "uncreated node"
+    prompts = []
+    original_configure = installer._configure
+
+    def ask(prompt, default, *, non_interactive):
+        prompts.append(prompt)
+        return "synthetic-node.example.test" if prompt == "RecordBench hostname" else default
+
+    def configure(console, args, *positional, **kwargs):
+        assert args.server_name == "synthetic-node.example.test"
+        return original_configure(console, args, *positional, **kwargs)
+
+    monkeypatch.setattr(installer, "_ask", ask)
+    monkeypatch.setattr(installer, "_configure", configure)
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none", "--auth", "local", "--dry-run"])
+    assert installer.main() == 0
+    assert prompts.count("RecordBench hostname") == 1
+    assert not node.exists()

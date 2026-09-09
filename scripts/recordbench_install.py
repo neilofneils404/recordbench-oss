@@ -981,10 +981,16 @@ def _probe(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
 def _storage_ancestors_safe(ancestor: Path) -> bool:
     """Require a private creation point and a non-replaceable parent chain."""
     uid = os.geteuid()
+    # The portable no-follow descriptor walk opens directories read-only, so
+    # check its read/search requirements before reporting a usable path.
+    if not os.access(ancestor, os.R_OK | os.X_OK):
+        return False
     creation = ancestor.stat()
     if not stat.S_ISDIR(creation.st_mode) or creation.st_uid != uid or creation.st_mode & 0o022:
         return False
     for parent in ancestor.parents:
+        if not os.access(parent, os.R_OK | os.X_OK):
+            return False
         metadata = parent.stat()
         if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid not in {0, uid}:
             return False
@@ -1078,7 +1084,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
                         "Choose a new empty node directory. Use --resume only when this directory belongs to the RecordBench node being resumed.")
                 add(name, writable, "Directory access checks pass (no write attempted)" if writable else "Unsafe path, ownership, or directory access",
                     "Create private application state" if name == "node-storage" else "Store and process admitted sources",
-                    "Choose a dedicated absolute directory without symlinks, owned by the service account. Use an existing service-owned creation directory without group or other write access, beneath root-owned or service-owned protected parents; do not use a home directory or shared export root.")
+                    "Choose a dedicated absolute directory without symlinks, owned by the service account. Use an existing service-owned creation directory without group or other write access, beneath root-owned or service-owned protected parents. The service account needs read and search access to every ancestor; do not use a home directory or shared export root.")
                 free = shutil.disk_usage(ancestor).free / (1024 ** 3) if safe else None
                 add(name + "-reserve", free is not None and free > 100,
                     f"{free:.1f} GiB free" if free is not None else "Capacity could not be checked safely",
@@ -2256,6 +2262,10 @@ def main() -> int:
             )
         if args.bind_address is None and not args.non_interactive:
             args.bind_address = _ask("HTTPS bind address", "127.0.0.1", non_interactive=False)
+        if not args.server_name:
+            args.server_name = _ask(
+                "RecordBench hostname", "recordbench.example.test", non_interactive=args.non_interactive
+            )
         args.root = args.root.expanduser().absolute()
         # Resolve storage, TLS and the complete hardware plan before creating
         # state. Dry-run discovery uses the same read-only prerequisite checks.
