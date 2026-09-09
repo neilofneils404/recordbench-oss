@@ -65,8 +65,9 @@ environment. Do not perform this through an HTTP request.
 
    Run on the host in the reviewed operator environment, or explicitly mount
    these directories into the account tool. The destination directory must be
-   empty and `0700`. The command saves and verifies an exact `0600` recovery
-   copy, writes and syncs the new file, rotates account session revisions, then
+   empty and `0700`. The command saves and verifies a `0600` recovery copy
+   preserving account details with fresh session revisions, writes and syncs
+   the new file with independently rotated session revisions, then
    removes and syncs the old canonical file. If interrupted after writing the
    destination, keep writers stopped and inspect both paths before resuming.
 4. Set `RECORDBENCH_LOCAL_ACCOUNT_ROOT=/srv/recordbench/accounts` in `compose.env`.
@@ -89,14 +90,19 @@ Restore its canonical file to a new owner-controlled `0700` directory with mode
 `0600`, enable the matching profile and configuration, and verify synthetic
 administrator sign-in, account mutation and matter authorization. A synthetic
 clean restore regression checks that the verified relocation recovery copy is
-readable and authenticates the same account; an installed-node recovery drill
+readable and authenticates the same account. A rollback regression reuses the
+original workspace database and signing key, restores without intervening
+session requests, and confirms that both pre-move and destination cookies are
+denied while fresh password sign-in succeeds; an installed-node recovery drill
 remains an operator acceptance requirement.
 
 To roll back the layout, stop all writers and the application. Retain a protected
 copy of the latest canonical accounts, restore the pre-relocation recovery file
 at the old secrets path with owner-only permissions, remove the management-root
 setting and overlay, set `local_account_management` to `false`, and restore the
-previous account-file setting. Restart the compatible release and verify access.
+previous account-file setting. Restart the compatible release and sign in again.
+The relocation recovery copy has independent session revisions, so it does not
+restore access to cookies issued before the move or at the destination.
 Changes after the recovery copy are absent and must be reconciled deliberately.
 Never run writers against both locations or copy lock files into a live node.
 

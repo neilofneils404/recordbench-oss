@@ -139,6 +139,25 @@ def test_password_validation_never_echoes_input(tmp_path, password):
         assert "invalid.user" not in repo.read()
 
 
+@pytest.mark.parametrize("display_name", ["Synthetic\u202eReviewer", "Synthetic\x7fReviewer"])
+@pytest.mark.parametrize("operation", ["create", "rename"])
+def test_browser_rejects_unsupported_display_names_before_writing(tmp_path, display_name, operation):
+    app, repo = configured_app(tmp_path)
+    with TestClient(app, base_url=ORIGIN) as admin:
+        login(admin)
+        before = repo.path.read_bytes()
+        if operation == "create":
+            response = admin.post("/admin/people/create", data={"csrf_token": csrf(admin),
+                "username": "new.reviewer", "display_name": display_name, "password": PASSWORD,
+                "password_confirm": PASSWORD, "role": "reviewer"}, follow_redirects=False)
+        else:
+            response = edit(admin, "alice.admin", "name", display_name=display_name)
+        assert response.status_code == 400
+        assert "Display name" in response.text
+        assert repo.path.read_bytes() == before
+        assert admin.get("/admin/people").status_code == 200
+
+
 @pytest.mark.parametrize("damage", ["extra-secret", "permissions", "symlink", "legacy"])
 def test_management_boundary_rejects_unsafe_or_legacy_layout(tmp_path, damage):
     app, repo = configured_app(tmp_path)
@@ -170,7 +189,7 @@ def test_relocation_has_verified_clean_restore_and_one_canonical_file(tmp_path):
         repo.relocate(destination, backup, actor="synthetic-operator")
     assert repo.path.read_bytes() == before
     repo.relocate(destination, backup, actor="synthetic-operator", writers_stopped=True)
-    assert not repo.path.exists() and backup.read_bytes() == before
+    assert not repo.path.exists() and backup.read_bytes() != before
     moved = LocalAccountSettings(destination, management_root=destination.parent)
     restore = tmp_path / "clean-restore" / "local-accounts.json"
     restore.parent.mkdir(mode=0o700)
