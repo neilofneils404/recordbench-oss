@@ -126,6 +126,9 @@ class ParsedQuery:
         }
 
     def matches_units(self, units: Iterable[str], *, budget_check: Callable[[], None] | None = None) -> bool:
+        return self.explain_units(units, budget_check=budget_check) is not None
+
+    def explain_units(self, units: Iterable[str], *, budget_check: Callable[[], None] | None = None) -> tuple[Literal, ...] | None:
         """Reference matching for one eligible, already-authorized document.
 
         AND/OR/NOT apply to the entire document. Positive term/phrase occurrences
@@ -169,15 +172,28 @@ class ParsedQuery:
                 if matched:
                     found.add(literal)
 
-        def evaluate(node: Expression) -> bool:
+        def witness(node: Expression, desired: bool = True) -> tuple[Literal, ...] | None:
             if isinstance(node, Literal):
-                return node in found
+                return ((node,) if desired else ()) if (node in found) == desired else None
             if isinstance(node, Not):
-                return not evaluate(node.operand)
-            values = (evaluate(child) for child in node.operands)
-            return all(values) if isinstance(node, And) else any(values)
+                return witness(node.operand, not desired)
+            # An AND is true only through every child; an OR is false only
+            # through every child. The opposite cases need one satisfied branch.
+            require_all = isinstance(node, And) == desired
+            selected = []
+            for child in node.operands:
+                proof = witness(child, desired)
+                if proof is None:
+                    if require_all:
+                        return None
+                elif not require_all:
+                    return proof
+                else:
+                    selected.extend(proof)
+            return tuple(dict.fromkeys(selected)) if require_all else None
 
-        return has_text and evaluate(self.expression)
+        return witness(self.expression) if has_text else None
+
 
 
 @dataclass(frozen=True)

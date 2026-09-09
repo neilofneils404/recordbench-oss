@@ -22,7 +22,12 @@ The route authorizes the matter before reading its population. Collection and
 source-set filters intersect, including an empty intersection. Unknown and
 foreign scopes fail closed. Matching and counting use only this scoped
 population. Ready sources with searchable text are eligible; not-ready and
-empty-text sources appear as separate exclusion counts. A source load failure
+empty-text sources appear as separate exclusion counts. PDFs with missing or
+unverified page coverage are excluded entirely, including for negation queries,
+and a visible warning says their incomplete pages were left out. Exact counts
+apply only to the eligible fully covered extracted population. A blank extracted
+page cannot be distinguished from a page needing OCR by this stored metadata;
+the exclusion is deliberately conservative. A source load failure
 invalidates the scan rather than becoming a nonmatch.
 
 AND, OR, and NOT apply across all extracted units of one document. For example,
@@ -34,13 +39,17 @@ normalization, punctuation, limits, and unsupported syntax.
 Totals count documents after the whole population is evaluated. Sorting uses
 case-folded source name and document ID; pages contain 25, 50, or 100 documents.
 More than 100 matches remain browsable. Up to three units containing positive
-query terms explain each result, with visibly shortened text previews. These
+query terms from a satisfied Boolean proof explain each result, with visibly
+shortened text previews. One supporting unit per positive part of that proof
+is preferred before filling the display cap; a failed OR branch does not
+supply misleading highlights. These
 preview limits never limit matching or document membership. Phrase previews
 anchor on complete consecutive-token phrase occurrences, preserving original
 Unicode text. Page links use the position in the extracted-unit sequence, so
 unreadable PDF pages do not shift the linked match. Negation-only
 matches explain that the requested terms were absent. Source links use the
-current version's existing source-review token.
+current version's existing source-review token. Transcript links carry the
+matching timestamp and segment anchor instead of a text-unit page parameter.
 
 Pagination links carry a fingerprint of the grammar, original/parsed query,
 matter and selected scopes, source membership, names, states, versions, and
@@ -60,7 +69,9 @@ membership to PostgreSQL web-search syntax or a top-k candidate list.
 `ExactScanPolicy` is injectable product policy, independent of development-host
 hardware. Defaults are 10,000 scoped documents, 10 million extracted characters,
 and a five-second cooperative processing deadline. Deadline checks run between
-sources, within tokenization, and within phrase evaluation. Exhaustion produces
+sources, within tokenization, within phrase evaluation, and through preview
+generation for the displayed page. Previews are built inside the backend before
+the result is returned; budget exhaustion there also suppresses the entire result. Exhaustion produces
 HTTP 503 with **no exact total or partial results** and guidance to select a
 smaller scope. The time budget is cooperative: source-file I/O, JSON loading,
 Unicode normalization, and lock acquisition are not preempted. This is not a
@@ -92,7 +103,9 @@ canaries, source mutations, and budget/read failures. The route test forbids
 calling the ranked retriever. Plain-form tests cover literal operator words,
 include/phrase/exclude combinations, filter intersections, retained pagination
 inputs, empty-input guidance, original-text previews, skipped-page links,
-late phrase matches after isolated words, and button-free advanced submissions. Browser checks cover
+late phrase matches after isolated words, button-free advanced submissions,
+transcript timestamps, conservative partial-PDF coverage, satisfied-branch
+explanations, and a preview-stage deadline regression. Browser checks cover
 the first-use form, a successful search, no-result guidance, keyboard submission
 with visible focus, and a 390-pixel viewport without horizontal overflow.
 The shared grammar's truth tables remain required.

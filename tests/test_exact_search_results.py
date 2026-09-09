@@ -306,3 +306,83 @@ def test_advanced_form_keyboard_submission_has_its_own_explicit_mode(tmp_path):
         result = client.get(expression["action"], params=params)
         assert result.status_code == 200 and "1 source found" in result.text
         assert "words" not in params and params["advanced"] == "1"
+
+
+def test_boolean_preview_uses_only_a_satisfied_branch_even_after_many_false_starts():
+    source = document(1, "red", "red again", "red once more", "green explains this match")
+    result = scan([source], "(red AND bicycle) OR green")
+    assert result.total == 1 and result.items[0].matching_unit_count == 1
+    assert result.items[0].passage_positions == (4,)
+    assert result.items[0].previews[0]["pieces"][1] == ("green", True)
+    source = document(2, "red isolated. " + "neutral " * 120 + "green")
+    preview = scan([source], "(red AND bicycle) OR green").items[0].previews[0]
+    assert "isolated" not in "".join(text for text, _ in preview["pieces"])
+    assert ("green", True) in preview["pieces"]
+
+
+def test_partial_pdf_coverage_is_excluded_including_negation_and_invalidates_old_pages():
+    partial = document(1, "red")
+    partial.media_type, partial.page_count = "application/pdf", 2
+    partial.message = "1 of 2 pages ready and searchable; 1 page needs OCR"
+    complete = document(2, "red", "neutral")
+    complete.media_type, complete.page_count = "application/pdf", 2
+    for query in ("red", "red NOT blue", "NOT blue"):
+        result = scan([partial, complete], query)
+        assert result.total == result.eligible == 1 and result.population == 2
+        assert result.exclusions == {"Incomplete page coverage": 1}
+        assert result.items[0].document_id == complete.document_id
+    previous = scan([complete])
+    complete.page_count = 3
+    with pytest.raises(ExactSearchChanged):
+        scan([complete], expected_fingerprint=previous.fingerprint)
+    complete.page_count = 0
+    assert scan([complete]).exclusions == {"Incomplete page coverage": 1}
+
+
+def test_preview_work_consumes_the_same_search_deadline(monkeypatch):
+    import case_intelligence.exact_search_results as module
+    original_preview = module.passage_preview
+    clock = {"preview": False, "checks": 0}
+    def monotonic():
+        if clock["preview"]:
+            clock["checks"] += 1
+            return clock["checks"] * .25
+        return 0
+    def preview(*args, **kwargs):
+        clock["preview"] = True
+        return original_preview(*args, **kwargs)
+    monkeypatch.setattr(module.time, "monotonic", monotonic)
+    monkeypatch.setattr(module, "passage_preview", preview)
+    source = document(1, "term0 " + "neutral " * 20000)
+    query = " OR ".join(f"term{index}" for index in range(40))
+    with pytest.raises(ExactSearchUnavailable, match="No exact total or partial results"):
+        scan([source], query, max_seconds=1)
+    assert clock["preview"] and clock["checks"] == 5
+
+
+def test_media_timestamp_links_and_partial_page_warning_are_visible(tmp_path):
+    app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
+    with TestClient(app) as client:
+        response = client.post("/matters", data={"name": "Synthetic transcript locator", "descriptor": ""}, follow_redirects=False)
+        slug = response.headers["location"].split("/")[2]
+        bench = app.state.workbench
+        matter = bench.matter(slug, "development-taylor-morgan")
+        media = document(1, "opening", "red bicycle appears at this moment")
+        media.media_type = "audio/wav"
+        media.units[0].update(start_ms=0, end_ms=1000, location_label="0:00–0:01")
+        media.units[1].update(start_ms=45000, end_ms=46000, location_label="0:45–0:46")
+        partial = document(2, "red")
+        partial.media_type, partial.page_count = "application/pdf", 2
+        bench.source_store(matter).documents.update({item.document_id: item for item in (media, partial)})
+        result = client.get(f"/matters/{slug}/exact-search", params={"words": "red"})
+        assert result.status_code == 200 and "1 source found" in result.text
+        assert "have incomplete page coverage and were left out" in result.text
+        match = re.search(r'<a class="find-location" href="([^"]+)">', result.text)
+        assert match and match.group(1).endswith("?start_ms=45000#segment-2")
+
+
+def test_boolean_preview_diversifies_support_for_each_required_positive_term():
+    source = document(1, "red", "red again", "red once more", "bicycle")
+    item = scan([source], "red AND bicycle").items[0]
+    assert item.passage_positions[:2] == (1, 4)
+    assert item.matching_unit_count == 4
