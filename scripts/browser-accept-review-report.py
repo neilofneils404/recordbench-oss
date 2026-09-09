@@ -84,6 +84,10 @@ def main() -> None:
                     "width": width, "height": 1000, "deviceScaleFactor": 1, "mobile": False,
                 })
                 assert driver.execute_script("return window.innerWidth") == width
+                if width < 901:
+                    wait.until(lambda d: d.execute_script(
+                        "return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"
+                    ))
                 assert driver.execute_script("return document.documentElement.scrollWidth <= window.innerWidth")
                 coverage = driver.find_element(By.CSS_SELECTOR, 'input[value="Scope and coverage"]')
                 driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", coverage)
