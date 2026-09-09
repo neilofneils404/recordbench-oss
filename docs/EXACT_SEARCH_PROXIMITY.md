@@ -72,8 +72,12 @@ The shared authoritative exact backend is used regardless of the ranked answer
 retriever's CPU/PostgreSQL configuration. A routing regression verifies that
 PostgreSQL-ready flags do not change proximity membership or invoke ranked
 retrieval. This is not live PostgreSQL index parity: no indexed exact adapter is
-implemented. The initial scan budget remains 10,000 documents, 10 million
-extracted characters, and a cooperative five-second processing deadline.
+implemented. The scan budget is 10,000 documents, 10 million extracted
+characters, 128 million serialized input characters, 8 million serialized
+characters per derived unit record, and a cooperative five-second processing
+deadline. File-backed reads and bounded JSON decoding participate in that
+deadline; serialized limits apply before decoding and extracted characters are
+charged before retaining each unit. See [result budgets](EXACT_SEARCH_RESULTS.md).
 Cancellation checks run through token scans and occurrence pairing. Source I/O
 and normalization remain cooperative limitations, as documented in the
 [exact result contract](EXACT_SEARCH_RESULTS.md).

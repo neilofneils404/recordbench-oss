@@ -1204,13 +1204,22 @@ class PilotStore:
         )
 
     def _iter_units(self, name: str, **kwargs):
-        from .unit_stream import iter_unit_records
+        from .unit_stream import iter_unit_records, UnitRecordLimit
         if not self._units_file_is_safe(name):
             raise RuntimeError("derived searchable text is unavailable")
-        fd = os.open(self.derived / name, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, encoding="utf-8") as stream:
-            for item in iter_unit_records(stream, **kwargs):
-                yield PilotUnit(**item)
+        try:
+            fd = os.open(self.derived / name, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, encoding="utf-8") as stream:
+                for item in iter_unit_records(stream, **kwargs):
+                    yield PilotUnit(**item)
+        except UnitRecordLimit:
+            raise
+        except (OSError, TypeError, ValueError) as exc:
+            if kwargs:
+                # Budgeted callers own their failure taxonomy; preserve the
+                # exact callback exception instead of calling it a read error.
+                raise
+            raise RuntimeError("derived searchable text could not be loaded") from exc
 
     def _load_units(self, name: str) -> tuple[PilotUnit, ...]:
         if not self._units_file_is_safe(name):

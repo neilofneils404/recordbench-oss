@@ -70,19 +70,32 @@ membership to PostgreSQL web-search syntax or a top-k candidate list.
 
 `ExactScanPolicy` is injectable product policy, independent of development-host
 hardware. Defaults are 10,000 scoped documents, 10 million extracted characters,
-and a five-second cooperative processing deadline. Deadline checks run between
-sources, within tokenization, within phrase evaluation, and through preview
+128 million serialized input characters, 8 million serialized characters per
+derived unit record, and a five-second cooperative processing deadline.
+File-backed units stream through the [bounded reader](DERIVED_TEXT_READING.md):
+input is charged after each bounded read, records are capped before JSON decode,
+and decoded text is charged before retaining each unit. Oversized or unfinished
+records fail the scan budget before decoding; a character limit reached partway
+through a source stops without reading its remaining units. Deadline checks run
+before and after reads and decoding, between sources, within tokenization,
+within phrase evaluation, and through preview
 generation for the displayed page. Previews are built inside the backend before
 the result is returned; budget exhaustion there also suppresses the entire result. Exhaustion produces
 HTTP 503 with **no exact total or partial results** and guidance to select a
-smaller scope. The time budget is cooperative: source-file I/O, JSON loading,
-Unicode normalization, and lock acquisition are not preempted. This is not a
+smaller scope. The time budget is cooperative: one bounded source-file read or
+record decode, Unicode normalization, and lock acquisition are not preempted. This is not a
 hard wall-clock service guarantee. A scan holds the matter's source mutation
 lock, captures its collection/set membership under the workspace lock, and
 releases the workspace lock before matching. Other matters can continue using
 workspace storage during the scan. Source changes in the searched matter wait
 for the scan; membership edits during a scan affect the next request, where the
 fingerprint detects a changed result population.
+
+Synthetic file-backed regressions cover a result at its configured character
+limit, overflow before an unread large tail, a slow read that expires before
+decoding, serialized whitespace exhaustion, and oversized complete or unfinished
+first records. Existing cross-unit Boolean proofs and proximity results retain
+their semantics; invalid source tails still invalidate the entire scan.
 
 This initial adapter deliberately rescans each page. It is not the scalable
 indexed backend. A production-scale adapter should use a consistent database

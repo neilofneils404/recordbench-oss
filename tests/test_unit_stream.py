@@ -85,3 +85,26 @@ def test_store_streams_real_derived_file_without_whole_file_loader(tmp_path, mon
     charged = []
     assert list(source.iter_parsed_units(read_check=charged.append))[0].text == 'Synthetic text'
     assert sum(charged) == len((store.derived / source.units_file).read_text())
+
+
+def test_store_default_error_contract_and_budget_callback_identity(tmp_path, monkeypatch):
+    from case_intelligence.exact_search_results import ExactSearchUnavailable
+    from case_intelligence import unit_stream
+    store = PilotStore(tmp_path / 'synthetic-error-contract')
+    source, _ = store.store_stream('Synthetic.txt', 'text/plain', io.BytesIO(b'Synthetic'))
+    for failure in (ValueError('synthetic callback'), ExactSearchUnavailable('synthetic budget')):
+        def stop():
+            raise failure
+        with pytest.raises(type(failure)) as caught:
+            list(source.iter_parsed_units(budget_check=stop))
+        assert caught.value is failure
+    (store.derived / source.units_file).write_text('{"version":1,"units":[')
+    with pytest.raises(RuntimeError, match='could not be loaded'):
+        list(source.iter_parsed_units())
+    failure = UnitRecordLimit('synthetic record cap')
+    def limited(*args, **kwargs):
+        raise failure
+    monkeypatch.setattr(unit_stream, 'iter_unit_records', limited)
+    with pytest.raises(UnitRecordLimit) as caught:
+        list(source.iter_parsed_units())
+    assert caught.value is failure
