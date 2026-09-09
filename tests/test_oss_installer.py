@@ -40,7 +40,11 @@ def test_account_management_configuration_and_update_overlay(tmp_path, enabled):
         assert (str(ROOT / "compose.local-accounts.yaml") in command) is enabled
 
 
-@pytest.mark.parametrize("arguments", [["install", "--auth", "oidc"], ["resume", "--auth", "local"], ["install"]])
+@pytest.mark.parametrize("arguments", [
+    ["install", "--auth", "oidc"], ["resume", "--auth", "local"], ["install"],
+    ["preflight"], ["preflight", "--auth", "oidc"], ["update", "--auth", "local"],
+    ["doctor", "--auth", "local"], ["backup", "--auth", "local"], ["restore", "--auth", "local"],
+])
 def test_management_flag_rejects_ambiguous_or_existing_node_before_writes(tmp_path, arguments):
     root = tmp_path / "node"
     response = subprocess.run([sys.executable, str(ROOT / "scripts/recordbench_install.py"), *arguments,
@@ -1904,3 +1908,59 @@ def test_tls_nul_path_rejected_before_file_metadata(tmp_path, ready_host, monkey
     result = installer._collect_preflight("none", args)
     assert not result.ready and checks_by_name(result)["tls"].state == "fail"
     assert not args.root.exists()
+
+
+def test_cli_preflight_accepts_new_local_account_management(tmp_path, ready_host, monkeypatch, capsys):
+    root = tmp_path.resolve() / "new-managed-node"
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("preflight prepared directories"))
+    monkeypatch.setattr(installer, "_password", lambda *a: pytest.fail("preflight consumed a password"))
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(root), "--auth", "local", "--enable-account-management", "--models", "none", "--non-interactive", "--password-stdin", "--json"])
+    assert installer.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ready"] is True
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("explicit_flags", [[], ["--auth", "local", "--enable-account-management"]])
+@pytest.mark.parametrize("account_present", [False, True])
+def test_cli_preflight_resume_uses_canonical_managed_account_storage(tmp_path, request, monkeypatch, capsys, explicit_flags, account_present):
+    from tests.test_first_run_handoff import configured_node
+    from case_intelligence.local_accounts import LocalAccountRepository
+    root, _, paths = configured_node(tmp_path.resolve())
+    accounts = tmp_path.resolve() / "relocated-accounts"
+    paths["accounts"].rename(accounts)
+    installer._replace_env(root / "compose.env", "RECORDBENCH_LOCAL_ACCOUNT_ROOT", str(accounts))
+    # An obsolete legacy copy cannot stand in for the canonical managed mount.
+    selected = accounts if account_present else paths["secrets"]
+    LocalAccountRepository(selected / "local-accounts.json").initialize(
+        "alice.admin", "Alice Administrator", "synthetic-preflight-password", actor="synthetic-operator")
+    before = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    request.getfixturevalue("ready_host")
+    capsys.readouterr()
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("preflight issued a runtime command"))
+    monkeypatch.setattr(installer, "_password", lambda *a: pytest.fail("preflight consumed a password"))
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(root), "--resume", "--non-interactive", "--json", *explicit_flags])
+    assert installer.main() == (0 if account_present else 1)
+    result = json.loads(capsys.readouterr().out)
+    checks = {row["name"]: row for row in result["checks"]}
+    assert result["ready"] is account_present
+    assert ("admin-password-input" not in checks) is account_present
+    if not account_present:
+        assert checks["admin-password-input"]["state"] == "fail"
+    assert {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+def test_cli_preflight_invalid_saved_state_is_blocking_json(tmp_path, request, monkeypatch, capsys):
+    from tests.test_first_run_handoff import configured_node
+    root, _, _paths = configured_node(tmp_path.resolve())
+    (root / "installation.json").write_text("[]")
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    request.getfixturevalue("ready_host")
+    capsys.readouterr()
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("preflight issued a runtime command"))
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(root), "--resume", "--json"])
+    assert installer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert not payload["ready"] and payload["checks"][0]["name"] == "saved-node"
+    assert payload["checks"][0]["blocking"] is True
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before

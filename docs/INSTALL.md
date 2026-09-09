@@ -178,6 +178,14 @@ It validates those exact choices and reuses them during configuration without
 asking again. These initial questions collect no passwords, tokens or credential
 file contents; secret entry remains in the later provisioning steps. Standalone
 `preflight` remains non-prompting and checks the options supplied on its command line.
+For a new browser-managed local-account node, include both `--auth local` and
+`--enable-account-management` in that preflight command. With `--resume`, preflight
+restores the existing node's saved authentication mode, account mount, storage,
+model selection and offline staging status before checking prerequisites. This
+includes relocated managed-account directories; an old account file in `secrets`
+does not replace the canonical managed account file. Supplied flags do not change
+the saved account mode or paths. Invalid saved coordinates are reported as a
+blocking checklist item, including with `--json`.
 
 ```bash
 ./install
