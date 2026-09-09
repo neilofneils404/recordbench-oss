@@ -25,17 +25,34 @@ IDs identify work, not an obligation to execute everything in numeric order.
 
 Current implementation PRs (unmerged):
 
-* [Exact grammar and synthetic foundation #36](https://github.com/neilofneils404/recordbench-oss/pull/36)
-  implements 00/07 reference semantics. Browser result integration follows in 08.
-* [Report review basis #38](https://github.com/neilofneils404/recordbench-oss/pull/38)
-  implements 14 conversion, editing/export retention, and atomic creation.
-* [CI candidate isolation #37](https://github.com/neilofneils404/recordbench-oss/pull/37)
-  lets candidate checks inspect the complete intended ancestry independently of
-  unrelated fetched branches. This is a validation dependency, not a product slice.
+| PR | User outcome | Slices |
+| --- | --- | --- |
+| [#36](https://github.com/neilofneils404/recordbench-oss/pull/36) | Defined exact grammar and known-answer corpus | 00, 07 |
+| [#38](https://github.com/neilofneils404/recordbench-oss/pull/38) | Retain findings, gaps, and human decisions in Reports | 14 |
+| [#39](https://github.com/neilofneils404/recordbench-oss/pull/39) | Actionable, non-writing installer prerequisites | 01 |
+| [#40](https://github.com/neilofneils404/recordbench-oss/pull/40) | Visible investigation budgets and coverage accounting | 10 |
+| [#41](https://github.com/neilofneils404/recordbench-oss/pull/41) | Shared local account lifecycle and session revocation | 04 |
+| [#42](https://github.com/neilofneils404/recordbench-oss/pull/42) | Complete exact result browsing with guided search | 08 |
+| [#43](https://github.com/neilofneils404/recordbench-oss/pull/43) | Browser People administration and first-use entry | 05 |
+| [#44](https://github.com/neilofneils404/recordbench-oss/pull/44) | Automatically compile selected saved work into usable drafts | 15 |
+| [#45](https://github.com/neilofneils404/recordbench-oss/pull/45) | Nearby words/phrases with guided proximity controls | 09, proximity family |
 
-Installer prerequisites (01), exact result browsing (08), and investigation
-budget visibility (10) are being implemented on separate branches. Review and
-CI completion must be read from each PR; inclusion here does not mark it accepted.
+[CI candidate isolation #37](https://github.com/neilofneils404/recordbench-oss/pull/37)
+is a validation dependency, not a product slice. It inspects intended ancestry
+and actual branch metadata independently of unrelated fetched branches.
+
+Review and CI completion must be read from each PR; this index does not mark a
+change accepted or deployed. Stacked PRs include their prerequisites on the
+branch and remain testable before merging. The intended Linux deployment host
+should validate a combined candidate in a separate synthetic checkout and
+installation before deployment-sensitive changes are accepted. No default-branch
+merge is needed for that test.
+
+Installer handoff/onboarding (02/03) and all-extracted-text review (12) are being
+implemented separately. Adaptive investigation (11), hierarchy (13), reusable
+team groups (06), remaining advanced operators, and the entity workspace and
+relationship slices remain proposed. The report's People/Places/Things format
+does not claim to implement the persistent entity workspace or identity resolution.
 
 | ID | Slice | Depends on |
 | --- | --- | --- |
@@ -54,7 +71,7 @@ CI completion must be read from each PR; inclusion here does not mark it accepte
 | [12](12-full-text-review-coverage.md) | Process every extracted unit in a frozen population | 00, 10 |
 | [13](13-hierarchical-synthesis.md) | Synthesize findings beyond a 12-passage bottleneck | 11 or 12 |
 | [14](14-report-review-basis.md) | Preserve investigation gaps and coverage in Reports | None |
-| [15](15-purposeful-report-outlines.md) | Draft an issue review or chronology with substance | 14; integrates 13 |
+| [15](15-purposeful-report-outlines.md) | Automatically compile useful reports from saved review | 14; integrates 13 |
 | [16](16-entity-workspace.md) | First-class People, Places, and Things with mentions | 12; product UI after deeper review |
 | [17](17-entity-extraction.md) | Extract and reconcile more than title-based names | 16 |
 | [18](18-evidence-backed-relationships.md) | Connect entities, events, and conflicting accounts | 13, 17 |
