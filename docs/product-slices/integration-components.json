@@ -38,7 +38,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/installer-preflight-20260908",
-      "headRefOid": "8dc967063dc19237be5de41cd4f51555810c599b",
+      "headRefOid": "d8b0e37832c38d22ec9611ff836318a9fc304179",
       "number": 39,
       "title": "Make first-run installer prerequisites actionable",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/39"
@@ -46,7 +46,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/investigation-budgets-20260908",
-      "headRefOid": "04632b83d90473660bf89202f8223cde0f24d45e",
+      "headRefOid": "cd4fa734c416687d52e4d36103364e582eed2dc0",
       "number": 40,
       "title": "Make investigation budgets and coverage limits explicit",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/40"
@@ -70,7 +70,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/browser-local-accounts-20260908",
-      "headRefOid": "26b215a8ebed2ac06f8e24c068dc82efb8996e89",
+      "headRefOid": "8c1a388959c6f5ca4d7593946a5a067bc794b359",
       "number": 43,
       "title": "feat: browser account management and first-use People entry",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/43"
@@ -78,7 +78,7 @@
     {
       "baseRefName": "codex/report-review-basis-20260908",
       "headRefName": "codex/guided-reports-20260908",
-      "headRefOid": "d26f8fb506e6ea184034e649e378d6944feff652",
+      "headRefOid": "e5fbd9ac3857c53453402589b30b82aee13c84ed",
       "number": 44,
       "title": "Compile saved AI work and human review into usable report drafts",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/44"
@@ -94,7 +94,7 @@
     {
       "baseRefName": "codex/investigation-budgets-20260908",
       "headRefName": "codex/full-text-review-20260908",
-      "headRefOid": "b00ce593fd1981d06e8e88fc2d94bc5245980fd2",
+      "headRefOid": "0254d2896a807f28bfc7e308c9262134669cc606",
       "number": 47,
       "title": "Review all extracted text with durable coverage and resumable findings",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/47"
@@ -102,10 +102,18 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/first-run-handoff-20260908",
-      "headRefOid": "9611d2c388607fc37126baefe5cc067ece208c49",
+      "headRefOid": "edb08815598627f982995198e71e366c353c01f1",
       "number": 48,
       "title": "Guide resumable installation and first team setup",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/48"
+    },
+    {
+      "baseRefName": "codex/portable-integration-20260908",
+      "headRefName": "codex/workspace-layout-20260908",
+      "headRefOid": "98d14b39a9968447f73453ba69dc9675ad9d3bbe",
+      "number": 49,
+      "title": "Align matter pages and keep sidebars reachable beside long content",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/49"
     }
   ],
   "assembly": "Patch-equivalent changes combined in one branch. Resolve the candidate commit from the handoff or git rev-parse HEAD; this manifest cannot name its own containing commit.",

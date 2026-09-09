@@ -84,7 +84,10 @@ Exercise these workflows with a small synthetic matter:
 6. Repeat key workflows with the real pinned local model offline. Record
    incorrect or unsupported findings as failures needing investigation; the
    deterministic source-echo browser tests are workflow tests only.
-7. Run the documented encrypted backup and restore into a clean validation
+7. With long conversations and case-note lists, independently scroll the matter
+   rail, saved-conversation menu, and note tools. Check keyboard reachability,
+   consistent page alignment, and narrow-screen layouts.
+8. Run the documented encrypted backup and restore into a clean validation
    destination. Check accounts, source versions, reports, and queued-work
    recovery. Exercise an update and the documented rollback procedure using
    synthetic state, preserving both old and candidate revision identities.
@@ -107,7 +110,9 @@ heads, then obtain the full-commit maintainer acceptance required by
 [the public-alpha gate](../PUBLIC_ALPHA.md#merge-and-automation-boundary).
 Use the component PRs as the default merge path; the integration PR exists for
 combined validation and should be closed after its component changes land. Do not
-merge both paths independently. Merge accepted component PRs in dependency order. Recheck the assembled tree and
+merge both paths independently. Retarget follow-up PRs based on the integration
+branch onto the accepted default branch after their prerequisites land, then
+refresh their diff, checks, and reviews. Merge accepted component PRs in dependency order. Recheck the assembled tree and
 required CI after conflict resolution or default-branch advances. Deployment
 adoption is a later explicit step against the accepted revision; testing this
 branch alone does not update or validate an existing deployment.
