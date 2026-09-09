@@ -128,9 +128,11 @@ For missing prerequisites:
   the input choice and administrator username/display-name syntax without reading
   a password. Unattended OIDC and Kerberos installation require their credential
   source files; preflight checks readable, nonempty regular-file metadata without
-  reading the contents. OIDC secret files are conservatively limited to 4,096
-  bytes including line endings so an ASCII value cannot exceed the runtime's
-  4,096-character limit. Kerberos keytabs retain the separate 1 MiB limit.
+  reading the contents. OIDC secret files must contain 16–4,096 bytes including
+  line endings. The metadata lower bound rejects definitely undersized values;
+  the conservative upper bound prevents an ASCII value exceeding the runtime's
+  4,096-character limit. Encoding, whitespace and decoded character length still
+  require runtime validation. Kerberos keytabs retain their 1-byte to 1 MiB range.
   Kerberos also requires the host SSSD and Kerberos paths.
   Non-secret OIDC settings require an HTTPS issuer, non-loopback external server
   name, and a nonempty client ID of at most 512 characters. OIDC group names can
@@ -149,7 +151,8 @@ For missing prerequisites:
   pair trusted by the organization for explicit LAN access. Preflight checks the
   choice, IP bind-address syntax, server-name syntax and file access. The bind
   address must be an IPv4 or unbracketed, unscoped IPv6 literal; specify the port
-  separately with `--https-port`. Preflight does not certify the pair's matching keys, identity,
+  separately with `--https-port`. Supplied certificate and key paths must not
+  contain control characters. Preflight does not certify the pair's matching keys, identity,
   expiry or trust chain. Verify those before staff access.
 - For AI tasks, install the NVIDIA driver and
   [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).

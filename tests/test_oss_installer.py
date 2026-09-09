@@ -1823,7 +1823,7 @@ def test_source_storage_cannot_equal_or_contain_node(tmp_path, ready_host, monke
     assert not node.exists()
 
 
-@pytest.mark.parametrize("auth,size,expected", [("oidc", 4096, True), ("oidc", 4097, False), ("kerberos", 4097, True), ("kerberos", 1024 * 1024, True), ("kerberos", 1024 * 1024 + 1, False)])
+@pytest.mark.parametrize("auth,size,expected", [("oidc", 16, True), ("oidc", 4096, True), ("oidc", 4097, False), ("kerberos", 1, True), ("kerberos", 4097, True), ("kerberos", 1024 * 1024, True), ("kerberos", 1024 * 1024 + 1, False)])
 def test_provider_metadata_limits_keep_larger_keytabs(tmp_path, ready_host, monkeypatch, auth, size, expected):
     source = tmp_path / "synthetic-credential"
     source.write_bytes(b"x" * size)
@@ -1855,3 +1855,52 @@ def test_failed_post_stop_admission_reports_failed_rollback(tmp_path, request, m
         installer._update(installer.Console(color=False, quiet=True), args, root)
     assert "up-new" not in events and events[-1] == "up-old"
     assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+@pytest.mark.parametrize("size", [1, 15])
+def test_undersized_oidc_secret_blocks_before_writes_without_reading(tmp_path, ready_host, monkeypatch, size):
+    source = tmp_path / "synthetic-small-secret"
+    source.write_bytes(b"x" * size)
+    flags = ["--auth", "oidc", "--oidc-client-secret-file", str(source), "--non-interactive"]
+    args = preflight_args(tmp_path, *flags)
+    monkeypatch.setattr(Path, "read_bytes", lambda *a, **k: pytest.fail("read credential contents"))
+    monkeypatch.setattr(Path, "read_text", lambda *a, **k: pytest.fail("read credential contents"))
+    result = installer._collect_preflight("none", args)
+    assert not result.ready and checks_by_name(result)["oidc-secret-input"].state == "fail"
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("small secret reached writes"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--models", "none", *flags])
+    assert installer.main() == 1
+    assert not args.root.exists() and source.stat().st_size == size
+
+
+@pytest.mark.parametrize("field", ["--tls-cert", "--tls-key"])
+@pytest.mark.parametrize("control", ["\n", "\r", "\t", "\x7f"])
+def test_existing_tls_control_path_blocks_before_writes(tmp_path, ready_host, monkeypatch, field, control):
+    cert, key = tmp_path / "synthetic.crt", tmp_path / "synthetic.key"
+    malformed = tmp_path / ("synthetic" + control + "tls")
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic key")
+    malformed.write_text("synthetic supplied TLS material")
+    flags = ["--tls-cert", str(cert), "--tls-key", str(key), field, str(malformed), "--non-interactive", "--password-stdin"]
+    args = preflight_args(tmp_path, *flags)
+    result = installer._collect_preflight("none", args)
+    assert not result.ready and checks_by_name(result)["tls"].state == "fail"
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("invalid TLS path reached writes"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--models", "none", *flags])
+    assert installer.main() == 1
+    assert not args.root.exists()
+
+@pytest.mark.parametrize("field", ["--tls-cert", "--tls-key"])
+def test_tls_nul_path_rejected_before_file_metadata(tmp_path, ready_host, monkeypatch, field):
+    cert, key = tmp_path / "synthetic.crt", tmp_path / "synthetic.key"
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic key")
+    malformed = tmp_path / "synthetic\x00tls"
+    args = preflight_args(tmp_path, "--tls-cert", str(cert), "--tls-key", str(key), field, str(malformed))
+    original = Path.is_file
+    def checked(path):
+        assert "\x00" not in str(path), "invalid TLS path reached a file operation"
+        return original(path)
+    monkeypatch.setattr(Path, "is_file", checked)
+    result = installer._collect_preflight("none", args)
+    assert not result.ready and checks_by_name(result)["tls"].state == "fail"
+    assert not args.root.exists()
