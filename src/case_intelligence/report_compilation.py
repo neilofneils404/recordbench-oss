@@ -12,7 +12,7 @@ import re
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from typing import Mapping, Protocol, Sequence
+from typing import Callable, Mapping, Protocol, Sequence
 
 from .generation import (
     EvidenceItem, GenerationRejected, GenerationUnavailable, VerifiedAnswer,
@@ -136,7 +136,10 @@ def _exact_date(text: str, label: str = "") -> str:
 
 def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMaterial] = (),
                    generator: CompilationGenerator | None = None, *,
-                   budget: CompilationBudget | None = None) -> CompilationDraft:
+                   budget: CompilationBudget | None = None,
+                   cancelled: Callable[[], bool] | None = None) -> CompilationDraft:
+    if cancelled is not None and cancelled():
+        raise CompilationProblem("Report compilation cancelled.")
     topic = _request(kind, topic)
     policy = budget or DEFAULT_COMPILATION_BUDGET
     materials = tuple(deepcopy(item) for item in materials)
@@ -216,6 +219,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                          for i, (_key, citation, excerpt) in enumerate(batch, 1))
         lookup = {f"S{i}": row for i, row in enumerate(batch, 1)}
         for category, question in queries:
+            if cancelled is not None and cancelled():
+                raise CompilationProblem("Report compilation cancelled.")
             if calls >= policy.max_model_calls:
                 break
             calls += 1
@@ -227,6 +232,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             except (GenerationUnavailable, GenerationRejected):
                 unavailable += 1
                 continue
+            if cancelled is not None and cancelled():
+                raise CompilationProblem("Report compilation cancelled.")
             analyzed.update(key for key, _citation, _excerpt in batch)
             if not isinstance(answer, VerifiedAnswer):
                 raise CompilationProblem("The compiler requires independently verified model answers.")
@@ -285,6 +292,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             body += "\n\nThis human note has no attached source support."
         if not append_section(heading, body, item.citations, (item,), date_key=date_key, category=category):
             omitted_sections += 1
+    if cancelled is not None and cancelled():
+        raise CompilationProblem("Report compilation cancelled.")
     if not sections:
         raise CompilationProblem("The selected saved work did not produce supported report content. Refine the topic or select relevant reviewed material.")
     if kind == "timeline":

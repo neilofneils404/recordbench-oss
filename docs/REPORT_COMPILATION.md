@@ -64,3 +64,46 @@ same-name mentions, topic relevance, foreign citation rejection, human attributi
 saved gaps, offline labeling, omitted-material budgets, snapshot mutation during
 model work, and revision-bound fingerprints. Deployment capacity and model
 throughput need separate Linux/GPU validation.
+
+## Durable background compilation
+
+`ReportCompilationJobs` stores only compilation intent (type, topic, selected
+record or collection identifiers), its input fingerprint, status, and final
+report identifier in migration `0027_report_compilation.sql`. The coordinator
+performs model work outside HTTP requests. `CompilationJobPolicy` controls active
+per-actor/global admission, selection size, lease duration, and interrupted-worker
+attempts. Database write transactions serialize admission and claims across
+independent worker processes; only expired leases are recovered. An active
+worker's random lease token fences older workers, including a worker returning
+from model generation after its lease expired.
+
+Workers persist the initial resolved fingerprint before model work. The flow
+re-resolves current material and enters `jobs.complete(job, builder,
+fingerprint=draft.fingerprint)` while holding the source guard. Completion checks
+current authorization, the live lease token, cancellation, the input fingerprint,
+and the resulting report's matter. The builder must use the transaction already
+owned by `complete`: call `WorkspaceStore.create_report_from_sections` with
+`transaction_owned=True`. It must not begin/commit a transaction or call a model.
+Report creation and the job's successful result link then commit together or
+roll back together. A stale worker cannot create a second report.
+
+The application must register the mirrored migration in its migration list,
+include queued/running compilation jobs in its active-work closure inventory,
+and close the coordinator before closing workspace storage. Matter deletion
+cascades the intent rows. Revoked access and non-active matters prevent admission,
+claiming, and completion. A user's request key is bound to its original kind,
+topic, and selection; reusing it with different inputs fails explicitly.
+
+Cancellation is cooperative between model calls, with another check before
+atomic save. Heartbeats extend only live owned leases. Graceful shutdown stops
+new claims and fences/requeues current intent; an outstanding model request may
+finish afterward but cannot save its result. Repeated expired leases eventually
+produce a failed job requiring explicit retry. Leases use UTC epoch timestamps,
+so multi-worker hosts sharing the control database need synchronized clocks.
+No restart blindly resets all running jobs.
+
+The queue's synthetic regressions use two independent processes, crash/expiry and
+stale-token attempts, delayed heartbeats, cancellation/retry, denied matter access,
+admission pressure, rollback after report creation, and a SQLite online backup
+restored into a clean workspace. Restore preserves the original live lease until
+expiry, then admits one replacement claim; `PRAGMA integrity_check` remains clean.

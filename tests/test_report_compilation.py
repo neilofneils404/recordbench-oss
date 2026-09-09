@@ -187,3 +187,17 @@ def test_human_uncertain_date_does_not_gain_precision_from_date_label():
     uncertain = material(origin="human", date_label="2024-04-03", text="Around 2024-04-03 the generated delivery occurred.")
     draft = compile_report("timeline", materials=(uncertain,))
     assert draft.sections[0]["date_key"] == ""
+
+
+def test_compilation_cooperatively_stops_between_model_calls():
+    stopped = [False]
+
+    class CancellingService:
+        available = True
+
+        def answer(self, question, evidence, **kwargs):
+            stopped[0] = True
+            return VerifiedAnswer(True, "", (VerifiedClaim(evidence[0].excerpt, ("S1",)),), None, "", ("S1",), True, 1)
+
+    with pytest.raises(CompilationProblem, match="cancelled"):
+        compile_report("entities", materials=(material(),), generator=CancellingService(), cancelled=lambda: stopped[0])
