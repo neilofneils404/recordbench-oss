@@ -1765,7 +1765,8 @@ def test_failed_optional_overview_explains_cause_retries_and_independence(tmp_pa
         assert "Synchronized transcript" in review.text
         assert "The red bicycle was logged" in review.text
 
-        with bench.workspace.connection:
+        # The background media coordinator shares this SQLite connection.
+        with bench.workspace._lock, bench.workspace.connection:
             bench.workspace.connection.execute(
                 "UPDATE workbench_media_summary SET attempts=3 WHERE transcript_id=?",
                 (failed.transcript_id,),
