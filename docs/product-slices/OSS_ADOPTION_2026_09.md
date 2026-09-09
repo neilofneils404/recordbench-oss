@@ -99,3 +99,8 @@ adoption record. That record should capture the old and new upstream revisions,
 local differences, configuration decisions, migrations, observed validation,
 recovery boundary and promotion decision. Bring defects upstream as synthetic
 reproductions and content-free behavior descriptions.
+
+The compiled-report and full-text browser runners clear inherited deployment
+settings before constructing their temporary synthetic node. The integration
+adds this safeguard alongside the pinned component histories, so running browser
+acceptance cannot reuse a configured storage root, database, scanner or worker.

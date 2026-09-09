@@ -24,6 +24,8 @@ from tests.test_report_review_basis import ACTOR, saved_research
 
 
 def main():
+    from synthetic_browser_environment import isolate_environment
+    isolate_environment()
     parser = argparse.ArgumentParser()
     parser.add_argument('--chrome-binary', type=Path, required=True)
     parser.add_argument('--chromedriver', type=Path, required=True)
