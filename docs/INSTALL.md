@@ -143,7 +143,10 @@ For missing prerequisites:
   choice, IP bind-address syntax, server-name syntax and file access. The bind
   address must be an IPv4 or unbracketed, unscoped IPv6 literal; specify the port
   separately with `--https-port`. Supplied certificate and key paths must not
-  contain control characters. Preflight does not certify the pair's matching keys, identity,
+  contain control characters. Relative TLS paths are made absolute from the
+  launch directory before checking and saving them, so the staged release uses
+  the same files; symbolic-link inputs remain rejected. Preflight does not
+  certify the pair's matching keys, identity,
   expiry or trust chain. Verify those before staff access.
 - For AI tasks, install the NVIDIA driver and
   [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).

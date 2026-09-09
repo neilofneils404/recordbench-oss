@@ -1149,6 +1149,14 @@ def _storage_path_text_valid(path: Path) -> bool:
     return not any(ord(character) < 32 or ord(character) == 127 for character in str(path))
 
 
+def _absolute_tls_path(path: Path | None) -> Path | None:
+    # Retain invalid text for the blocking preflight check, and preserve lexical
+    # symlinks so making a path absolute cannot bypass their rejection.
+    if path is None or not _storage_path_text_valid(path):
+        return path
+    return path.expanduser().absolute()
+
+
 def _storage_roots_compatible(node: Path, storage: Path) -> bool:
     """Keep managed sources out of installer-owned state and control paths."""
     if not _storage_path_text_valid(node) or not _storage_path_text_valid(storage):
@@ -1359,6 +1367,8 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
             "Bind address is an IP literal" if bind_ok else "Bind address is invalid",
             "Bind the private HTTPS gateway",
             "Use --bind-address with an IPv4 or unbracketed, unscoped IPv6 literal, without a hostname, port or control characters. Set the port separately with --https-port.")
+        args.tls_cert = _absolute_tls_path(args.tls_cert)
+        args.tls_key = _absolute_tls_path(args.tls_key)
         pair = bool(args.tls_cert) == bool(args.tls_key)
         supplied = bool(args.tls_cert and args.tls_key)
         readable = supplied and all(_storage_path_text_valid(path) and path.is_file()
@@ -1641,8 +1651,8 @@ def _configure(
         if not dsn_path.exists():
             _private_write(dsn_path, dsn)
 
-    tls_cert = args.tls_cert
-    tls_key = args.tls_key
+    tls_cert = _absolute_tls_path(args.tls_cert)
+    tls_key = _absolute_tls_path(args.tls_key)
     if bool(tls_cert) != bool(tls_key):
         raise RuntimeError("--tls-cert and --tls-key must be supplied together")
     if tls_cert is None:

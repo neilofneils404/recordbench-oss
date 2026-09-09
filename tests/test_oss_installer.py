@@ -1787,3 +1787,43 @@ def test_tls_nul_path_rejected_before_file_metadata(tmp_path, ready_host, monkey
     result = installer._collect_preflight("none", args)
     assert not result.ready and checks_by_name(result)["tls"].state == "fail"
     assert not args.root.exists()
+
+
+def test_relative_tls_paths_keep_launch_location_in_staged_configuration(tmp_path, ready_host, monkeypatch):
+    launch = tmp_path.resolve() / "launch"
+    launch.mkdir()
+    cert, key = launch / "synthetic certificate.crt", launch / "synthetic key.pem"
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic key")
+    monkeypatch.chdir(launch)
+    root = tmp_path.resolve() / "node"
+    args = installer._parser().parse_args(["install", "--root", str(root), "--auth", "local", "--models", "none", "--non-interactive", "--password-stdin", "--tls-cert", cert.name, "--tls-key", key.name])
+    result = installer._collect_preflight("none", args)
+    assert result.ready
+    assert args.tls_cert == cert and args.tls_key == key
+    paths = installer._paths(root)
+    for path in paths.values():
+        path.mkdir(parents=True, exist_ok=True)
+    release = tmp_path.resolve() / "staged-release"
+    release.mkdir()
+    (release / "compose.yaml").write_text("services: {}\n")
+    monkeypatch.chdir(release)
+    installer._collect_identity_choices(args)
+    installer._configure(installer.Console(color=False, quiet=True), args, root, paths, "synthetic-release", release, ())
+    values = installer._dotenv(root / "compose.env")
+    assert values["RECORDBENCH_TLS_CERT"] == str(cert)
+    assert values["RECORDBENCH_TLS_KEY"] == str(key)
+
+
+@pytest.mark.parametrize("field", ["--tls-cert", "--tls-key"])
+def test_relative_tls_symlink_remains_rejected_after_absolutizing(tmp_path, ready_host, monkeypatch, field):
+    launch = tmp_path.resolve()
+    cert, key = launch / "synthetic.crt", launch / "synthetic.key"
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic key")
+    link = launch / "synthetic-link"
+    link.symlink_to(cert if field == "--tls-cert" else key)
+    monkeypatch.chdir(launch)
+    args = preflight_args(tmp_path, "--tls-cert", cert.name, "--tls-key", key.name, field, link.name)
+    assert checks_by_name(installer._collect_preflight("none", args))["tls"].state == "fail"
+    assert not args.root.exists()
