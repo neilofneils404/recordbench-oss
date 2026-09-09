@@ -131,6 +131,20 @@ def _positive_literals(query: ParsedQuery) -> tuple[Literal | Proximity, ...]:
     return tuple(dict.fromkeys(result))
 
 
+def _validate_unit(unit: PilotUnit) -> None:
+    """Reject corrupt decoded locators inside the source-reading boundary."""
+    if type(unit.number) is not int or unit.number < 1:
+        raise ValueError('Invalid derived unit number')
+    if not isinstance(unit.text, str) or not isinstance(unit.location_label, str):
+        raise ValueError('Invalid derived unit text or location')
+    # Transcript projections also store millisecond offsets in the legacy line
+    # fields, so zero is valid there as well as in explicit media timestamps.
+    for value, minimum in ((unit.line_start, 0), (unit.line_end, 0),
+                           (unit.start_ms, 0), (unit.end_ms, 0)):
+        if value is not None and (type(value) is not int or value < minimum):
+            raise ValueError('Invalid derived unit locator')
+
+
 def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600, *, budget_check=None) -> dict[str, object]:
     """Display-only highlights; preserve original text and never emit HTML."""
     # Track original spans while applying the same canonical tokenizer used by
@@ -273,14 +287,19 @@ def search_documents(
         # A source loader failure invalidates the scan instead of reporting zero.
         units, has_text = [], False
         try:
+            if document.media_type == 'application/pdf' and (
+                    type(document.page_count) is not int or document.page_count < 0):
+                raise ValueError('Invalid derived page count')
             for unit in document.iter_parsed_units(budget_check=check_budget,
                     read_check=charge_read, max_record_chars=max_record_chars):
+                _validate_unit(unit)
                 characters += len(unit.text)
                 check_budget()
                 # Retain only admitted text. A later unit or malformed tail
                 # invalidates the whole scan without exposing partial totals.
                 units.append(unit)
-                digest.update(json.dumps([unit.number, unit.text, unit.location], ensure_ascii=True).encode())
+                digest.update(json.dumps([unit.number, unit.text, unit.location,
+                    unit.start_ms, unit.end_ms], ensure_ascii=True).encode())
                 has_text = has_text or bool(tokenize_text(unit.text, budget_check=check_budget))
         except ExactSearchUnavailable:
             raise
