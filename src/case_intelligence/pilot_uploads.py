@@ -573,6 +573,31 @@ class PilotDocument:
         default=None, repr=False, compare=False
     )
 
+    _units_iterator: Callable | None = field(default=None, repr=False, compare=False)
+
+    def iter_parsed_units(self, *, budget_check=None, read_check=None, max_record_chars=None):
+        """Stream extracted units; budgeted callers never use a whole-file loader."""
+        if self.units:
+            for unit in self.units:
+                if budget_check is not None:
+                    budget_check()
+                yield PilotUnit(**unit)
+            if budget_check is not None:
+                budget_check()
+        elif self.units_file and self._units_iterator is not None:
+            kwargs = {}
+            if budget_check is not None:
+                kwargs['budget_check'] = budget_check
+            if read_check is not None:
+                kwargs['read_check'] = read_check
+            if max_record_chars is not None:
+                kwargs['max_record_chars'] = max_record_chars
+            yield from self._units_iterator(self.units_file, **kwargs)
+        elif self.units_file and self._units_loader is not None:
+            if budget_check is not None or read_check is not None or max_record_chars is not None:
+                raise RuntimeError("bounded derived text reader is unavailable")
+            yield from self._units_loader(self.units_file)
+
     def parsed_units(self) -> tuple[PilotUnit, ...]:
         if self.units:
             return tuple(PilotUnit(**unit) for unit in self.units)
@@ -1063,6 +1088,7 @@ class PilotStore:
         for document in loaded:
             before = self._document_payload(document)
             document._units_loader = self._load_units
+            document._units_iterator = self._iter_units
             if document.origin == "upload":
                 path = self.files / document.stored_name
                 if path.parent != self.files or path.is_symlink() or not path.is_file():
@@ -1176,6 +1202,15 @@ class PilotStore:
             and metadata.st_size > 0
             and metadata.st_size == document.playback_size
         )
+
+    def _iter_units(self, name: str, **kwargs):
+        from .unit_stream import iter_unit_records
+        if not self._units_file_is_safe(name):
+            raise RuntimeError("derived searchable text is unavailable")
+        fd = os.open(self.derived / name, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, encoding="utf-8") as stream:
+            for item in iter_unit_records(stream, **kwargs):
+                yield PilotUnit(**item)
 
     def _load_units(self, name: str) -> tuple[PilotUnit, ...]:
         if not self._units_file_is_safe(name):
@@ -1498,6 +1533,7 @@ class PilotStore:
                     else "Queued to prepare browser-compatible playback."
                 ),
                 _units_loader=self._load_units,
+                _units_iterator=self._iter_units,
             )
             if suffix in MEDIA_TYPES:
                 document.state = "queued"
@@ -1763,6 +1799,7 @@ class PilotStore:
                     else "Queued to prepare browser-compatible playback."
                 ),
                 _units_loader=self._load_units,
+                _units_iterator=self._iter_units,
             )
             final = self.files / stored_name
             try:
@@ -2165,6 +2202,7 @@ class PilotStore:
                         stable_mtime_ns=int(getattr(source, "stable_mtime_ns")),
                         processing_stage="Queued",
                         _units_loader=self._load_units,
+                        _units_iterator=self._iter_units,
                     )
                 )
             for document in created:
