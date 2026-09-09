@@ -10694,6 +10694,10 @@ class WorkspaceStore:
             raise WorkspaceProblem("Only the reviewer who started this run can cancel it.")
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            run = self.review_run(matter_id, actor_id, run_id)
+            if run.state == "running" and run.cancellation_requested:
+                return run
             if run.state == "queued":
                 state, stage, message, finished = "cancelled", "cancelled", "Review cancelled before it started.", now
             elif run.state == "running":
