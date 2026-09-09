@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 import unicodedata
-from typing import Iterable
+from typing import Callable, Iterable
 
 GRAMMAR_VERSION = "recordbench-exact-v1"
 MAX_QUERY_CHARS = 512
@@ -32,7 +32,7 @@ def _normalize_text(text: str) -> str:
     return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold()).translate(_APOSTROPHES)
 
 
-def tokenize_text(text: str) -> tuple[str, ...]:
+def tokenize_text(text: str, *, budget_check: Callable[[], None] | None = None) -> tuple[str, ...]:
     """NFC/casefold words; retain internal apostrophes and ASCII hyphens.
 
     Other punctuation separates words. No stemming or stop-word removal occurs.
@@ -42,6 +42,8 @@ def tokenize_text(text: str) -> tuple[str, ...]:
     words: list[str] = []
     word: list[str] = []
     for index, char in enumerate(normalized):
+        if budget_check is not None and index % 4096 == 0:
+            budget_check()
         attached_mark = bool(word) and unicodedata.category(char).startswith("M")
         internal_joiner = (bool(word) and char in "'-" and index + 1 < len(normalized)
                            and normalized[index + 1].isalnum())
@@ -123,7 +125,7 @@ class ParsedQuery:
             "expression": _plan(self.expression),
         }
 
-    def matches_units(self, units: Iterable[str]) -> bool:
+    def matches_units(self, units: Iterable[str], *, budget_check: Callable[[], None] | None = None) -> bool:
         """Reference matching for one eligible, already-authorized document.
 
         AND/OR/NOT apply to the entire document. Positive term/phrase occurrences
@@ -145,20 +147,25 @@ class ParsedQuery:
         found: set[Literal] = set()
         has_text = False
         for unit in units:
-            tokens = tokenize_text(unit)
+            tokens = tokenize_text(unit, budget_check=budget_check)
             if not tokens:
                 continue
             has_text = True
             words = set(tokens)
             for literal in literals - found:
+                if budget_check is not None:
+                    budget_check()
                 if len(literal.words) == 1:
                     matched = literal.words[0] in words
                 else:
                     width = len(literal.words)
-                    matched = any(
-                        tokens[index:index + width] == literal.words
-                        for index in range(len(tokens) - width + 1)
-                    )
+                    matched = False
+                    for index in range(len(tokens) - width + 1):
+                        if budget_check is not None and index % 4096 == 0:
+                            budget_check()
+                        if tokens[index:index + width] == literal.words:
+                            matched = True
+                            break
                 if matched:
                     found.add(literal)
 

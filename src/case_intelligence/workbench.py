@@ -40,6 +40,11 @@ from starlette.concurrency import run_in_threadpool
 
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
+from .exact_search import QuerySyntaxError
+from .exact_search_results import (
+    ExactSearchBackend, ExactSearchChanged, ExactSearchPage, ExactSearchUnavailable, ReferenceExactSearchBackend,
+    build_search_query, passage_preview,
+)
 from .identity import (
     KERBEROS_SECRET_HEADER,
     KERBEROS_USER_HEADER,
@@ -772,8 +777,10 @@ class CaseIntelligenceWorkbench:
         storage_policy: StoragePolicy | None = None,
         malware_scanner: MalwareScanner | None = None,
         malware_scan_mode: str | None = None,
+        exact_search_backend: ExactSearchBackend | None = None,
     ) -> None:
         self.runtime_dir = Path(runtime_dir).absolute()
+        self.exact_search_backend = exact_search_backend or ReferenceExactSearchBackend()
         self._prepare_runtime()
         self.storage_policy = storage_policy or StoragePolicy.from_environment()
         configured_storage = managed_storage_root
@@ -2553,6 +2560,32 @@ class CaseIntelligenceWorkbench:
             ):
                 return False
         return True
+
+    def exact_search(
+        self, matter: MatterRecord, query: str, *, source_set_id: str = "",
+        collection_id: str = "", page: int = 1, page_size: int = 25,
+        expected_fingerprint: str = "",
+    ) -> ExactSearchPage:
+        """Enumerate an already-authorized matter, independently of retrieval."""
+        store = self.source_store(matter)
+        # Source changes project into workspace while holding this same lock.
+        with store._lock, self.workspace._lock:
+            store._ensure_active()
+            allowed = None
+            if source_set_id:
+                allowed = self.workspace.source_set_document_ids(matter.matter_id, source_set_id)
+            if collection_id:
+                self.workspace.source_collection(matter.matter_id, collection_id)
+                members = frozenset(item.document_id for item in
+                    self.workspace.source_organizations(matter.matter_id)
+                    if item.collection_id == collection_id)
+                allowed = members if allowed is None else allowed & members
+            documents = (item for item in store.documents.values()
+                         if allowed is None or item.document_id in allowed)
+            return self.exact_search_backend.search(
+                documents, query, scope=(matter.matter_id, source_set_id, collection_id),
+                page=page, page_size=page_size, expected_fingerprint=expected_fingerprint,
+            )
 
     def search(
         self,
@@ -9554,6 +9587,74 @@ def create_workbench_app(
                 notice="Every-source check summary saved to a new report",
             ), status_code=303
         )
+
+    @app.get("/matters/{slug}/exact-search", response_class=HTMLResponse)
+    def exact_search_page(
+        request: Request, slug: str,
+        q: str = Query("", max_length=512),
+        words: str = Query("", max_length=512),
+        phrase: str = Query("", max_length=512),
+        exclude: str = Query("", max_length=512),
+        search: bool = Query(False),
+        advanced: bool = Query(False),
+        source_set: str = Query("", max_length=80),
+        collection: str = Query("", max_length=80),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(25),
+        fingerprint: str = Query("", max_length=64),
+    ):
+        matter = authorized_matter(request, slug)
+        results = None
+        action_error = ""
+        status = 200
+        using_expression = advanced or bool(q.strip() and not search)
+        try:
+            # Validate even on an empty form; never broaden an invalid scope.
+            if source_set:
+                bench.workspace.source_set(matter.matter_id, source_set)
+            if collection:
+                bench.workspace.source_collection(matter.matter_id, collection)
+            if search or any(value.strip() for value in (q, words, phrase, exclude)):
+                effective_query = q if using_expression else build_search_query(words, phrase, exclude)
+                results = bench.exact_search(matter, effective_query, source_set_id=source_set,
+                    collection_id=collection, page=page, page_size=page_size,
+                    expected_fingerprint=fingerprint)
+        except KeyError as exc:
+            raise HTTPException(404, "Search scope not found") from exc
+        except ExactSearchChanged as exc:
+            action_error, status = "Your sources changed. Search again to refresh these results.", 409
+        except ExactSearchUnavailable as exc:
+            action_error, status = "We couldn't finish this search. Choose a smaller collection or saved set, then try again. If it keeps happening, check source preparation.", 503
+        except QuerySyntaxError as exc:
+            action_error = str(exc) if using_expression else "Use fewer words or a shorter phrase, then search again."
+            status = 400
+        except ValueError as exc:
+            action_error, status = str(exc), 400
+        links = {}
+        if results:
+            for label, number in (("previous", results.page - 1), ("next", results.page + 1)):
+                if 1 <= number <= results.pages:
+                    links[label] = _query_url(f"/matters/{slug}/exact-search", q=q if using_expression else "",
+                        words=words, phrase=phrase, exclude=exclude,
+                        source_set=source_set, collection=collection, page=number,
+                        page_size=page_size, fingerprint=results.fingerprint)
+        audit(request, "search.exact", "failure" if action_error else "success",
+              context=auth_context(request), matter=matter,
+              details={"result_count": results.total} if results else {})
+        return templates.TemplateResponse(request=request, name="workbench_exact_search.html",
+            status_code=status, context={
+                **base_context(request, matter), "matter": matter, "query": q if using_expression else "",
+                "words": words, "phrase": phrase, "exclude": exclude,
+                "show_assistant_dock": False,
+                "clear_refinements_url": _query_url(f"/matters/{slug}/exact-search", words=words,
+                    q=q if using_expression else ""),
+                "source_sets": bench.workspace.source_sets(matter.matter_id),
+                "collections": bench.workspace.source_collections(matter.matter_id),
+                "selected_source_set": source_set, "selected_collection": collection,
+                "results": results, "links": links, "error": action_error,
+                "previews": {item.document_id: tuple(passage_preview(unit, results.query)
+                    for unit in item.passages) for item in results.items} if results else {},
+            })
 
     @app.get("/matters/{slug}", response_class=HTMLResponse)
     def workspace(

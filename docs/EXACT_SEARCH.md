@@ -2,8 +2,9 @@
 
 This change implements the shared grammar and reference matcher for product
 slices 00 and 07. It does not switch the existing browser search to exact mode.
-The ranked answer retriever still has its existing behavior. An explicit exact
-result service, pagination, backend integration, and UI follow in slice 08.
+The ranked answer retriever still has its existing behavior. Slice 08 adds a
+separate [exact result service and UI](EXACT_SEARCH_RESULTS.md), using this grammar
+for complete, scoped document enumeration with bounded scans.
 
 ## Grammar v1
 
