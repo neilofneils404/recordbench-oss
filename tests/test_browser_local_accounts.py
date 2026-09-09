@@ -61,7 +61,7 @@ def edit(client, username, action, **fields):
 def test_first_administrator_can_create_people_and_control_two_user_access(tmp_path):
     app, repo = configured_app(tmp_path)
     with TestClient(app, base_url=ORIGIN) as admin:
-        assert login(admin).headers["location"] == "/admin/people"
+        assert login(admin).headers["location"] == "/admin/setup"
         page = admin.get("/admin/people")
         assert "Add your first teammate" in page.text and "Create account" in page.text
         assert create(admin, "first.reviewer").status_code == 303

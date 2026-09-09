@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -18,6 +18,53 @@ def _seed(store: WorkspaceStore) -> None:
         "dev-taylor",
         preferred_principal_id="dev-taylor",
     )
+
+
+def test_account_name_refresh_preserves_inactive_identity_and_signin_history(tmp_path):
+    store = WorkspaceStore(tmp_path / "workbench.sqlite", clock=lambda: FIXED)
+    person = store.upsert_principal("local", "synthetic.reviewer", "Original name", "original.login")
+    with store.connection:
+        store.connection.execute(
+            "UPDATE workbench_principal SET active=0 WHERE principal_id=?", (person.principal_id,)
+        )
+    before = store.get_principal(person.principal_id)
+    store.refresh_principal_display_name("local", "synthetic.reviewer", "Updated name")
+    after = store.get_principal(person.principal_id)
+    assert after.display_name == "Updated name"
+    assert (after.principal_id, after.active, after.login_name, after.created_at, after.last_seen_at) == (
+        before.principal_id, before.active, before.login_name, before.created_at, before.last_seen_at
+    )
+    store.refresh_principal_display_name("local", "unseen.reviewer", "Never signed in")
+    assert store.connection.execute("SELECT count(*) FROM workbench_principal").fetchone()[0] == 1
+    store.close()
+
+
+def test_team_access_evidence_must_be_later_than_current_grant(tmp_path):
+    now = [FIXED]
+    store = WorkspaceStore(tmp_path / "workbench.sqlite", clock=lambda: now[0])
+    _seed(store)
+    person = store.upsert_principal("local", "synthetic.reviewer", "Synthetic reviewer", "synthetic.reviewer")
+    matter = store.create_matter("Synthetic setup evidence", "", "dev-taylor")
+    membership = store.add_member(matter.matter_id, person.principal_id, "dev-taylor")
+
+    def record_open(outcome="success"):
+        store.append_audit_event(
+            actor_principal_id=person.principal_id, session_id=None, matter_id=matter.matter_id,
+            request_id="synthetic-setup-check", action="matter.home", outcome=outcome,
+        )
+
+    record_open()
+    # Equal timestamps cannot prove that access occurred after this grant.
+    assert not store.member_access_seen(matter.matter_id, person.principal_id, since=membership.updated_at)
+    now[0] += timedelta(seconds=1)
+    record_open("denied")
+    assert not store.member_access_seen(matter.matter_id, person.principal_id, since=membership.updated_at)
+    record_open()
+    assert store.member_access_seen(matter.matter_id, person.principal_id, since=membership.updated_at)
+    store.revoke_member(matter.matter_id, person.principal_id, "dev-taylor")
+    membership = store.add_member(matter.matter_id, person.principal_id, "dev-taylor")
+    assert not store.member_access_seen(matter.matter_id, person.principal_id, since=membership.updated_at)
+    store.close()
 
 
 def test_matter_and_conversation_persist_and_remain_bound(tmp_path):
