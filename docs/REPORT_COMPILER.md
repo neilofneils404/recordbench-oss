@@ -143,3 +143,13 @@ allocation contract; they do not establish model quality or live-workload
 readiness. Full application and transcription suites, Compose validation,
 Python compilation, publication checks, and final-commit hosted review remain
 the contributor and acceptance gates.
+
+
+Saved conversations and investigations preserve the source-backed qualification
+in `source_limitation` and the service-authored omission warning in
+`verification_notice`. The legacy combined `limitation` remains available for
+conversation display. Compilation imports the qualification with its own exact
+citations and the verifier notice as uncited coverage. Older saved answers with
+a positive omitted-claim count and the exact appended service warning are split
+when read; their stored payload is preserved. Synthetic round-trip tests cover
+both saved-work types, with and without a sourced qualification, and older payloads.

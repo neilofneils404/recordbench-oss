@@ -21,6 +21,13 @@ class CompilationLeaseLost(CompilationProblem):
     """This worker can no longer mutate the job or save its result."""
 
 
+def _sqlite_contention(error: sqlite3.OperationalError) -> bool:
+    code = getattr(error, "sqlite_errorcode", None)
+    if code is not None:
+        return (code & 0xff) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+    return str(error) in {"database is locked", "database table is locked", "database schema is locked"}
+
+
 @dataclass(frozen=True)
 class CompilationJobPolicy:
     actor_active_limit: int = 3
@@ -215,6 +222,19 @@ class ReportCompilationJobs:
                                (self.clock()+self.policy.lease_seconds, self.clock(), job.job_id, job.lease_token))
             return True
 
+    def heartbeat_deadline(self, job: CompilationJobRecord) -> float | None:
+        """Read the durable lease independently while a WAL writer is busy."""
+        with closing(sqlite3.connect(self.workspace.path.resolve().as_uri() + "?mode=ro", uri=True,
+                                     timeout=min(0.25, self.policy.lease_seconds / 12))) as connection:
+            connection.row_factory = sqlite3.Row
+            try:
+                row = self._owned(connection, job)
+            except CompilationLeaseLost:
+                return None
+            if not self._authorized(connection, job.matter_id, job.actor_id):
+                return None
+            return float(row["lease_expires_at"])
+
     def cancelled(self, job: CompilationJobRecord) -> bool:
         with self.workspace._lock:
             try:
@@ -346,14 +366,44 @@ class ReportCompilationCoordinator:
             lost = threading.Event()
 
             def renew(job=job, done=done, lost=lost):
-                while not done.wait(max(0.01, self.jobs.policy.lease_seconds / 3)) and not self._stop.is_set():
+                interval = max(0.01, self.jobs.policy.lease_seconds / 3)
+                delay = interval
+                known_deadline = job.lease_expires_at or self.jobs.clock()
+                while not done.wait(delay) and not self._stop.is_set():
+                    attempted_at = self.jobs.clock()
                     try:
                         if not self.jobs.heartbeat(job):
                             lost.set()
                             return
+                    except sqlite3.OperationalError as exc:
+                        if not _sqlite_contention(exc):
+                            lost.set()
+                            return
+                        try:
+                            durable_deadline = self.jobs.heartbeat_deadline(job)
+                        except sqlite3.OperationalError as read_error:
+                            if not _sqlite_contention(read_error):
+                                lost.set()
+                                return
+                            # Even when a read is also busy, never wait beyond
+                            # the conservative deadline of our last renewal.
+                            durable_deadline = known_deadline
+                        except Exception:
+                            lost.set()
+                            return
+                        if durable_deadline is None or self.jobs.clock() >= durable_deadline:
+                            lost.set()
+                            return
+                        known_deadline = durable_deadline
+                        delay = min(0.1, interval, max(0.01, durable_deadline - self.jobs.clock()))
+                        continue
                     except Exception:
                         lost.set()
                         return
+                    # The UPDATE renews after attempted_at, so this is a lower
+                    # bound if a later busy read cannot inspect its exact value.
+                    known_deadline = max(known_deadline, attempted_at + self.jobs.policy.lease_seconds)
+                    delay = interval
 
             heartbeat = threading.Thread(target=renew, daemon=True)
             heartbeat.start()

@@ -138,7 +138,12 @@ claiming, and completion. A user's request key is bound to its original kind,
 topic, and selection; reusing it with different inputs fails explicitly.
 
 Cancellation is cooperative between model calls, with another check before
-atomic save. Heartbeats extend only live owned leases. Graceful shutdown stops
+atomic save. Heartbeats extend only live owned leases. A transient SQLite busy
+or locked error triggers short bounded retries while an independent read confirms
+the durable lease is still owned and unexpired. If that read is also busy, retries
+cannot exceed the conservative deadline from the last successful renewal. Actual
+lease loss, cancellation, revoked access and non-lock database errors remain
+fenced. A long writer cannot extend an expired lease through retry. Graceful shutdown stops
 new claims and fences/requeues current intent; an outstanding model request may
 finish afterward but cannot save its result. Repeated expired leases eventually
 produce a failed job requiring explicit retry. Leases use UTC epoch timestamps,
