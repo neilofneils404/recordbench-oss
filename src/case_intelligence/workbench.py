@@ -67,6 +67,7 @@ from .generation import (
     generator_from_environment,
 )
 from .ingestion import IngestionCoordinator
+from .report_review_basis import research_sections, review_sections
 from .media_evidence import (
     MediaCoordinator,
     MediaExport,
@@ -197,6 +198,7 @@ from .work_product_exports import (
     export_matter_bundle,
     export_notebook,
     export_research,
+    validate_research_basis,
     export_report,
     safe_file_stem,
 )
@@ -3476,6 +3478,41 @@ class CaseIntelligenceWorkbench:
                         ) from exc
             return render()
 
+    def _assert_current_research_ledger(self, matter: MatterRecord, job: ResearchJobRecord) -> None:
+        """Caller holds source mutation guard; validate all copied investigation support."""
+        validate_research_basis(matter, job)
+        raw_evidence = job.result.get("evidence")
+        if not isinstance(raw_evidence, list):
+            raise ExportProblem(
+                "The investigation evidence ledger could not be resolved."
+            )
+        try:
+            citations = tuple(
+                self._workflow_citation(value)
+                for value in raw_evidence
+                if isinstance(value, Mapping)
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ExportProblem(
+                "The investigation evidence ledger could not be resolved."
+            ) from exc
+        if len(citations) != len(raw_evidence) or any(
+            self._current_workflow_citation(matter, citation) is None
+            for citation in citations
+        ):
+            raise ExportProblem(
+                "The investigation evidence ledger no longer resolves to its saved sources."
+            )
+        self._assert_current_payload_support(
+            matter,
+            job.result,
+            failure=ExportProblem,
+            message=(
+                "The investigation evidence ledger no longer resolves to its "
+                "saved sources."
+            ),
+        )
+
     def export_research_work_product(
         self,
         matter: MatterRecord,
@@ -3494,37 +3531,7 @@ class CaseIntelligenceWorkbench:
 
         store = self.source_store(matter)
         with store.mutation_guard():
-            raw_evidence = job.result.get("evidence")
-            if not isinstance(raw_evidence, list):
-                raise ExportProblem(
-                    "The investigation evidence ledger could not be resolved."
-                )
-            try:
-                citations = tuple(
-                    self._workflow_citation(value)
-                    for value in raw_evidence
-                    if isinstance(value, Mapping)
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ExportProblem(
-                    "The investigation evidence ledger could not be resolved."
-                ) from exc
-            if len(citations) != len(raw_evidence) or any(
-                self._current_workflow_citation(matter, citation) is None
-                for citation in citations
-            ):
-                raise ExportProblem(
-                    "The investigation evidence ledger no longer resolves to its saved sources."
-                )
-            self._assert_current_payload_support(
-                matter,
-                job.result,
-                failure=ExportProblem,
-                message=(
-                    "The investigation evidence ledger no longer resolves to its "
-                    "saved sources."
-                ),
-            )
+            self._assert_current_research_ledger(matter, job)
             return export_research(matter, job, format_name)
 
     def _assert_frozen_research_ledger(
@@ -8930,41 +8937,19 @@ def create_workbench_app(
             )
             if job.state != "succeeded":
                 raise WorkspaceProblem("Research must finish before it can be saved to a report.")
-            report = bench.workspace.create_report(
-                matter.matter_id,
-                context.principal_id,
-                f"Investigation — {job.title}",
-                f"Research question: {job.question}",
-            )
-            citations = []
-            for value in job.result.get("evidence", [])[:100]:
-                if not isinstance(value, Mapping):
-                    continue
-                citations.append(
-                    {
-                        "kind": "transcript" if value.get("evidence_kind") == "transcript" else "source",
-                        "document_id": value.get("document_id", ""),
-                        "source_version_id": value.get("source_version_id", ""),
-                        "source_name": value.get("source_name", ""),
-                        "location": value.get("location", ""),
-                        "support_token": value.get("support_token", ""),
-                        "excerpt": value.get("excerpt", ""),
-                    }
+            with bench.source_store(matter).mutation_guard():
+                bench._assert_current_research_ledger(matter, job)
+                report = bench.workspace.create_report_from_sections(
+                    matter.matter_id,
+                    context.principal_id,
+                    f"Investigation — {job.title}"[:200],
+                    f"Research question: {job.question}"[:2_000],
+                    origin_id=job.job_id,
+                    sections=research_sections(job),
                 )
-            bench.workspace.add_report_section(
-                matter.matter_id,
-                report.report_id,
-                context.principal_id,
-                expected_status=report.status,
-                heading="Verified research synthesis",
-                body=str(job.result.get("summary", "")),
-                origin="finding",
-                origin_id=job.job_id,
-                citations=citations,
-            )
         except KeyError as exc:
             raise HTTPException(404, "Research run not found") from exc
-        except WorkspaceProblem as exc:
+        except (WorkspaceProblem, ExportProblem) as exc:
             return RedirectResponse(
                 _query_url(f"/matters/{slug}/research", job=job_id, error=str(exc)),
                 status_code=303,
@@ -9489,54 +9474,41 @@ def create_workbench_app(
             decisions = bench.workspace.review_decisions_for_export(
                 matter.matter_id, context.principal_id, run.run_id
             )
-            metrics = bench.workspace.review_validation_metrics(
-                matter.matter_id, context.principal_id, run.run_id
+            reviewer_names = {}
+            for reviewer_id in {item.reviewed_by for item in decisions if item.reviewed_by}:
+                try:
+                    reviewer_names[reviewer_id] = bench.workspace.get_principal(reviewer_id).display_name
+                except KeyError:
+                    pass
+            sections = review_sections(
+                run, decisions, criterion_title=criterion.title,
+                criterion_version=version.version_number, instructions=version.instructions,
+                ledger_path=_query_url(f"/matters/{slug}/full-review", run=run_id),
+                reviewer_names=reviewer_names,
             )
-            report = bench.workspace.create_report(
-                matter.matter_id,
-                context.principal_id,
-                f"Every-source check — {criterion.title}",
-                f"Criterion version {version.version_number}; frozen population {run.snapshot_count:,} sources.",
-            )
-            citations: list[dict[str, object]] = []
-            for decision_record in decisions:
-                if decision_record.machine_decision != "included":
-                    continue
-                for value in decision_record.citations:
-                    if len(citations) >= 100:
-                        break
-                    citations.append(
-                        {
-                            "kind": "transcript" if value.get("evidence_kind") == "transcript" else "source",
-                            "document_id": value.get("document_id", ""),
-                            "source_version_id": value.get("source_version_id", ""),
-                            "source_name": value.get("source_name", ""),
-                            "location": value.get("location", ""),
-                            "support_token": value.get("support_token", ""),
-                            "excerpt": value.get("excerpt", ""),
-                        }
-                    )
-                if len(citations) >= 100:
-                    break
-            body = (
-                f"Criterion v{version.version_number}: {version.instructions}\n\n"
-                f"Frozen population: {run.snapshot_count:,}\n"
-                f"Included: {run.included_count:,}\n"
-                f"Not identified: {run.excluded_count:,}\n"
-                f"Needs attention: {run.attention_count:,}\n"
-                f"Validation reviewed: {metrics.get('reviewed_total', 0)} of {metrics.get('sample_total', 0)} sampled decisions."
-            )
-            bench.workspace.add_report_section(
-                matter.matter_id,
-                report.report_id,
-                context.principal_id,
-                expected_status=report.status,
-                heading="Review scope and result",
-                body=body,
-                origin="finding",
-                origin_id=run.run_id,
-                citations=citations,
-            )
+            copied_tokens = {
+                str(citation["support_token"])
+                for section in sections for citation in section["citations"]
+            }
+            with bench.source_store(matter).mutation_guard():
+                for decision in decisions:
+                    for value in decision.citations:
+                        if str(value.get("support_token", "")) not in copied_tokens:
+                            continue
+                        try:
+                            current = bench._current_workflow_citation(matter, bench._workflow_citation(value))
+                        except (KeyError, TypeError, ValueError):
+                            current = None
+                        if current is None:
+                            raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
+                report = bench.workspace.create_report_from_sections(
+                    matter.matter_id,
+                    context.principal_id,
+                    f"Every-source check — {criterion.title}"[:200],
+                    f"Criterion version {version.version_number}; frozen population {run.snapshot_count:,} sources.",
+                    origin_id=run.run_id,
+                    sections=sections,
+                )
         except KeyError as exc:
             raise HTTPException(404, "Review run not found") from exc
         except WorkspaceProblem as exc:
