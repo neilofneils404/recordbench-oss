@@ -452,3 +452,30 @@ def test_repeated_generated_passages_fail_before_export_capacity_is_exceeded(mar
         compile_report("topic", "synthetic events", (material(citations=(citation(text=source_text),)),), RepeatedSources())
     small = compile_report("topic", "synthetic events", (material(),), service())
     assert small.coverage["estimated_export_characters"] < small.coverage["export_character_limit"] == MAX_EXPORT_TEXT_CHARS
+
+
+@pytest.mark.parametrize("selection", ["research:synthetic-investigation", "conversation:synthetic-conversation", "review:synthetic-check"])
+def test_offline_focused_fallback_counts_original_saved_work_not_expanded_findings(selection):
+    items = (material(), material(2, category="gap", citations=()), material(3, category="coverage", citations=()))
+    draft = compile_report("topic", "delivery", items, selections=(selection,))
+    assert draft.coverage["selected_saved_work_count"] == 1
+    assert draft.coverage["selected_materials"] == 3
+    assert draft.coverage["selected_saved_work_ids"] == (selection,)
+    assert draft.coverage["mode"] == "unfiltered_saved_material_arrangement"
+    assert all("relevance not checked" in section["heading"] for section in draft.sections[:-1])
+    assert "topic relevance has not been checked" in draft.sections[-1]["body"]
+    assert "Selected saved work: 1. Expanded findings compiled: 3 of 3." in draft.sections[-1]["compilation_basis"]
+    assert draft.fingerprint == compilation_fingerprint("topic", "delivery", items, selections=(selection,))
+    assert draft.fingerprint != compilation_fingerprint("topic", "delivery", items, selections=("research:different-group",))
+
+
+def test_material_budget_does_not_turn_multiple_saved_work_selections_into_one():
+    with pytest.raises(CompilationProblem, match="Topic relevance could not be checked"):
+        compile_report("topic", "delivery", (material(), material(2)),
+                       selections=("research:first", "research:second"), budget=CompilationBudget(max_materials=1))
+
+
+@pytest.mark.parametrize("selections", [(), ("research:first", "research:first"), ("",), "research:first"])
+def test_selected_work_group_ids_must_be_explicit_and_unique(selections):
+    with pytest.raises(CompilationProblem, match="[Ss]elected"):
+        compilation_fingerprint("topic", "delivery", (material(),), selections=selections)
