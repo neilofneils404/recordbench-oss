@@ -52,6 +52,7 @@ def test_backup_contract_defers_all_background_work_and_restarts_early() -> None
         '"answer_jobs"',
         '"research_jobs"',
         '"review_runs"',
+        '"report_compilation_jobs"',
         'state="deferred"',
         '"cp", "-al"',
         '"stop", "--timeout", "120", "gateway", "app"',

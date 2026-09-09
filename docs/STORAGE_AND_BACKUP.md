@@ -124,3 +124,6 @@ replace an operator's installed-node or replacement-host acceptance.
 
 The tooling remains prerelease. Do not depend on this candidate as the sole copy
 of retained work product until your own scheduled backup and restore drill pass.
+
+Queued and running report compilations appear in content-free health counts and
+defer backup before services are stopped, alongside other active background work.

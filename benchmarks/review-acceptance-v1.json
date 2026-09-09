@@ -162,7 +162,7 @@
       "tests/test_matter_media_workflow.py::test_failed_optional_overview_explains_cause_retries_and_independence": "1a8292814c817dc696269b3c3fee9f1ee4c7753c95660f8d384d45bd3e7ffe66",
       "tests/test_matter_media_workflow.py::test_media_upload_transcript_review_range_citations_exports_and_clips": "141dc1cca74285ae991a9f23bf333cef83451fb049d5d781fe02aa7550458dba",
       "tests/test_matter_media_workflow.py::test_speaker_review_browser_contract_preserves_player_scroll_and_focus": "7955f04e150e91e0fa9549f733efbff67a55372d4e31735d46888df1beeee5e8",
-      "tests/test_matter_media_workflow.py::test_speaker_review_save_updates_every_passage_without_navigation": "9cf8e8a142ba1d81d8777be18e67dc91d6c0ee7db74363bf629830b45dc1f2c3",
+      "tests/test_matter_media_workflow.py::test_speaker_review_save_updates_every_passage_without_navigation": "4355860ac679176657fa247ff13942fd17dcdbdfa59535adc1dcf1b4cf39aa1d",
       "tests/test_research_and_full_review.py::test_full_review_freezes_every_source_versions_criteria_and_computes_validation": "473959c1656360c7e180520da382fef398ce26fad701c8df4901f07a9b097a50",
       "tests/test_review_acceptance_pack.py::test_withheld_source_scenario_excludes_prepared_synthesis": "1ddf71e3aab7c63d0942f52c2ebf50cccf66c62cdf7f9a438221db960e848e6e",
       "tests/test_review_conversation_continuity.py::test_research_result_is_appended_once_to_its_conversation_and_survives_restart": "378a0753115f5c890d02eb885af367dd981d6b49939f16777cbac01c9c43b5ee",
@@ -188,7 +188,7 @@
     "test_file_sha256": {
       "tests/test_generation.py": "17d7434cd3e1c41b03792a82a146f0fee4fc0c25bad7158d21fe0d00bcbcd2f9",
       "tests/test_matter_management.py": "739a7a7a913d9446daf5e45483df19b354fe504ab1bbd1723ad6428bddccf857",
-      "tests/test_matter_media_workflow.py": "ede47c3c5e9c5cdd3fabccb94b79e823663c96b885c9f73f0d50e17498645ff8",
+      "tests/test_matter_media_workflow.py": "71a051e2665a145120ce1d8499de3fc65df074cdb4581154620416071c1d01ec",
       "tests/test_research_and_full_review.py": "4ba1acb7e2c077a632e744538214f22ebba492a2633511e63114de5cf7182c47",
       "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
       "tests/test_review_conversation_continuity.py": "7e09fe23984a0acd5c97d6b47ed15467d0437133bb8b76b1a5d348ebc6523eeb",
@@ -202,6 +202,6 @@
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "f139f94d6241d4dd16ba80965249f7c5e1535f168587154cfcd248c8ece2f695"
+    "content_fingerprint": "414825acfc8ab3c68f616b75f28dacafb8f5dce226d3c76dbe1e26ec3d889e67"
   }
 }

@@ -932,6 +932,11 @@ class ReportSectionRecord:
     compilation_basis: str = ""
 
     @property
+    def prose_limit(self) -> int:
+        suffix = "\n\nReview basis:\n" + self.compilation_basis if self.compilation_basis else ""
+        return max(0, 50_000 - len(suffix))
+
+    @property
     def prose(self) -> str:
         suffix = "\n\nReview basis:\n" + self.compilation_basis
         if self.compilation_basis and self.body.endswith(suffix):
