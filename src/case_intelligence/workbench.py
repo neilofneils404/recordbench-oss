@@ -11124,7 +11124,7 @@ def create_workbench_app(
         request: Request,
         slug: str,
         token: str,
-        unit: int = Query(1, ge=1, le=100_000),
+        unit: int | None = Query(None, ge=1, le=100_000),
         start_ms: int = Query(0, ge=0, le=43_200_000),
         segment: str = Query("", max_length=100),
         q: str = Query("", max_length=240),
@@ -11175,7 +11175,14 @@ def create_workbench_app(
                     )
                 )
                 page_size = 200
-                if start_ms and not any((q, speaker, flag)):
+                if unit is not None and not any((q, speaker, flag)):
+                    target = next(
+                        (index for index, item in enumerate(selected) if item.ordinal == unit),
+                        None,
+                    )
+                    if target is not None:
+                        page = target // page_size + 1
+                elif start_ms and not any((q, speaker, flag)):
                     target = next(
                         (
                             index
@@ -11239,7 +11246,7 @@ def create_workbench_app(
                         "error": error,
                     },
                 )
-            source = bench.source_review(matter, token, unit_number=unit)
+            source = bench.source_review(matter, token, unit_number=unit or 1)
             if not administrator_override:
                 bench.workspace.record_matter_activity(
                     matter.matter_id,
