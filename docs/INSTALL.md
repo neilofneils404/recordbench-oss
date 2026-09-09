@@ -1,9 +1,18 @@
 # Installation playbook
 
+See [Installation handoff and team setup](FIRST_RUN.md) for phase meanings,
+interrupted-run recovery, offline model reuse, and the first browser journey.
+
 For a source checkout used to write code and run tests, start with
 [contributor setup](../CONTRIBUTING.md#set-up-a-development-checkout). The playbook
 below installs an application node; `make bootstrap` prepares a development
 environment and does not deploy the application.
+
+For a new local-account node, `./install --auth local --enable-account-management`
+enables the **People** account editor and first-administrator setup checklist.
+The [browser account playbook](LOCAL_ACCOUNT_BROWSER.md) covers its narrow
+writable account mount, existing-node relocation, backup and rollback. Without
+the explicit option, local sign-in retains the operator-managed account layout.
 
 ## Hardware and capability profiles
 

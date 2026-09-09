@@ -14,6 +14,53 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import recordbench_install as installer  # noqa: E402
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_account_management_configuration_and_update_overlay(tmp_path, enabled):
+    args = installer._parser().parse_args(["install", "--auth", "local", "--models", "none", "--non-interactive"] + (["--enable-account-management"] if enabled else []))
+    console = installer.Console(color=False)
+    paths = installer._prepare_directories(console, tmp_path / "node", storage_root=None, resume=False, dry_run=False)
+    root = tmp_path / "node"
+    cert, key = paths["tls"] / "synthetic.crt", paths["tls"] / "synthetic.key"
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic private key")
+    args.tls_cert, args.tls_key = cert, key
+    installer._configure(console, args, root, paths, "synthetic-release", ROOT, ())
+    application = (paths["config"] / "recordbench.env").read_text()
+    record = json.loads((root / "installation.json").read_text())
+    assert record["local_account_management"] is enabled
+    if enabled:
+        assert "/var/lib/recordbench-accounts/local-accounts.json" in application
+        assert "CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT" in application
+    else:
+        assert "/run/recordbench-secrets/local-accounts.json" in application
+        assert "CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT" not in application
+    for release in (None, ROOT):
+        command = installer._compose(root, (), release=release)
+        assert (str(ROOT / "compose.local-accounts.yaml") in command) is enabled
+
+
+@pytest.mark.parametrize("arguments", [["install", "--auth", "oidc"], ["resume", "--auth", "local"], ["install"]])
+def test_management_flag_rejects_ambiguous_or_existing_node_before_writes(tmp_path, arguments):
+    root = tmp_path / "node"
+    response = subprocess.run([sys.executable, str(ROOT / "scripts/recordbench_install.py"), *arguments,
+                               "--root", str(root), "--enable-account-management"], capture_output=True, text=True)
+    assert response.returncode != 0
+    assert not root.exists()
+
+
+def test_interrupted_provisioning_resume_retains_canonical_account_profile(tmp_path, monkeypatch):
+    from tests.test_first_run_handoff import configured_node
+    root, _, _ = configured_node(tmp_path)
+    monkeypatch.setattr(installer, "_preflight", lambda *args, **kwargs: ())
+    monkeypatch.setattr(installer, "_run", lambda *args, **kwargs: None)
+    calls = []
+    monkeypatch.setattr(installer, "_provision", lambda console, args, *rest: calls.append(args.enable_account_management))
+    args = installer._parser().parse_args(["install", "--resume"])
+    assert not args.enable_account_management
+    installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert calls == [True]
+
+
 def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path, ready_host, monkeypatch, capsys) -> None:
     node = tmp_path.resolve() / "node"
     monkeypatch.setattr(sys, "argv", [
@@ -40,12 +87,13 @@ def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path, ready_ho
         "FORGE RUNTIME",
         "SEAL CONTROL PLANE",
         "NODE ARMED",
-        "ACCESS GRANTED",
+        "PLAN COMPLETE",
     ):
         assert marker in output
     assert not node.exists()
     assert "password=" not in output.casefold()
     assert "token=" not in output.casefold()
+    assert "ACCESS GRANTED" not in output
 
 
 def test_capability_profiles_have_conservative_gpu_contracts() -> None:
@@ -1101,18 +1149,20 @@ def test_diarization_preflight_checks_flags_without_consuming_standard_input(tmp
 
 
 def saved_gpu_node(tmp_path, *, model_profile="quality", models="review"):
-    root = tmp_path.resolve() / "saved-node"
-    (root / "config").mkdir(parents=True)
-    installation = {
+    from tests.test_first_run_handoff import configured_node
+    root, _, _ = configured_node(tmp_path.resolve())
+    installation = json.loads((root / "installation.json").read_text())
+    installation.update({
         "release_id": "synthetic", "release_path": str(ROOT), "auth": "local", "models": models,
         "profiles": ["ai"] if models == "review" else ["transcription"],
         "review_model_profile": model_profile, "gpu_layout": "shared",
         "gpu_topology": {"generator": ["0"], "transcription": "0", "retrieval_device": "cpu", "retrieval_gpu": None},
-    }
+    })
     (root / "installation.json").write_text(json.dumps(installation))
-    environment = {"RECORDBENCH_GENERATOR_GPU": "0", "RECORDBENCH_TRANSCRIPTION_GPU": "0",
+    environment = installer._dotenv(root / "compose.env")
+    environment.update({"RECORDBENCH_GENERATOR_GPU": "0", "RECORDBENCH_TRANSCRIPTION_GPU": "0",
                    "RECORDBENCH_RETRIEVAL_DEVICE": "cpu", "RECORDBENCH_RETRIEVAL_GPU": "0",
-                   "RECORDBENCH_GPU_LAYOUT": "shared", "RECORDBENCH_GENERATOR_GPU_UTILIZATION": "0.72"}
+                   "RECORDBENCH_GPU_LAYOUT": "shared", "RECORDBENCH_GENERATOR_GPU_UTILIZATION": "0.72"})
     (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved GPU plan"))
     (root / "config" / "transcription.env").write_text('TRANSCRIPTION_V2_MIN_FREE_VRAM_MB="16000"\n')
     return root, installation, environment
@@ -1121,10 +1171,11 @@ def saved_gpu_node(tmp_path, *, model_profile="quality", models="review"):
 @pytest.mark.parametrize("command", ["resume", "update"])
 @pytest.mark.parametrize("shortage", ["explicit-device", "quality-model", "utilization", "transcription"])
 def test_saved_gpu_preflight_blocks_resume_update_before_commands(
-    tmp_path, ready_host, monkeypatch, command, shortage,
+    tmp_path, request, monkeypatch, command, shortage,
 ):
     models = "transcription" if shortage == "transcription" else "review"
     root, installation, environment = saved_gpu_node(tmp_path, models=models)
+    request.getfixturevalue("ready_host")
     inventories = {
         "explicit-device": "0, Synthetic Busy, 49152, 1000, 8.9\n1, Synthetic Free, 49152, 47000, 8.9",
         "quality-model": "0, Synthetic Small, 24576, 24000, 8.0",
@@ -1152,23 +1203,35 @@ def test_saved_gpu_preflight_blocks_resume_update_before_commands(
     assert {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
 
 
-def test_completed_diarization_resume_uses_saved_plan_without_new_token(tmp_path, ready_host, monkeypatch):
+def test_completed_diarization_resume_uses_saved_plan_without_new_token(tmp_path, request, monkeypatch):
     root, installation, environment = saved_gpu_node(tmp_path, model_profile="portable", models="transcription")
     installation["transcription_diarization"] = True
     installation["transcription_languages"] = ["en", "es"]
     environment["RECORDBENCH_TRANSCRIPTION_GPU"] = "1"
     (root / "installation.json").write_text(json.dumps(installation))
     (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved transcription"))
-    (root / "state").mkdir()
     installer._seal_provisioning(root, installation)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("synthetic_saved_stager", ROOT / "scripts/stage-models.py")
+    stager = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stager)
+    artifact = root / "models/synthetic-speaker-model.bin"
+    artifact.write_bytes(b"synthetic cached speaker model")
+    stager._stage_receipt(root / "models", ROOT / "config/models.json",
+        frozenset({"transcription-asr", "transcription-alignment-en", "transcription-alignment-es", "transcription-diarization"}),
+        "portable", [artifact])
+    request.getfixturevalue("ready_host")
     monkeypatch.setattr(installer, "_probe", lambda cmd: subprocess.CompletedProcess(cmd, 0,
         "0, Synthetic Busy, 24576, 1000, 8.0\n1, Synthetic Selected, 24576, 24000, 8.0"
         if cmd[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
     commands = []
     monkeypatch.setattr(installer, "_run", lambda console, cmd, **kw: commands.append(cmd))
     monkeypatch.setattr(installer, "_hf_token", lambda *a: pytest.fail("completed resume must remain offline"))
+    provisions = []
+    monkeypatch.setattr(installer, "_provision", lambda *a, **kw: provisions.append(a[1]))
     args = installer._parser().parse_args(["install", "--root", str(root), "--resume", "--non-interactive", "--dry-run"])
     installer._resume_node(installer.Console(color=False, quiet=True), args, root)
-    assert len(commands) == 2 and "up" in commands[-1]
+    assert len(commands) == 1 and "config" in commands[0]
+    assert provisions == [args]
     assert args.transcription_gpu == "1" and args.transcription_languages == "en,es"
     assert args.transcription_min_free_vram_mib == 16000
