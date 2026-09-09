@@ -122,6 +122,14 @@ make the scan unavailable before it can return misleading seek links. Equal
 starts and overlapping segments remain valid. Wholly untimed legacy media
 keeps its ordinary unit links, and PDF page numbering retains its separate
 coverage rules.
+Timed transcripts must also retain the exact integer segment count recorded by
+the transcript installer. A syntactically valid projection missing its final
+segment makes the scan unavailable, even when the remaining timestamps and
+numbers are valid. This prevents both false exact zeroes and exclusion-only
+matches caused by a lost segment. The count check applies to timed projections;
+untimed legacy media retains its existing count interpretation. Synthetic
+regressions use the production transcript projector and installer, remove the
+last file-backed record, and check both positive and negation queries.
 
 This initial adapter deliberately rescans each page. It is not the scalable
 indexed backend. A production-scale adapter should use a consistent database

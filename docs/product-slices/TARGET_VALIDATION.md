@@ -1,12 +1,16 @@
-# Validate the unmerged integration candidate
+# Validate the portable workflow integration
 
-The target Linux machine can test this work before any pull request is merged.
-The `codex/portable-candidate-20260909` branch is the combined test surface
-for the repaired component revisions. It replaces the older September 8
-integration snapshot; use the new manifest and full commit from its handoff.
-Use a separate OSS checkout of the integration branch and a separate synthetic
-installation. The branch is a review/test candidate, not an accepted release.
-Its component PRs remain independently reviewable.
+This walkthrough supports the combined development candidate and the accepted
+upstream revision after source merging. The maintainer handoff and GitHub record
+establish source status for the exact commit; this document does not establish
+an accepted release or target readiness. The `codex/portable-candidate-20260909`
+branch assembles the repaired component revisions in the manifest.
+
+Use a separate OSS checkout and synthetic installation. Keep installed runtime
+state and private deployment overlays separate. The
+[adoption record](OSS_ADOPTION_2026_09.md) describes changed behavior, dependencies,
+configuration, migrations, compatibility, rollback and the scoped source-review
+exception authorized for this batch.
 
 ## Fetch the exact candidate
 
@@ -106,22 +110,21 @@ host identities, paths, credentials, and private deployment details outside the
 public repository. Public follow-up PRs should contain only synthetic
 reproductions and generalized corrections.
 
-Source readiness and installed-target readiness are separate. Finish
-code/security reviews and CI on the final PR heads, then obtain the full-commit
-maintainer acceptance required by
-[the public-alpha gate](../PUBLIC_ALPHA.md#merge-and-automation-boundary).
+Source readiness and installed-target readiness are separate. Follow the
+[public-alpha gate](../PUBLIC_ALPHA.md#merge-and-automation-boundary) for source
+acceptance, with only the scoped security-review exception recorded in this
+batch's [adoption record](OSS_ADOPTION_2026_09.md). Current code review, CI and
+full-commit maintainer acceptance remain required.
 Target access is not needed to continue portable development or source review.
 Target installation, model quality and recovery lanes stay not run until they are
 actually exercised on the intended profile.
 
-Use the component PRs as the default merge path. The combined candidate exists for
-validation; any integration PR should be closed after its component changes land.
-Do not merge both paths independently. Retarget follow-up PRs based on the integration
-branch onto the accepted default branch after their prerequisites land, then
-refresh their diff, checks, and reviews. Merge accepted component PRs in dependency order. Recheck the assembled tree and
-required CI after conflict resolution or default-branch advances. Deployment
-adoption is a later explicit step against the accepted revision; testing this
-branch alone does not update or validate an existing deployment.
+For this batch, merge the reviewed integration tree once, preserving component
+histories, and reconcile the corresponding component PRs. Do not merge another
+copy of the same features. Base later follow-ups on accepted main and refresh
+checks and reviews for their final heads. Deployment adoption remains a later
+explicit step against the accepted revision; source merging does not update or
+validate an existing deployment.
 
 ## Adoption boundaries in this candidate
 

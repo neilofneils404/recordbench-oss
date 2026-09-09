@@ -317,6 +317,44 @@ def test_timestamp_only_media_change_invalidates_pagination(tmp_path, field, val
         scan(sources, page=2, expected_fingerprint=first.fingerprint)
 
 
+def _installed_transcript_source(tmp_path):
+    import io
+    from types import SimpleNamespace
+    from case_intelligence.media_evidence import transcript_units
+    from case_intelligence.pilot_uploads import PilotStore
+    store = PilotStore(tmp_path / 'synthetic-complete-transcript')
+    source, _ = store.store_stream('Synthetic transcript.txt', 'text/plain', io.BytesIO(b'Synthetic media source'))
+    source.media_type, source.duration_ms = 'audio/wav', 2000
+    units = transcript_units([SimpleNamespace(start_ms=start, end_ms=start + 1000,
+        current_text=text, speaker_cluster='speaker-1', speaker_display_name='', speaker_identity_state='unconfirmed')
+        for start, text in [(0, 'neutral opening'), (1000, 'cancelled bicycle')]])
+    store.install_media_transcript(source.document_id, units)
+    assert source.page_count == 2 and source.units_file and not source.units
+    return source, store.derived / source.units_file
+
+
+def test_installed_transcript_missing_valid_tail_invalidates_positive_and_negation_searches(tmp_path):
+    source, path = _installed_transcript_source(tmp_path)
+    assert scan([source], 'cancelled').total == 1
+    assert scan([source], 'NOT cancelled').total == 0
+    payload = json.loads(path.read_text())
+    payload['units'].pop()
+    path.write_text(json.dumps(payload))
+    # The remaining record is valid, consecutively numbered and starts at zero;
+    # only the production installer's retained segment count exposes the loss.
+    for query in ('cancelled', 'NOT cancelled'):
+        with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+            scan([document(1, 'cancelled'), source], query)
+
+
+@pytest.mark.parametrize('count', [None, True, 2.0, '2', 0, -1, 1, 3])
+def test_installed_timed_transcript_requires_an_exact_integer_segment_count(tmp_path, count):
+    source, _ = _installed_transcript_source(tmp_path)
+    source.page_count = count
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([source], 'cancelled')
+
+
 @pytest.mark.parametrize('field,value', [
     ('number', 'one'), ('number', []), ('number', None), ('number', True),
     ('start_ms', '1000'), ('end_ms', []), ('line_start', False),
@@ -352,6 +390,7 @@ def test_missing_reader_never_becomes_an_empty_source_exclusion():
 def test_corrupt_file_backed_media_relationships_are_unavailable(tmp_path, index, changes):
     source, path = _file_backed_source(tmp_path, ['red bicycle', 'red depot'])
     source.media_type, source.duration_ms = 'audio/wav', 5000
+    source.page_count = 2
     payload = json.loads(path.read_text())
     for unit, start in zip(payload['units'], (1000, 2000)):
         unit.update(start_ms=start, end_ms=start + 1000)
@@ -366,7 +405,8 @@ def test_corrupt_file_backed_media_relationships_are_unavailable(tmp_path, index
 def test_media_validation_preserves_untimed_legacy_units_and_pdf_page_numbers():
     legacy = document(1, 'red bicycle')
     legacy.media_type = 'audio/wav'
-    legacy.units[0]['number'] = 5
+    legacy.page_count = 99  # Untimed legacy metadata is not a segment count.
+    legacy.units[0].update(number=5, line_start=0, line_end=1000)
     result = scan([legacy])
     assert result.total == 1 and result.items[0].previews[0]['start_ms'] is None
     pdf = document(2, 'red on page two', 'red on page one')
@@ -375,6 +415,7 @@ def test_media_validation_preserves_untimed_legacy_units_and_pdf_page_numbers():
     assert scan([pdf]).total == 1
     timed = document(3, 'red bicycle', 'red depot')
     timed.media_type, timed.duration_ms = 'audio/wav', 5000
+    timed.page_count = 2
     timed.units[0].update(start_ms=1000, end_ms=2000)
     # Equal starts and overlapping segments remain valid; the producer permits
     # an endpoint up to and including its two-second duration allowance.
@@ -690,6 +731,7 @@ def test_media_timestamp_links_and_partial_page_warning_are_visible(tmp_path):
         media = document(1, "opening", "red bicycle appears at this moment")
         media.media_type = "audio/wav"
         media.duration_ms = 46000
+        media.page_count = 2
         segments = [SimpleNamespace(start_ms=start, end_ms=start + 1000,
             current_text=text, speaker_cluster="speaker-1", speaker_display_name="",
             speaker_identity_state="unconfirmed") for start, text in
@@ -840,5 +882,6 @@ def test_production_transcript_projection_displays_timestamps(start, expected):
     assert preview["start_ms"] == start
     source = document(1)
     source.media_type, source.duration_ms = 'audio/wav', start + 1000
+    source.page_count = 1
     source.units = [asdict(unit)]
     assert scan([source]).items[0].previews[0]['location'] == expected
