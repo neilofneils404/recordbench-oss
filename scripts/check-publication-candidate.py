@@ -32,7 +32,8 @@ def main() -> int:
     if not args.publication_ref.startswith(("refs/heads/", "refs/pull/", "refs/tags/")):
         raise ValueError("Invalid publication reference")
     oid = args.expected_head
-    outgoing_ref = "refs/heads/publication-candidate"
+    outgoing_ref = ("refs/heads/publication-candidate"
+                    if args.publication_ref.startswith("refs/pull/") else args.publication_ref)
     if args.publication_ref.startswith("refs/tags/"):
         if git("rev-parse", "--verify", "--end-of-options", args.publication_ref + "^{commit}") != args.expected_head:
             raise ValueError("Tag does not identify the expected candidate")

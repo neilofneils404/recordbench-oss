@@ -9,7 +9,10 @@ unrelated branch history part of the candidate result.
 tracked checkout, then uses the existing pre-push guard to inspect an isolated
 copy of the explicit candidate object. Every ancestor remains included. Tag
 pushes use the original tag object, verify its peeled commit against expected
-HEAD, and retain annotated/nested-tag inspection. No residue rule is relaxed.
+HEAD, and retain annotated/nested-tag inspection. Branch pushes retain the actual
+branch name so ref metadata receives the same scan; only pull-request integration
+refs receive a synthetic branch name. Deleted-ref events skip candidate inspection
+because they publish no candidate object. No residue rule is relaxed.
 
 The generic scanner and the installed pre-push hook keep their existing
 behavior. Repository-wide gitleaks history scanning remains separate and
