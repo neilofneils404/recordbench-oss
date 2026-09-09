@@ -25,6 +25,7 @@ from authlib.integrations.starlette_client import OAuth
 from joserfc.errors import JoseError
 
 from .branding import PRODUCT_NAME
+from .local_accounts import LocalAccount, LocalAccountRepository
 from .workspace_store import PrincipalRecord, SessionRecord, WorkspaceProblem, WorkspaceStore
 
 SESSION_COOKIE = "case_intelligence_session"
@@ -325,101 +326,25 @@ class KerberosSettings:
         )
 
 
-@dataclass(frozen=True)
-class LocalAccount:
-    username: str
-    display_name: str
-    password_hash: str = field(repr=False)
-    roles: frozenset[str] = frozenset()
-    enabled: bool = True
-
-
 class LocalAccountSettings:
-    """Owner-managed Argon2id account file for installations without SSO."""
+    """Read-only live account snapshots; the operator repository owns mutations."""
 
     provider_key = "local"
 
     def __init__(self, accounts_file: Path) -> None:
-        path = _regular_file(
-            Path(accounts_file),
-            label="Local account file",
-            exact_mode=0o600,
-        )
-        try:
-            metadata = path.stat(follow_symlinks=False)
-            if metadata.st_size > 1024 * 1024:
-                raise RuntimeError("Local account file exceeds its size limit")
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError("Local account file is unreadable or invalid") from exc
-        if (
-            not isinstance(payload, dict)
-            or set(payload) != {"format_version", "accounts"}
-            or payload.get("format_version") != 1
-            or not isinstance(payload.get("accounts"), list)
-            or not 1 <= len(payload["accounts"]) <= 500
-        ):
-            raise RuntimeError("Local account file does not match the required format")
-        try:
-            from argon2 import PasswordHasher, extract_parameters
-        except ImportError as exc:
-            raise RuntimeError("Local account authentication dependency is unavailable") from exc
-        accounts: dict[str, LocalAccount] = {}
-        for raw in payload["accounts"]:
-            if not isinstance(raw, dict) or not set(raw).issubset(
-                {"username", "display_name", "password_hash", "roles", "enabled"}
-            ) or not {"username", "display_name", "password_hash"}.issubset(raw):
-                raise RuntimeError("Local account file contains an invalid account")
-            username_value = raw.get("username")
-            display_value = raw.get("display_name")
-            password_hash = raw.get("password_hash")
-            roles_value = raw.get("roles", [])
-            enabled = raw.get("enabled", True)
-            username = (
-                username_value.strip().casefold()
-                if isinstance(username_value, str)
-                else ""
-            )
-            display_name = display_value.strip() if isinstance(display_value, str) else ""
-            if (
-                _LOCAL_USERNAME.fullmatch(username) is None
-                or not display_name
-                or len(display_name) > 160
-                or any(ord(character) < 32 for character in display_name)
-                or not isinstance(password_hash, str)
-                or not password_hash.startswith("$argon2id$")
-                or len(password_hash) > 512
-                or not isinstance(roles_value, list)
-                or any(value != "administrator" for value in roles_value)
-                or len(set(roles_value)) != len(roles_value)
-                or not isinstance(enabled, bool)
-                or username in accounts
-            ):
-                raise RuntimeError("Local account file contains an invalid account")
-            try:
-                parameters = extract_parameters(password_hash)
-            except Exception as exc:
-                raise RuntimeError(
-                    "Local account file contains an invalid password hash"
-                ) from exc
-            if parameters.type.name.casefold() != "id":
-                raise RuntimeError("Local account passwords must use Argon2id")
-            accounts[username] = LocalAccount(
-                username,
-                display_name,
-                password_hash,
-                frozenset(roles_value),
-                enabled,
-            )
-        if not any(
-            account.enabled and "administrator" in account.roles
-            for account in accounts.values()
-        ):
-            raise RuntimeError("At least one enabled local administrator is required")
-        self.accounts_file = path
-        self.accounts = accounts
+        from argon2 import PasswordHasher
+
+        self.accounts_file = Path(accounts_file)
+        self.repository = LocalAccountRepository(self.accounts_file)
+        self.repository.read()  # Fail startup closed on unsafe or invalid files.
         self._hasher = PasswordHasher()
         self._dummy_hash = self._hasher.hash(secrets.token_urlsafe(32))
+
+    @property
+    def accounts(self) -> dict[str, LocalAccount]:
+        # Atomic file replacement gives each request a complete snapshot without
+        # requiring the application's read-only secrets mount to create a lock.
+        return self.repository.read()
 
     @classmethod
     def from_env(cls) -> "LocalAccountSettings":
@@ -1001,10 +926,15 @@ class IdentityService:
         principal: PrincipalRecord,
         auth_method: str,
         application_roles: frozenset[str] = frozenset(),
+        local_account: LocalAccount | None = None,
     ) -> tuple[AuthContext, str]:
         if not principal.active:
             raise WorkspaceProblem("This identity is not active.")
         raw_token = secrets.token_urlsafe(32)
+        if auth_method == "local":
+            if local_account is None:
+                raise LocalAuthenticationError("Local account sign-in is unavailable.")
+            raw_token = f"local.{self._local_session_binding(local_account)}.{raw_token}"
         now = self._now()
         session = self.store.create_session(
             principal.principal_id,
@@ -1073,6 +1003,14 @@ class IdentityService:
                 for value in stale[:1_000]:
                     self._local_failures.pop(value, None)
 
+    def _local_session_binding(self, account: LocalAccount) -> str:
+        # A keyed digest exposes neither password hashes nor stored revisions in
+        # the opaque cookie. The session table continues to store only its digest.
+        material = json.dumps([account.username, account.session_revision,
+                               account.password_hash, sorted(account.roles), account.enabled],
+                              separators=(",", ":")).encode()
+        return hmac.new(self._secret, b"local-account-session:" + material, hashlib.sha256).hexdigest()
+
     def login_local(
         self,
         username: str,
@@ -1095,7 +1033,10 @@ class IdentityService:
             raise LocalAuthenticationError(
                 "Sign-in is temporarily unavailable. Wait a few minutes and try again."
             )
-        account = self.local_settings.authenticate(username, password)
+        try:
+            account = self.local_settings.authenticate(username, password)
+        except (OSError, RuntimeError):
+            raise LocalAuthenticationError("Local account sign-in is temporarily unavailable.") from None
         if account is None:
             self._record_local_failure(attempt_key, now)
             raise LocalAuthenticationError("The username or password is incorrect.")
@@ -1107,7 +1048,7 @@ class IdentityService:
             account.display_name,
             account.username,
         )
-        return self._issue_session(principal, "local", account.roles)
+        return self._issue_session(principal, "local", account.roles, local_account=account)
 
     def _resolved_kerberos_groups(self, principal: str) -> frozenset[str]:
         try:
@@ -1456,11 +1397,22 @@ class IdentityService:
                 or principal.provider != self.local_settings.provider_key
             ):
                 return None
-            account = self.local_settings.account(principal.provider_subject)
-            if account is None or not account.enabled:
+            try:
+                account = self.local_settings.account(principal.provider_subject)
+            except (OSError, RuntimeError):
+                account = None
+            binding = raw_token.split(".", 2)
+            if (account is None or not account.enabled or session.auth_method != "local"
+                    or len(binding) != 3 or binding[0] != "local"
+                    or not hmac.compare_digest(binding[1], self._local_session_binding(account))):
                 self.store.revoke_session(session.session_id)
                 return None
             roles = account.roles
+            if principal.display_name != account.display_name:
+                principal = self.store.upsert_principal(
+                    self.local_settings.provider_key, account.username,
+                    account.display_name, account.username,
+                )
         return AuthContext(
             principal,
             session,

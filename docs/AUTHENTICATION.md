@@ -8,7 +8,11 @@ CSRF protection, explicit matter membership, and attributed audit events.
 Local mode stores only Argon2id password hashes in an owner-only JSON file. The
 login page never lists account names, errors do not reveal whether an account
 exists, and repeated failures are rate-limited at both gateway and application
-layers. At least one enabled administrator is required.
+layers. At least one enabled administrator is required. Account changes now
+refresh in running processes; password, enabled-state and role changes require
+affected users to sign in again. Display-name changes retain their sessions.
+See the [local-account lifecycle](LOCAL_ACCOUNT_LIFECYCLE.md) for the shared
+service, explicit version 1 migration and recovery contract.
 
 Manage accounts inside the tools container; do not edit hashes by hand:
 
@@ -16,6 +20,14 @@ Manage accounts inside the tools container; do not edit hashes by hand:
 docker compose --profile tools run --rm --no-deps account-admin \
   accounts list --file /run/recordbench-secrets/local-accounts.json
 ```
+
+Use the same `accounts` CLI for `add`, `password`, `display-name`, `enable`,
+`disable`, and `role --role reviewer|administrator`, with `--file` and
+`--username`. Creation also takes `--display-name`; passwords come from a
+terminal prompt or `--password-stdin`, never a command argument. `accounts
+migrate --file ... --backup-file ...` prepares existing version 1 files for
+changes while retaining a verified recovery copy. CLI output attributes each
+completed mutation to its effective service-account UID.
 
 ## OIDC
 
