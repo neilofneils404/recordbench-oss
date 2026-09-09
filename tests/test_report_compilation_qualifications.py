@@ -116,7 +116,7 @@ def test_qualifications_count_toward_persisted_section_capacity(field):
     huge = "Synthetic qualification. " * 3_000
     answer = replace(qualified_answer(), **{field: VerifiedClaim(huge, ()) if field == "limitation" else huge})
     with pytest.raises(CompilationProblem, match="too long to save"):
-        compile_report("timeline", materials=(material(), material(2)), generator=AnswerService(answer))
+        compile_report("timeline", materials=(material(transcript=field == "evidence_notice"), material(2)), generator=AnswerService(answer))
 
 
 def test_real_generation_transcript_warning_survives_compilation():
@@ -194,5 +194,55 @@ def test_real_verifier_notice_remains_uncited_beside_sourced_limitation(tmp_path
         assert exported.count(omission_notice) == 1
         if sourced_limitation:
             assert "Limitation: " + selected[1].text + "\nLimitation source support: Source 2." in exported
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("source_kind", ["transcript", "media_clip"])
+@pytest.mark.parametrize("transcript_limitation", [False, True])
+def test_mixed_source_notices_follow_section_support_through_export(tmp_path, source_kind, transcript_limitation):
+    document_text = "The synthetic inspection occurred on 2024-04-02."
+    transcript_text = "The machine transcript appears to say that a synthetic delivery was mentioned."
+    first, second = material(), material(2, transcript=True)
+    first = replace(first, text=document_text, citations=({**first.citations[0], "excerpt": document_text},))
+    second = replace(second, text=transcript_text,
+                     citations=({**second.citations[0], "kind": source_kind, "excerpt": transcript_text},))
+
+    if source_kind == "media_clip":
+        second = replace(second, citations=({**second.citations[0], "support_token": "",
+            "media_clip_id": "media-clip-" + "2" * 32, "start_ms": 1_000, "end_ms": 2_000},))
+
+    class MixedClient:
+        available = True
+
+        def generate(self, **kwargs):
+            return {"answerable": True, "claims": [
+                {"text": document_text, "evidence_ids": ["S1"]},
+                {"text": transcript_text, "evidence_ids": ["S2"]},
+            ], "limitation": {"text": transcript_text, "evidence_ids": ["S2"]} if transcript_limitation else None,
+                "missing_information": ""}
+
+    draft = compile_report("timeline", materials=(first, second), generator=GroundedGenerationService(MixedClient()))
+    document = next(section for section in draft.sections if section["body"].startswith(document_text))
+    transcript = next(section for section in draft.sections if section["body"].startswith(transcript_text))
+    assert (MEDIA_TRANSCRIPT_NOTICE in document["body"]) == transcript_limitation
+    assert MEDIA_TRANSCRIPT_NOTICE in transcript["body"]
+    assert document["date_key"] == ("" if transcript_limitation else "2024-04-02")
+    assert document["citations"] == ((first.citations[0], second.citations[0]) if transcript_limitation else first.citations)
+
+    store = WorkspaceStore(tmp_path / "synthetic-mixed-notices.sqlite")
+    try:
+        actor = store.upsert_principal("test", "synthetic-compiler", "Synthetic compiler", "synthetic-compiler",
+                                       preferred_principal_id="synthetic-compiler")
+        matter_record = store.create_matter("Synthetic mixed evidence", "Synthetic", actor.principal_id)
+        report = store.create_report_from_sections(matter_record.matter_id, actor.principal_id,
+            title=draft.title, purpose=draft.purpose, origin_id="synthetic-compilation", sections=draft.sections)
+        saved = store.report_sections(matter_record.matter_id, report.report_id)
+        saved_document = next(section for section in saved if section.body.startswith(document_text))
+        assert saved_document.body == document["body"]
+        sections = tuple((section, store.report_citations(matter_record.matter_id, report.report_id, section.section_id))
+                         for section in saved)
+        exported = export_report(matter_record, report, sections, "markdown").body.decode("utf-8")
+        assert exported.count(MEDIA_TRANSCRIPT_NOTICE) == (2 if transcript_limitation else 1)
     finally:
         store.close()

@@ -82,7 +82,16 @@ not return a partial human record set as a completed draft.
   Service-authored omission notices remain labeled qualifications without
   invented citations. Transcript notices retain their playback and reliability
   cautions in saved Reports and exports. These qualifications share the finding's
-  section and text budgets, so capacity cannot drop them independently.
+  section and text budgets, so capacity cannot drop them independently. Transcript
+  notices appear only when that section's own claim or limitation cites transcript
+  or media-clip evidence; document-only findings in mixed answers do not inherit
+  recording instructions. The scoped notice also governs deduplication and text
+  budget calculations.
+- Failed answer-service calls distinguish outages (`unavailable_model_calls`)
+  from invalid or ungrounded responses (`rejected_model_calls`) in both source
+  generation and relevance classification. Rejected calls remain separate from
+  individual rejected claims. Both leave analysis incomplete and preserve the
+  attributed fallback; an all-rejected response is not described as an outage.
 - Verifier omission notices have separate, uncited metadata and a separate
   `Verification notice` paragraph. A source-supported limitation never attributes
   verifier behavior to its source. Legacy conversation answer fields and display
@@ -97,7 +106,7 @@ not return a partial human record set as a completed draft.
   citations keep generated and saved timeline dates non-exact regardless of the
   phrasing or a supplied date label. This decision follows the finding's own
   support: document-only findings in a mixed source answer can retain exact dates.
-- Compiler version 10 changes the fingerprint so earlier previews cannot share
+- Compiler version 11 changes the fingerprint so earlier previews cannot share
   an identity with the corrected allocation, relevance, citation, and
   qualification policy.
 - This work does not resolve #44's separate finding about distinct machine
@@ -120,6 +129,9 @@ Transcript-date regressions exercise real verification and mixed source packets;
 citation-count boundaries verify full persistence and Markdown export. Date-bound
 regressions cover saved text, generated claims, and verified limitations; blank
 review-record regressions verify the coverage denominator and completion status.
+Mixed-source notice tests verify each section through persistence and export;
+call-outcome tests cover outages, structural and grounding rejections, and mixed
+failures in classification and source generation.
 Existing compiler tests also exercise grounding, coverage, cancellation, export text
 limits, current Report storage compatibility, and source snapshot fingerprints.
 

@@ -401,7 +401,8 @@ def test_initially_available_model_failure_preserves_attributed_saved_findings(k
         assert item.revision in saved["compilation_basis"]
         assert saved["citations"] == item.citations
     assert draft.coverage["unprocessed_source_passages"] == 2
-    assert draft.coverage["unavailable_model_calls"] == draft.coverage["model_calls"]
+    assert draft.coverage["unavailable_model_calls"] == (draft.coverage["model_calls"] if failure == "unavailable" else 0)
+    assert draft.coverage["rejected_model_calls"] == (draft.coverage["model_calls"] if failure == "rejected" else 0)
     assert draft.coverage["stop_reason"] == "analysis_incomplete"
     if topic:
         assert draft.coverage["mode"] == "unfiltered_saved_material_arrangement"
