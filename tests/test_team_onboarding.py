@@ -127,3 +127,15 @@ def test_setup_does_not_count_disabled_local_teammates_or_assume_model_readiness
             assert "Waiting for another eligible person to sign in" in page.text
             assert "Optional answers: temporarily unavailable" in page.text
             assert page.headers["cache-control"] == "no-store"
+
+
+def test_seeded_preview_identities_do_not_claim_observed_signin(tmp_path, monkeypatch):
+    app = create_workbench_app(tmp_path / 'runtime', generator=UnavailableGenerator(), auth_mode='test', learned_retrieval=False)
+    identity = app.state.identity
+    original = identity.resolve
+    monkeypatch.setattr(identity, 'resolve', lambda token: replace(original(token), application_roles=frozenset({'administrator'})))
+    with TestClient(app) as client:
+        page = client.get('/admin/setup')
+        assert page.status_code == 200
+        assert 'Another eligible person has signed in' not in page.text
+        assert 'Preview identities are available; teammate sign-in is not verified.' in page.text

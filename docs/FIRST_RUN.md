@@ -134,3 +134,8 @@ selected model artifacts through its runtime image before launch.
 If interruption occurred before local administrator creation, unattended resume
 requires the saved administrator identity and `--password-stdin` before runtime
 commands. Existing canonical account stores do not require password re-entry.
+
+Preview and test identities are seeded when the application starts. Team setup
+labels them as available synthetic identities without claiming that another
+person has signed in. Configured local or organization identity flows retain the
+observed-person wording; matter access still requires its independent event.

@@ -338,6 +338,8 @@ def test_model_receipt_rejects_unsafe_snapshot_relationships(tmp_path, kind):
 
 @pytest.mark.parametrize("command", ["resume", "update"])
 def test_resume_and_update_preflight_uses_saved_coordinates_and_model_options(tmp_path, monkeypatch, command):
+    # Provisioning is stubbed in this coordinate/input test; supply its one-use bootstrap credential.
+    monkeypatch.setattr(installer, '_password', lambda args: 'synthetic-bootstrap-password')
     storage = tmp_path / "separate-storage"
     root, _, paths = configured_node(tmp_path, storage_root=storage)
     installation = json.loads((root / "installation.json").read_text())
@@ -400,6 +402,8 @@ def test_resume_refuses_conflicting_or_replaced_saved_mounts_before_external_com
 
 @pytest.mark.parametrize("receipt_state", ["missing", "broken-link", "unrecorded-file", "valid"])
 def test_unattended_resume_requires_staging_inputs_only_when_cache_is_not_verified(tmp_path, monkeypatch, receipt_state):
+    # Provisioning is stubbed in this coordinate/input test; supply its one-use bootstrap credential.
+    monkeypatch.setattr(installer, '_password', lambda args: 'synthetic-bootstrap-password')
     root, _, paths = configured_node(tmp_path)
     installation = json.loads((root / "installation.json").read_text())
     installation.update(models="transcription", transcription_diarization=True, profiles=["transcription"])
@@ -475,3 +479,68 @@ def test_resume_keeps_a_safe_external_canonical_account_directory(tmp_path, monk
     assert args.account_root == external
     assert not paths["accounts"].exists()
     assert any("accounts" in command and "list" in command for command in commands)
+
+
+@pytest.mark.parametrize('receipt', ['missing', 'previous-release'])
+def test_doctor_recovers_prepared_progress_without_reprovisioning(tmp_path, monkeypatch, capsys, receipt):
+    root, args, _ = configured_node(tmp_path)
+    installation, _ = installer._installed_release(root)
+    installer._seal_provisioning(root, installation)
+    progress = root / 'state/install-progress.json'
+    if receipt == 'missing':
+        progress.unlink()
+    else:
+        value = json.loads(progress.read_text()); value['release_id'] = 'old-release'; progress.write_text(json.dumps(value))
+    monkeypatch.setattr(installer, '_run', lambda *a, **k: subprocess.CompletedProcess([], 0, '', ''))
+    def healthy(console, root):
+        for phase in ('running', 'login_reachable', 'basic_review', 'selected_capabilities'):
+            installer._install_phase(root, phase, 'complete')
+    monkeypatch.setattr(installer, '_wait_health', healthy)
+    installer._doctor(installer.Console(color=False), args, root)
+    capsys.readouterr()
+    installer._handoff(installer.Console(color=False), root)
+    output = capsys.readouterr().out
+    assert 'prepared: complete' in output
+    assert 'Continue with:' not in output
+    assert 'Browser sign-in: not verified' in output
+
+
+def test_successful_update_handoff_retains_completed_preparation(tmp_path, monkeypatch, capsys):
+    root, args, _ = configured_node(tmp_path)
+    installation, _ = installer._installed_release(root)
+    installer._seal_provisioning(root, installation)
+    args.no_backup = True
+    monkeypatch.setattr(installer, '_preflight', lambda *a, **k: ())
+    monkeypatch.setattr(installer, '_stage_release', lambda *a, **k: ('synthetic-updated-release', ROOT))
+    monkeypatch.setattr(installer, '_run', lambda *a, **k: subprocess.CompletedProcess([], 0, '', ''))
+    def healthy(console, root):
+        for phase in ('running', 'login_reachable', 'basic_review', 'selected_capabilities'):
+            installer._install_phase(root, phase, 'complete')
+    monkeypatch.setattr(installer, '_wait_health', healthy)
+    installer._update(installer.Console(color=False), args, root)
+    capsys.readouterr()
+    installer._handoff(installer.Console(color=False), root)
+    output = capsys.readouterr().out
+    assert 'prepared: complete' in output and 'Continue with:' not in output
+    assert installer._install_progress(root)['release_id'] == 'synthetic-updated-release'
+
+
+def test_bootstrap_password_is_read_once_and_consumed_at_account_initialization(tmp_path, monkeypatch):
+    root, args, paths = configured_node(tmp_path)
+    reads = []
+    monkeypatch.setattr(installer, '_password', lambda args: reads.append('read') or PASSWORD)
+    values_seen = []
+    def command(console, command, **kwargs):
+        assert reads == ['read']
+        if 'accounts' in command and 'init' in command:
+            assert kwargs['input_value'] == PASSWORD + '\n'
+            assert values_seen[0] == []
+            LocalAccountRepository(paths['accounts'] / 'local-accounts.json').initialize(
+                'alice.admin', 'Alice Administrator', PASSWORD, actor='synthetic-operator')
+        return subprocess.CompletedProcess(command, 0, '', '')
+    monkeypatch.setattr(installer, '_run', command)
+    with installer._bootstrap_password_input(args, root, 'local') as password_input:
+        values_seen.append(password_input)
+        installer._provision(installer.Console(color=False), args, root, 'local', 'none',
+                             'alice.admin', 'Alice Administrator', password_input=password_input)
+    assert reads == ['read'] and password_input == []
