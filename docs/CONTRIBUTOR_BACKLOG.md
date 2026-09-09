@@ -1,5 +1,11 @@
 # Contributor starting points
 
+For scoped product work, start with the [portable product slices](product-slices/README.md).
+They record code-backed findings, dependencies, implementation boundaries, and
+synthetic acceptance criteria for installation, onboarding, accounts/groups,
+exact search, deep review, Reports, and People/Places/Things. The briefs are
+proposals; refresh upstream and coordinate an individual slice before coding.
+
 These are candidate contributions, not assignments. Open a short issue with a
 synthetic reproduction or proposed acceptance path; check existing PRs before
 starting. Maintainers coordinate ownership and break larger work into small
