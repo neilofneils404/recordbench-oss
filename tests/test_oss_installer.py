@@ -721,3 +721,16 @@ def test_preflight_rejects_home_directory_dot_dot_alias(tmp_path, ready_host, mo
     check = "node-storage" if field == "root" else "matter-storage"
     assert checks_by_name(result)[check].state == "fail"
     assert list(synthetic_home.iterdir()) == []
+
+
+
+def test_preflight_dot_dot_cannot_hide_a_symlink_component(tmp_path, ready_host):
+    target = tmp_path.resolve() / "separate-target"
+    target.mkdir()
+    (tmp_path / "linked").symlink_to(target)
+    args = preflight_args(tmp_path)
+    args.root = tmp_path.resolve() / "missing" / ".." / "linked" / "node"
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["node-storage"].state == "fail"
+    assert list(target.iterdir()) == []

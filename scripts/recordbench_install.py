@@ -1031,8 +1031,10 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
         for name, path in (("node-storage", args.root), ("matter-storage", args.storage_root or args.root / "matter-storage")):
             entered_path = path.expanduser()
             try:
+                lexical_path = Path(os.path.abspath(entered_path))
                 safe = entered_path.is_absolute() and not any(
-                    part.is_symlink() for part in (entered_path, *entered_path.parents)
+                    part.is_symlink()
+                    for part in (entered_path, *entered_path.parents, lexical_path, *lexical_path.parents)
                 )
                 # Match the canonical path installation will actually use while
                 # retaining the refusal of symlinks in the entered path.
