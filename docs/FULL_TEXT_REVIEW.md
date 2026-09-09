@@ -96,6 +96,21 @@ matter bundle includes the JSON ledger and retains its existing bundle byte
 limits. Final synthesis consumers should bind a terminal run and revision; an
 active forward cursor is not a completion watermark.
 
+Standalone JSON/CSV downloads acquire the same matter response lease as other
+source-bearing exports. Matter closure and purge wait until the admitted stream
+finishes. A ledger-specific response cleanup closes its read-only SQLite snapshot
+and releases that lease on normal completion, producer errors, send errors and
+client disconnects; a failed download does not leave deletion blocked. The reader
+permits successive, serialized iterator calls on different ASGI worker threads.
+Authorization is still checked between record batches.
+
+Non-member administrators read coverage, paginated ranges, extraction rows and
+ledger downloads under their authenticated identity with an explicit read
+override. Deactivating the owner or revoking the owner's membership does not
+turn an authorized administrator read into an owner-impersonation failure.
+Administrator reads remain attributed to that administrator, and the read
+override does not grant creator-only ledger deletion.
+
 The Reports workflow uses `resolve_text_report_citations()` for full-text saved
 work. It streams frozen sources, including sources with no citations and decisions
 beyond the displayed summary limit. It validates actual text digests, frozen

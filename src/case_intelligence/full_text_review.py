@@ -199,15 +199,15 @@ class FullTextReviewLedger:
                 "ORDER BY u.unit_ordinal LIMIT 12", (run_id, document_id)))
             return source
 
-    def extraction_rows(self, matter_id, actor_id, run_id, *, after='', limit=100):
-        self.workspace.review_run(matter_id, actor_id, run_id)
+    def extraction_rows(self, matter_id, actor_id, run_id, *, after='', limit=100, administrator_override=False):
+        self.workspace.review_run(matter_id, actor_id, run_id, administrator_override=administrator_override)
         with self.workspace._lock:
             return tuple(dict(row) for row in self.workspace.connection.execute(
                 "SELECT * FROM workbench_text_review_source WHERE run_id=? AND document_id>? ORDER BY document_id LIMIT ?",
                 (run_id, after, min(500, max(1, int(limit))))))
 
-    def citation(self, matter_id, actor_id, run_id, document_id, unit_ordinal):
-        self.workspace.review_run(matter_id, actor_id, run_id)
+    def citation(self, matter_id, actor_id, run_id, document_id, unit_ordinal, *, administrator_override=False):
+        self.workspace.review_run(matter_id, actor_id, run_id, administrator_override=administrator_override)
         with self.workspace._lock:
             row = self.workspace.connection.execute("SELECT citation_json FROM workbench_text_review_unit WHERE run_id=? AND document_id=? AND unit_ordinal=? AND state!='invalidated'",
                 (run_id, document_id, unit_ordinal)).fetchone()
@@ -215,8 +215,8 @@ class FullTextReviewLedger:
             raise KeyError(unit_ordinal)
         return read_locator(row[0])
 
-    def coverage(self, matter_id, actor_id, run_id):
-        run = self.workspace.review_run(matter_id, actor_id, run_id)
+    def coverage(self, matter_id, actor_id, run_id, *, administrator_override=False):
+        self.workspace.review_run(matter_id, actor_id, run_id, administrator_override=administrator_override)
         with self.workspace._lock:
             db = self.workspace.connection
             settings = db.execute("SELECT policy_json FROM workbench_text_review WHERE run_id=?", (run_id,)).fetchone()
@@ -256,13 +256,13 @@ class FullTextReviewLedger:
             self.workspace.connection.execute('DELETE FROM workbench_review_run WHERE run_id=?', (run_id,))
             return run
 
-    def rows(self, matter_id, actor_id, run_id, *, after=0, limit=100):
+    def rows(self, matter_id, actor_id, run_id, *, after=0, limit=100, administrator_override=False):
         """Keyset-page sealed source inventories within frozen resource limits.
 
         Final synthesis consumers bind the terminal run/revision; active-run
         callers must refresh pending rows because outcomes can still change.
         """
-        self.workspace.review_run(matter_id, actor_id, run_id)
+        self.workspace.review_run(matter_id, actor_id, run_id, administrator_override=administrator_override)
         with self.workspace._lock:
             return tuple(dict(row) for row in self.workspace.connection.execute(
                 "SELECT c.*,u.unit_number,u.location,u.unit_digest,u.citation_json,s.source_name,s.source_version_id,s.source_basis_digest "
@@ -276,7 +276,10 @@ def iter_text_export(workspace, matter_id, actor_id, run_id, format_name='json',
     import csv
     import io
     workspace.review_run(matter_id, actor_id, run_id, administrator_override=administrator_override)
-    db = sqlite3.connect(workspace.path.resolve().as_uri() + '?mode=ro', uri=True)
+    # StreamingResponse awaits each next() serially, but successive calls (and
+    # close()) may run on different workers. This connection belongs solely to
+    # this iterator and is never used concurrently or shared with workspace writes.
+    db = sqlite3.connect(workspace.path.resolve().as_uri() + '?mode=ro', uri=True, check_same_thread=False)
     db.row_factory = sqlite3.Row
     try:
         db.execute('BEGIN')
