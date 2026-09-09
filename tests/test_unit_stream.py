@@ -77,6 +77,15 @@ def test_budgeted_document_refuses_materializing_loader_and_checks_inline():
     assert len(checkpoints) == 2
 
 
+@pytest.mark.parametrize('budgeted', [False, True])
+def test_file_backed_document_without_any_reader_is_unavailable(budgeted):
+    document = PilotDocument('b' * 32, 'Synthetic missing reader.txt', '', 'text/plain', 0,
+                             'ready', '', [], units_file='b' * 32 + '.json')
+    kwargs = {'budget_check': lambda: None} if budgeted else {}
+    with pytest.raises(RuntimeError, match='derived text reader is unavailable'):
+        list(document.iter_parsed_units(**kwargs))
+
+
 def test_store_streams_real_derived_file_without_whole_file_loader(tmp_path, monkeypatch):
     store = PilotStore(tmp_path / 'synthetic-store')
     source, _ = store.store_stream('Synthetic.txt', 'text/plain', io.BytesIO(b'Synthetic text'))

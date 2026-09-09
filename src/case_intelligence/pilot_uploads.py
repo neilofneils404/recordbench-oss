@@ -597,6 +597,8 @@ class PilotDocument:
             if budget_check is not None or read_check is not None or max_record_chars is not None:
                 raise RuntimeError("bounded derived text reader is unavailable")
             yield from self._units_loader(self.units_file)
+        elif self.units_file:
+            raise RuntimeError("derived text reader is unavailable")
 
     def parsed_units(self) -> tuple[PilotUnit, ...]:
         if self.units:
