@@ -89,7 +89,7 @@ def test_literal_normalization_and_phrase_rules(query, text, wanted):
     "", "   ", "AND red", "red OR", "red AND OR blue", "()", "red)",
     "(red", '"red', '""', '"..."', 'red"blue"', '"red"blue',
     "red*", "name:red", "red?", "red~", "red -blue", "red & blue",
-    "red NEAR/3 blue", "red W/3 blue", "red PRE/3 blue", "red WITHIN blue",
+    "red NEAR/101 blue", "red W/3 blue", "red PRE/3 blue", "red WITHIN blue",
     "red\x00blue", "red\u202eblue", '"red\\q"', "red/blue", "red\\blue",
     "(" * (MAX_QUERY_DEPTH + 1) + "red" + ")" * (MAX_QUERY_DEPTH + 1),
     "NOT " * (MAX_QUERY_DEPTH + 1) + "red",
@@ -155,3 +155,10 @@ def test_casefold_expansion_obeys_the_canonical_character_limit():
     assert parse_query(query.normalized).expression == query.expression
     with pytest.raises(QuerySyntaxError, match="normalized query"):
         parse_query("ß" * MAX_QUERY_CHARS)
+
+
+def test_match_explanation_selects_a_true_boolean_proof():
+    assert parse_query("(red AND bicycle) OR green").explain_units(["red", "green"])[0].words == ("green",)
+    assert parse_query("NOT (NOT red AND blue)").explain_units(["red"])[0].words == ("red",)
+    assert parse_query("NOT (red OR blue)").explain_units(["green"]) == ()
+    assert parse_query("red AND bicycle").explain_units(["red"]) is None

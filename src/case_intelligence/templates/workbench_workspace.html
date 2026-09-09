@@ -21,9 +21,9 @@
           Add sources
         </a>
         <a class="button button-secondary" href="/matters/{{ matter.slug }}/settings">Matter settings</a>
-        <a class="button button-ink" href="/matters/{{ matter.slug }}?mode=search#search-results">
+        <a class="button button-ink" href="/matters/{{ matter.slug }}/exact-search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
-          Search matter
+          Find sources
         </a>
         {% if can_close_matter %}<a class="button close-matter-link" href="/matters/{{ matter.slug }}/close">Close matter</a>{% endif %}
       </div>
@@ -96,7 +96,7 @@
       <div class="search-mode-heading">
         <div>
           <h2 id="search-heading">Search this matter</h2>
-          <p>Find an exact word, name, date, phrase, or related passage.</p>
+          <p>Semantic passage search finds ranked related passages. <a href="/matters/{{ matter.slug }}/exact-search">Find sources by the words they contain.</a></p>
         </div>
         <a href="/matters/{{ matter.slug }}?mode=ask">Back to conversation</a>
       </div>
@@ -521,7 +521,7 @@
         </div>
       </form>
       <small class="composer-readiness-hint{% if readiness.partial_query %} is-partial{% endif %}" id="composer-readiness-hint" data-composer-readiness-hint>{% if active_research %}This conversation is waiting for its broader investigation. You can leave and return later.{% elif readiness.partial_query %}{{ readiness.coverage_notice }}{% elif readiness.can_query %}Answer uses the strongest matching passages. Investigate makes several searches and takes longer. Neither checks every source.{% elif readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ readiness.guidance }}{% endif %}</small>
-      <a class="search-instead" href="/matters/{{ matter.slug }}?mode=search#search-results">
+      <a class="search-instead" href="/matters/{{ matter.slug }}/exact-search">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
         Search instead
       </a>
