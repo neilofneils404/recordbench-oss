@@ -1484,6 +1484,11 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
         if existing_resume and args.auth in {None, "local"}:
             account_status = _saved_account_status(account_directory / "local-accounts.json",
                                                    managed=args.enable_account_management)
+            if account_status == "missing":
+                try:
+                    _assert_unfinished_account_bootstrap(args.root)
+                except RuntimeError:
+                    account_status = "recovery-required"
             if account_status != "missing":
                 valid = account_status == "valid"
                 add("saved-node", valid,
@@ -1848,6 +1853,14 @@ def _password(args: argparse.Namespace) -> str:
     return value
 
 
+def _assert_unfinished_account_bootstrap(root: Path) -> None:
+    # Even a stale or damaged seal is evidence of prior provisioning, never
+    # authorization to replace a missing attributed account store.
+    marker = _provision_marker(root)
+    if marker.exists() or marker.is_symlink():
+        raise RuntimeError("saved local account store is missing after provisioning; restore the canonical account backup before resuming")
+
+
 @contextmanager
 def _bootstrap_password_input(args: argparse.Namespace, root: Path, auth: str):
     account_root = (getattr(args, 'account_root', root / 'accounts')
@@ -1855,6 +1868,7 @@ def _bootstrap_password_input(args: argparse.Namespace, root: Path, auth: str):
     values = []
     try:
         if not args.dry_run and auth == 'local' and not (account_root / 'local-accounts.json').exists():
+            _assert_unfinished_account_bootstrap(root)
             values.append(_password(args))
         yield values
     finally:
@@ -2355,6 +2369,10 @@ def _provision(
         with _bootstrap_password_input(args, root, auth) as values:
             return _provision(console, args, root, auth, models, admin_username, admin_display,
                               model_cache_verified=model_cache_verified, password_input=values)
+    account_root = (getattr(args, 'account_root', root / 'accounts')
+                    if args.enable_account_management else root / 'secrets')
+    if auth == 'local' and not (account_root / 'local-accounts.json').exists():
+        _assert_unfinished_account_bootstrap(root)
     profiles = ["tools"]
     if not args.dry_run:
         for phase in INSTALL_PHASES[1:]:
@@ -2691,6 +2709,16 @@ def _saved_node_arguments(args: argparse.Namespace, root: Path) -> tuple[dict[st
             raise RuntimeError("saved storage mount disagrees with the installed node layout")
     if app_env.get("CASE_INTELLIGENCE_AUTH_MODE") != auth:
         raise RuntimeError("saved authentication mode disagrees with application configuration")
+    if auth == "local":
+        expected_file = ("/var/lib/recordbench-accounts/local-accounts.json" if account_management
+                         else "/run/recordbench-secrets/local-accounts.json")
+        expected_management = "/var/lib/recordbench-accounts" if account_management else ""
+        if (app_env.get("CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE") != expected_file
+                or app_env.get("CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT", "") != expected_management):
+            raise RuntimeError("saved local-account paths disagree with the installed application configuration")
+        account_root = args.account_root if account_management else root / "secrets"
+        if not (account_root / "local-accounts.json").exists():
+            _assert_unfinished_account_bootstrap(root)
     server_name = installation.get("server_name")
     if not isinstance(server_name, str) or compose_env.get("RECORDBENCH_SERVER_NAME") != server_name:
         raise RuntimeError("saved HTTPS hostname coordinates disagree")

@@ -506,7 +506,9 @@ def test_doctor_recovers_prepared_progress_without_reprovisioning(tmp_path, monk
 
 
 def test_successful_update_handoff_retains_completed_preparation(tmp_path, monkeypatch, capsys):
-    root, args, _ = configured_node(tmp_path)
+    root, args, paths = configured_node(tmp_path)
+    LocalAccountRepository(paths['accounts'] / 'local-accounts.json').initialize(
+        'alice.admin', 'Alice Administrator', PASSWORD, actor='synthetic-operator')
     installation, _ = installer._installed_release(root)
     installer._seal_provisioning(root, installation)
     args.no_backup = True
