@@ -83,7 +83,7 @@
             {% for unit in previews[item.document_id][1:] %}<div><a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if unit.start_ms is not none %}?start_ms={{ unit.start_ms }}#segment-{{ unit.number }}{% else %}?unit={{ unit.position }}{% endif %}">{{ unit.location }}</a><p class="find-excerpt">{% for text, highlighted in unit.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p></div>{% endfor %}
             {% if item.matching_unit_count > 3 %}<p>Open the source to review every matching page or section.</p>{% endif %}
           </details>{% endif %}
-        {% else %}<p class="find-excerpt">This source matches the exclusions in your search.</p>{% endif %}
+        {% else %}<p class="find-excerpt">This source matched because a word, phrase, or combination excluded by the search was absent.</p>{% endif %}
       </div>
     </article>
     {% else %}<div class="find-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><h3>No sources found</h3><p>Try a shorter name or fewer words.{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %} You can also clear your filters to look more broadly.{% endif %}</p>{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<a class="button button-secondary" href="{{ clear_refinements_url }}">Search without filters</a>{% endif %}</div>{% endfor %}
