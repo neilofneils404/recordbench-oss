@@ -21,6 +21,7 @@ MAX_QUESTION_CHARS = 2_000
 MAX_EVIDENCE_ITEMS = DEFAULT_REVIEW_BUDGET.synthesis_inputs
 MAX_EVIDENCE_CHARS = DEFAULT_REVIEW_BUDGET.evidence_chars
 MAX_EVIDENCE_ITEM_CHARS = DEFAULT_REVIEW_BUDGET.evidence_item_chars
+MAX_ANSWER_CLAIMS = 8
 MAX_HISTORY_CHARS = 6_000
 MAX_WORKING_CONTEXT_CHARS = 12_000
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -104,6 +105,9 @@ class VerifiedAnswer:
     elapsed_ms: int
     omitted_claims: int = 0
     evidence_notice: str = ""
+    # Retain consumed output slots even when identical verified claims collapse.
+    # Classification callers must not infer completeness from the shorter list.
+    duplicate_claims: int = 0
 
     @property
     def text(self) -> str:
@@ -156,7 +160,7 @@ ANSWER_SCHEMA: dict[str, object] = {
         "answerable": {"type": "boolean"},
         "claims": {
             "type": "array",
-            "maxItems": 8,
+            "maxItems": MAX_ANSWER_CLAIMS,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -1177,7 +1181,7 @@ class GroundedGenerationService:
         answerable = raw.get("answerable")
         claims = raw.get("claims")
         missing = raw.get("missing_information")
-        if not isinstance(answerable, bool) or not isinstance(claims, list) or len(claims) > 8 or not isinstance(missing, str) or len(missing) > 800:
+        if not isinstance(answerable, bool) or not isinstance(claims, list) or len(claims) > MAX_ANSWER_CLAIMS or not isinstance(missing, str) or len(missing) > 800:
             raise GenerationRejected("The generated answer did not match the required structure.")
         evidence_map = {item.evidence_id: item for item in evidence}
         if not answerable:
@@ -1195,6 +1199,7 @@ class GroundedGenerationService:
             )
         accepted: list[VerifiedClaim] = []
         omitted = 0
+        duplicates = 0
         for value in claims:
             if not isinstance(value, dict) or set(value) != {"text", "evidence_ids"}:
                 omitted += 1
@@ -1204,6 +1209,8 @@ class GroundedGenerationService:
                 omitted += 1
             elif claim not in accepted:
                 accepted.append(claim)
+            else:
+                duplicates += 1
         limitation_value = raw.get("limitation")
         limitation: VerifiedClaim | None = None
         if limitation_value is not None:
@@ -1270,4 +1277,5 @@ class GroundedGenerationService:
             elapsed_ms,
             omitted,
             MEDIA_TRANSCRIPT_NOTICE if media_used else "",
+            duplicate_claims=duplicates,
         )

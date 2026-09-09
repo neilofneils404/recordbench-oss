@@ -30,6 +30,17 @@ not return a partial human record set as a completed draft.
   unconfirmed-relevance note, even when source generation succeeds. Empty records
   do not reserve slots. `retained_unclassified_review_material_ids` identifies
   the unchecked records actually retained in the draft.
+- Relevance batches contain at most eight records, matching the shared answer
+  schema and verifier claim capacity. Smaller batches still share the configured
+  model-call budget; unchecked later records remain available as unconfirmed
+  review. A response with omitted, invalid, or repeated classification claims
+  cannot prove the other records irrelevant. Generation verification retains a
+  separate duplicate-claim count so normalization cannot hide consumed output
+  slots; it does not label duplicate claims as unsupported statements.
+- A note longer than the model's per-item input limit is never marked completely
+  classified from its prefix. Its full original text remains available, and
+  `truncated_review_material_ids` identifies the affected records alongside the
+  existing truncated-character count.
 - Generated candidates are bounded to `max_sections` while model calls finish.
   Content allocation stays within that limit; the coverage ledger adds one
   separate section. Generated or machine sections can still be omitted and are
@@ -44,20 +55,30 @@ not return a partial human record set as a completed draft.
 - Repeated generated claims with the same text and evidence set occupy one
   section per category regardless of evidence order. The first claim's citation
   order is preserved for display; distinct evidence sets remain separate.
-- Compiler version 5 changes the fingerprint so earlier previews cannot share
-  an identity with the corrected allocation, relevance, and citation policy.
+- Verified limitations and evidence notices stay in each generated finding's
+  readable body, before its review basis. Source-supported limitations include
+  their citations and identify the corresponding section-local source numbers.
+  Service-authored omission notices remain labeled qualifications without
+  invented citations. Transcript notices retain their playback and reliability
+  cautions in saved Reports and exports. These qualifications share the finding's
+  section and text budgets, so capacity cannot drop them independently.
+- Compiler version 6 changes the fingerprint so earlier previews cannot share
+  an identity with the corrected allocation, relevance, citation, and
+  qualification policy.
 - This work does not resolve #44's separate finding about distinct machine
   assertions sharing a passage, or its deleted-result and cancellation UI
   findings. This foundation is not acceptance of the full #44 workflow.
 
 ## Synthetic validation
 
-Run `python -m pytest -q tests/test_report_compilation.py tests/test_report_compilation_dedup.py` in the contributor
+Run `python -m pytest -q tests/test_report_compilation*.py` in the contributor
 environment. Capacity regressions exercise generated and offline machine work
 before a disputed note, multiple entity categories, insufficient human capacity,
 empty and topic-excluded notes, and initially available model failure. Mixed
 classification/source outcomes, partial entity classification, exact citation
-persistence limits, and reversed-evidence duplicates have focused regressions. Existing
+persistence limits, reversed-evidence duplicates, classifier output capacity,
+matches beyond a truncated note prefix, and persisted/exported limitations and
+transcript notices have focused regressions. Existing
 compiler tests also exercise grounding, coverage, cancellation, export text
 limits, current Report storage compatibility, and source snapshot fingerprints.
 

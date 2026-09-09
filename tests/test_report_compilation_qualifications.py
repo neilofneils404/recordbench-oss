@@ -1,0 +1,132 @@
+"""Synthetic coverage for finding qualifications surviving Report compilation."""
+from dataclasses import replace
+
+import pytest
+
+from case_intelligence.generation import (
+    MEDIA_TRANSCRIPT_NOTICE, GroundedGenerationService, VerifiedAnswer, VerifiedClaim,
+)
+from case_intelligence.report_compilation import (
+    CompilationBudget, CompilationMaterial, CompilationProblem, compile_report,
+)
+from case_intelligence.work_product_exports import export_report
+from case_intelligence.workspace_store import WorkspaceStore
+
+
+def material(index=1, *, transcript=False):
+    text = ("The machine transcript mentions a synthetic delivery." if transcript
+            else "The synthetic delivery date remains unconfirmed.")
+    return CompilationMaterial(
+        material_id=f"synthetic-record-{index}", origin="research", title="Synthetic finding",
+        text=text, review_status="verified", revision="synthetic-revision-1",
+        citations=({"kind": "transcript" if transcript else "source",
+                    "document_id": f"{index:032x}", "source_version_id": f"{index + 100:032x}",
+                    "support_token": f"{index:040x}", "source_name": f"Synthetic source {index}.txt",
+                    "location": "00:01–00:02" if transcript else "Line 1", "excerpt": text},),
+    )
+
+
+class AnswerService:
+    available = True
+
+    def __init__(self, answer):
+        self.result = answer
+
+    def answer(self, question, evidence, **kwargs):
+        return self.result
+
+
+def qualified_answer():
+    return VerifiedAnswer(
+        True, "", (VerifiedClaim("The machine transcript mentions a synthetic delivery.", ("S1",)),
+                   VerifiedClaim("A second synthetic finding was retained.", ("S1",))),
+        VerifiedClaim("The synthetic delivery date remains unconfirmed.", ("S2", "S2")),
+        "", ("S1", "S2"), True, 1, evidence_notice=MEDIA_TRANSCRIPT_NOTICE,
+    )
+
+
+def test_capacity_retains_qualification_and_its_support_with_each_finding(tmp_path):
+    selected = (material(transcript=True), material(2))
+    answer = qualified_answer()
+    draft = compile_report("timeline", materials=selected, generator=AnswerService(answer),
+                           budget=CompilationBudget(max_sections=1))
+    assert len(draft.sections) == 2
+    finding = draft.sections[0]
+    assert "Limitation: " + answer.limitation.text in finding["body"]
+    assert "Limitation source support: Source 2." in finding["body"]
+    assert "Evidence notice: " + MEDIA_TRANSCRIPT_NOTICE in finding["body"]
+    assert finding["citations"] == tuple(item.citations[0] for item in selected)
+    assert draft.coverage["omitted_sections"] > 0
+
+    store = WorkspaceStore(tmp_path / "synthetic-workspace.sqlite")
+    try:
+        actor = store.upsert_principal("test", "synthetic-compiler", "Synthetic compiler", "synthetic-compiler",
+                                       preferred_principal_id="synthetic-compiler")
+        matter_record = store.create_matter("Synthetic qualifications", "Synthetic", actor.principal_id)
+        report = store.create_report_from_sections(matter_record.matter_id, actor.principal_id,
+            title=draft.title, purpose=draft.purpose, origin_id="synthetic-compilation", sections=draft.sections)
+        saved = store.report_sections(matter_record.matter_id, report.report_id)
+        assert saved[0].body == finding["body"]
+        sections = tuple((section, store.report_citations(matter_record.matter_id, report.report_id, section.section_id))
+                         for section in saved)
+        assert tuple(citation.excerpt for citation in sections[0][1]) == tuple(item.citations[0]["excerpt"] for item in selected)
+        exported = export_report(matter_record, report, sections, "markdown").body.decode("utf-8")
+        assert "Limitation: " + answer.limitation.text in exported
+        assert "Limitation source support: Source 2." in exported
+        assert MEDIA_TRANSCRIPT_NOTICE in exported
+    finally:
+        store.close()
+
+
+def test_service_authored_omission_limitation_needs_no_invented_source():
+    limitation = VerifiedClaim("Some generated statements were omitted because their source support could not be verified.", ())
+    answer = replace(qualified_answer(), limitation=limitation, omitted_claims=1, evidence_notice="")
+    draft = compile_report("timeline", materials=(material(),), generator=AnswerService(answer))
+    findings = [section for section in draft.sections if section.get("category") == "Chronology"]
+    assert len(findings) == 2
+    for finding in findings:
+        assert "Limitation: " + limitation.text in finding["body"]
+        assert "Limitation source support:" not in finding["body"]
+        assert finding["citations"] == material().citations
+
+
+def test_limitation_support_does_not_merge_distinct_claim_support_sets():
+    answer = replace(qualified_answer(),
+        claims=tuple(VerifiedClaim("A synthetic finding.", (identifier,)) for identifier in ("S1", "S2")),
+        limitation=VerifiedClaim("A shared synthetic qualification.", ("S1", "S2")), evidence_notice="")
+    selected = (material(), material(2))
+    draft = compile_report("timeline", materials=selected, generator=AnswerService(answer))
+    findings = [section for section in draft.sections if section.get("category") == "Chronology"]
+    assert len(findings) == 2
+    assert findings[0]["citations"] == tuple(item.citations[0] for item in selected)
+    assert findings[1]["citations"] == tuple(item.citations[0] for item in reversed(selected))
+    assert "Limitation source support: Source 1, Source 2." in findings[0]["body"]
+    assert "Limitation source support: Source 2, Source 1." in findings[1]["body"]
+
+
+@pytest.mark.parametrize("identifiers", [("S99",), ("S2", "S99")])
+def test_foreign_limitation_support_cannot_leave_an_unqualified_finding(identifiers):
+    answer = replace(qualified_answer(), limitation=VerifiedClaim("Synthetic qualification.", identifiers))
+    with pytest.raises(CompilationProblem, match="limitation.*source"):
+        compile_report("timeline", materials=(material(), material(2)), generator=AnswerService(answer))
+
+
+@pytest.mark.parametrize("field", ["limitation", "evidence_notice"])
+def test_qualifications_count_toward_persisted_section_capacity(field):
+    huge = "Synthetic qualification. " * 3_000
+    answer = replace(qualified_answer(), **{field: VerifiedClaim(huge, ()) if field == "limitation" else huge})
+    with pytest.raises(CompilationProblem, match="too long to save"):
+        compile_report("timeline", materials=(material(), material(2)), generator=AnswerService(answer))
+
+
+def test_real_generation_transcript_warning_survives_compilation():
+    class SourceEchoClient:
+        available = True
+
+        def generate(self, *, question, evidence, **kwargs):
+            return {"answerable": True, "claims": [{"text": "The machine transcript appears to say that a synthetic delivery was mentioned.", "evidence_ids": ["S1"]}],
+                    "limitation": None, "missing_information": ""}
+
+    draft = compile_report("timeline", materials=(material(transcript=True),),
+                           generator=GroundedGenerationService(SourceEchoClient()))
+    assert "Evidence notice: " + MEDIA_TRANSCRIPT_NOTICE in draft.sections[0]["body"]

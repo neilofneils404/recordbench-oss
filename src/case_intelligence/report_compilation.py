@@ -19,10 +19,10 @@ from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS
 
 from .generation import (
     EvidenceItem, GenerationRejected, GenerationUnavailable, VerifiedAnswer,
-    MAX_EVIDENCE_ITEMS, MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEM_CHARS,
+    MAX_EVIDENCE_ITEMS, MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEM_CHARS, MAX_ANSWER_CLAIMS,
 )
 
-COMPILATION_VERSION = 5
+COMPILATION_VERSION = 6
 KINDS = frozenset({"timeline", "entities", "topic"})
 HUMAN_ORIGINS = frozenset({"human", "notebook", "human_review", "review_decision", "source_review"})
 UNRESOLVED_STATES = frozenset({"disputed", "needs_review", "needs_attention", "flagged", "unreviewed"})
@@ -292,6 +292,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     note_categories: dict[str, list[str]] = {}
     classification_calls = 0
     classification_truncated_chars = 0
+    truncated_review_ids: set[str] = set()
     if focused and not model_available and len(selected_work) > 1:
         raise CompilationProblem("Topic relevance could not be checked. Try again when AI assistance is available or select one relevant saved item.")
     classification_queries = (
@@ -312,9 +313,12 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     for item in classification_items:
         excerpt = item.text[:MAX_EVIDENCE_ITEM_CHARS]
         classification_truncated_chars += len(item.text) - len(excerpt)
+        if len(excerpt) < len(item.text):
+            truncated_review_ids.add(item.material_id)
         if not excerpt.strip():
             continue
-        if note_batch and (len(note_batch) >= MAX_EVIDENCE_ITEMS or note_chars + len(excerpt) > MAX_EVIDENCE_CHARS):
+        if note_batch and (len(note_batch) >= min(MAX_EVIDENCE_ITEMS, MAX_ANSWER_CLAIMS)
+                           or note_chars + len(excerpt) > MAX_EVIDENCE_CHARS):
             note_batches.append(note_batch)
             note_batch, note_chars = [], 0
         note_batch.append((item, excerpt))
@@ -344,22 +348,31 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 raise CompilationProblem("Report compilation cancelled.")
             if not isinstance(classified, VerifiedAnswer):
                 raise CompilationProblem("Review classification requires independently verified model answers.")
-            for item, _excerpt in note_batch:
-                completed = classified_categories.setdefault(item.material_id, set())
-                completed.add(category)
-                if completed >= required_categories:
-                    classified_ids.add(item.material_id)
             rejected += classified.omitted_claims
+            complete_classification = not (classified.omitted_claims or classified.duplicate_claims)
+            returned_review_ids: set[str] = set()
             for claim in classified.claims if classified.answerable else ():
                 if len(set(claim.evidence_ids)) != 1 or any(identifier not in note_lookup for identifier in claim.evidence_ids):
                     rejected += 1
+                    complete_classification = False
                     continue
                 for identifier in claim.evidence_ids:
                     material_id = note_lookup[identifier].material_id
+                    if material_id in returned_review_ids:
+                        complete_classification = False
+                    returned_review_ids.add(material_id)
                     relevant_note_ids.add(material_id)
                     values = note_categories.setdefault(material_id, [])
                     if category not in values:
                         values.append(category)
+            # Missing/rejected output cannot establish that an unreturned
+            # record is irrelevant. Keep the batch incomplete in that case.
+            if complete_classification:
+                for item, _excerpt in note_batch:
+                    completed = classified_categories.setdefault(item.material_id, set())
+                    completed.add(category)
+                    if completed >= required_categories and item.material_id not in truncated_review_ids:
+                        classified_ids.add(item.material_id)
     for batch in batches if model_available else ():
         evidence = tuple(EvidenceItem(f"S{i}", citation.get("source_name") or "Saved source",
                                      citation.get("location") or "Saved passage", excerpt,
@@ -391,22 +404,48 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 if completed >= required_source_categories:
                     analyzed.add(key)
             rejected += answer.omitted_claims
+            limitation = answer.limitation
+            limitation_keys: tuple = ()
+            if limitation is not None:
+                if (not isinstance(limitation.text, str) or not limitation.text.strip()
+                        or any(not isinstance(identifier, str) or identifier not in lookup
+                               for identifier in limitation.evidence_ids)):
+                    raise CompilationProblem("A generated limitation needs valid text and source references.")
+                # The answer service also supplies omission notices with no
+                # evidence IDs. Keep them as qualifications, without inventing
+                # source support for a statement about the generation process.
+                limitation_keys = tuple(dict.fromkeys(lookup[identifier][0] for identifier in limitation.evidence_ids))
+            if not isinstance(answer.evidence_notice, str):
+                raise CompilationProblem("A generated evidence notice must be text.")
             for claim in answer.claims if answer.answerable else ():
                 if not claim.text.strip() or not claim.evidence_ids or any(identifier not in lookup for identifier in claim.evidence_ids):
                     rejected += 1
                     continue
                 keys = tuple(dict.fromkeys(lookup[identifier][0] for identifier in claim.evidence_ids))
-                identity = (category, claim.text, frozenset(keys))
+                identity = (category, claim.text, frozenset(keys),
+                            limitation.text if limitation else "", frozenset(limitation_keys), answer.evidence_notice)
                 if identity in generated_keys:
                     continue
                 generated_keys.add(identity)
-                cited = tuple(source_rows[key] for key in keys)
-                origins = {item.material_id: item for key in keys for item in source_materials[key]}
+                all_keys = tuple(dict.fromkeys((*keys, *limitation_keys)))
+                cited = tuple(source_rows[key] for key in all_keys)
+                origins = {item.material_id: item for key in all_keys for item in source_materials[key]}
                 items = tuple(origins.values())
                 date_key = _exact_date(claim.text) if kind == "timeline" else ""
                 heading = f"{category} — {date_key or 'dates as stated'}" if kind == "timeline" else f"{category} — source-linked finding"
-                basis, omitted = _generated_basis(items, claim.text)
-                body = claim.text + "\n\nReview basis:\n" + basis
+                # Qualifications travel with every finding so section capacity
+                # cannot retain an assertion while dropping its caveat. Source
+                # numbers match the attached citations in Report and export.
+                qualified_text = claim.text
+                if limitation is not None:
+                    qualified_text += "\n\nLimitation: " + limitation.text
+                    if limitation_keys:
+                        support = ", ".join(f"Source {all_keys.index(key) + 1}" for key in limitation_keys)
+                        qualified_text += "\nLimitation source support: " + support + "."
+                if answer.evidence_notice.strip():
+                    qualified_text += "\n\nEvidence notice: " + answer.evidence_notice
+                basis, omitted = _generated_basis(items, qualified_text)
+                body = qualified_text + "\n\nReview basis:\n" + basis
                 if len(generated_candidates) < policy.max_sections:
                     generated_candidates.append({"heading": heading, "body": body, "citations": cited,
                                                  "items": items, "date_key": date_key, "category": category,
@@ -533,6 +572,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 "retained_unclassified_review_material_ids": tuple(item.material_id for item in selected if item.material_id in retained_unclassified_review_ids),
                 "omitted_human_material_ids": tuple(omitted_human_materials),
                 "classification_truncated_chars": classification_truncated_chars,
+                "truncated_review_material_ids": tuple(item.material_id for item in classification_items if item.material_id in truncated_review_ids),
                 "unsourced_material_ids": tuple(unsourced), "uncompiled_material_ids": tuple(uncompiled_materials), "source_passages": len(source_rows),
                 "source_classification_categories": tuple({"source_key": key, "categories": tuple(sorted(value))} for key, value in source_categories.items()),
                 "partially_analyzed_source_passages": sum(key not in analyzed for key in source_categories),

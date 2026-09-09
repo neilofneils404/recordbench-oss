@@ -244,8 +244,13 @@ def test_topic_relevance_cannot_select_a_foreign_review_identifier():
         def answer(self, question, evidence, **kwargs):
             return VerifiedAnswer(True, "", (VerifiedClaim("Wrong record.", ("S99",)),), None, "", ("S99",), True, 1)
 
-    with pytest.raises(CompilationProblem, match="did not produce supported report content"):
-        compile_report("topic", "delivery", (material(origin="human", citations=()),), InvalidClassifier())
+    note = material(origin="human", citations=())
+    draft = compile_report("topic", "delivery", (note,), InvalidClassifier())
+    assert draft.sections[0]["body"].startswith(note.text)
+    assert "Wrong record." not in draft.sections[0]["body"]
+    assert draft.coverage["selected_review_records"] == 0
+    assert draft.coverage["classified_review_records"] == 0
+    assert draft.coverage["retained_unclassified_review_material_ids"] == (note.material_id,)
 
 
 def test_topic_without_model_requires_narrower_work_and_labels_unfiltered_single_item():
@@ -334,7 +339,9 @@ def test_review_classifier_rejects_multi_record_claim_even_when_source_text_is_s
             return VerifiedAnswer(True, '', (VerifiedClaim(evidence[0].excerpt, ids),), None, '', ids, True, 1)
     draft = compile_report('topic', 'blue device', notes, ExtraRecordService())
     content = '\n'.join(section['body'] for section in draft.sections)
-    assert notes[0].text not in content and notes[1].text not in content
+    assert notes[0].text in content and notes[1].text in content
+    assert draft.coverage['classified_review_records'] == 0
+    assert draft.coverage['retained_unclassified_review_material_ids'] == (notes[0].material_id, notes[1].material_id)
     assert draft.coverage['selected_review_records'] == 0
     assert draft.coverage['rejected_claims'] == 1
 
