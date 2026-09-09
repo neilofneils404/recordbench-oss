@@ -108,6 +108,11 @@ class VerifiedAnswer:
     # Retain consumed output slots even when identical verified claims collapse.
     # Classification callers must not infer completeness from the shorter list.
     duplicate_claims: int = 0
+    # Legacy limitation/text retain the combined display used by conversations.
+    # When verification_notice is present, source_limitation is the separate
+    # sourced qualification (possibly None); the notice has no source support.
+    source_limitation: VerifiedClaim | None = None
+    verification_notice: str = ""
 
     @property
     def text(self) -> str:
@@ -1257,13 +1262,16 @@ class GroundedGenerationService:
                 else "The searchable sources support these findings:"
             )
         )
+        source_limitation = limitation
+        verification_notice = ""
         if omitted and not transcript_only_claims:
+            verification_notice = "Some generated statements were omitted because their source support could not be verified."
             generated_notice = VerifiedClaim(
-                "Some generated statements were omitted because their source support could not be verified.",
+                verification_notice,
                 (),
             )
             limitation = generated_notice if limitation is None else VerifiedClaim(
-                f"{limitation.text} Some generated statements were omitted because their source support could not be verified.",
+                f"{limitation.text} {verification_notice}",
                 limitation.evidence_ids,
             )
         return VerifiedAnswer(
@@ -1278,4 +1286,6 @@ class GroundedGenerationService:
             omitted,
             MEDIA_TRANSCRIPT_NOTICE if media_used else "",
             duplicate_claims=duplicates,
+            source_limitation=source_limitation,
+            verification_notice=verification_notice,
         )

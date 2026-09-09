@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from case_intelligence.generation import (
-    MEDIA_TRANSCRIPT_NOTICE, GroundedGenerationService, VerifiedAnswer, VerifiedClaim,
+    MEDIA_TRANSCRIPT_NOTICE, EvidenceItem, GroundedGenerationService, VerifiedAnswer, VerifiedClaim,
 )
 from case_intelligence.report_compilation import (
     CompilationBudget, CompilationMaterial, CompilationProblem, compile_report,
@@ -111,7 +111,7 @@ def test_foreign_limitation_support_cannot_leave_an_unqualified_finding(identifi
         compile_report("timeline", materials=(material(), material(2)), generator=AnswerService(answer))
 
 
-@pytest.mark.parametrize("field", ["limitation", "evidence_notice"])
+@pytest.mark.parametrize("field", ["limitation", "evidence_notice", "verification_notice"])
 def test_qualifications_count_toward_persisted_section_capacity(field):
     huge = "Synthetic qualification. " * 3_000
     answer = replace(qualified_answer(), **{field: VerifiedClaim(huge, ()) if field == "limitation" else huge})
@@ -130,3 +130,69 @@ def test_real_generation_transcript_warning_survives_compilation():
     draft = compile_report("timeline", materials=(material(transcript=True),),
                            generator=GroundedGenerationService(SourceEchoClient()))
     assert "Evidence notice: " + MEDIA_TRANSCRIPT_NOTICE in draft.sections[0]["body"]
+
+
+@pytest.mark.parametrize("sourced_limitation", [False, True])
+def test_real_verifier_notice_remains_uncited_beside_sourced_limitation(tmp_path, sourced_limitation):
+    first = material()
+    first = replace(first, text="A synthetic delivery was recorded.",
+                    citations=({**first.citations[0], "excerpt": "A synthetic delivery was recorded."},))
+    selected = (first, material(2))
+    omission_notice = "Some generated statements were omitted because their source support could not be verified."
+
+    class PartlySupportedClient:
+        available = True
+
+        def generate(self, *, evidence, **kwargs):
+            return {"answerable": True, "claims": [
+                {"text": evidence[0].excerpt, "evidence_ids": ["S1"]},
+                {"text": "An unsupported helicopter arrived at 99:99.", "evidence_ids": ["S1"]},
+            ], "limitation": {"text": evidence[1].excerpt, "evidence_ids": ["S2"]} if sourced_limitation else None,
+                "missing_information": ""}
+
+    service = GroundedGenerationService(PartlySupportedClient())
+    evidence = tuple(EvidenceItem(f"S{index}", item.title, "Line 1", item.citations[0]["excerpt"])
+                     for index, item in enumerate(selected, 1))
+    answer = service.answer("What is recorded about the synthetic delivery?", evidence)
+    assert answer.omitted_claims == 1
+    assert answer.verification_notice == omission_notice
+    if sourced_limitation:
+        assert answer.source_limitation == VerifiedClaim(selected[1].text, ("S2",))
+        assert answer.limitation.text == selected[1].text + " " + omission_notice
+    else:
+        assert answer.source_limitation is None
+        assert answer.limitation == VerifiedClaim(omission_notice, ())
+    # Legacy conversation consumers retain their existing limitation and text.
+    assert "Limitation: " + answer.limitation.text in answer.text
+
+    draft = compile_report("timeline", materials=selected, generator=service,
+                           budget=CompilationBudget(max_sections=1))
+    finding = draft.sections[0]
+    assert "Verification notice: " + omission_notice in finding["body"]
+    assert finding["body"].count(omission_notice) == 1
+    if sourced_limitation:
+        assert "Limitation: " + selected[1].text + "\nLimitation source support: Source 2." in finding["body"]
+        assert "Limitation: " + answer.limitation.text not in finding["body"]
+    else:
+        assert "Limitation:" not in finding["body"]
+        assert "Limitation source support:" not in finding["body"]
+
+    store = WorkspaceStore(tmp_path / "synthetic-verifier-notice.sqlite")
+    try:
+        actor = store.upsert_principal("test", "synthetic-compiler", "Synthetic compiler", "synthetic-compiler",
+                                       preferred_principal_id="synthetic-compiler")
+        matter_record = store.create_matter("Synthetic verifier notice", "Synthetic", actor.principal_id)
+        report = store.create_report_from_sections(matter_record.matter_id, actor.principal_id,
+            title=draft.title, purpose=draft.purpose, origin_id="synthetic-compilation", sections=draft.sections)
+        saved = store.report_sections(matter_record.matter_id, report.report_id)
+        sections = tuple((section, store.report_citations(matter_record.matter_id, report.report_id, section.section_id))
+                         for section in saved)
+        assert saved[0].body == finding["body"]
+        assert len(sections[0][1]) == (2 if sourced_limitation else 1)
+        exported = export_report(matter_record, report, sections, "markdown").body.decode("utf-8")
+        assert "Verification notice: " + omission_notice in exported
+        assert exported.count(omission_notice) == 1
+        if sourced_limitation:
+            assert "Limitation: " + selected[1].text + "\nLimitation source support: Source 2." in exported
+    finally:
+        store.close()

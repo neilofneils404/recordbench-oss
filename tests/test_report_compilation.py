@@ -97,8 +97,13 @@ def test_model_cannot_attach_foreign_citation_ids():
         def answer(self, question, evidence, **kwargs):
             return VerifiedAnswer(True, "", (VerifiedClaim("An invented event happened.", ("S9",)),), None, "", ("S9",), True, 1)
 
-    with pytest.raises(CompilationProblem, match="did not produce supported report content"):
-        compile_report("topic", "Generated event", (material(),), ForeignSupport())
+    item = material()
+    draft = compile_report("topic", "Generated event", (item,), ForeignSupport())
+    assert "An invented event happened." not in "\n".join(section["body"] for section in draft.sections)
+    assert draft.sections[0]["body"].startswith(item.text)
+    assert draft.sections[0]["citations"] == item.citations
+    assert draft.coverage["rejected_claims"] == 1
+    assert draft.coverage["incompletely_analyzed_material_ids"] == (item.material_id,)
 
 
 def test_offline_arrangement_is_explicit_and_human_types_are_retained():

@@ -52,6 +52,14 @@ not return a partial human record set as a completed draft.
   model work starts. Oversized passages fail explicitly; the compiler does not
   shorten original citation text to make a preview savable. The compiler and
   persistence validation share the same limit.
+- Empty or whitespace-only citation excerpts also fail admission, including
+  mixed valid/blank selections. They cannot make a machine assertion appear
+  sourced or hide an unsupported human-note warning.
+- Source batches fit the same eight-claim answer capacity. Unvisited passages,
+  unrepresented passages in full outputs, and truncated or rejected outputs
+  remain incompletely analyzed; their original saved findings stay available
+  through the attributed fallback. Duplicate-normalized output cannot establish
+  complete source coverage either.
 - Repeated generated claims with the same text and evidence set occupy one
   section per category regardless of evidence order. The first claim's citation
   order is preserved for display; distinct evidence sets remain separate.
@@ -62,7 +70,11 @@ not return a partial human record set as a completed draft.
   invented citations. Transcript notices retain their playback and reliability
   cautions in saved Reports and exports. These qualifications share the finding's
   section and text budgets, so capacity cannot drop them independently.
-- Compiler version 6 changes the fingerprint so earlier previews cannot share
+- Verifier omission notices have separate, uncited metadata and a separate
+  `Verification notice` paragraph. A source-supported limitation never attributes
+  verifier behavior to its source. Legacy conversation answer fields and display
+  remain compatible; this compiler uses the explicitly separated metadata.
+- Compiler version 7 changes the fingerprint so earlier previews cannot share
   an identity with the corrected allocation, relevance, citation, and
   qualification policy.
 - This work does not resolve #44's separate finding about distinct machine

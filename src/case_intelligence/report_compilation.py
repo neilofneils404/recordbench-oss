@@ -22,7 +22,7 @@ from .generation import (
     MAX_EVIDENCE_ITEMS, MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEM_CHARS, MAX_ANSWER_CLAIMS,
 )
 
-COMPILATION_VERSION = 6
+COMPILATION_VERSION = 7
 KINDS = frozenset({"timeline", "entities", "topic"})
 HUMAN_ORIGINS = frozenset({"human", "notebook", "human_review", "review_decision", "source_review"})
 UNRESOLVED_STATES = frozenset({"disputed", "needs_review", "needs_attention", "flagged", "unreviewed"})
@@ -214,6 +214,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
         for citation in item.citations:
             if not isinstance(citation, Mapping) or not isinstance(citation.get("excerpt"), str):
                 raise CompilationProblem("Compilation references need validated source excerpts.")
+            if not citation["excerpt"].strip():
+                raise CompilationProblem("Each citation needs a nonblank source excerpt. Remove the unsupported citation or select a supported source passage.")
             if len(citation["excerpt"]) > MAX_REPORT_CITATION_EXCERPT_CHARS:
                 raise CompilationProblem(f"A selected passage exceeds the {MAX_REPORT_CITATION_EXCERPT_CHARS:,}-character Report citation limit. Select a shorter source passage; citation text cannot be shortened safely.")
         # Unsettled human interpretation is preserved as attributed review,
@@ -221,8 +223,6 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
         if item.category in {"gap", "coverage"} or (item.origin in HUMAN_ORIGINS and item.review_status in UNRESOLVED_STATES):
             continue
         for citation in item.citations:
-            if not citation["excerpt"].strip():
-                continue
             key = _citation_key(citation)
             if key in source_rows and source_rows[key] != dict(citation):
                 raise CompilationProblem("The same source locator has conflicting saved content.")
@@ -261,7 +261,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     for key, citation in source_rows.items():
         excerpt = citation["excerpt"][:MAX_EVIDENCE_ITEM_CHARS]
         truncated_chars += len(citation["excerpt"]) - len(excerpt)
-        if current and (len(current) >= MAX_EVIDENCE_ITEMS or chars + len(excerpt) > MAX_EVIDENCE_CHARS):
+        if current and (len(current) >= min(MAX_EVIDENCE_ITEMS, MAX_ANSWER_CLAIMS)
+                        or chars + len(excerpt) > MAX_EVIDENCE_CHARS):
             batches.append(current)
             current, chars = [], 0
         current.append((key, citation, excerpt))
@@ -398,13 +399,34 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 raise CompilationProblem("Report compilation cancelled.")
             if not isinstance(answer, VerifiedAnswer):
                 raise CompilationProblem("The compiler requires independently verified model answers.")
-            for key, _citation, _excerpt in batch:
+            rejected += answer.omitted_claims
+            incomplete_answer = bool(answer.omitted_claims or answer.duplicate_claims)
+            valid_claims = []
+            represented_keys: set[tuple] = set()
+            for claim in answer.claims if answer.answerable else ():
+                if not claim.text.strip() or not claim.evidence_ids or any(identifier not in lookup for identifier in claim.evidence_ids):
+                    rejected += 1
+                    incomplete_answer = True
+                    continue
+                valid_claims.append(claim)
+                represented_keys.update(lookup[identifier][0] for identifier in claim.evidence_ids)
+            output_full = len(answer.claims) + answer.duplicate_claims + answer.omitted_claims >= MAX_ANSWER_CLAIMS
+            for key, citation, excerpt in batch:
+                # A limited/invalid answer cannot prove that unreturned source
+                # material was irrelevant. Keep its attributed saved fallback.
+                if (incomplete_answer or len(excerpt) < len(citation["excerpt"])
+                        or (output_full and key not in represented_keys)):
+                    continue
                 completed = source_categories.setdefault(key, set())
                 completed.add(category)
                 if completed >= required_source_categories:
                     analyzed.add(key)
-            rejected += answer.omitted_claims
-            limitation = answer.limitation
+            if not isinstance(answer.verification_notice, str):
+                raise CompilationProblem("A generated verification notice must be text.")
+            # New service results distinguish sourced qualifications from the
+            # uncited verifier notice. Legacy result producers still use the
+            # original limitation field, including unsourced omission notices.
+            limitation = answer.source_limitation if answer.verification_notice else answer.limitation
             limitation_keys: tuple = ()
             if limitation is not None:
                 if (not isinstance(limitation.text, str) or not limitation.text.strip()
@@ -417,13 +439,11 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 limitation_keys = tuple(dict.fromkeys(lookup[identifier][0] for identifier in limitation.evidence_ids))
             if not isinstance(answer.evidence_notice, str):
                 raise CompilationProblem("A generated evidence notice must be text.")
-            for claim in answer.claims if answer.answerable else ():
-                if not claim.text.strip() or not claim.evidence_ids or any(identifier not in lookup for identifier in claim.evidence_ids):
-                    rejected += 1
-                    continue
+            for claim in valid_claims:
                 keys = tuple(dict.fromkeys(lookup[identifier][0] for identifier in claim.evidence_ids))
                 identity = (category, claim.text, frozenset(keys),
-                            limitation.text if limitation else "", frozenset(limitation_keys), answer.evidence_notice)
+                            limitation.text if limitation else "", frozenset(limitation_keys),
+                            answer.evidence_notice, answer.verification_notice)
                 if identity in generated_keys:
                     continue
                 generated_keys.add(identity)
@@ -444,6 +464,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                         qualified_text += "\nLimitation source support: " + support + "."
                 if answer.evidence_notice.strip():
                     qualified_text += "\n\nEvidence notice: " + answer.evidence_notice
+                if answer.verification_notice.strip():
+                    qualified_text += "\n\nVerification notice: " + answer.verification_notice
                 basis, omitted = _generated_basis(items, qualified_text)
                 body = qualified_text + "\n\nReview basis:\n" + basis
                 if len(generated_candidates) < policy.max_sections:
