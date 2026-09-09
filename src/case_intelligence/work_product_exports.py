@@ -405,6 +405,11 @@ def _validate_research_export_scope(
             )
 
 
+def validate_research_basis(matter: MatterRecord, job: ResearchJobRecord) -> None:
+    """Check saved findings and summary against the exact ledger before reuse."""
+    _validate_research_export_scope(matter, job, job.result)
+
+
 def _validate_report_export_scope(
     matter: MatterRecord,
     report: ReportRecord,
