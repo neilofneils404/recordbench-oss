@@ -15,7 +15,7 @@ import tempfile
 import threading
 import urllib.request
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -3582,19 +3582,31 @@ class CaseIntelligenceWorkbench:
             # The optional streaming API is supplied by the full-text slice.
             # Older source stores remain supported without importing it.
             iterator = getattr(document, "iter_parsed_units", None)
-            units = iterator() if iterator is not None else iter(document.parsed_units())
-            for ordinal, unit in enumerate(units, 1):
-                candidate = self._candidate(matter, document, unit, ordinal)
-                tokens = self._support_tokens(candidate)
-                pending = [value for value in pending if not (
-                    document.version_id == value.get("source_version_id")
-                    and value.get("support_token") in tokens
-                    and value.get("source_name") == document.display_name
-                    and value.get("location") == candidate.citation
-                    and value.get("excerpt") == unit.text
-                    and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source"))]
-                if not pending:
-                    break
+            units = None
+            try:
+                units = iterator() if iterator is not None else iter(document.parsed_units())
+                for ordinal, unit in enumerate(units, 1):
+                    # Exhaustion validates the container's trailer and version.
+                    # Once matched, drain without retaining or matching more units.
+                    if not pending:
+                        continue
+                    candidate = self._candidate(matter, document, unit, ordinal)
+                    tokens = self._support_tokens(candidate)
+                    pending = [value for value in pending if not (
+                        document.version_id == value.get("source_version_id")
+                        and value.get("support_token") in tokens
+                        and value.get("source_name") == document.display_name
+                        and value.get("location") == candidate.citation
+                        and value.get("excerpt") == unit.text
+                        and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source"))]
+            except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+                raise WorkspaceProblem(
+                    "A copied decision source could not be fully read. Repair or rerun the original source check."
+                ) from exc
+            finally:
+                close = getattr(units, "close", None)
+                if close is not None:
+                    close()
             if pending:
                 raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
 
@@ -9489,18 +9501,21 @@ def create_workbench_app(
         try:
             matter = response_lease_matter(request, slug)
             override = getattr(request.state, "administrator_matter_override", None) == matter.matter_id
-            bench.workspace.review_run(matter.matter_id, context.principal_id, run_id, administrator_override=override)
-            if not FullTextReviewLedger(bench.workspace).enabled(run_id):
-                raise KeyError(run_id)
+            stream = iter_text_export(bench.workspace, matter.matter_id, context.principal_id, run_id,
+                format_name, administrator_override=override)
         except KeyError as exc:
             raise HTTPException(404, "Text review not found") from exc
-        audit(request, "full_review.text_export", "success", context=context, matter=matter,
-            object_type="review_run", object_id=run_id, details={"format": format_name})
-        response = TextLedgerStreamingResponse(iter_text_export(bench.workspace, matter.matter_id, context.principal_id, run_id,
-            format_name, administrator_override=override), media_type="application/json" if format_name == "json" else "text/csv",
-            release_lease=lambda: bench.finish_matter_response(matter.matter_id, request.state.matter_response_lease["lease_id"]),
-            headers={"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="full-text-review.{format_name}"'})
-        return transfer_matter_response_lease(request, response)
+        try:
+            audit(request, "full_review.text_export", "success", context=context, matter=matter,
+                object_type="review_run", object_id=run_id, details={"format": format_name})
+            response = TextLedgerStreamingResponse(stream,
+                media_type="application/json" if format_name == "json" else "text/csv",
+                release_lease=lambda: bench.finish_matter_response(matter.matter_id, request.state.matter_response_lease["lease_id"]),
+                headers={"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="full-text-review.{format_name}"'})
+            return transfer_matter_response_lease(request, response)
+        except BaseException:
+            stream.close()
+            raise
 
     @app.post(
         "/matters/{slug}/full-review/{run_id}/cancel",
@@ -14400,11 +14415,12 @@ def create_workbench_app(
             for index, review_run in enumerate(review_runs, 1):
                 if FullTextReviewLedger(bench.workspace).enabled(review_run.run_id):
                     text_body = bytearray()
-                    for fragment in iter_text_export(bench.workspace, matter.matter_id, read_actor_id, review_run.run_id,
-                            administrator_override=administrator_override):
-                        if additional_work_product_bytes + len(text_body) + len(fragment) > MAX_BUNDLE_UNCOMPRESSED_BYTES:
-                            raise ExportProblem("No complete bundle was created. Download the full-text ledger separately before closing this matter.")
-                        text_body.extend(fragment)
+                    with closing(iter_text_export(bench.workspace, matter.matter_id, read_actor_id, review_run.run_id,
+                            administrator_override=administrator_override)) as text_stream:
+                        for fragment in text_stream:
+                            if additional_work_product_bytes + len(text_body) + len(fragment) > MAX_BUNDLE_UNCOMPRESSED_BYTES:
+                                raise ExportProblem("No complete bundle was created. Download the full-text ledger separately before closing this matter.")
+                            text_body.extend(fragment)
                     add_work_product(kind="full_text_review", path=f"source-checks/{index:03d}-full-text-ledger.json",
                         artifact=ExportArtifact(body=bytes(text_body), media_type="application/json", filename="full-text-ledger.json"))
                 criterion = bench.workspace.review_criterion(

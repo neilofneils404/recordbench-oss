@@ -994,6 +994,8 @@ class WorkspaceStore:
             raise RuntimeError("workspace database directory is unsafe")
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = threading.RLock()
+        # In-process ledger readers share admission/deletion serialization.
+        self._text_review_export_leases: dict[str, int] = {}
         self._matter_readiness_cache: dict[
             str, tuple[tuple[int, int], MatterReadinessRecord]
         ] = {}

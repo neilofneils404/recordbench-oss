@@ -46,7 +46,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/report-workflow-cleanup-20260909",
-      "headRefOid": "2223c718f6d4df1704a9fb844ab313ac949131e3",
+      "headRefOid": "244b3c1a63ad2daf08243f7003612427a5a7544d",
       "number": 56,
       "title": "Compile saved review work into recoverable report drafts",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/56"
@@ -62,7 +62,7 @@
     {
       "baseRefName": "codex/report-workflow-cleanup-20260909",
       "headRefName": "codex/full-text-cleanup-20260909",
-      "headRefOid": "2f27dfac4bd5a9e88f8aaedf6faef4eb975ad481",
+      "headRefOid": "9fdd8d46191f23f2ef4d077b9fcce9fc8953d86a",
       "number": 58,
       "title": "Review extracted text with durable limits and report support",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/58"
