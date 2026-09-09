@@ -63,6 +63,7 @@ from .identity import (
     OidcProviderClient,
     OidcSettings,
 )
+from .full_text_review import FullTextReviewLedger, iter_text_export
 from .generation import (
     EvidenceItem,
     GenerationGroundingRejected,
@@ -2057,25 +2058,18 @@ class CaseIntelligenceWorkbench:
 
     @staticmethod
     def _document_content_basis(document: PilotDocument) -> str:
-        encoded = json.dumps(
-            {
-                "source_version": document.version_id,
-                "units": [
-                    {
-                        "number": unit.number,
-                        "digest": unit.excerpt_digest,
-                        "line_start": unit.line_start,
-                        "line_end": unit.line_end,
-                        "start_ms": unit.start_ms,
-                        "end_ms": unit.end_ms,
-                    }
-                    for unit in document.parsed_units()
-                ],
-            },
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        digest = hashlib.sha256()
+        digest.update(('{"source_version":' + json.dumps(document.version_id) + ',"units":[').encode())
+        for ordinal, unit in enumerate(document.iter_parsed_units()):
+            if ordinal:
+                digest.update(b',')
+            digest.update(json.dumps({
+                "number": unit.number, "digest": unit.excerpt_digest,
+                "line_start": unit.line_start, "line_end": unit.line_end,
+                "start_ms": unit.start_ms, "end_ms": unit.end_ms,
+            }, separators=(",", ":"), sort_keys=True).encode())
+        digest.update(b']}')
+        return digest.hexdigest()
 
     @staticmethod
     def _source_state(document: PilotDocument) -> tuple[str, str]:
@@ -5013,6 +5007,9 @@ class CaseIntelligenceWorkbench:
             raise WorkflowFailure("Access to this matter was removed during the every-source check.") from exc
         if cancelled():
             raise WorkflowFailure("Review cancelled.")
+        from .full_text_review import FullTextReviewLedger, process_text_source
+        if FullTextReviewLedger(self.workspace).enabled(run.run_id):
+            return process_text_source(self, run, decision, cancelled)
         matter = self._matter_by_id(run.matter_id)
         try:
             frozen_document = self.source_store(matter).get(decision.document_id)
@@ -5223,6 +5220,7 @@ class CaseIntelligenceWorkbench:
                 rationale=result.rationale,
                 citations=result.citations,
                 error_message=result.error_message,
+                expected_attempt=run.attempts,
             )
 
     def _finish_review_run(self, run: ReviewRunRecord) -> ReviewRunRecord:
@@ -5265,11 +5263,15 @@ class CaseIntelligenceWorkbench:
                         except (KeyError, TypeError, ValueError):
                             citations_current = False
                     if not citations_current:
+                        from .full_text_review import FullTextReviewLedger
+                        text_ledger = FullTextReviewLedger(self.workspace)
+                        if text_ledger.enabled(run.run_id):
+                            text_ledger.invalidate(run, decision.document_id)
                         self.workspace.mark_review_decision_source_changed(
                             run.run_id, decision.document_id
                         )
                 after_ordinal = decisions[-1].ordinal
-            return self.workspace.finish_review_run(run.run_id)
+            return self.workspace.finish_review_run(run.run_id, expected_attempt=run.attempts)
 
     def record_answer_error(
         self,
@@ -9222,6 +9224,7 @@ def create_workbench_app(
                 "active_criterion": active_criterion,
                 "active_version": active_version,
                 "review_runs": runs,
+                "text_review_runs": {item.run_id for item in runs if FullTextReviewLedger(bench.workspace).enabled(item.run_id)},
                 "active_run": active_run,
                 "decision_page": decision_page,
                 "selected_decision": selected_decision,
@@ -9343,7 +9346,8 @@ def create_workbench_app(
                 matter.matter_id,
                 context.principal_id,
                 criterion_version_id,
-                run_kind=run_kind,
+                run_kind="full" if run_kind == "full_text" else run_kind,
+                review_mode="full_text" if run_kind == "full_text" else "selected_passages",
                 source_set_id=source_set or None,
             )
         except KeyError as exc:
@@ -9385,9 +9389,51 @@ def create_workbench_app(
             )
         except KeyError as exc:
             raise HTTPException(404, "Review run not found") from exc
-        return JSONResponse(
-            review_status_projection(matter, run), headers={"Cache-Control": "no-store"}
-        )
+        payload = review_status_projection(matter, run)
+        payload["text_review"] = FullTextReviewLedger(bench.workspace).coverage(matter.matter_id, matter.owner_id if administrator_override else actor, run.run_id)
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    @app.get("/matters/{slug}/full-review/{run_id}/text")
+    def full_text_ledger(request: Request, slug: str, run_id: str, after: int = Query(0, ge=0)):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            actor = matter.owner_id if getattr(request.state, "administrator_matter_override", None) == matter.matter_id else context.principal_id
+            run = bench.workspace.review_run(matter.matter_id, actor, run_id)
+            ledger = FullTextReviewLedger(bench.workspace)
+            coverage = ledger.coverage(matter.matter_id, actor, run_id)
+            if coverage is None:
+                raise KeyError(run_id)
+            rows = ledger.rows(matter.matter_id, actor, run_id, after=after, limit=100)
+            for row in rows:
+                row["citation"] = json.loads(row.pop("citation_json"))
+            sources = ledger.extraction_rows(matter.matter_id, actor, run_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Text review not found") from exc
+        audit(request, "full_review.text_open", "success", context=context, matter=matter,
+            object_type="review_run", object_id=run.run_id)
+        return templates.TemplateResponse(request=request, name="workbench_text_review.html", context={
+            **base_context(request, matter), "matter": matter, "run": run, "coverage": coverage,
+            "rows": rows, "sources": sources, "after": after,
+            "next_cursor": rows[-1]["cursor"] if len(rows) == 100 else None,
+        }, headers={"Cache-Control": "no-store"})
+
+    @app.get("/matters/{slug}/full-review/{run_id}/text/export")
+    def export_full_text_ledger(request: Request, slug: str, run_id: str, format_name: str = Query("json", alias="format", pattern="^(json|csv)$")):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            override = getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+            bench.workspace.review_run(matter.matter_id, context.principal_id, run_id, administrator_override=override)
+            if not FullTextReviewLedger(bench.workspace).enabled(run_id):
+                raise KeyError(run_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Text review not found") from exc
+        audit(request, "full_review.text_export", "success", context=context, matter=matter,
+            object_type="review_run", object_id=run_id, details={"format": format_name})
+        return StreamingResponse(iter_text_export(bench.workspace, matter.matter_id, context.principal_id, run_id,
+            format_name, administrator_override=override), media_type="application/json" if format_name == "json" else "text/csv",
+            headers={"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="full-text-review.{format_name}"'})
 
     @app.post(
         "/matters/{slug}/full-review/{run_id}/cancel",
@@ -14198,6 +14244,15 @@ def create_workbench_app(
                         artifact=research_artifact,
                     )
             for index, review_run in enumerate(review_runs, 1):
+                if FullTextReviewLedger(bench.workspace).enabled(review_run.run_id):
+                    text_body = bytearray()
+                    for fragment in iter_text_export(bench.workspace, matter.matter_id, read_actor_id, review_run.run_id,
+                            administrator_override=administrator_override):
+                        if additional_work_product_bytes + len(text_body) + len(fragment) > MAX_BUNDLE_UNCOMPRESSED_BYTES:
+                            raise ExportProblem("No complete bundle was created. Download the full-text ledger separately before closing this matter.")
+                        text_body.extend(fragment)
+                    add_work_product(kind="full_text_review", path=f"source-checks/{index:03d}-full-text-ledger.json",
+                        artifact=ExportArtifact(body=bytes(text_body), media_type="application/json", filename="full-text-ledger.json"))
                 criterion = bench.workspace.review_criterion(
                     matter.matter_id, review_run.criterion_id
                 )

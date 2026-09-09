@@ -226,17 +226,17 @@ class ReviewCoordinator:
                 raise _WorkflowCancelled()
             self.finish(run)
         except _WorkflowCancelled:
-            self._fail(run.run_id, "Review cancelled.")
+            self._fail(run, "Review cancelled.")
         except WorkflowFailure as exc:
-            self._fail(run.run_id, str(exc))
+            self._fail(run, str(exc))
         except Exception:
             self._fail(
-                run.run_id,
+                run,
                 "The every-source check could not continue. Saved source decisions are preserved and the run can be resumed.",
             )
 
-    def _fail(self, run_id: str, message: str) -> None:
+    def _fail(self, run: ReviewRunRecord, message: str) -> None:
         try:
-            self.workspace.fail_review_run(run_id, message[:240])
+            self.workspace.fail_review_run(run.run_id, message[:240], expected_attempt=run.attempts)
         except Exception:
             pass
