@@ -21,7 +21,7 @@ from .generation import (
     MAX_EVIDENCE_ITEMS, MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEM_CHARS,
 )
 
-COMPILATION_VERSION = 2
+COMPILATION_VERSION = 3
 KINDS = frozenset({"timeline", "entities", "topic"})
 HUMAN_ORIGINS = frozenset({"human", "notebook", "human_review", "review_decision", "source_review"})
 UNRESOLVED_STATES = frozenset({"disputed", "needs_review", "needs_attention", "flagged", "unreviewed"})
@@ -92,10 +92,24 @@ def _request(kind: str, topic: str) -> str:
     return topic
 
 
+def _selected_work_ids(materials: Sequence[CompilationMaterial], selections: Sequence[str] | None) -> tuple[str, ...]:
+    """Direct callers select individual materials; jobs pass original UI groups."""
+    if selections is None:
+        return tuple(item.material_id for item in materials)
+    if isinstance(selections, (str, bytes)):
+        raise CompilationProblem("Selected work must be a sequence of saved-work identifiers.")
+    identifiers = tuple(selections)
+    if (not identifiers or any(not isinstance(value, str) or not value.strip() for value in identifiers)
+            or len(set(identifiers)) != len(identifiers)):
+        raise CompilationProblem("Selected saved-work identifiers must be unique and present.")
+    return identifiers
+
+
 def compilation_fingerprint(kind: str, topic: str, materials: Sequence[CompilationMaterial],
-                            *, budget: CompilationBudget | None = None) -> str:
+                            *, budget: CompilationBudget | None = None, selections: Sequence[str] | None = None) -> str:
     topic = _request(kind, topic)
     policy = budget or DEFAULT_COMPILATION_BUDGET
+    selected_work = _selected_work_ids(materials, selections)
     identities = [item.material_id for item in materials]
     if len(set(identities)) != len(identities):
         raise CompilationProblem("Selected material identifiers must be unique.")
@@ -104,7 +118,7 @@ def compilation_fingerprint(kind: str, topic: str, materials: Sequence[Compilati
             raise CompilationProblem("Every selected material needs an identity and exact revision.")
     try:
         encoded = json.dumps({"version": COMPILATION_VERSION, "kind": kind, "topic": topic,
-                              "budget": asdict(policy), "materials": [asdict(item) for item in materials]},
+                              "budget": asdict(policy), "selections": selected_work, "materials": [asdict(item) for item in materials]},
                              sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise CompilationProblem("Compilation material is not a portable snapshot.") from exc
@@ -160,6 +174,7 @@ def _exact_date(text: str, label: str = "") -> str:
 def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMaterial] = (),
                    generator: CompilationGenerator | None = None, *,
                    budget: CompilationBudget | None = None,
+                   selections: Sequence[str] | None = None,
                    cancelled: Callable[[], bool] | None = None) -> CompilationDraft:
     if cancelled is not None and cancelled():
         raise CompilationProblem("Report compilation cancelled.")
@@ -167,7 +182,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     focused = bool(topic)
     policy = budget or DEFAULT_COMPILATION_BUDGET
     materials = tuple(deepcopy(item) for item in materials)
-    fingerprint = compilation_fingerprint(kind, topic, materials, budget=policy)
+    selected_work = _selected_work_ids(materials, selections)
+    fingerprint = compilation_fingerprint(kind, topic, materials, budget=policy, selections=selected_work)
     if not materials:
         raise CompilationProblem("Select saved work to compile a report.")
     selected = materials[:policy.max_materials]
@@ -266,7 +282,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     note_categories: dict[str, list[str]] = {}
     classification_calls = 0
     classification_truncated_chars = 0
-    if focused and not model_available and len(selected) > 1:
+    if focused and not model_available and len(selected_work) > 1:
         raise CompilationProblem("Topic relevance could not be checked. Try again when AI assistance is available or select one relevant saved item.")
     classification_queries = (
         (("Topic", f"Which saved review records relate specifically to this topic: {topic}? Include related disagreements and unresolved questions, but exclude unrelated notes. Return a separate supported statement for each relevant review record and cite its identifier."),)
@@ -470,7 +486,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     else:
         stop = "compiled_selected_material"
     coverage = {"version": COMPILATION_VERSION, "mode": status, "requested_materials": len(materials),
-                "selected_materials": len(selected), "omitted_material_ids": tuple(omitted_materials),
+                "selected_materials": len(selected), "selected_saved_work_count": len(selected_work),
+                "selected_saved_work_ids": selected_work, "omitted_material_ids": tuple(omitted_materials),
                 "human_materials": len(human_materials), "classified_review_records": len(classified_ids),
                 "selected_review_records": len(relevant_note_ids), "classification_calls": classification_calls,
                 "partially_classified_review_material_ids": tuple(item.material_id for item in classification_items if item.material_id in classified_categories and item.material_id not in classified_ids),
@@ -488,7 +505,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 "stop_reason": stop, "budget": asdict(policy), "fingerprint": fingerprint}
     category_counts = "; ".join(f"{category}: {sum(category in values for values in source_categories.values())} of {len(source_rows)}"
                                 for category, _question in queries)
-    ledger = (f"Compiled {len(selected)} of {len(materials)} selected saved items. "
+    ledger = (f"Selected saved work: {len(selected_work)}. Expanded findings compiled: {len(selected)} of {len(materials)}. "
               f"Mode: {status.replace('_', ' ')}. Verified answer-service calls: {calls}; source passages analyzed in all required categories: {len(analyzed)} of {len(source_rows)}. "
               f"Source category checks: {category_counts}. "
               f"Uncompiled saved items: {len(uncompiled_materials)}; omitted saved items: {len(omitted_materials)}; omitted sections: {omitted_sections}; "

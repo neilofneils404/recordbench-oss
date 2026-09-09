@@ -50,10 +50,10 @@ class ReportCompilationFlow:
         try:
             with self.bench.source_store(matter).mutation_guard(), self.bench.workspace._lock:
                 _, materials = self._snapshot(job)
-            fingerprint = compilation_fingerprint(job.kind, job.topic, materials, budget=self.budget)
+            fingerprint = compilation_fingerprint(job.kind, job.topic, materials, budget=self.budget, selections=job.selections)
             self.jobs.record_input_fingerprint(job, fingerprint)
             return compile_report(job.kind, job.topic, materials, self.bench.generator,
-                                  budget=self.budget, cancelled=cancelled)
+                                  budget=self.budget, selections=job.selections, cancelled=cancelled)
         except (WorkspaceProblem, ExportProblem) as exc:
             raise CompilationProblem(str(exc)) from exc
         except KeyError as exc:
@@ -64,7 +64,7 @@ class ReportCompilationFlow:
         try:
             with self.bench.source_store(matter).mutation_guard(), self.bench.workspace._lock:
                 _, current = self._snapshot(job)
-                if compilation_fingerprint(job.kind, job.topic, current, budget=self.budget) != draft.fingerprint:
+                if compilation_fingerprint(job.kind, job.topic, current, budget=self.budget, selections=job.selections) != draft.fingerprint:
                     raise CompilationProblem("The selected work changed while the report was being compiled. Retry to use the latest review.")
                 self.bench._assert_current_report_section_citations(matter, draft.sections)
                 return self.jobs.complete(job, lambda: self.bench.workspace.create_report_from_sections(
