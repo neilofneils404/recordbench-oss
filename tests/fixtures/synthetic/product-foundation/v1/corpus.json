@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "corpus_id": "recordbench-product-foundation-v1",
+  "provenance": "synthetic",
+  "confidential_data": false,
+  "matter_id": "matter-alpha",
+  "documents": [
+    {
+      "document_id": "red-bike",
+      "matter_id": "matter-alpha",
+      "state": "ready",
+      "units": [
+        {
+          "unit_id": "red-bike-unit-1",
+          "text": "A red bicycle was inventoried.",
+          "sha256": "2875e3e4ca087cfb57268d5193a5ccc618c5d128089c32fbd6ab97ee8d3f65ae"
+        },
+        {
+          "unit_id": "red-bike-unit-2",
+          "text": "Officer Avery Moss arrived at Cedar Station on September 3, 2026.",
+          "sha256": "133660474b424d0e1bcef48268992388204127c09e493f795508201f4ad09629"
+        }
+      ]
+    },
+    {
+      "document_id": "blue-bike",
+      "matter_id": "matter-alpha",
+      "state": "ready",
+      "units": [
+        {
+          "unit_id": "blue-bike-unit-1",
+          "text": "A blue bicycle was inventoried.",
+          "sha256": "08444ca189f8085728cff365ae724210f256ec8cd7d939068efc9bdd4e537d4a"
+        }
+      ]
+    },
+    {
+      "document_id": "red-truck",
+      "matter_id": "matter-alpha",
+      "state": "ready",
+      "units": [
+        {
+          "unit_id": "red-truck-unit-1",
+          "text": "A red truck was inventoried.",
+          "sha256": "3e4bed54bcf76db4de307e90c91be3c0b6f2b54f07fab73068ddae8ebbbecede"
+        }
+      ]
+    },
+    {
+      "document_id": "split-terms",
+      "matter_id": "matter-alpha",
+      "state": "ready",
+      "units": [
+        {
+          "unit_id": "split-terms-unit-1",
+          "text": "The property was red.",
+          "sha256": "7db986999b39adcccafbd28cfdf0754becd578c001274cc1998223b817390ed0"
+        },
+        {
+          "unit_id": "split-terms-unit-2",
+          "text": "The inventory lists a bicycle.",
+          "sha256": "a58c06d9517224a49bcb7d9ca86cbadb1b7883599147854dc6b7cca0a870c4b2"
+        }
+      ]
+    },
+    {
+      "document_id": "late-conflict",
+      "matter_id": "matter-alpha",
+      "state": "ready",
+      "units": [
+        {
+          "unit_id": "late-conflict-unit-1",
+          "text": "The bicycle was recorded as red.",
+          "sha256": "8c16b8a5f9e01ba58266fe51e9c598526743a8b8e520ed4a5c187f4a885990bb"
+        },
+        {
+          "unit_id": "late-conflict-unit-2",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-3",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-4",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-5",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-6",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-7",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-8",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-9",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-10",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-11",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-12",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-13",
+          "text": "Routine synthetic routing record.",
+          "sha256": "d1cda359330ca6afb144ecfb23ea26554aab1d3c9f0d5de92752dcd8fb77cc1d"
+        },
+        {
+          "unit_id": "late-conflict-unit-14",
+          "text": "The final correction says the bicycle was blue, not red.",
+          "sha256": "8d07c3ded8bdf5280a920645c161806c9641a2686699966d66122441ca6c6fa7"
+        }
+      ]
+    },
+    {
+      "document_id": "mechanic",
+      "matter_id": "matter-alpha",
+      "state": "ready",
+      "units": [
+        {
+          "unit_id": "mechanic-unit-1",
+          "text": "Jordan Vale is a mechanic. Jordan repaired inventory item RB-101.",
+          "sha256": "c1b752a93aca04d159b8c14ae222cfc5487e3ae64c96385aaccb3e4d2282a16c"
+        }
+      ]
+    },
+    {
+      "document_id": "witness",
+      "matter_id": "matter-alpha",
+      "state": "ready",
+      "units": [
+        {
+          "unit_id": "witness-unit-1",
+          "text": "Jordan Vale is a witness. This Jordan Vale is not the mechanic. The witness says Officer Avery Moss never arrived at Cedar Station.",
+          "sha256": "59ebfb3b19bee1ad71973d54950bd747dab6485ca1fb1c812059edcacf1e42f9"
+        }
+      ]
+    },
+    {
+      "document_id": "unavailable",
+      "matter_id": "matter-alpha",
+      "state": "failed",
+      "units": [
+        {
+          "unit_id": "unavailable-unit-1",
+          "text": "A red bicycle appears in this intentionally unavailable record.",
+          "sha256": "6b2360002b60e02e7111992a15bd04c94f930ae99027971f93e08d926b2b465e"
+        }
+      ]
+    },
+    {
+      "document_id": "foreign-canary",
+      "matter_id": "matter-bravo",
+      "state": "ready",
+      "units": [
+        {
+          "unit_id": "foreign-canary-unit-1",
+          "text": "A red bicycle appears only in the other matter.",
+          "sha256": "d918330b7894cd5a52d79f475b54a7b72db540914f3263aba311d24f9350aace"
+        }
+      ]
+    }
+  ],
+  "exact_search_cases": [
+    {
+      "query": "red AND bicycle",
+      "expected_document_ids": [
+        "red-bike",
+        "split-terms",
+        "late-conflict"
+      ]
+    },
+    {
+      "query": "\"red bicycle\"",
+      "expected_document_ids": [
+        "red-bike"
+      ]
+    },
+    {
+      "query": "bicycle AND NOT blue",
+      "expected_document_ids": [
+        "red-bike",
+        "split-terms"
+      ]
+    },
+    {
+      "query": "red OR blue AND truck",
+      "expected_document_ids": [
+        "red-bike",
+        "red-truck",
+        "split-terms",
+        "late-conflict"
+      ]
+    },
+    {
+      "query": "(red OR blue) AND bicycle",
+      "expected_document_ids": [
+        "red-bike",
+        "blue-bike",
+        "split-terms",
+        "late-conflict"
+      ]
+    },
+    {
+      "query": "RB-101",
+      "expected_document_ids": [
+        "mechanic"
+      ]
+    },
+    {
+      "query": "\"Jordan Vale\" AND NOT mechanic",
+      "expected_document_ids": []
+    },
+    {
+      "query": "\"the bicycle\"",
+      "expected_document_ids": [
+        "late-conflict"
+      ]
+    }
+  ],
+  "review_expectations": {
+    "late_decisive_unit": "late-conflict-unit-14",
+    "unavailable_document_ids": [
+      "unavailable"
+    ],
+    "separate_same_name_people": [
+      "mechanic",
+      "witness"
+    ],
+    "competing_arrival_accounts": [
+      "red-bike",
+      "witness"
+    ],
+    "may_suggest": [
+      "mechanic mention of item RB-101",
+      "comparison of conflicting arrival accounts"
+    ],
+    "must_not_infer": [
+      "the two Jordan Vale mentions identify the same person",
+      "co-mention proves a personal relationship",
+      "unavailable text was reviewed"
+    ]
+  },
+  "backend_acceptance": {
+    "reference": "executable in tests/test_exact_search.py",
+    "cpu_route": "pending slice 08",
+    "postgres_route": "pending slice 08",
+    "real_model_review": "pending slices 11-13"
+  }
+}
