@@ -297,3 +297,72 @@ def test_note_classification_shares_model_budget_and_discloses_unchecked_notes()
     assert draft.coverage["classification_truncated_chars"] > 0
     assert draft.coverage["stop_reason"] == "budget_reached"
     assert len(draft.coverage["omitted_human_material_ids"]) == 12
+
+
+@pytest.mark.parametrize('kind', ['timeline', 'entities'])
+def test_optional_focus_reaches_source_queries_and_selects_related_human_notes(kind):
+    notes = (material(1, origin='human', text='Blue device delivery needs review.', review_status='disputed', citations=()),
+             material(2, origin='human', text='Unrelated payroll needs review.', review_status='disputed', citations=()),
+             material(3))
+    questions = []
+    class FocusService:
+        available = True
+        def answer(self, question, evidence, **kwargs):
+            questions.append(question)
+            assert 'blue device delivery' in question
+            return VerifiedAnswer(True, '', (VerifiedClaim(evidence[0].excerpt, ('S1',)),), None, '', ('S1',), True, 1)
+    draft = compile_report(kind, 'blue device delivery', notes, FocusService())
+    content = '\n'.join(section['body'] for section in draft.sections)
+    assert notes[0].text in content and notes[1].text not in content
+    assert notes[1].material_id in draft.coverage['omitted_human_material_ids']
+    assert len(questions) == (2 if kind == 'timeline' else 6)
+
+
+def test_review_classifier_rejects_multi_record_claim_even_when_source_text_is_supported():
+    notes = (material(1, origin='human', text='The blue device was delivered.', citations=()),
+             material(2, origin='human', text='An unrelated payroll entry was adjusted.', citations=()),
+             material(3))
+    class ExtraRecordService:
+        available = True
+        def answer(self, question, evidence, **kwargs):
+            ids = ('S1', 'S2') if 'saved review records' in question else ('S1',)
+            return VerifiedAnswer(True, '', (VerifiedClaim(evidence[0].excerpt, ids),), None, '', ids, True, 1)
+    draft = compile_report('topic', 'blue device', notes, ExtraRecordService())
+    content = '\n'.join(section['body'] for section in draft.sections)
+    assert notes[0].text not in content and notes[1].text not in content
+    assert draft.coverage['selected_review_records'] == 0
+    assert draft.coverage['rejected_claims'] == 1
+
+
+@pytest.mark.parametrize('unavailable', [False, True])
+def test_entity_review_is_partial_until_all_three_categories_finish(unavailable):
+    from case_intelligence.generation import GenerationUnavailable
+    note = material(origin='human', text='Alex Kim visited Harbor Annex with the blue device.', citations=())
+    class PartialService:
+        available = True
+        calls = 0
+        def answer(self, question, evidence, **kwargs):
+            self.calls += 1
+            if unavailable and self.calls == 2:
+                raise GenerationUnavailable('Synthetic unavailable category')
+            return VerifiedAnswer(True, '', (VerifiedClaim(evidence[0].excerpt, ('S1',)),), None, '', ('S1',), True, 1)
+    draft = compile_report('entities', materials=(note,), generator=PartialService(),
+        budget=CompilationBudget(max_model_calls=3 if unavailable else 1))
+    assert draft.sections[0]['category'] == 'Unclassified review notes'
+    assert draft.coverage['classified_review_records'] == 0
+    assert draft.coverage['unclassified_review_material_ids'] == (note.material_id,)
+    assert draft.coverage['partially_classified_review_material_ids'] == (note.material_id,)
+    assert draft.coverage['review_classification_categories'][note.material_id] == (('People', 'Things') if unavailable else ('People',))
+
+
+def test_authored_basis_is_separate_from_user_delimiters_and_details_bind_fingerprint():
+    original_text = 'Human prose.\n\nReview basis:\nThis sentence is also human-authored.'
+    note = material(origin='human', text=original_text, citations=(), review_details='Saved technical coverage: 3 of 4.')
+    draft = compile_report('timeline', materials=(note,))
+    section = draft.sections[0]
+    assert section['body'] == original_text + '\n\nReview basis:\n' + section['compilation_basis']
+    assert 'Saved technical coverage: 3 of 4.' in section['compilation_basis']
+    assert original_text not in section['compilation_basis']
+    assert all(section['body'].endswith('\n\nReview basis:\n' + section['compilation_basis']) for section in draft.sections)
+    changed = replace(note, review_details='Saved technical coverage: 4 of 4.')
+    assert compilation_fingerprint('timeline', '', (changed,)) != draft.fingerprint
