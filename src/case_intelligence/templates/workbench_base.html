@@ -71,7 +71,7 @@
             </select>
           </form>
           <a href="/matters/manage">Manage matters</a>
-          {% if is_administrator %}<a href="/admin/people">People</a><a href="/admin">Administrator</a>{% endif %}
+          {% if is_administrator %}<a href="/admin/setup">Team setup</a><a href="/admin/people">People</a><a href="/admin">Administrator</a>{% endif %}
           <form class="logout-form" method="post" action="/auth/logout">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit">{{ session_action_label }}</button>

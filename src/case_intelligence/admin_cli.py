@@ -96,6 +96,11 @@ def _storage_init(args: argparse.Namespace) -> None:
     print(f"Initialized managed storage {storage.root}.")
 
 
+def _storage_status(args: argparse.Namespace) -> None:
+    ManagedMatterStorage(args.root, policy=StoragePolicy.from_environment(), require_marker=True)
+    print("Existing managed storage boundary validated; sources and ownership marker retained.")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="recordbench")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -150,6 +155,9 @@ def _parser() -> argparse.ArgumentParser:
     initialize = storage_commands.add_parser("init")
     initialize.add_argument("--root", type=Path, required=True)
     initialize.set_defaults(handler=_storage_init)
+    status = storage_commands.add_parser("status", help="Validate existing managed storage without resetting it")
+    status.add_argument("--root", type=Path, required=True)
+    status.set_defaults(handler=_storage_status)
     return parser
 
 

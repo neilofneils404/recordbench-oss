@@ -1,5 +1,8 @@
 # Installation playbook
 
+See [Installation handoff and team setup](FIRST_RUN.md) for phase meanings,
+interrupted-run recovery, offline model reuse, and the first browser journey.
+
 For a source checkout used to write code and run tests, start with
 [contributor setup](../CONTRIBUTING.md#set-up-a-development-checkout). The playbook
 below installs an application node; `make bootstrap` prepares a development

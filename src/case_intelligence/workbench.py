@@ -7327,9 +7327,8 @@ def create_workbench_app(
                 **({"role": "administrator"} if context.is_administrator else {}),
             },
         )
-        if (destination == "/" and context.is_administrator and identity.local_settings is not None
-                and sum(account.enabled for account in identity.local_settings.accounts.values()) == 1):
-            destination = "/admin/people"
+        if destination == "/" and context.is_administrator and not bench.matters(context.principal_id):
+            destination = "/admin/setup"
         response = RedirectResponse(destination, status_code=303)
         response.set_cookie(SESSION_COOKIE, raw_token, **identity.session_cookie_options)
         response.delete_cookie(LOGIN_CHALLENGE_COOKIE, path="/auth")
@@ -7399,6 +7398,11 @@ def create_workbench_app(
         return FileResponse(PACKAGE_ROOT / "static/favicon.svg", media_type="image/svg+xml")
 
     register_local_account_routes(
+        app, identity=identity, bench=bench, templates=templates,
+        auth_context=auth_context, base_context=base_context, audit=audit,
+    )
+    from .onboarding import register_onboarding_routes
+    register_onboarding_routes(
         app, identity=identity, bench=bench, templates=templates,
         auth_context=auth_context, base_context=base_context, audit=audit,
     )
@@ -7618,6 +7622,8 @@ def create_workbench_app(
     @app.get("/", include_in_schema=False)
     def home(request: Request) -> RedirectResponse:
         context = auth_context(request)
+        if context.is_administrator and not bench.matters(context.principal_id):
+            return RedirectResponse("/admin/setup", status_code=303)
         matters = bench.matters(
             context.principal_id,
             administrator=context.is_administrator,
