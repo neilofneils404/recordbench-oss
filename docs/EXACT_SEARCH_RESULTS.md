@@ -13,6 +13,8 @@ saved source set. These fields treat words literally, including words such as
 search** form accepts the grammar directly. Results lead with source names,
 original-text excerpts with safely escaped highlights, page/section links,
 and an **Open source** action. Counts and preparation gaps use plain language.
+Each search form preserves its own mode when submitted with Enter. Advanced
+search has its own collection and source-set controls.
 
 ## Current behavior
 
@@ -33,7 +35,10 @@ Totals count documents after the whole population is evaluated. Sorting uses
 case-folded source name and document ID; pages contain 25, 50, or 100 documents.
 More than 100 matches remain browsable. Up to three units containing positive
 query terms explain each result, with visibly shortened text previews. These
-preview limits never limit matching or document membership. Negation-only
+preview limits never limit matching or document membership. Phrase previews
+anchor on complete consecutive-token phrase occurrences, preserving original
+Unicode text. Page links use the position in the extracted-unit sequence, so
+unreadable PDF pages do not shift the linked match. Negation-only
 matches explain that the requested terms were absent. Source links use the
 current version's existing source-review token.
 
@@ -86,7 +91,8 @@ boundaries, exclusions, invalid syntax, scope intersections, foreign-matter
 canaries, source mutations, and budget/read failures. The route test forbids
 calling the ranked retriever. Plain-form tests cover literal operator words,
 include/phrase/exclude combinations, filter intersections, retained pagination
-inputs, empty-input guidance, and original-text previews. Browser checks cover
+inputs, empty-input guidance, original-text previews, skipped-page links,
+late phrase matches after isolated words, and button-free advanced submissions. Browser checks cover
 the first-use form, a successful search, no-result guidance, keyboard submission
 with visible focus, and a 390-pixel viewport without horizontal overflow.
 The shared grammar's truth tables remain required.
