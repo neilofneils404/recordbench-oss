@@ -536,6 +536,9 @@ def test_partial_local_resume_requires_explicit_bootstrap_identity(tmp_path, mon
 
 @pytest.fixture
 def ready_host(monkeypatch):
+    import pwd
+    from types import SimpleNamespace
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir="/home/synthetic-service"))
     monkeypatch.setattr(installer.platform, "system", lambda: "Linux")
     monkeypatch.setattr(installer.platform, "machine", lambda: "x86_64")
     monkeypatch.setattr(installer.os, "geteuid", lambda: 1000)
@@ -781,3 +784,21 @@ def test_preflight_dot_dot_cannot_hide_a_symlink_component(tmp_path, ready_host)
     assert not result.ready
     assert checks_by_name(result)["node-storage"].state == "fail"
     assert list(target.iterdir()) == []
+
+
+@pytest.mark.parametrize("storage", [False, True])
+def test_preflight_refuses_effective_service_home_when_home_is_inherited(tmp_path, ready_host, monkeypatch, storage):
+    import pwd
+    from types import SimpleNamespace
+    service_home = tmp_path / "service-home"
+    service_home.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "inherited-operator-home"))
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(service_home)))
+    args = preflight_args(tmp_path, "--resume")
+    if storage:
+        args.storage_root = service_home
+    else:
+        args.root = service_home
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["matter-storage" if storage else "node-storage"].state == "fail"

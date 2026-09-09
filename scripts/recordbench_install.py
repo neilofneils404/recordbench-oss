@@ -1050,7 +1050,11 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
                 # Match the canonical path installation will actually use while
                 # retaining the refusal of symlinks in the entered path.
                 path = entered_path.resolve(strict=False)
-                safe = safe and path not in {Path("/"), Path.home().resolve(strict=False)}
+                # HOME may be inherited through sudo; consult the effective
+                # service account too before accepting either storage root.
+                import pwd
+                effective_home = Path(pwd.getpwuid(os.geteuid()).pw_dir).resolve(strict=False)
+                safe = safe and path not in {Path("/"), Path.home().resolve(strict=False), effective_home}
                 ancestor = path
                 while not ancestor.exists() and ancestor != ancestor.parent:
                     ancestor = ancestor.parent
@@ -1078,7 +1082,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
                         f"Alpha evaluation target: {target} GiB before matter data",
                         "Leave headroom for images and selected models",
                         "Plan additional SSD capacity for the selected profile. These evaluation targets are not validated minimums.", blocking=False)
-            except (OSError, RuntimeError):
+            except (OSError, RuntimeError, KeyError):
                 add(name, False, "Directory metadata unavailable", "Inspect storage before installation",
                     "Ask the storage administrator to restore directory access, then rerun preflight.")
         bind = args.bind_address or "127.0.0.1"
