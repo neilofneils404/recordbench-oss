@@ -171,3 +171,10 @@ parser, not yet a staff search route. [Export readiness](EXPORT_READINESS.md)
 uses the same bounded preparation as the eventual download. The
 [selected acceptance record](SELECTED_ACCEPTANCE_2026-09-09.md) identifies the
 combined candidate and deferred feature stacks.
+
+[Local account lifecycle](LOCAL_ACCOUNT_LIFECYCLE.md) separates read-only live
+account snapshots from operator-authorized mutations of the same private JSON
+file. A shared repository serializes writers and preserves at least one enabled
+administrator. Version 2 account revisions bind local sessions to current
+credentials, enabled state and roles without changing the SQLite session schema
+or granting the web application write access to secrets.

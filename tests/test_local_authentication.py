@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from case_intelligence.generation import UnavailableGenerator
 from case_intelligence.identity import LocalAccountSettings, SESSION_COOKIE
+from case_intelligence.local_accounts import LocalAccountRepository
 from case_intelligence.workbench import create_workbench_app
 
 
@@ -144,14 +145,11 @@ def test_disabled_local_account_cannot_reuse_a_prior_session(tmp_path):
         assert login.status_code == 303
         token = client.cookies.get(SESSION_COOKIE)
         assert token
-        account = settings.accounts["alice.reviewer"]
-        settings.accounts["alice.reviewer"] = type(account)(
-            account.username,
-            account.display_name,
-            account.password_hash,
-            account.roles,
-            False,
-        )
+        repository = LocalAccountRepository(accounts)
+        repository.migrate(tmp_path / "recovery/accounts-v1.json", actor="synthetic-operator")
+        repository.create("backup.admin", "Backup Administrator", "synthetic-backup-password",
+                          administrator=True, actor="synthetic-operator")
+        repository.set_enabled("alice.reviewer", False, actor="synthetic-operator")
         blocked = client.get("/", follow_redirects=False)
         assert blocked.status_code == 303
         assert blocked.headers["location"].startswith("/auth/login")
