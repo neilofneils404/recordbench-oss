@@ -89,6 +89,7 @@ NOTEBOOK_STATUSES = ("suggested", "confirmed", "disputed", "needs_review", "dism
 NOTEBOOK_ORIGINS = ("manual", "answer", "citation", "extraction")
 MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS = 3
 MAX_REPORT_CITATION_EXCERPT_CHARS = 6_000
+MAX_REPORT_SECTION_CITATIONS = 100
 _ANALYSIS_RESTART_MESSAGE = (
     "The review map refresh was interrupted by an application restart. "
     "Select Refresh review map to retry. Existing review decisions are unchanged."
@@ -6960,8 +6961,8 @@ class WorkspaceStore:
             body = self._safe_text(section.get("body"), label="Section text", maximum=50_000,
                                    required=False, multiline=True)
             raw_citations = section.get("citations", ())
-            if not isinstance(raw_citations, (list, tuple)) or len(raw_citations) > 100:
-                raise WorkspaceProblem("A report section can cite up to 100 passages.")
+            if not isinstance(raw_citations, (list, tuple)) or len(raw_citations) > MAX_REPORT_SECTION_CITATIONS:
+                raise WorkspaceProblem(f"A report section can cite up to {MAX_REPORT_SECTION_CITATIONS} passages.")
             try:
                 citations = tuple(self._prepare_report_citation(value) for value in raw_citations)
             except (TypeError, ValueError, AttributeError) as exc:

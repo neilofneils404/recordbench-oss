@@ -54,6 +54,11 @@ not return a partial human record set as a completed draft.
   model work starts. Oversized passages fail explicitly; the compiler does not
   shorten original citation text to make a preview savable. The compiler and
   persistence validation share the same limit.
+- Selected records must also fit the unchanged 100-citation per-section Report
+  limit before model work, including human notes, saved gaps, and machine
+  fallbacks. The compiler and persistence validator share this limit. Excess
+  citations fail explicitly; exactly 100 passages remain intact through saving
+  and export. Generated section admission enforces the same bound.
 - Empty or whitespace-only citation excerpts also fail admission, including
   mixed valid/blank selections. They cannot make a machine assertion appear
   sourced or hide an unsupported human-note warning.
@@ -82,8 +87,11 @@ not return a partial human record set as a completed draft.
   well as the claim. Common date hedges such as may, might, approximate, estimated,
   circa, uncertain, and unconfirmed retain the date wording without claiming an
   exact date, including saved records with a supplied date label. A limitation
-  cannot introduce an event date missing from the claim.
-- Compiler version 8 changes the fingerprint so earlier previews cannot share
+  cannot introduce an event date missing from the claim. Transcript and media-clip
+  citations keep generated and saved timeline dates non-exact regardless of the
+  phrasing or a supplied date label. This decision follows the finding's own
+  support: document-only findings in a mixed source answer can retain exact dates.
+- Compiler version 9 changes the fingerprint so earlier previews cannot share
   an identity with the corrected allocation, relevance, citation, and
   qualification policy.
 - This work does not resolve #44's separate finding about distinct machine
@@ -102,6 +110,8 @@ matches beyond a truncated note prefix, and persisted/exported limitations and
 transcript notices have focused regressions. Additional real-service regressions
 cover qualified timeline ordering, ambiguous relevance limitations, and reversed
 evidence order in duplicate output; exact-date and distinct-claim controls remain.
+Transcript-date regressions exercise real verification and mixed source packets;
+citation-count boundaries verify full persistence and Markdown export.
 Existing compiler tests also exercise grounding, coverage, cancellation, export text
 limits, current Report storage compatibility, and source snapshot fingerprints.
 

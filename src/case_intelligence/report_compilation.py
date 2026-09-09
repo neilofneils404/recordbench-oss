@@ -15,14 +15,14 @@ from datetime import date
 from typing import Callable, Mapping, Protocol, Sequence
 
 from .work_product_exports import MAX_EXPORT_TEXT_CHARS, _markdown_escape
-from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS
+from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, MAX_REPORT_SECTION_CITATIONS
 
 from .generation import (
     EvidenceItem, GenerationRejected, GenerationUnavailable, VerifiedAnswer,
     MAX_EVIDENCE_ITEMS, MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEM_CHARS, MAX_ANSWER_CLAIMS,
 )
 
-COMPILATION_VERSION = 8
+COMPILATION_VERSION = 9
 KINDS = frozenset({"timeline", "entities", "topic"})
 HUMAN_ORIGINS = frozenset({"human", "notebook", "human_review", "review_decision", "source_review"})
 UNRESOLVED_STATES = frozenset({"disputed", "needs_review", "needs_attention", "flagged", "unreviewed"})
@@ -158,8 +158,12 @@ def _generated_basis(items: Sequence[CompilationMaterial], claim_text: str) -> t
     return prefix + "\n".join(lines) + suffix, omitted
 
 
-def _exact_date(text: str, label: str = "") -> str:
+def _exact_date(text: str, label: str = "", *, citations: Sequence[Mapping] = ()) -> str:
     """Only sort explicit unqualified ISO dates; preserve every other date phrase."""
+    # A recording-derived statement reports what a transcript appears to say;
+    # it does not establish an event date, even alongside document support.
+    if any(citation.get("kind") in {"transcript", "media_clip"} for citation in citations):
+        return ""
     candidate = label.strip()
     if re.search(r"\b(?:about|around|approximate(?:ly)?|estimated?|circa|may|might|uncertain(?:ty)?|unconfirmed|"
                  r"before|after|between|possibly|perhaps|or|until|since)\b", text, re.I):
@@ -210,6 +214,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     source_materials: dict[tuple, list[CompilationMaterial]] = {}
     unsourced: list[str] = []
     for item in selected:
+        if len(item.citations) > MAX_REPORT_SECTION_CITATIONS:
+            raise CompilationProblem(f"A selected record exceeds the {MAX_REPORT_SECTION_CITATIONS}-citation Report section limit. Select fewer source passages; citations cannot be silently dropped.")
         if not item.citations:
             unsourced.append(item.material_id)
         for citation in item.citations:
@@ -235,6 +241,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     def append_section(heading, body, citations, items, *, date_key="", category="", compilation_basis=""):
         if len(sections) + len(reserved_human_ids) >= policy.max_sections:
             return False
+        if len(citations) > MAX_REPORT_SECTION_CITATIONS:
+            raise CompilationProblem(f"A compiled section exceeds the {MAX_REPORT_SECTION_CITATIONS}-citation Report section limit. Select fewer source passages.")
         reserve_export_text(heading[:200], body, citations)
         sections.append({"heading": heading[:200], "body": body, "citations": tuple(citations),
                          "material_ids": tuple(dict.fromkeys(item.material_id for item in items)),
@@ -466,7 +474,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                         qualified_text += "\nLimitation source support: " + support + "."
                 # A limitation can qualify a claim's date, but cannot introduce
                 # an event date into a claim that did not state one itself.
-                date_key = _exact_date(claim.text) if kind == "timeline" else ""
+                date_key = _exact_date(claim.text, citations=cited) if kind == "timeline" else ""
                 if date_key:
                     date_key = _exact_date(qualified_text, date_key)
                 heading = f"{category} — {date_key or 'dates as stated'}" if kind == "timeline" else f"{category} — source-linked finding"
@@ -555,7 +563,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             # Retain every category label and the original note once, instead
             # of letting category copies consume another reviewer's slot.
             categories = ["; ".join(categories)]
-        date_key = _exact_date(item.text, item.date_label) if kind == "timeline" else ""
+        date_key = _exact_date(item.text, item.date_label, citations=item.citations) if kind == "timeline" else ""
         basis = _attribution(item)
         if item.material_id in unclassified_review_ids:
             basis += "\nThis saved review record is retained because its topic relevance has not been fully checked."
