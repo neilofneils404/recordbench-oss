@@ -63,6 +63,11 @@ def _accounts_migrate(args: argparse.Namespace) -> None:
     _report(LocalAccountRepository(args.file).migrate(args.backup_file, actor=_actor()))
 
 
+def _accounts_rollback(args: argparse.Namespace) -> None:
+    _report(LocalAccountRepository(args.file).rollback(
+        args.backup_file, args.workspace_file, actor=_actor(), writers_stopped=args.confirm_stopped))
+
+
 def _accounts_relocate(args: argparse.Namespace) -> None:
     _report(LocalAccountRepository(args.file).relocate(
         args.destination, args.backup_file, actor=_actor(), writers_stopped=args.confirm_stopped))
@@ -128,6 +133,12 @@ def _parser() -> argparse.ArgumentParser:
     migrate.add_argument("--file", type=Path, required=True)
     migrate.add_argument("--backup-file", type=Path, required=True)
     migrate.set_defaults(handler=_accounts_migrate)
+    rollback = account_commands.add_parser("rollback", help="Invalidate local sessions and restore a version 1 migration recovery copy")
+    rollback.add_argument("--file", type=Path, required=True)
+    rollback.add_argument("--backup-file", type=Path, required=True)
+    rollback.add_argument("--workspace-file", type=Path, required=True)
+    rollback.add_argument("--confirm-stopped", action="store_true")
+    rollback.set_defaults(handler=_accounts_rollback)
     relocate = account_commands.add_parser("relocate", help="Move accounts into a dedicated browser-management directory")
     relocate.add_argument("--file", type=Path, required=True)
     relocate.add_argument("--destination", type=Path, required=True)

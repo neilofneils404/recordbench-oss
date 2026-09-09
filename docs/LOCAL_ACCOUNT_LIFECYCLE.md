@@ -103,17 +103,54 @@ stopping only the web application does not stop separate CLI processes.
 
 A clean restore must place the account file in a new owner-controlled directory,
 restore mode `0600`, start the matching reviewed release, and verify synthetic
-sign-in plus administrator recovery. To roll back to a release that understands
-only version 1, stop account writers and the application, restore the exact
-pre-migration recovery copy at the original path with its original ownership
-and mode, and restart the previous release. Later account changes are absent
-from that older copy; reconcile them deliberately before opening access.
+sign-in plus administrator recovery.
+
+To roll back to a release that understands only version 1, stop the application
+and **all account writers**, including separate tools containers. Preserve a
+consistent current backup, then use this release's operator command while the
+node remains stopped:
+
+```bash
+recordbench accounts rollback \
+  --file /srv/recordbench/secrets/local-accounts.json \
+  --backup-file /mnt/recovery/recordbench/accounts-before-v2.json \
+  --workspace-file /srv/recordbench/runtime/workbench.sqlite \
+  --confirm-stopped
+```
+
+Use the installation's actual canonical account path and control database path
+in the operator environment. `--confirm-stopped` is the operator's confirmation;
+it does not stop processes. If recovering the control database too, restore it
+first and run the command against the exact database the old release will use.
+Do not replace that database with an older copy after session invalidation.
+
+The command holds the account writer lock, validates the protected v1 recovery
+copy and existing workspace, then commits invalidation of every local-authentication
+session before atomically restoring the exact v1 account bytes with mode `0600`.
+It neither initializes nor migrates the database. It replaces each local
+session's cookie lookup digest and marks the row revoked, preserving existing
+revocation timestamps, session IDs and append-only audit links. Non-local
+sessions, principals, matters and audit events remain unchanged. The recovery
+artifact and session key remain unchanged. A missing, unsafe or incompatible
+database or failed session invalidation
+prevents account replacement. If account replacement fails after invalidation,
+local sessions remain revoked: keep writers stopped, inspect the account file
+and retry the command. A completed rollback can also be repeated safely.
+
+Restart the compatible previous release and require fresh password sign-in;
+verify administrator recovery before opening access. Raw-copying the v1 backup
+can revive an old cookie with its original workspace and key if that cookie was
+never presented against v2. Exact v1 artifacts have no revision field to rotate,
+so migration's live revision changes alone do not make that rollback safe. Later
+account changes are absent from the old copy; reconcile them deliberately.
 Never strip revision fields from the live file to force an older reader to load
 it. Keep the migration recovery copy until the rollback window closes.
 
 Synthetic regression tests cover process writers, last-admin races, failed
 writes, concurrent readers, fresh process snapshots, revocation and non-revival,
-backup verification, clean restore and exact version 1 rollback. A near-limit
+backup verification, clean restore and exact version 1 rollback with both old
+and migrated cookies denied without intervening requests. Failure tests cover
+session-invalidation ordering and account-write recovery. A near-limit
 500-account fixture verifies that repeated session resolutions parse only once;
 replacement, metadata changes and invalid-file tests verify cache invalidation.
 These tests do not replace an operator's installed-node backup and recovery drill.

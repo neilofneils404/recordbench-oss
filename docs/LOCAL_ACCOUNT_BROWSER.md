@@ -29,10 +29,10 @@ For local accounts, explicitly enable the narrow writable account profile:
 The installer creates one canonical `accounts/local-accounts.json`, mode `0600`,
 inside an owner-only `0700` directory. `compose.local-accounts.yaml` mounts that
 directory at `/var/lib/recordbench-accounts` in the app and operator account tool.
-The original secrets mount remains read-only in the app. No duplicate account
-database or writable session-key, provider-secret or database-credential mount
+The original secrets mount remains read-only in both the app and operator
+account tool. No duplicate account database or writable session-key, provider-secret or database-credential mount
 is introduced. Installer resume and updates retain this profile in
-`installation.json`. The flag is only accepted for a new explicit local install.
+`installation.json`. New installations must explicitly select local authentication.
 
 The profile requires a local POSIX filesystem with reliable locks, atomic rename
 and durable file/directory sync. The account directory may contain only the
@@ -78,7 +78,8 @@ environment. Do not perform this through an HTTP request.
    permissions. Include `compose.local-accounts.yaml` after `compose.yaml` for
    direct Compose operations; installer operations load it from node metadata.
 5. Validate the rendered Compose graph, restart the application, and sign in
-   again. Confirm the app's original secrets mount remains read-only. With
+   again. Confirm the original secrets mount is read-only in both the app and
+   operator account tool. With
    synthetic accounts, create two reviewers, add only one to a synthetic matter,
    confirm only that reviewer can open it, then reset and disable that account
    and confirm its existing sessions lose access.
@@ -105,6 +106,11 @@ The relocation recovery copy has independent session revisions, so it does not
 restore access to cookies issued before the move or at the destination.
 Changes after the recovery copy are absent and must be reconciled deliberately.
 Never run writers against both locations or copy lock files into a live node.
+
+Rolling back the account **format to v1** is a separate operation. Follow the
+[local-account rollback command](LOCAL_ACCOUNT_LIFECYCLE.md#existing-installations-explicit-migration-and-recovery)
+under the stopped-writer boundary; the exact v1 migration recovery file has no
+independent revisions and must not be restored by raw copy with old sessions.
 
 ## Authorization and audit
 

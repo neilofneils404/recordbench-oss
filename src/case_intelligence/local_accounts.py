@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import stat
 import threading
 from contextlib import contextmanager
@@ -161,6 +162,56 @@ def _write(directory: int, name: str, data: bytes, *, create: bool = False) -> N
             pass
 
 
+def _invalidate_local_sessions(path: Path) -> None:
+    """Invalidate local cookies in an existing stopped workspace, without migrations."""
+    with _parent(path) as directory:
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             dir_fd=directory)
+        try:
+            metadata = os.fstat(descriptor)
+            def safe_file(item):
+                return (stat.S_ISREG(item.st_mode) and item.st_uid == os.geteuid()
+                        and not stat.S_IMODE(item.st_mode) & 0o022 and item.st_nlink == 1)
+            if not safe_file(metadata):
+                raise RuntimeError("Rollback workspace file is unavailable or unsafe")
+            for suffix in ("-wal", "-shm", "-journal"):
+                try:
+                    companion = os.stat(path.name + suffix, dir_fd=directory, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if not safe_file(companion):
+                    raise RuntimeError("Rollback workspace journal is unavailable or unsafe")
+            # mode=rw refuses a missing database. Never construct WorkspaceStore:
+            # its initialization would migrate the operator's recovery database.
+            db = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True)
+            try:
+                current = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+                if not safe_file(current) or (metadata.st_dev, metadata.st_ino) != (current.st_dev, current.st_ino):
+                    raise RuntimeError("Rollback workspace file changed while opening")
+                db.execute("PRAGMA foreign_keys=ON")
+                db.execute("PRAGMA synchronous=FULL")
+                with db:
+                    db.execute("BEGIN IMMEDIATE")
+                    tables = {row[0] for row in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('workbench_session','workbench_principal')")}
+                    required = {"session_id", "token_digest", "principal_id", "auth_method", "revoked_at"}
+                    columns = {row[1] for row in db.execute("PRAGMA table_info(workbench_session)")}
+                    if tables != {"workbench_session", "workbench_principal"} or not required.issubset(columns):
+                        raise RuntimeError("Rollback requires a compatible existing RecordBench workspace database")
+                    # Keep append-only audit references intact. Replace the cookie
+                    # lookup digest as well as revoking the row so older readers
+                    # cannot recover either generation of local credentials.
+                    db.execute("UPDATE workbench_session SET token_digest=lower(hex(randomblob(32))), "
+                               "revoked_at=COALESCE(revoked_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
+                               "WHERE auth_method='local'")
+            finally:
+                db.close()
+        except sqlite3.Error as exc:
+            raise RuntimeError("Local sessions could not be invalidated; account rollback was not performed") from exc
+        finally:
+            os.close(descriptor)
+
+
 class LocalAccountRepository:
     """Validated live snapshots and process-serialized account mutations."""
 
@@ -285,6 +336,27 @@ class LocalAccountRepository:
             if len(encoded) > _MAX_BYTES:
                 raise RuntimeError("Migrated local account file exceeds its size limit")
             _write(directory, self.path.name, encoded)
+        return receipt
+
+    def rollback(self, backup_file: Path, workspace_file: Path, *, actor: str,
+                 writers_stopped: bool = False) -> LocalAccountChange:
+        """Restore exact version 1 bytes only after durably invalidating local sessions."""
+        if self.guard is not None or not writers_stopped:
+            raise RuntimeError("Stop the application and all account writers, then confirm the operator rollback")
+        backup_file, workspace_file = Path(backup_file), Path(workspace_file)
+        if backup_file == self.path or workspace_file in {self.path, backup_file}:
+            raise RuntimeError("Use separate account, recovery and workspace files for rollback")
+        receipt = self._receipt("rollback", "*", actor)
+        with self._writer() as directory:
+            _read(directory, self.path.name)
+            with _parent(backup_file) as backup_directory:
+                data, version, _ = _read(backup_directory, backup_file.name)
+            if version != 1:
+                raise RuntimeError("Migration rollback requires the exact version 1 recovery copy")
+            # Two resources cannot commit atomically. Invalidate sessions first:
+            # a later account write failure leaves safe revocation, never revival.
+            _invalidate_local_sessions(workspace_file)
+            _write(directory, self.path.name, data)
         return receipt
 
     def relocate(self, destination: Path, backup_file: Path, *, actor: str,

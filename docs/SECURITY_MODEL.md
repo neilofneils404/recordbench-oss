@@ -99,7 +99,11 @@ replacement. Every local session resolution validates the opened file metadata,
 reuses only an unchanged validated snapshot, and checks its revision binding.
 Password, enabled-state and role changes invalidate
 previous sessions without requiring a process restart. Version 1 migration
-requires an explicit verified backup. The optional
+requires an explicit verified backup. Restoring that exact v1 backup requires the
+operator rollback command with the application and all account writers stopped;
+it durably invalidates local sessions before replacing the account file. Live revision
+rotation alone cannot prevent revival after raw-copying a v1 account binding.
+The optional
 [browser account profile](LOCAL_ACCOUNT_BROWSER.md) grants writes only to the
 dedicated canonical account directory. Browser mutations require CSRF and fresh
 administrator session validation under the account lock, enforce keyed edit
