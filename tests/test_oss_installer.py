@@ -699,6 +699,10 @@ def test_preflight_nonempty_root_requires_explicit_resume(tmp_path, ready_host, 
     assert not blocked.ready
     assert checks_by_name(blocked)["node-empty"].state == "fail"
     args.resume = True
+    assert not installer._collect_preflight("none", args).ready
+    (args.root / "installation.json").write_text(json.dumps({
+        "release_path": str(ROOT), "auth": "local", "models": "none", "profiles": ["tools"],
+    }))
     assert installer._collect_preflight("none", args).ready
     assert (args.root / "existing.txt").read_text() == "synthetic existing data"
 
@@ -1388,3 +1392,153 @@ def test_completed_diarization_resume_uses_saved_plan_without_new_token(tmp_path
     assert len(commands) == 2 and "up" in commands[-1]
     assert args.transcription_gpu == "1" and args.transcription_languages == "en,es"
     assert args.transcription_min_free_vram_mib == 16000
+
+@pytest.mark.parametrize("record", [None, [], {"auth": "unsupported", "models": "none"}, {"auth": []}, {"auth": "local", "models": {}}, {"auth": "local", "profiles": [3]}])
+def test_resume_unrelated_root_stops_before_writes(tmp_path, ready_host, monkeypatch, record):
+    node = tmp_path.resolve() / "unrelated"
+    node.mkdir()
+    sentinel = node / "compose.env"
+    sentinel.write_text("synthetic existing data")
+    if record is not None:
+        (node / "installation.json").write_text(json.dumps(record))
+    before = {path.name: path.read_bytes() for path in node.iterdir()}
+    args = preflight_args(tmp_path, "--root", str(node), "--resume")
+    assert not installer._collect_preflight("none", args).ready
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("prepared storage"))
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("ran install command"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--resume", "--models", "none", "--non-interactive", "--password-stdin"])
+    assert installer.main() == 1
+    assert {path.name: path.read_bytes() for path in node.iterdir()} == before
+
+
+@pytest.mark.parametrize("reserved", ["matters", ".matter-purging", "ingestion-staging"])
+@pytest.mark.parametrize("kind", ["directory", "file", "broken-link"])
+def test_preflight_reserved_storage_collision_stops_install(tmp_path, ready_host, monkeypatch, reserved, kind):
+    storage = tmp_path.resolve() / "storage"
+    storage.mkdir()
+    entry = storage / reserved
+    if kind == "directory":
+        entry.mkdir()
+    elif kind == "file":
+        entry.write_text("synthetic unrelated data")
+    else:
+        entry.symlink_to(storage / "missing")
+    args = preflight_args(tmp_path, "--storage-root", str(storage))
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["matter-storage-layout"].state == "fail"
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("prepared storage"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--storage-root", str(storage), "--models", "none", "--non-interactive", "--password-stdin"])
+    assert installer.main() == 1
+    assert not args.root.exists()
+    assert list(storage.iterdir()) == [entry]
+
+
+@pytest.mark.parametrize("auth,option,value", [
+    ("oidc", "--oidc-issuer", "http://identity.example.test"),
+    ("kerberos", "--kerberos-realm", "EXAMPLE"),
+])
+def test_provider_semantics_stop_install_before_writes(tmp_path, ready_host, monkeypatch, auth, option, value):
+    args = preflight_args(tmp_path, "--auth", auth, option, value, "--dry-run")
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["identity-options"].state == "fail"
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("prepared storage"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--models", "none", "--auth", auth, option, value, "--non-interactive", "--dry-run"])
+    assert installer.main() == 1
+    assert not args.root.exists()
+
+
+@pytest.mark.parametrize("bind", ["127.0.0.1\nINJECTED=1", "example.test", "127.0.0.1:8443", "[::1]", "", "2001:db8::1%eth0\nINJECTED=1", "2001:db8::1%eth0"])
+def test_bind_literal_with_tls_stops_before_writes(tmp_path, ready_host, monkeypatch, bind):
+    cert, key = tmp_path / "synthetic.crt", tmp_path / "synthetic.key"
+    cert.write_text("synthetic certificate")
+    key.write_text("synthetic key")
+    options = ["--bind-address", bind, "--tls-cert", str(cert), "--tls-key", str(key)]
+    args = preflight_args(tmp_path, *options)
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["bind-address"].state == "fail"
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("prepared storage"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--models", "none", "--non-interactive", "--password-stdin", *options])
+    assert installer.main() == 1
+    assert not args.root.exists()
+
+@pytest.mark.parametrize("bind", ["127.0.0.1", "0.0.0.0", "192.0.2.10", "::1", "2001:db8::10"])
+def test_preflight_accepts_ip_bind_literals(tmp_path, ready_host, bind):
+    args = preflight_args(tmp_path, "--bind-address", bind)
+    assert checks_by_name(installer._collect_preflight("none", args))["bind-address"].state == "pass"
+
+
+def test_preflight_preserves_initialized_storage_without_writes(tmp_path, ready_host, monkeypatch):
+    storage = tmp_path.resolve() / "storage"
+    storage.mkdir()
+    for name in ("matters", ".matter-purging", "ingestion-staging"):
+        (storage / name).mkdir()
+    marker = storage / ".recordbench-managed-storage.json"
+    marker.write_text(json.dumps({"format_version": 1, "product": "RecordBench", "storage_id": "recordbench-storage-synthetic"}))
+    (storage / "matters" / "synthetic.txt").write_text("synthetic matter fixture")
+    args = preflight_args(tmp_path, "--storage-root", str(storage))
+    monkeypatch.setattr(Path, "mkdir", lambda *a, **k: pytest.fail("preflight wrote storage"))
+    assert installer._collect_preflight("none", args).ready
+    marker.write_text("[]")
+    assert checks_by_name(installer._collect_preflight("none", args))["matter-storage-layout"].state == "fail"
+
+
+@pytest.mark.parametrize("auth,options,expected", [
+    ("oidc", [], True),
+    ("oidc", ["--oidc-issuer", "https://identity.example.test/realm/"], True),
+    ("oidc", ["--oidc-issuer", "http://identity.example.test"], False),
+    ("oidc", ["--oidc-issuer", "https://identity.example.test?query=yes"], False),
+    ("oidc", ["--oidc-issuer", "https://identity.example.test/#fragment"], False),
+    ("oidc", ["--oidc-issuer", "https://user:pass@identity.example.test"], False),
+    ("oidc", ["--oidc-issuer", "https://localhost"], False),
+    ("oidc", ["--oidc-issuer", "https://127.0.0.1"], False),
+    ("oidc", ["--server-name", "localhost"], False),
+    ("oidc", ["--server-name", "127.0.0.1"], False),
+    ("oidc", ["--server-name", " RecordBench.Example.Test "], True),
+    ("oidc", ["--oidc-issuer", "https://identity.example.test/" + "a" * 1024], False),
+    ("oidc", ["--oidc-client-id", ""], False),
+    ("oidc", ["--oidc-client-id", "a\tb"], False),
+    ("oidc", ["--oidc-client-id", "a" * 513], False),
+    ("oidc", ["--oidc-allowed-groups", "a" * 257], False),
+    ("oidc", ["--oidc-admin-groups", ",".join(f"group{i}" for i in range(51))], False),
+    ("oidc", ["--oidc-allowed-groups", ",".join(f"group{i}" for i in range(101))], False),
+    ("oidc", ["--oidc-allowed-groups", "", "--oidc-admin-groups", ""], True),
+    ("oidc", ["--oidc-allowed-groups", "Team,team"], True),
+    ("kerberos", [], True),
+    ("kerberos", ["--kerberos-realm", " example.test "], True),
+    ("kerberos", ["--kerberos-realm", "EXAMPLE"], False),
+    ("kerberos", ["--kerberos-realm=-EXAMPLE.TEST"], False),
+    ("kerberos", ["--kerberos-realm", "a" * 250 + ".test"], False),
+    ("kerberos", ["--kerberos-allowed-groups", "team/invalid"], False),
+    ("kerberos", ["--kerberos-allowed-groups", "a" * 256], False),
+    ("kerberos", ["--kerberos-allowed-groups", "", "--kerberos-admin-groups", ""], False),
+    ("kerberos", ["--kerberos-allowed-groups", "", "--kerberos-admin-groups", "Team Admins"], True),
+    ("kerberos", ["--kerberos-admin-groups", ",".join(f"group{i}" for i in range(51))], False),
+    ("kerberos", ["--kerberos-allowed-groups", ",".join(f"group{i}" for i in range(101))], False),
+    ("kerberos", ["--kerberos-allowed-groups", "Team,team"], True),
+])
+def test_preflight_nonsecret_settings_match_identity_runtime(tmp_path, ready_host, auth, options, expected):
+    from case_intelligence.identity import KerberosSettings, OidcSettings
+    args = preflight_args(tmp_path, "--auth", auth, "--dry-run", *options)
+    values = {name: getattr(args, name) if getattr(args, name) is not None else default
+              for name, _prompt, default in installer.IDENTITY_FIELDS[auth]}
+    groups = {suffix: frozenset(value.strip() for value in values[f"{auth}_{suffix}"].split(",") if value.strip())
+              for suffix in ("allowed_groups", "admin_groups")}
+    try:
+        if auth == "oidc":
+            OidcSettings(issuer=values["oidc_issuer"],
+                         external_origin=f"https://{installer._valid_host(args.server_name or 'recordbench.example.test')}:{args.https_port}",
+                         client_id=values["oidc_client_id"], client_secret="synthetic-secret-value",
+                         allowed_groups=groups["allowed_groups"], administrator_groups=groups["admin_groups"])
+        else:
+            KerberosSettings(realm=values["kerberos_realm"], proxy_secret="synthetic-secret-value-0123456789abcdef",
+                             allowed_groups=groups["allowed_groups"], administrator_groups=groups["admin_groups"])
+        runtime_valid = True
+    except (RuntimeError, ValueError):
+        runtime_valid = False
+    assert runtime_valid is expected
+    result = installer._collect_preflight("none", args)
+    assert (checks_by_name(result)["identity-options"].state == "pass") is runtime_valid
+    assert not args.root.exists()

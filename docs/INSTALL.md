@@ -104,7 +104,10 @@ For missing prerequisites:
   and assign them to the non-root service account. The account's primary group
   must also be non-root. Do not use a home directory, symlink, or shared export
   root. Existing selected directories must belong to that account. A first-install
-  node root must be empty; use `--resume` only for the intended existing node.
+  node root must be empty. `--resume` permits a nonempty root only when it has a
+  valid RecordBench installation record and available release capsule; it does
+  not claim unrelated directories. A missing or empty root still follows fresh
+  installation prerequisites when `--resume` is supplied.
   Both preflight and installation require absolute storage paths; relative paths
   are rejected before creating state.
 - For unattended local installation, supply `--password-stdin`. Preflight checks
@@ -112,6 +115,14 @@ For missing prerequisites:
   a password. Unattended OIDC and Kerberos installation require their credential
   source files; preflight checks readable, nonempty regular-file metadata without
   reading the contents. Kerberos also requires the host SSSD and Kerberos paths.
+  Non-secret OIDC settings require an HTTPS issuer, non-loopback external server
+  name, and a nonempty client ID of at most 512 characters. OIDC group names can
+  contain at most 256 characters. Kerberos requires a dotted realm, valid group
+  names (letters, digits, spaces, dots, underscores, dashes, @ or backslashes,
+  starting with a letter or digit, at most 255 characters), and at least one
+  allowed or administrator group. Both modes allow up to 100 allowed groups and
+  50 administrator groups, reject NUL, carriage returns and newlines in configuration fields,
+  and validate the same non-secret settings accepted by the runtime.
   These checks do not verify credentials or a working identity-provider exchange.
 - Leave more than the installer's 100 GiB storage safety reserve free on the
   selected filesystems. The larger profile targets above are advisory alpha
@@ -119,7 +130,9 @@ For missing prerequisites:
   be on a different filesystem and needs separate capacity planning.
 - Retain loopback HTTPS for evaluation, or supply a readable certificate/key
   pair trusted by the organization for explicit LAN access. Preflight checks the
-  choice, server-name syntax and file access; it does not certify the pair's matching keys, identity,
+  choice, IP bind-address syntax, server-name syntax and file access. The bind
+  address must be an IPv4 or unbracketed, unscoped IPv6 literal; specify the port
+  separately with `--https-port`. Preflight does not certify the pair's matching keys, identity,
   expiry or trust chain. Verify those before staff access.
 - For AI tasks, install the NVIDIA driver and
   [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
@@ -254,6 +267,13 @@ the prior image set. If startup acceptance fails, configuration is returned to
 the previous release and its images are relaunched. Old releases and images are
 retained for deliberate operator cleanup; the updater never prunes them.
 
+
+Before fresh managed-storage initialization, the reserved names `matters`,
+`.matter-purging`, and `ingestion-staging` must be absent, including broken links.
+Existing initialized storage must retain its valid RecordBench marker and three
+writable directories on the same filesystem. Preflight inspects that metadata
+without writing or probing hardlinks; it does not delete or rename collisions.
+Choose another dedicated storage root when unrelated data already uses those names.
 
 Storage preflight requires the nearest existing creation directory to belong to
 the service account and deny group/other writes. Every parent must belong to
