@@ -9598,6 +9598,10 @@ def create_workbench_app(
         words: str = Query("", max_length=512),
         phrase: str = Query("", max_length=512),
         exclude: str = Query("", max_length=512),
+        proximity_first: str = Query("", max_length=256),
+        proximity_second: str = Query("", max_length=256),
+        proximity_gap: str = Query("5", max_length=3),
+        proximity_order: str = Query("either", max_length=10),
         search: bool = Query(False),
         advanced: bool = Query(False),
         source_set: str = Query("", max_length=80),
@@ -9617,8 +9621,10 @@ def create_workbench_app(
                 bench.workspace.source_set(matter.matter_id, source_set)
             if collection:
                 bench.workspace.source_collection(matter.matter_id, collection)
-            if search or any(value.strip() for value in (q, words, phrase, exclude)):
-                effective_query = q if using_expression else build_search_query(words, phrase, exclude)
+            if search or any(value.strip() for value in (q, words, phrase, exclude, proximity_first, proximity_second)):
+                effective_query = q if using_expression else build_search_query(words, phrase, exclude,
+                    proximity_first=proximity_first, proximity_second=proximity_second,
+                    proximity_gap=proximity_gap, proximity_order=proximity_order)
                 results = bench.exact_search(matter, effective_query, source_set_id=source_set,
                     collection_id=collection, page=page, page_size=page_size,
                     expected_fingerprint=fingerprint)
@@ -9639,6 +9645,8 @@ def create_workbench_app(
                 if 1 <= number <= results.pages:
                     links[label] = _query_url(f"/matters/{slug}/exact-search", q=q if using_expression else "",
                         words=words, phrase=phrase, exclude=exclude,
+                        proximity_first=proximity_first, proximity_second=proximity_second,
+                        proximity_gap=proximity_gap, proximity_order=proximity_order,
                         source_set=source_set, collection=collection, page=number,
                         page_size=page_size, fingerprint=results.fingerprint)
         audit(request, "search.exact", "failure" if action_error else "success",
@@ -9648,6 +9656,8 @@ def create_workbench_app(
             status_code=status, context={
                 **base_context(request, matter), "matter": matter, "query": q if using_expression else "",
                 "words": words, "phrase": phrase, "exclude": exclude,
+                "proximity_first": proximity_first, "proximity_second": proximity_second,
+                "proximity_gap": proximity_gap, "proximity_order": proximity_order,
                 "show_assistant_dock": False,
                 "clear_refinements_url": _query_url(f"/matters/{slug}/exact-search", words=words,
                     q=q if using_expression else ""),

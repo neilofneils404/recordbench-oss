@@ -89,7 +89,7 @@ def test_literal_normalization_and_phrase_rules(query, text, wanted):
     "", "   ", "AND red", "red OR", "red AND OR blue", "()", "red)",
     "(red", '"red', '""', '"..."', 'red"blue"', '"red"blue',
     "red*", "name:red", "red?", "red~", "red -blue", "red & blue",
-    "red NEAR/3 blue", "red W/3 blue", "red PRE/3 blue", "red WITHIN blue",
+    "red NEAR/101 blue", "red W/3 blue", "red PRE/3 blue", "red WITHIN blue",
     "red\x00blue", "red\u202eblue", '"red\\q"', "red/blue", "red\\blue",
     "(" * (MAX_QUERY_DEPTH + 1) + "red" + ")" * (MAX_QUERY_DEPTH + 1),
     "NOT " * (MAX_QUERY_DEPTH + 1) + "red",

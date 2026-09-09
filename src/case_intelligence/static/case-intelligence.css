@@ -8059,3 +8059,10 @@ body.activity-open .activity-drawer { transform: translateX(0); }
   .find-refinements[open] > summary::before { content: '▾'; }
   .find-document { padding: 20px 0; }
 }
+
+/* Optional literal proximity refinements retain the plain first-use form. */
+.find-proximity { border: 0; border-top: 1px solid var(--line); padding: 1.1rem 0 0; margin: 1.2rem 0 0; min-width: 0; }
+.find-proximity legend { float: left; width: 100%; padding: 0; font-weight: 650; font-size: .92rem; }
+.find-proximity > .find-help { clear: both; padding-top: .5rem; }
+.find-filter-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.25rem; }
+.find-filter-actions .find-clear-link { margin: 0; }
