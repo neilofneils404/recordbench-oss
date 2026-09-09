@@ -357,6 +357,7 @@ def _iter_text_export(workspace, matter_id, actor_id, run_id, format_name, *, ad
                 yield {'record_type': 'budget', **dict(budget)}
             for table, order, kind in (
                 ('workbench_text_review_source', 'document_id', 'source'),
+                ('workbench_review_decision', 'ordinal,document_id', 'decision'),
                 ('workbench_text_review_unit', 'document_id,unit_ordinal', 'unit'),
                 ('workbench_text_review_chunk', 'document_id,unit_ordinal,chunk_ordinal', 'range'),
             ):
@@ -365,7 +366,7 @@ def _iter_text_export(workspace, matter_id, actor_id, run_id, format_name, *, ad
                     workspace.review_run(matter_id, actor_id, run_id, administrator_override=administrator_override)
                     for row in batch:
                         record = {'record_type': kind, **dict(row)}
-                        for key in ('policy_json', 'citation_json'):
+                        for key in ('policy_json', 'citation_json', 'citations_json'):
                             if key in record:
                                 raw = record.pop(key)
                                 try:
@@ -388,7 +389,7 @@ def _iter_text_export(workspace, matter_id, actor_id, run_id, format_name, *, ad
                 output.seek(0); output.truncate(0)
                 # All free text is JSON-encoded so cells cannot begin as formulas.
                 writer.writerow((record['record_type'], record.get('document_id',''), record.get('unit_ordinal',''),
-                    record.get('chunk_ordinal',''), record.get('state',''), record.get('decision',''),
+                    record.get('chunk_ordinal',''), record.get('state',''), record.get('machine_decision', record.get('decision','')),
                     record.get('coverage_start',''), record.get('coverage_end',''), json.dumps(record, ensure_ascii=False)))
                 yield output.getvalue().encode('utf-8')
         else:

@@ -270,3 +270,47 @@ def test_full_text_decision_inspector_resolves_exact_support_without_persisting_
         assert 'Supporting passages are unavailable or changed' not in response.text
     retained = bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, document.document_id)
     assert retained.citations == saved.citations and retained.updated_at == saved.updated_at
+
+
+@pytest.mark.parametrize('format_name', ['json', 'csv'])
+def test_complete_text_ledger_preserves_human_validation_before_delete(workspace, format_name):
+    import csv
+    client, bench, matter = workspace
+    run, documents = completed_text_run(bench, matter, ['The amber bicycle arrived.'])
+    document = documents[0]
+    saved = bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, document.document_id)
+    reviewed = bench.workspace.adjudicate_review_decision(matter.matter_id, ACTOR, run.run_id,
+        document.document_id, human_decision='exclude', expected_updated_at=saved.updated_at,
+        note='Synthetic human validation retained before deletion.')
+    response = client.get(f'/matters/{matter.slug}/full-review/{run.run_id}/text/export', params={'format': format_name})
+    assert response.status_code == 200
+    if format_name == 'json':
+        records = response.json()['records']
+    else:
+        records = [json.loads(row['Saved record JSON']) for row in csv.DictReader(io.StringIO(response.text))]
+    decisions = [row for row in records if row['record_type'] == 'decision']
+    assert len(decisions) == 1
+    record = decisions[0]
+    assert record['machine_decision'] == 'included' and record['human_decision'] == 'exclude'
+    assert record['human_note'] == reviewed.human_note
+    assert record['reviewed_by'] == reviewed.reviewed_by == ACTOR
+    assert record['reviewed_at'] == reviewed.reviewed_at
+    assert record['source_name'] == document.display_name
+    removed = client.post(f'/matters/{matter.slug}/full-review/{run.run_id}/text/delete', follow_redirects=False)
+    assert removed.status_code == 303
+    assert record['human_note'] == 'Synthetic human validation retained before deletion.'
+
+
+@pytest.mark.parametrize('state', ['failed', 'cancelled'])
+@pytest.mark.parametrize('exhausted', [False, True])
+def test_full_text_run_only_offers_resume_when_budget_allows_it(workspace, state, exhausted):
+    client, bench, matter = workspace
+    run, _ = completed_text_run(bench, matter, ['The amber bicycle arrived.'])
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_review_run SET state=? WHERE run_id=?', (state, run.run_id))
+        bench.workspace.connection.execute('UPDATE workbench_text_review_budget SET limit_reason=? WHERE run_id=?',
+            ('Synthetic retained capacity limit' if exhausted else '', run.run_id))
+    response = client.get(f'/matters/{matter.slug}/full-review', params={'criterion':run.criterion_id, 'run':run.run_id})
+    assert response.status_code == 200
+    assert ('Resume saved run' in response.text) is not exhausted
+    assert ('Start a new review with fewer sources' in response.text) is exhausted

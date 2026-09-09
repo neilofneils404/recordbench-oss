@@ -189,3 +189,5 @@ rather than emitting empty or truncated cited passages. Uncited attention and
 coverage outcomes remain exportable.
 
 The source-decision inspector and validation-recovery page resolve the selected decision's compact citations against its frozen source before displaying supporting passages. This read does not persist excerpts. If the source support is unavailable or changed, the inspector shows a caution and omits unresolved passage links; reopen the source and rerun the check before relying on that decision.
+
+Complete JSON/CSV ledgers include source-decision records with machine outcomes, human decisions and notes, reviewer identifiers, and review timestamps in the same consistent snapshot as text-range coverage. Download that ledger before deleting a terminal saved review. A resource-exhausted review cannot resume; its UI directs the reviewer to start a new run with fewer sources while keeping the saved ledger accessible.
