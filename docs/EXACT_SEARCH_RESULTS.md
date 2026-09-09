@@ -205,3 +205,9 @@ match the decoded text before matching; altered projections cannot supply new
 evidence or hide the original text behind an exact total. Legacy units without
 an excerpt digest remain readable. Synthetic regressions truncate a production
 transcript to an empty array and alter text while retaining its stored digest.
+
+Legacy media projections retain millisecond offsets in the line fields. Search
+previews use those offsets for the timestamp label and recording seek URL, and
+use the extracted passage position for the transcript segment anchor. Synthetic
+route checks open primary and additional later-passage links, including a zero
+offset, without treating a legacy unit number as a segment ordinal.

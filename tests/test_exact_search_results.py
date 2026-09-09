@@ -428,7 +428,7 @@ def test_media_validation_preserves_untimed_legacy_units_and_pdf_page_numbers():
     legacy.page_count = 99  # Untimed legacy metadata is not a segment count.
     legacy.units[0].update(number=5, line_start=0, line_end=1000)
     result = scan([legacy])
-    assert result.total == 1 and result.items[0].previews[0]['start_ms'] is None
+    assert result.total == 1 and result.items[0].previews[0]['start_ms'] == 0
     pdf = document(2, 'red on page two', 'red on page one')
     pdf.media_type, pdf.page_count = 'application/pdf', 2
     pdf.units[0]['number'], pdf.units[1]['number'] = 2, 1
@@ -905,3 +905,29 @@ def test_production_transcript_projection_displays_timestamps(start, expected):
     source.page_count = 1
     source.units = [asdict(unit)]
     assert scan([source]).items[0].previews[0]['location'] == expected
+
+
+@pytest.mark.parametrize('offset', [0, 45000])
+def test_legacy_media_result_links_seek_to_offset_and_extracted_position(tmp_path, offset):
+    app = create_workbench_app(tmp_path / 'runtime', auth_mode='test')
+    with TestClient(app) as client:
+        response = client.post('/matters', data={'name': 'Synthetic legacy media seek'}, follow_redirects=False)
+        slug = response.headers['location'].split('/')[2]
+        bench = app.state.workbench
+        matter = bench.matter(slug, 'development-taylor-morgan')
+        media = document(1, 'opening', 'red bicycle', 'red depot')
+        media.version_id = 'a' * 32
+        media.media_type, media.duration_ms = 'audio/wav', 60000
+        for number, unit, start in zip((5, 8, 12), media.units, (0, offset, 50000)):
+            unit.update(number=number, line_start=start, line_end=start + 1000)
+        bench.source_store(matter).documents[media.document_id] = media
+        bench._sync_source_catalog(matter, [media])
+        result = client.get(f'/matters/{slug}/exact-search', params={'words': 'red'})
+        assert result.status_code == 200 and '1 source found' in result.text
+        links = re.findall(r'<a class="find-location" href="([^"]+)">', result.text)
+        assert len(links) == 2
+        assert links[0].endswith(f'?start_ms={offset}#segment-2')
+        assert links[1].endswith('?start_ms=50000#segment-3')
+        opened = client.get(html.unescape(links[0]))
+        assert opened.status_code == 200
+        assert f'data-media-review data-start-ms="{offset}"' in opened.text
