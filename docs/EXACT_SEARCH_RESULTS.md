@@ -31,6 +31,12 @@ apply only to the eligible fully covered extracted population. A blank extracted
 page cannot be distinguished from a page needing OCR by this stored metadata;
 the exclusion is deliberately conservative. A source load failure
 invalidates the scan rather than becoming a nonmatch.
+DOCX, email, CSV, TSV and XLSX counts represent the exact number of extracted
+sections. Their records must retain that count and consecutive section numbers
+in extraction order. Missing, duplicate or misnumbered sections invalidate the
+entire scan, including positive and negation queries, instead of producing an
+apparently exact zero or an exclusion-only match. Text-file line counts and
+image-frame counts are not interpreted as section counts.
 
 AND, OR, and NOT apply across all extracted units of one document. For example,
 `red AND bicycle NOT blue` rejects a document with `blue` on its final page,
@@ -49,7 +55,11 @@ preview limits never limit matching or document membership. Phrase previews
 anchor on complete consecutive-token phrase occurrences, preserving original
 Unicode text. Page links use the position in the extracted-unit sequence, so
 unreadable PDF pages do not shift the linked match. Negation-only
-matches explain that the requested terms were absent. Source links use the
+matches explicitly state that an excluded word, phrase or combination was
+absent. This also covers grouped negation such as `NOT (red AND bicycle)` when
+one of those words is present, and alternatives between negated conditions.
+DOCX previews
+label extracted locations as sections, matching source review. Source links use the
 current version's existing source-review token. Transcript links carry the
 matching timestamp and segment anchor instead of a text-unit page parameter.
 
@@ -99,6 +109,8 @@ their semantics; invalid source tails still invalidate the entire scan.
 Decoded unit numbers, text and displayed locator types are validated inside the
 source-reading boundary. Corrupt locators produce the documented unavailable
 response rather than a server error or an apparently exact partial total.
+Line ranges reject an endpoint before their start while retaining valid
+single-line ranges and zero-based legacy transcript offsets.
 Pagination fingerprints include both media timestamp endpoints, even when line
 locators and text remain unchanged; retiming a media projection invalidates the
 previous result fingerprint and requires a fresh search.
@@ -138,6 +150,13 @@ explanations, and a preview-stage deadline regression. Browser checks cover
 the first-use form, a successful search, no-result guidance, keyboard submission
 with visible focus, and a 390-pixel viewport without horizontal overflow.
 The shared grammar's truth tables remain required.
+Production ingestion adapters supply synthetic DOCX, email, CSV, TSV and XLSX
+projections for section-count/numbering corruption tests. The DOCX route checks
+the section label and follows its extracted-unit link into source review;
+plain and advanced exclusion-only routes check the explicit absence explanation.
+On macOS these DOCX fixtures run the production section parser in process to
+avoid the existing child address-space limit incompatibility, then use the
+normal ingestion/projection adapter. On Linux they use the extraction subprocess.
 
 Real PostgreSQL indexed exact-search acceptance is pending; no PostgreSQL
 exact adapter is claimed. The same authoritative scan is used when a PostgreSQL

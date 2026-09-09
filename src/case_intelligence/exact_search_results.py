@@ -16,8 +16,10 @@ from typing import Iterable, Protocol
 
 from .exact_search import And, Literal, Not, Or, ParsedQuery, Proximity, match_positionals, matching_spans, parse_query, tokenize_text
 from .media_evidence import format_timestamp
-from .pilot_uploads import PilotDocument, PilotStore, PilotUnit, is_media_type
+from .pilot_uploads import DOCX_MEDIA_TYPE, EMAIL_MEDIA_TYPES, SPREADSHEET_MEDIA_TYPES, PilotDocument, PilotStore, PilotUnit, is_media_type
 from .unit_stream import UnitRecordLimit
+
+_SECTION_MEDIA_TYPES = {DOCX_MEDIA_TYPE} | EMAIL_MEDIA_TYPES | SPREADSHEET_MEDIA_TYPES
 
 
 class ExactSearchUnavailable(ValueError):
@@ -66,6 +68,7 @@ class ExactDocumentResult:
     passage_positions: tuple[int, ...]
     explanation: ParsedQuery
     previews: tuple[dict[str, object], ...] = ()
+    media_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -143,6 +146,8 @@ def _validate_unit(unit: PilotUnit) -> None:
                            (unit.start_ms, 0), (unit.end_ms, 0)):
         if value is not None and (type(value) is not int or value < minimum):
             raise ValueError('Invalid derived unit locator')
+    if unit.line_start is not None and unit.line_end is not None and unit.line_end < unit.line_start:
+        raise ValueError('Invalid derived line range')
 
 
 def _validate_media_locator(document: PilotDocument, unit: PilotUnit,
@@ -155,7 +160,7 @@ def _validate_media_locator(document: PilotDocument, unit: PilotUnit,
         raise ValueError('Invalid transcript locator relationships')
 
 
-def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600, *, budget_check=None) -> dict[str, object]:
+def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600, *, media_type: str = "", budget_check=None) -> dict[str, object]:
     """Display-only highlights; preserve original text and never emit HTML."""
     # Track original spans while applying the same canonical tokenizer used by
     # matching. Combining marks belong to their word and punctuation separates
@@ -242,6 +247,8 @@ def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600, *, bu
         location = format_timestamp(unit.start_ms)
         if unit.end_ms is not None and unit.end_ms != unit.start_ms:
             location += "–" + format_timestamp(unit.end_ms)
+    elif media_type == DOCX_MEDIA_TYPE and not unit.location_label and unit.line_start is None:
+        location = f"Section {unit.number}"
     return {"number": unit.number, "location": location, "start_ms": unit.start_ms, "pieces": tuple(pieces)}
 
 
@@ -297,13 +304,16 @@ def search_documents(
         # A source loader failure invalidates the scan instead of reporting zero.
         units, has_text = [], False
         media, timed_media, previous_start = is_media_type(document.media_type), None, -1
+        section_backed = document.media_type in _SECTION_MEDIA_TYPES
         try:
-            if document.media_type == 'application/pdf' and (
+            if (document.media_type == 'application/pdf' or section_backed) and (
                     type(document.page_count) is not int or document.page_count < 0):
                 raise ValueError('Invalid derived page count')
             for ordinal, unit in enumerate(document.iter_parsed_units(budget_check=check_budget,
                     read_check=charge_read, max_record_chars=max_record_chars), 1):
                 _validate_unit(unit)
+                if section_backed and unit.number != ordinal:
+                    raise ValueError('Invalid derived section numbering')
                 if media:
                     has_timestamps = unit.start_ms is not None or unit.end_ms is not None
                     if timed_media is None:
@@ -321,6 +331,8 @@ def search_documents(
                 digest.update(json.dumps([unit.number, unit.text, unit.location,
                     unit.start_ms, unit.end_ms], ensure_ascii=True).encode())
                 has_text = has_text or bool(tokenize_text(unit.text, budget_check=check_budget))
+            if section_backed and len(units) != document.page_count:
+                raise ValueError('Incomplete derived section coverage')
         except ExactSearchUnavailable:
             raise
         except UnitRecordLimit as exc:
@@ -365,6 +377,7 @@ def search_documents(
                 tuple(selected_units.values()), len(matching_units),
                 tuple(selected_units),
                 ParsedQuery("", And(positives), parsed.grammar_version),
+                media_type=document.media_type,
             ))
         check_budget()
     fingerprint = hashlib.sha256(json.dumps(
@@ -378,7 +391,7 @@ def search_documents(
     selected_page = min(page, pages)
     start = (selected_page - 1) * page_size
     selected = tuple(replace(item, previews=tuple({
-        **passage_preview(unit, item.explanation, budget_check=check_budget), "position": position,
+        **passage_preview(unit, item.explanation, media_type=item.media_type, budget_check=check_budget), "position": position,
     } for position, unit in zip(item.passage_positions, item.passages))) for item in matches[start:start + page_size])
     check_budget()
     return ExactSearchPage(parsed, selected, len(matches),

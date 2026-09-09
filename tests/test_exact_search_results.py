@@ -95,6 +95,129 @@ def _file_backed_source(tmp_path, texts):
     return source, path
 
 
+def _section_backed_source(tmp_path, kind, *, store=None):
+    """Exercise the real ingestion adapters and their file-backed projections."""
+    from contextlib import nullcontext
+    import io
+    import sys
+    from unittest.mock import patch
+    import zipfile
+    from case_intelligence.pilot_uploads import DOCUMENT_MEDIA_TYPES, PilotStore
+    from tests.test_review_tools import CleanScanner, _xlsx
+    from tests.test_upload_pilot import _docx_bytes
+    if kind == 'docx':
+        data = _docx_bytes(*(['neutral'] * 12 + ['cancelled']))
+    elif kind == 'eml':
+        data = b'Subject: Synthetic neutral\r\nContent-Type: text/plain; charset=utf-8\r\n\r\ncancelled\r\n'
+    elif kind in {'csv', 'tsv'}:
+        data = ('neutral\n' * 100 + 'cancelled\n').encode()
+    else:
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(_xlsx())) as original, zipfile.ZipFile(output, 'w') as archive:
+            for name in original.namelist():
+                content = original.read(name)
+                if name == 'xl/worksheets/sheet1.xml':
+                    rows = ''.join(f'<row r="{index}"><c r="A{index}" t="inlineStr"><is><t>{text}</t></is></c></row>'
+                                   for index, text in enumerate(['neutral'] * 100 + ['cancelled'], 1))
+                    content = ('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                               f'<sheetData>{rows}</sheetData></worksheet>').encode()
+                archive.writestr(name, content)
+        data = output.getvalue()
+    if store is None:
+        store = PilotStore(tmp_path / 'synthetic-sections', malware_scanner=CleanScanner(), malware_scan_mode='extended')
+    extraction = nullcontext()
+    if kind == 'docx' and sys.platform == 'darwin':
+        # macOS cannot apply the helper's Linux address-space resource limit.
+        # Keep the production section parser and ingestion/projection adapter;
+        # Linux runs the actual extraction subprocess without this test shim.
+        from case_intelligence.docx_extract import DocxSection
+        from case_intelligence.docx_extract_helper import _sections
+        def native_sections(path):
+            with zipfile.ZipFile(path) as archive:
+                return tuple(DocxSection(**section) for section in _sections(archive.read('word/document.xml')))
+        extraction = patch('case_intelligence.docx_extract.extract_docx_sections', side_effect=native_sections)
+    with extraction:
+        source, _ = store.store_stream(f'Synthetic sections.{kind}', DOCUMENT_MEDIA_TYPES['.' + kind], io.BytesIO(data))
+    assert source.state == 'ready' and source.page_count == 2 and not source.units
+    assert scan([source], 'cancelled').total == 1
+    return source, store.derived / source.units_file
+
+
+@pytest.mark.parametrize('kind', ['docx', 'eml', 'csv', 'tsv', 'xlsx'])
+@pytest.mark.parametrize('damage', ['missing-last', 'missing-all', 'duplicate', 'out-of-range', 'reordered', 'count-type', 'count-mismatch'])
+def test_section_backed_projection_requires_complete_count_and_numbering(tmp_path, kind, damage):
+    source, path = _section_backed_source(tmp_path, kind)
+    payload = json.loads(path.read_text())
+    if damage == 'missing-last':
+        payload['units'].pop()
+    elif damage == 'missing-all':
+        payload['units'].clear()
+    elif damage == 'duplicate':
+        payload['units'][1]['number'] = 1
+    elif damage == 'out-of-range':
+        payload['units'][1]['number'] = 3
+    elif damage == 'reordered':
+        payload['units'].reverse()
+    elif damage == 'count-type':
+        source.page_count = '2'
+    else:
+        source.page_count = 3
+    path.write_text(json.dumps(payload))
+    for query in ('cancelled', 'NOT cancelled'):
+        with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+            scan([document(1, 'neutral'), source], query)
+
+
+def test_docx_result_labels_and_links_match_source_review_sections(tmp_path):
+    app = create_workbench_app(tmp_path / 'runtime', auth_mode='test')
+    with TestClient(app) as client:
+        bench = app.state.workbench
+        matter = bench.create_matter('Synthetic DOCX sections', '', 'development-taylor-morgan')
+        source, _ = _section_backed_source(tmp_path, 'docx', store=bench.source_store(matter))
+        bench.workspace.reconcile_source_organizations(matter.matter_id, ((source.document_id, 'upload', source.display_name),))
+        response = client.get(f'/matters/{matter.slug}/exact-search', params={'q': 'cancelled'})
+        assert response.status_code == 200
+        link = re.search(r'class="find-location" href="([^"]+)">Section 2</a>', response.text)
+        assert link and '?unit=2' in link[1]
+        review = client.get(html.unescape(link[1]))
+        assert review.status_code == 200 and 'Section 2 of 2' in review.text
+
+
+@pytest.mark.parametrize('params,text', [
+    ({'exclude': 'cancelled', 'search': '1'}, b'neutral'),
+    ({'q': 'NOT cancelled'}, b'neutral'),
+    ({'q': 'NOT (red AND bicycle)'}, b'red'),
+    ({'q': 'NOT red OR NOT bicycle'}, b'red'),
+], ids=['plain', 'advanced', 'negated-combination', 'negated-alternatives'])
+def test_exclusion_only_route_explains_absent_words(tmp_path, params, text):
+    import io
+    app = create_workbench_app(tmp_path / 'runtime', auth_mode='test')
+    with TestClient(app) as client:
+        bench = app.state.workbench
+        matter = bench.create_matter('Synthetic absent words', '', 'development-taylor-morgan')
+        store = bench.source_store(matter)
+        source, _ = store.store_stream('Synthetic neutral.txt', 'text/plain', io.BytesIO(text))
+        bench.workspace.reconcile_source_organizations(matter.matter_id, ((source.document_id, 'upload', source.display_name),))
+        response = client.get(f'/matters/{matter.slug}/exact-search', params=params)
+        assert response.status_code == 200 and '1 source found' in response.text
+        assert 'This source matched because a word, phrase, or combination excluded by the search was absent.' in response.text
+        assert 'matches the exclusions' not in response.text
+
+
+def test_production_text_projection_rejects_reversed_line_range(tmp_path):
+    import io
+    from case_intelligence.pilot_uploads import PilotStore
+    store = PilotStore(tmp_path / 'synthetic-line-range')
+    source, _ = store.store_stream('Synthetic lines.txt', 'text/plain', io.BytesIO(b'neutral\nred bicycle'))
+    assert scan([source]).items[0].previews[0]['location'] == 'Lines 1–2'
+    path = store.derived / source.units_file
+    payload = json.loads(path.read_text())
+    payload['units'][0].update(line_start=20, line_end=10)
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([document(1, 'red'), source])
+
+
 def test_file_backed_near_character_limit_preserves_proof_without_materializing(tmp_path, monkeypatch):
     texts = ['red ' + 'neutral ' * 5000, 'bicycle ' + 'neutral ' * 5000, 'depot']
     source, _ = _file_backed_source(tmp_path, texts)
@@ -704,12 +827,18 @@ def test_non_scanning_pages_remain_available_while_matter_is_busy(tmp_path, monk
             assert first.result(timeout=3).status_code == 200
 
 
-def test_production_transcript_projection_displays_timestamps():
+@pytest.mark.parametrize('start,expected', [(0, '00:00–00:01'), (45000, '00:45–00:46')])
+def test_production_transcript_projection_displays_timestamps(start, expected):
+    from dataclasses import asdict
     from types import SimpleNamespace
     from case_intelligence.exact_search import parse_query
     from case_intelligence.media_evidence import transcript_units
-    segments = [SimpleNamespace(start_ms=45000, end_ms=46000, current_text="red bicycle", speaker_cluster="speaker-1", speaker_display_name="", speaker_identity_state="unconfirmed")]
+    segments = [SimpleNamespace(start_ms=start, end_ms=start + 1000, current_text="red bicycle", speaker_cluster="speaker-1", speaker_display_name="", speaker_identity_state="unconfirmed")]
     unit = transcript_units(segments)[0]
     preview = passage_preview(unit, parse_query("red"))
-    assert preview["location"] == "00:45–00:46"
-    assert preview["start_ms"] == 45000
+    assert preview["location"] == expected
+    assert preview["start_ms"] == start
+    source = document(1)
+    source.media_type, source.duration_ms = 'audio/wav', start + 1000
+    source.units = [asdict(unit)]
+    assert scan([source]).items[0].previews[0]['location'] == expected
