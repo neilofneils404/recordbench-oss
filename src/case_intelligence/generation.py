@@ -22,6 +22,7 @@ MAX_EVIDENCE_ITEMS = DEFAULT_REVIEW_BUDGET.synthesis_inputs
 MAX_EVIDENCE_CHARS = DEFAULT_REVIEW_BUDGET.evidence_chars
 MAX_EVIDENCE_ITEM_CHARS = DEFAULT_REVIEW_BUDGET.evidence_item_chars
 MAX_ANSWER_CLAIMS = 8
+VERIFICATION_OMISSION_NOTICE = "Some generated statements were omitted because their source support could not be verified."
 MAX_HISTORY_CHARS = 6_000
 MAX_WORKING_CONTEXT_CHARS = 12_000
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -1269,7 +1270,7 @@ class GroundedGenerationService:
         source_limitation = limitation
         verification_notice = ""
         if omitted and not transcript_only_claims:
-            verification_notice = "Some generated statements were omitted because their source support could not be verified."
+            verification_notice = VERIFICATION_OMISSION_NOTICE
             generated_notice = VerifiedClaim(
                 verification_notice,
                 (),

@@ -4112,6 +4112,9 @@ class CaseIntelligenceWorkbench:
                 ],
             }
 
+        # Keep the legacy combined limitation for conversation display, while
+        # retaining provenance for saved-work consumers and later compilation.
+        source_limitation = answer.source_limitation if answer.verification_notice else answer.limitation
         payload: dict[str, object] = {
             "kind": (
                 "generated"
@@ -4122,6 +4125,8 @@ class CaseIntelligenceWorkbench:
             "introduction": answer.introduction,
             "claims": [claim_payload(claim) for claim in answer.claims],
             "limitation": claim_payload(answer.limitation) if answer.limitation else None,
+            "source_limitation": claim_payload(source_limitation) if source_limitation else None,
+            "verification_notice": answer.verification_notice,
             "missing_information": answer.missing_information,
             "model_called": answer.model_called,
             "elapsed_ms": answer.elapsed_ms,

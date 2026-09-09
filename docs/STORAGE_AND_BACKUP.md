@@ -147,7 +147,7 @@ working copy, then restores the snapshot to a clean target and reads it with tha
 original baseline code. It checks report content and SQLite integrity in both
 states. Run with the contributor Python environment and optional
 `--baseline-ref <pre-workflow-commit>`. The default baseline is
-`3f8a768d358643cf27476fc6c4e1af86ba9f076d`. It uses temporary synthetic data and
+`1fed77a2c50686b073e4c3255421d77aa16fefe5`. It uses temporary synthetic data and
 does not inspect an installed node. This complements the focused queue and
 provenance backup/clean-restore tests; it does not establish an operator's own
 backup or replacement-host readiness.

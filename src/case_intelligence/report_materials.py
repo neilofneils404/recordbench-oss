@@ -14,6 +14,7 @@ import json
 import re
 from typing import Mapping
 
+from .generation import VERIFICATION_OMISSION_NOTICE
 from .report_compilation import CompilationMaterial
 from .work_product_exports import MAX_EXPORT_TEXT_CHARS, validate_research_basis
 from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, MAX_REPORT_SECTION_CITATIONS, WorkspaceProblem
@@ -252,13 +253,30 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
             add(material_id=f"{prefix}:claim:{index}", origin=origin, title=title,
                 text=value["text"], citations=references(value.get("citations", []), ledger), revision=revision,
                 review_status="suggested", category="fact", author="AI assistance")
-        limitation = payload.get("limitation")
+        notice = payload.get("verification_notice", "")
+        if not isinstance(notice, str):
+            raise WorkspaceProblem("A saved answer has an unreadable verification notice.")
+        limitation = payload.get("source_limitation") if "source_limitation" in payload else payload.get("limitation")
+        omitted = payload.get("omitted_claims", 0)
+        if "source_limitation" not in payload and not notice and type(omitted) is int and omitted > 0:
+            # Older answer payloads persisted the exact service notice appended
+            # to their sourced limitation. Split only that known legacy shape;
+            # never infer source support for service-authored text.
+            if isinstance(limitation, Mapping) and isinstance(limitation.get("text"), str):
+                legacy = limitation["text"]
+                if legacy == VERIFICATION_OMISSION_NOTICE or legacy.endswith(" " + VERIFICATION_OMISSION_NOTICE):
+                    sourced = legacy[:-len(VERIFICATION_OMISSION_NOTICE)].rstrip()
+                    limitation = {**limitation, "text": sourced} if sourced else None
+                    notice = VERIFICATION_OMISSION_NOTICE
         if limitation is not None:
             if not isinstance(limitation, Mapping) or not isinstance(limitation.get("text"), str):
                 raise WorkspaceProblem("A saved answer has an unreadable qualification.")
             add(material_id=f"{prefix}:limitation", origin=origin, title="Saved qualification",
                 text=limitation["text"], citations=references(limitation.get("citations", []), ledger),
                 revision=revision, category="gap", author="AI assistance")
+        if notice.strip():
+            add(material_id=f"{prefix}:verification_notice", origin=origin, title="Saved verification notice",
+                text=notice, revision=revision, category="coverage", author="AI assistance")
         missing = payload.get("missing_information")
         if missing is not None and not isinstance(missing, str):
             raise WorkspaceProblem("A saved answer has unreadable missing-information notes.")
