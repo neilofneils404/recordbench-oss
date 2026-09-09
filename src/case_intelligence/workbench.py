@@ -9591,7 +9591,25 @@ def create_workbench_app(
             ), status_code=303
         )
 
-    @app.get("/matters/{slug}/exact-search", response_class=HTMLResponse)
+    exact_search_active: set[str] = set()
+    exact_search_admission_lock = threading.Lock()
+
+    async def exact_search_admission(slug: str):
+        # Async dependency admission happens before the synchronous route gets a
+        # shared worker thread. Never queue work behind a matter's source lock.
+        with exact_search_admission_lock:
+            if slug in exact_search_active or len(exact_search_active) >= 4:
+                raise HTTPException(429, "Search is busy. Please try again shortly.",
+                                    headers={"Retry-After": "1"})
+            exact_search_active.add(slug)
+        try:
+            yield
+        finally:
+            with exact_search_admission_lock:
+                exact_search_active.discard(slug)
+
+    @app.get("/matters/{slug}/exact-search", response_class=HTMLResponse,
+             dependencies=[Depends(exact_search_admission)])
     def exact_search_page(
         request: Request, slug: str,
         q: str = Query("", max_length=512),
