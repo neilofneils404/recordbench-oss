@@ -149,3 +149,23 @@ def test_export_budget_metadata_drops_unrecognized_saved_content():
     portable = budget_metadata({"budget": value})
     assert "extra" not in portable
     assert "unexpected" not in portable["counts"]
+
+
+def test_cancelled_checkpoint_crash_recovery_persists_terminal_budget_reason(tmp_path):
+    store, matter = _store(tmp_path)
+    job, _ = store.queue_research_job(matter.matter_id, ACTOR, "Generated question", "Generated title", "research-request-" + "d" * 32)
+    store.claim_research_job("synthetic-worker")
+    budget = ReviewBudget().metadata(completed_passes=1, unique_evidence=1)
+    store.checkpoint_research_job(job.job_id, {"budget": budget, "passes": [{"query": "Generated question"}], "evidence": []})
+    store.cancel_research_job(matter.matter_id, ACTOR, job.job_id)
+    path = store.path
+    store.close()  # Process exited before the worker acknowledged cancellation.
+    reopened = WorkspaceStore(path)
+    assert reopened.recover_running_research_jobs() == 1
+    recovered = reopened.research_job(matter.matter_id, ACTOR, job.job_id)
+    assert recovered.state == "cancelled"
+    assert recovered.result["stop_reason"] == "cancelled"
+    assert recovered.review_budget["stop_reason"] == "cancelled"
+    assert recovered.review_budget["counts"] == budget["counts"]
+    assert "Stop reason: cancelled." in recovered.review_budget_description
+    reopened.close()
