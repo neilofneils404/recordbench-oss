@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
+from case_intelligence.managed_storage import StoragePolicy
 from case_intelligence.review_budget import ReviewBudget, budget_metadata
 from case_intelligence.review_bench_v2 import (
     Candidate, DeterministicEmbeddingAdapter, DeterministicReranker,
@@ -55,15 +56,21 @@ def test_invalid_budget_rejected(fields):
         ReviewBudget(**fields)
 
 
-def test_repeated_passages_budget_agrees_with_ui_and_exports(tmp_path):
-    app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(), auth_mode="test")
+def test_repeated_passages_budget_agrees_with_ui_and_exports(tmp_path, monkeypatch):
+    # This synthetic upload exercises review accounting, independently of an
+    # operator's capacity reserve. Production still uses its configured policy.
+    monkeypatch.setenv("CASE_INTELLIGENCE_STORAGE_RESERVE_GIB", "16384")
+    app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(), auth_mode="test",
+        storage_policy=StoragePolicy(reserve_bytes=0))
     with TestClient(app) as client:
         bench = app.state.workbench
+        assert bench.storage_policy.reserve_bytes == 0
         bench.research.close()
         bench.research = None
         created = client.post("/matters", data={"name": "Generated budget matter", "descriptor": "Synthetic"}, follow_redirects=False)
         slug = created.headers["location"].split("/")[2]
-        client.post(f"/matters/{slug}/uploads", files=[("files", ("generated.txt", b"Generated device G-24 entered ready state at 09:14.", "text/plain"))])
+        uploaded = client.post(f"/matters/{slug}/uploads", files=[("files", ("generated.txt", b"Generated device G-24 entered ready state at 09:14.", "text/plain"))], follow_redirects=False)
+        assert uploaded.status_code == 303
         matter = bench.workspace.get_active_matter(slug)
         queued, _ = bench.workspace.queue_research_job(matter.matter_id, matter.owner_id, "When did device G-24 enter ready state?", "Generated budget", "research-request-" + "a" * 32)
         claimed = bench.workspace.claim_research_job("synthetic-worker")
