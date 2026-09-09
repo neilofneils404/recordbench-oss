@@ -9325,6 +9325,9 @@ def create_workbench_app(
                 "active_version": active_version,
                 "review_runs": runs,
                 "text_review_runs": {item.run_id for item in runs if FullTextReviewLedger(bench.workspace).enabled(item.run_id)},
+                "active_text_coverage": FullTextReviewLedger(bench.workspace).coverage(
+                    matter.matter_id, read_actor, active_run.run_id
+                ) if active_run else None,
                 "active_run": active_run,
                 "decision_page": decision_page,
                 "selected_decision": selected_decision,
