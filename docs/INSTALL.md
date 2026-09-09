@@ -117,7 +117,10 @@ For missing prerequisites:
   [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
   The checklist checks registered Docker runtime support and the selected model
   plan against currently reported GPU capability and free memory. It also
-  validates supported transcription languages and the diarization/profile combination. It neither
+  validates supported transcription languages and the diarization/profile combination.
+  Unattended diarization staging also requires both `--accept-model-terms` and
+  `--hf-token-stdin` before any installation writes. Preflight checks those
+  choices without reading, validating or printing the token. It neither
   pulls a test image nor proves container/device or offline model readiness.
 
 Directory writability is a metadata/access check with no write attempt; NAS
@@ -221,6 +224,14 @@ using their own backup method can use that flag after verifying their external
 recovery copy against the [backup consistency requirements](STORAGE_AND_BACKUP.md).
 It skips the bundled requirement; it does not validate an external backup or
 ignore a configured bundled backup's failed/deferred receipt.
+Resume and update validate the saved model profile, selected GPU devices,
+generator memory reservation and transcription free-memory threshold against the
+current hardware before running provisioning, backup or release commands. They
+do not substitute an automatically chosen GPU or a smaller model to pass the
+check. A completed offline resume or update does not require a new diarization
+token; an unfinished resume that must stage models still checks its staging
+options before continuing.
+
 The new capsule is built without overwriting
 the prior image set. If startup acceptance fails, configuration is returned to
 the previous release and its images are relaunched. Old releases and images are
@@ -240,7 +251,10 @@ parents such as `/srv` are supported when the operator first creates the
 service-owned directory beneath them. Non-sticky shared writable ancestors and
 parents owned by another non-root account are refused before installation.
 Installation creates each missing directory component with mode `0700`, even
-with a permissive process umask. It rechecks ownership and replacement protection
+when the caller's umask removes owner permissions. Directory creation runs in a
+short-lived isolated child that inherits only the held parent directory
+descriptor and sets its own umask; the installer never changes the calling
+process's umask. It rechecks ownership and replacement protection
 while walking held directory descriptors, refuses symbolic links, and applies
 owner-only permissions to the selected node and storage directories without
 changing existing ancestor modes. If those paths change after preflight,
@@ -249,7 +263,8 @@ protected directories may remain after such a failure; inspect them before
 resuming.
 
 Synthetic regression tests cover invalid server names stopping before state
-creation, nested node and separate matter-storage paths under umask `000`, and
+creation, nested node and separate matter-storage paths under umasks `000`,
+`0700` and `0777` as a non-root account, and
 concurrent symlink, writable-directory and foreign-owner replacements. The
 backup suite also round-trips synthetic control and managed SQLite stores from
 these prepared nested directories into a clean restore target. That regression

@@ -838,17 +838,20 @@ def test_invalid_server_name_blocks_before_state_creation(tmp_path, ready_host, 
     assert not node.exists()
 
 
-def test_prepare_protects_all_missing_storage_components_under_permissive_umask(tmp_path):
+@pytest.mark.skipif(os.geteuid() == 0, reason="owner-masking umask requires a real non-root permission check")
+@pytest.mark.parametrize("mask", [0o000, 0o700, 0o777])
+def test_prepare_protects_all_missing_storage_components_under_any_umask(tmp_path, mask):
     import stat
     base = tmp_path.resolve()
     node = base / "new-node-parent" / "nested" / "node"
     storage = base / "new-storage-parent" / "nested" / "matters"
-    old_umask = os.umask(0)
+    old_umask = os.umask(mask)
     try:
         paths = installer._prepare_directories(installer.Console(color=False, quiet=True), node,
                     storage_root=storage, resume=False, dry_run=False)
     finally:
-        os.umask(old_umask)
+        retained_umask = os.umask(old_umask)
+    assert retained_umask == mask
     for leaf in (node, *paths.values()):
         for directory in (leaf, *leaf.parents):
             if directory == base:
@@ -876,10 +879,10 @@ def test_prepare_revalidates_directory_created_during_the_walk(tmp_path, monkeyp
     original_mkdir, original_fstat = os.mkdir, os.fstat
     replaced_inode = None
 
-    def concurrent_creation(path, mode=0o777, *, dir_fd=None):
+    def concurrent_creation(path, *, dir_fd):
         nonlocal replaced_inode
         if path != "raced":
-            return original_mkdir(path, mode, dir_fd=dir_fd)
+            return original_mkdir(path, 0o700, dir_fd=dir_fd)
         if kind == "symlink":
             os.symlink(outside, path, dir_fd=dir_fd)
         else:
@@ -897,7 +900,7 @@ def test_prepare_revalidates_directory_created_during_the_walk(tmp_path, monkeyp
             return os.stat_result(fields)
         return result
 
-    monkeypatch.setattr(os, "mkdir", concurrent_creation)
+    monkeypatch.setattr(installer, "_mkdir_private", concurrent_creation)
     monkeypatch.setattr(os, "fstat", foreign_owner)
     with pytest.raises(RuntimeError, match="storage"):
         installer._create_private_directory(target)
@@ -1054,3 +1057,118 @@ def test_interactive_hostname_is_collected_once_and_used_by_configuration(tmp_pa
     assert installer.main() == 0
     assert prompts.count("RecordBench hostname") == 1
     assert not node.exists()
+
+
+@pytest.mark.parametrize("models", ["transcription", "all"])
+@pytest.mark.parametrize("flags,missing", [
+    ([], {"model-terms", "model-token-input"}),
+    (["--accept-model-terms"], {"model-token-input"}),
+    (["--hf-token-stdin"], {"model-terms"}),
+])
+def test_unattended_diarization_blocks_missing_staging_options_before_writes(
+    tmp_path, ready_host, monkeypatch, models, flags, missing,
+):
+    node = tmp_path.resolve() / "uncreated node"
+    def probe(command):
+        output = ("0, Synthetic GPU, 49152, 47000, 8.9" if command[0] == "nvidia-smi"
+                  else '{"nvidia": {}}' if "{{json .Runtimes}}" in command else "1.0")
+        return subprocess.CompletedProcess(command, 0, output, "")
+    monkeypatch.setattr(installer, "_probe", probe)
+    monkeypatch.setattr(installer, "_hf_token", lambda *a: pytest.fail("preflight read a token"))
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("missing staging choices reached writes"))
+    args = installer._parser().parse_args(["install", "--root", str(node), "--models", models,
+                                          "--enable-diarization", "--non-interactive", *flags])
+    result = installer._collect_preflight(models, args)
+    assert {row.name for row in result.checks if row.blocking and row.state == "fail"} == missing
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", models,
+                                     "--enable-diarization", "--non-interactive", *flags])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+def test_diarization_preflight_checks_flags_without_consuming_standard_input(tmp_path, ready_host, monkeypatch):
+    class UnreadInput:
+        def readline(self, *args):
+            pytest.fail("preflight must not consume the staging token")
+    monkeypatch.setattr(sys, "stdin", UnreadInput())
+    monkeypatch.setattr(installer, "_probe", lambda command: subprocess.CompletedProcess(command, 0,
+        "0, Synthetic GPU, 49152, 47000, 8.9" if command[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
+    args = preflight_args(tmp_path, "--models", "transcription", "--enable-diarization", "--non-interactive",
+                          "--accept-model-terms", "--hf-token-stdin")
+    result = installer._collect_preflight("transcription", args)
+    assert result.ready
+    assert checks_by_name(result)["model-token-input"].state == "pass"
+
+
+def saved_gpu_node(tmp_path, *, model_profile="quality", models="review"):
+    root = tmp_path.resolve() / "saved-node"
+    (root / "config").mkdir(parents=True)
+    installation = {
+        "release_id": "synthetic", "release_path": str(ROOT), "auth": "local", "models": models,
+        "profiles": ["ai"] if models == "review" else ["transcription"],
+        "review_model_profile": model_profile, "gpu_layout": "shared",
+        "gpu_topology": {"generator": ["0"], "transcription": "0", "retrieval_device": "cpu", "retrieval_gpu": None},
+    }
+    (root / "installation.json").write_text(json.dumps(installation))
+    environment = {"RECORDBENCH_GENERATOR_GPU": "0", "RECORDBENCH_TRANSCRIPTION_GPU": "0",
+                   "RECORDBENCH_RETRIEVAL_DEVICE": "cpu", "RECORDBENCH_RETRIEVAL_GPU": "0",
+                   "RECORDBENCH_GPU_LAYOUT": "shared", "RECORDBENCH_GENERATOR_GPU_UTILIZATION": "0.72"}
+    (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved GPU plan"))
+    (root / "config" / "transcription.env").write_text('TRANSCRIPTION_V2_MIN_FREE_VRAM_MB="16000"\n')
+    return root, installation, environment
+
+
+@pytest.mark.parametrize("command", ["resume", "update"])
+@pytest.mark.parametrize("shortage", ["explicit-device", "quality-model", "utilization", "transcription"])
+def test_saved_gpu_preflight_blocks_resume_update_before_commands(
+    tmp_path, ready_host, monkeypatch, command, shortage,
+):
+    models = "transcription" if shortage == "transcription" else "review"
+    root, installation, environment = saved_gpu_node(tmp_path, models=models)
+    inventories = {
+        "explicit-device": "0, Synthetic Busy, 49152, 1000, 8.9\n1, Synthetic Free, 49152, 47000, 8.9",
+        "quality-model": "0, Synthetic Small, 24576, 24000, 8.0",
+        "utilization": "0, Synthetic Partial, 49152, 35000, 8.9",
+        "transcription": "0, Synthetic Transcription, 49152, 44000, 8.9",
+    }
+    if shortage == "utilization":
+        environment["RECORDBENCH_GENERATOR_GPU_UTILIZATION"] = "0.90"
+        (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved reservation"))
+    before = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    monkeypatch.setattr(installer, "_probe", lambda cmd: subprocess.CompletedProcess(cmd, 0,
+        inventories[shortage] if cmd[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
+    # Demonstrate why checking an automatic plan is insufficient: it can pass by
+    # selecting a different GPU, smaller model, or smaller reservation.
+    assert installer._collect_preflight(models).ready
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("blocked saved plan reached a command"))
+    monkeypatch.setattr(installer, "_stage_release", lambda *a, **k: pytest.fail("blocked saved plan staged a release"))
+    args = installer._parser().parse_args(["install" if command == "resume" else "update", "--root", str(root),
+                                          "--non-interactive", "--no-backup", "--generator-gpus", "1",
+                                          "--review-model-profile", "portable"])
+    action = installer._resume_node if command == "resume" else installer._update
+    with pytest.raises(RuntimeError, match="prerequisites"):
+        action(installer.Console(color=False, quiet=True), args, root)
+    assert args.generator_gpus == "0" and args.review_model_profile == "quality"
+    assert {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
+
+
+def test_completed_diarization_resume_uses_saved_plan_without_new_token(tmp_path, ready_host, monkeypatch):
+    root, installation, environment = saved_gpu_node(tmp_path, model_profile="portable", models="transcription")
+    installation["transcription_diarization"] = True
+    installation["transcription_languages"] = ["en", "es"]
+    environment["RECORDBENCH_TRANSCRIPTION_GPU"] = "1"
+    (root / "installation.json").write_text(json.dumps(installation))
+    (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved transcription"))
+    (root / "state").mkdir()
+    installer._seal_provisioning(root, installation)
+    monkeypatch.setattr(installer, "_probe", lambda cmd: subprocess.CompletedProcess(cmd, 0,
+        "0, Synthetic Busy, 24576, 1000, 8.0\n1, Synthetic Selected, 24576, 24000, 8.0"
+        if cmd[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
+    commands = []
+    monkeypatch.setattr(installer, "_run", lambda console, cmd, **kw: commands.append(cmd))
+    monkeypatch.setattr(installer, "_hf_token", lambda *a: pytest.fail("completed resume must remain offline"))
+    args = installer._parser().parse_args(["install", "--root", str(root), "--resume", "--non-interactive", "--dry-run"])
+    installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert len(commands) == 2 and "up" in commands[-1]
+    assert args.transcription_gpu == "1" and args.transcription_languages == "en,es"
+    assert args.transcription_min_free_vram_mib == 16000
