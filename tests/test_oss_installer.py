@@ -17,6 +17,7 @@ import recordbench_install as installer  # noqa: E402
 @pytest.mark.parametrize("enabled", [False, True])
 def test_account_management_configuration_and_update_overlay(tmp_path, enabled):
     args = installer._parser().parse_args(["install", "--auth", "local", "--models", "none", "--non-interactive"] + (["--enable-account-management"] if enabled else []))
+    installer._collect_identity_choices(args)
     console = installer.Console(color=False)
     paths = installer._prepare_directories(console, tmp_path / "node", storage_root=None, resume=False, dry_run=False)
     root = tmp_path / "node"
@@ -1107,6 +1108,80 @@ def test_interactive_hostname_is_collected_once_and_used_by_configuration(tmp_pa
     assert not node.exists()
 
 
+@pytest.mark.parametrize("prompt,value", [
+    ("Initial administrator username", "bad/name"),
+    ("Administrator display name", "bad\nname"),
+    ("Administrator display name", "   "),
+    ("Administrator display name", "x" * 161),
+])
+def test_interactive_identity_is_validated_before_any_writes(tmp_path, ready_host, monkeypatch, prompt, value):
+    node = tmp_path.resolve() / "uncreated-node"
+    monkeypatch.setattr(installer, "_ask", lambda label, default, **k: value if label == prompt else default)
+    monkeypatch.setattr(installer, "_choose", lambda *a, **k: "local")
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("interactive identity reached writes"))
+    monkeypatch.setattr(installer.getpass, "getpass", lambda *a: pytest.fail("identity preflight read a secret"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none"])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("auth,prompt", [("oidc", "OIDC client ID"), ("kerberos", "Kerberos realm")])
+def test_interactive_provider_text_is_checked_before_writes(tmp_path, ready_host, monkeypatch, auth, prompt):
+    node = tmp_path.resolve() / "uncreated-node"
+    monkeypatch.setattr(installer, "_ask", lambda label, default, **k: "bad\nvalue" if label == prompt else default)
+    monkeypatch.setattr(installer, "_choose", lambda *a, **k: auth)
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("invalid provider text reached writes"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none", "--dry-run"])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("missing", ["host", "keytab"])
+def test_interactive_kerberos_checks_actual_choice_before_any_writes(tmp_path, ready_host, monkeypatch, missing):
+    node = tmp_path.resolve() / "uncreated-node"
+    keytab = tmp_path / "synthetic-keytab"
+    if missing == "host":
+        keytab.write_text("synthetic placeholder")
+    prompts = []
+    def ask(label, default, **kwargs):
+        prompts.append(label)
+        return str(keytab) if label == "Path to the exported HTTP service keytab" else default
+    original_is_dir, original_is_file = Path.is_dir, Path.is_file
+    monkeypatch.setattr(Path, "is_dir", lambda path: missing != "host" if path == Path("/var/lib/sss/pipes") else original_is_dir(path))
+    monkeypatch.setattr(Path, "is_file", lambda path: True if path == Path("/etc/krb5.conf") else original_is_file(path))
+    monkeypatch.setattr(installer, "_ask", ask)
+    monkeypatch.setattr(installer, "_choose", lambda *a, **k: "kerberos")
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("interactive Kerberos choice reached writes"))
+    monkeypatch.setattr(installer.getpass, "getpass", lambda *a: pytest.fail("identity preflight read a secret"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none"])
+    assert installer.main() == 1
+    assert prompts.count("Path to the exported HTTP service keytab") == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("auth", ["local", "oidc", "kerberos"])
+def test_configuration_reuses_all_preflight_identity_answers(tmp_path, ready_host, monkeypatch, auth):
+    node = tmp_path.resolve() / "uncreated-node"
+    prompts = []
+    def ask(label, default, **kwargs):
+        prompts.append(label)
+        return default
+    original_configure = installer._configure
+    def configure(console, args, *positional, **kwargs):
+        assert args.auth == auth
+        monkeypatch.setattr(installer, "_ask", lambda *a, **k: pytest.fail("configuration asked an unchecked identity question"))
+        monkeypatch.setattr(installer, "_choose", lambda *a, **k: pytest.fail("configuration changed the checked identity mode"))
+        return original_configure(console, args, *positional, **kwargs)
+    monkeypatch.setattr(installer, "_ask", ask)
+    monkeypatch.setattr(installer, "_choose", lambda *a, **k: auth)
+    monkeypatch.setattr(installer, "_configure", configure)
+    monkeypatch.setattr(installer.getpass, "getpass", lambda *a: pytest.fail("dry-run read a secret"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none", "--dry-run"])
+    assert installer.main() == 0
+    assert len(prompts) == len(set(prompts))
+    assert not node.exists()
+
+
 @pytest.mark.parametrize("models", ["transcription", "all"])
 @pytest.mark.parametrize("flags,missing", [
     ([], {"model-terms", "model-token-input"}),
@@ -1416,6 +1491,7 @@ def test_configure_normalizes_padded_administrator_display_name(tmp_path):
     display = "A" * 160
     args = installer._parser().parse_args(["install", "--auth", "local", "--models", "none", "--non-interactive",
         "--dry-run", "--admin-display-name", "  " + display + "  "])
+    installer._collect_identity_choices(args)
     root = tmp_path.resolve() / "node"
     result = installer._configure(installer.Console(color=False, quiet=True), args, root,
         installer._paths(root), "synthetic-release", ROOT, ())

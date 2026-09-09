@@ -276,6 +276,42 @@ def _choose(prompt: str, choices: Sequence[str], default: str, *, non_interactiv
         print(f"Choose one of: {', '.join(choices)}")
 
 
+IDENTITY_FIELDS = {
+    "local": (
+        ("admin_username", "Initial administrator username", "recordbench.admin"),
+        ("admin_display_name", "Administrator display name", "RecordBench Administrator"),
+    ),
+    "oidc": (
+        ("oidc_issuer", "OIDC issuer URL", "https://identity.example.test/realms/case-team"),
+        ("oidc_client_id", "OIDC client ID", "recordbench"),
+        ("oidc_allowed_groups", "OIDC allowed groups", "RecordBench_Users"),
+        ("oidc_admin_groups", "OIDC administrator groups", "RecordBench_Administrators"),
+    ),
+    "kerberos": (
+        ("kerberos_realm", "Kerberos realm", "EXAMPLE.TEST"),
+        ("kerberos_allowed_groups", "Allowed Kerberos group", "recordbench_users@example.test"),
+        ("kerberos_admin_groups", "Administrator Kerberos group", "recordbench_administrators@example.test"),
+    ),
+}
+
+
+def _collect_identity_choices(args: argparse.Namespace) -> None:
+    """Collect non-secret choices once so preflight checks the actual installation."""
+    if args.auth is None:
+        args.auth = _choose("Identity mode", ("local", "oidc", "kerberos"), "local",
+                            non_interactive=args.non_interactive)
+    for name, prompt, default in IDENTITY_FIELDS[args.auth]:
+        if getattr(args, name) is None:
+            setattr(args, name, _ask(prompt, default, non_interactive=args.non_interactive))
+    if args.auth == "local":
+        args.admin_username = args.admin_username.strip().casefold()
+        args.admin_display_name = args.admin_display_name.strip()
+    if args.auth == "kerberos":
+        args.kerberos_realm = args.kerberos_realm.upper()
+        if args.kerberos_keytab is None and not args.non_interactive and not args.dry_run:
+            args.kerberos_keytab = Path(_ask("Path to the exported HTTP service keytab", "", non_interactive=False))
+
+
 def _run(
     console: Console,
     command: Sequence[str],
@@ -1147,8 +1183,10 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
         if needs_local_account:
             # Keep the dependency-free launcher aligned with account-admin's
             # normalization; names are reported only as valid/invalid.
-            login = (args.admin_username or ("" if existing_resume else "recordbench.admin")).strip().casefold()
-            display = (args.admin_display_name or ("" if existing_resume else "RecordBench Administrator")).strip()
+            login = (args.admin_username if args.admin_username is not None else
+                     "" if existing_resume else "recordbench.admin").strip().casefold()
+            display = (args.admin_display_name if args.admin_display_name is not None else
+                       "" if existing_resume else "RecordBench Administrator").strip()
             identity_ok = (re.fullmatch(r"[a-z0-9][a-z0-9._@-]{2,127}", login) is not None
                            and bool(display) and len(display) <= 160
                            and not any(ord(character) < 32 for character in display))
@@ -1162,6 +1200,14 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 "Create the initial local administrator account",
                 "Pass --password-stdin and supply the initial administrator password through controlled standard input when installation runs.")
         if not existing_resume:
+            if args.auth in {"oidc", "kerberos"}:
+                values = (getattr(args, name) for name, _prompt, _default in IDENTITY_FIELDS[args.auth])
+                valid = all(value is None or not any(character in value for character in ("\x00", "\r", "\n"))
+                            for value in values)
+                add("identity-options", valid,
+                    "Identity configuration text is valid" if valid else "Identity configuration contains unsupported control characters",
+                    "Write the selected identity provider configuration",
+                    "Use single-line issuer, client, realm and group values without NUL, carriage return or newline characters.")
             for auth, source, name, option in (
                 ("oidc", args.oidc_client_secret_file, "oidc-secret-input", "--oidc-client-secret-file"),
                 ("kerberos", args.kerberos_keytab, "kerberos-keytab-input", "--kerberos-keytab"),
@@ -1450,9 +1496,9 @@ def _configure(
     gpu_devices: tuple[GpuDevice, ...],
 ) -> tuple[str, str, str, str | None, str | None]:
     console.phase(4, "IDENTITY + FRONT DOOR", "Sealing sessions, service credentials, and HTTPS coordinates")
-    auth = args.auth or _choose(
-        "Identity mode", ("local", "oidc", "kerberos"), "local", non_interactive=args.non_interactive
-    )
+    auth = args.auth
+    if auth not in IDENTITY_FIELDS:
+        raise RuntimeError("identity choices must be collected and checked before configuration")
     models = args.models or "none"
     transcription_languages = _transcription_languages(
         args.transcription_languages
@@ -1572,12 +1618,8 @@ def _configure(
             app_values["CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT"] = "/var/lib/recordbench-accounts"
         else:
             app_values["CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE"] = "/run/recordbench-secrets/local-accounts.json"
-        admin_username = args.admin_username or _ask(
-            "Initial administrator username", "recordbench.admin", non_interactive=args.non_interactive
-        )
-        admin_display = args.admin_display_name or _ask(
-            "Administrator display name", "RecordBench Administrator", non_interactive=args.non_interactive
-        )
+        admin_username = args.admin_username
+        admin_display = args.admin_display_name
         admin_username = admin_username.strip().casefold()
         admin_display = admin_display.strip()
         if re.fullmatch(r"[a-z0-9][a-z0-9._@-]{2,127}", admin_username) is None:
@@ -1585,32 +1627,14 @@ def _configure(
         if not admin_display.strip() or len(admin_display) > 160 or any(ord(char) < 32 for char in admin_display):
             raise RuntimeError("Initial administrator display name is invalid")
     elif auth == "oidc":
-        issuer = args.oidc_issuer or _ask(
-            "OIDC issuer URL",
-            "https://identity.example.test/realms/case-team",
-            non_interactive=args.non_interactive,
-        )
-        client_id = args.oidc_client_id or _ask(
-            "OIDC client ID", "recordbench", non_interactive=args.non_interactive
-        )
-        allowed_groups = args.oidc_allowed_groups or _ask(
-            "OIDC allowed groups",
-            "RecordBench_Users",
-            non_interactive=args.non_interactive,
-        )
-        administrator_groups = args.oidc_admin_groups or _ask(
-            "OIDC administrator groups",
-            "RecordBench_Administrators",
-            non_interactive=args.non_interactive,
-        )
         app_values.update(
             {
                 "CASE_INTELLIGENCE_EXTERNAL_ORIGIN": f"https://{server_name}" + (f":{args.https_port}" if args.https_port != 443 else ""),
-                "CASE_INTELLIGENCE_OIDC_ISSUER": issuer,
-                "CASE_INTELLIGENCE_OIDC_CLIENT_ID": client_id,
+                "CASE_INTELLIGENCE_OIDC_ISSUER": args.oidc_issuer,
+                "CASE_INTELLIGENCE_OIDC_CLIENT_ID": args.oidc_client_id,
                 "CASE_INTELLIGENCE_OIDC_CLIENT_SECRET_FILE": "/run/recordbench-secrets/oidc-client-secret",
-                "CASE_INTELLIGENCE_OIDC_ALLOWED_GROUPS": allowed_groups,
-                "CASE_INTELLIGENCE_OIDC_ADMIN_GROUPS": administrator_groups,
+                "CASE_INTELLIGENCE_OIDC_ALLOWED_GROUPS": args.oidc_allowed_groups,
+                "CASE_INTELLIGENCE_OIDC_ADMIN_GROUPS": args.oidc_admin_groups,
                 "CASE_INTELLIGENCE_OIDC_SCOPES": "openid profile email",
             }
         )
@@ -1631,30 +1655,13 @@ def _configure(
                     getpass.getpass("OIDC client secret: ") + "\n",
                 )
     else:
-        realm = (
-            args.kerberos_realm
-            or _ask(
-                "Kerberos realm",
-                "EXAMPLE.TEST",
-                non_interactive=args.non_interactive,
-            )
-        ).upper()
+        realm = args.kerberos_realm
         compose_values["RECORDBENCH_KERBEROS_PRINCIPAL"] = f"HTTP/{server_name}@{realm}"
         app_values.update(
             {
                 "CASE_INTELLIGENCE_KERBEROS_REALM": realm,
-                "CASE_INTELLIGENCE_KERBEROS_ALLOWED_GROUPS": args.kerberos_allowed_groups
-                or _ask(
-                    "Allowed Kerberos group",
-                    "recordbench_users@example.test",
-                    non_interactive=args.non_interactive,
-                ),
-                "CASE_INTELLIGENCE_KERBEROS_ADMIN_GROUPS": args.kerberos_admin_groups
-                or _ask(
-                    "Administrator Kerberos group",
-                    "recordbench_administrators@example.test",
-                    non_interactive=args.non_interactive,
-                ),
+                "CASE_INTELLIGENCE_KERBEROS_ALLOWED_GROUPS": args.kerberos_allowed_groups,
+                "CASE_INTELLIGENCE_KERBEROS_ADMIN_GROUPS": args.kerberos_admin_groups,
                 "CASE_INTELLIGENCE_KERBEROS_PROXY_SECRET_FILE": "/run/recordbench-secrets/kerberos-proxy-secret",
             }
         )
@@ -1663,8 +1670,6 @@ def _configure(
             target_keytab = paths["secrets"] / "recordbench.keytab"
             if not target_keytab.exists():
                 source_keytab = args.kerberos_keytab
-                if source_keytab is None and not args.non_interactive:
-                    source_keytab = Path(input("Path to the exported HTTP service keytab: ").strip())
                 if source_keytab is None:
                     raise RuntimeError("Kerberos installation requires --kerberos-keytab")
                 _private_copy(source_keytab.expanduser(), target_keytab)
@@ -2633,6 +2638,9 @@ def main() -> int:
             args.server_name = _ask(
                 "RecordBench hostname", "recordbench.example.test", non_interactive=args.non_interactive
             )
+        # Reject an invalid hostname before asking unrelated identity questions.
+        _valid_host(args.server_name)
+        _collect_identity_choices(args)
         args.root = args.root.expanduser()
         # Resolve storage, TLS and the complete hardware plan before creating
         # state. Dry-run discovery uses the same read-only prerequisite checks.
