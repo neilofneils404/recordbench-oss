@@ -1,10 +1,10 @@
 <article class="report-reading-page" aria-label="Report document">
-  <header><p class="eyebrow">{{ report.status|title }} report</p><h2>{{ report.title }}</h2>{% if report.purpose %}<p>{{ report.purpose }}</p>{% endif %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/reports?report={{ report.report_id }}&amp;edit=true">Edit this draft</a></header>
+  <header><p class="eyebrow">{{ report.status|title }} report</p><h2>{{ report.title }}</h2>{% if report.purpose %}<p>{{ report.purpose }}</p>{% endif %}{% if report_can_write %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/reports?report={{ report.report_id }}&amp;edit=true">Edit this draft</a>{% endif %}</header>
   {% for section in sections %}
   {% set parts = [section.prose, section.compilation_basis] if section.compilation_basis else [section.body] %}
   <section class="report-reading-section" id="{{ section.section_id }}"><h3>{{ section.heading }}</h3><div class="report-reading-text">{{ parts[0] }}</div>
     {% if citations[section.section_id] %}<nav class="report-reading-sources" aria-label="Sources for {{ section.heading }}">{% for citation in citations[section.section_id] %}{% if citation_hrefs[citation.citation_id] %}<a href="{{ citation_hrefs[citation.citation_id] }}">{{ citation.source_name }} <span>· {{ citation.location }} ↗</span></a>{% else %}<span>{{ citation.source_name }} · source unavailable</span>{% endif %}{% endfor %}</nav>{% endif %}
     {% if parts|length > 1 %}<details class="report-reading-basis"><summary>How this part was compiled</summary><div>{{ parts[1] }}</div></details>{% endif %}
   </section>
-  {% else %}<div class="report-no-work"><p>This draft has no saved material yet.</p><a class="button button-primary" href="/matters/{{ matter.slug }}/reports/new">Compile a report from saved work</a></div>{% endfor %}
+  {% else %}<div class="report-no-work"><p>This draft has no saved material yet.</p>{% if report_can_write %}<a class="button button-primary" href="/matters/{{ matter.slug }}/reports/new">Compile a report from saved work</a>{% endif %}</div>{% endfor %}
 </article>

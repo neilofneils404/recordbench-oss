@@ -19,7 +19,7 @@
 
   <div class="reports-layout">
     <aside class="report-library">
-      <section class="report-create-card">
+      {% if report_can_write %}<section class="report-create-card">
         <p class="eyebrow">From your review</p><h2>Make a report</h2>
         <a class="button button-primary" href="/matters/{{ matter.slug }}/reports/new">Compile saved work →</a>
         <details><summary>Or start with a blank document</summary>
@@ -31,6 +31,7 @@
         </form>
         </details>
       </section>
+      {% endif %}
       {% if compilation_jobs %}<nav class="report-job-list" aria-label="Reports being compiled"><strong>In progress</strong>{% for job in compilation_jobs %}<a href="/matters/{{ matter.slug }}/reports/new?job={{ job.job_id }}">{{ report_labels[job.kind] }}<small>{{ job.message }}</small></a>{% endfor %}</nav>{% endif %}
       <nav class="report-list" aria-label="Matter reports">
         {% for item in reports %}<a class="{% if report and item.report_id == report.report_id %}selected{% endif %}" href="/matters/{{ matter.slug }}/reports?report={{ item.report_id }}"><strong>{{ item.title }}</strong><span>{{ item.status|title }} · {{ item.section_count }} section{% if item.section_count != 1 %}s{% endif %}</span></a>{% else %}<p>No reports yet.</p>{% endfor %}
@@ -80,7 +81,7 @@
       </section>
       {% endif %}
       {% else %}
-      <div class="report-zero-state"><h2>Your review, ready to use</h2><p>Make a timeline, see who's involved, or pull together findings on a topic. Start with the AI answers and team review already saved in this matter.</p><a class="button button-primary" href="/matters/{{ matter.slug }}/reports/new">Make your first report</a></div>
+      <div class="report-zero-state"><h2>Your review, ready to use</h2><p>Make a timeline, see who's involved, or pull together findings on a topic. Start with the AI answers and team review already saved in this matter.</p>{% if report_can_write %}<a class="button button-primary" href="/matters/{{ matter.slug }}/reports/new">Make your first report</a>{% else %}<p>Administrator access is read-only. Matter members can create reports.</p>{% endif %}</div>
       {% endif %}
     </section>
   </div>

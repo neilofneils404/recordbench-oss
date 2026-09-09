@@ -228,6 +228,11 @@ class ReportCompilationJobs:
             self._owned(connection, job)
             connection.execute("UPDATE workbench_report_compilation_job SET state='succeeded',report_id=?,message='Report draft ready.',worker_id=NULL,lease_token=NULL,lease_expires_at=NULL,finished_at=?,updated_at=? WHERE job_id=? AND lease_token=?",
                                (report_id, self.clock(), self.clock(), job.job_id, job.lease_token))
+            self.workspace._append_audit_event_locked(
+                actor_principal_id=job.actor_id, session_id=None, matter_id=job.matter_id,
+                request_id=job.job_id, action="report.compile.complete", outcome="success",
+                object_type="report", object_id=report_id, details={"state": "succeeded"},
+            )
             return result
 
     def fail(self, job: CompilationJobRecord, message: str = "Compilation could not finish. Retry the saved request.") -> None:
@@ -236,6 +241,12 @@ class ReportCompilationJobs:
             state = "cancelled" if row["cancellation_requested"] else "failed"
             connection.execute("UPDATE workbench_report_compilation_job SET state=?,message=?,worker_id=NULL,lease_token=NULL,lease_expires_at=NULL,finished_at=?,updated_at=? WHERE job_id=? AND lease_token=?",
                                (state, "Compilation cancelled." if state == "cancelled" else message[:240], self.clock(), self.clock(), job.job_id, job.lease_token))
+
+            self.workspace._append_audit_event_locked(
+                actor_principal_id=job.actor_id, session_id=None, matter_id=job.matter_id,
+                request_id=job.job_id, action="report.compile.finish", outcome="failure",
+                object_type="report_compilation", object_id=job.job_id, details={"state": state},
+            )
 
     def cancel(self, matter_id: str, actor_id: str, job_id: str) -> CompilationJobRecord:
         with self._transaction() as connection:

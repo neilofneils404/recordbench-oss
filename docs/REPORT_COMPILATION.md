@@ -24,8 +24,9 @@ and coverage limits are retained as attributed prior review, not new source
 findings. Material identities and revisions appear after the `Review basis:`
 delimiter so a reader can expand that detail while exports retain it.
 
-When no model is available, the compiler explicitly arranges the selected saved
-work without claiming a new semantic synthesis. Unsourced machine statements are
+When no model is available, or every attempted synthesis call is rejected or
+unavailable, the compiler explicitly arranges the supported saved source findings
+without claiming a new semantic synthesis. Unsourced machine statements are
 excluded; unsourced human notes are visibly labeled. A selection containing no
 supported content fails with an actionable message instead of producing empty
 outline sections. This fallback is not an entity-resolution or topic-relevance
@@ -58,8 +59,12 @@ The UI uses the shared server policy, with configurable positive integers
 `CASE_INTELLIGENCE_REPORT_MAX_MATERIALS`, `CASE_INTELLIGENCE_REPORT_MAX_MODEL_CALLS`,
 `CASE_INTELLIGENCE_REPORT_MAX_SECTIONS`, and `CASE_INTELLIGENCE_REPORT_WORKERS`.
 These are capacity controls, not claims about pages reviewed. The selection adapter
-accepts at most 20 collections/records, 500 material records and 10,000 references;
-overlarge selections ask the reviewer to narrow the draft. The compiler records
+accepts at most 20 collections/records, 500 material records, 10,000 references,
+and 5 million canonical citation characters counted across repeated occurrences.
+It enforces that aggregate while resolving references, before snapshot hashing;
+overlarge selections ask the reviewer to narrow the draft. The completed draft
+also counts repeated citation text, escaped text and metadata against the shared
+10-million-character export capacity before it can be saved. The compiler records
 any smaller policy omissions in its coverage section.
 
 `tests/test_guided_reports.py` exercises all three HTTP-to-background-to-document
@@ -183,8 +188,8 @@ unrelated notes are omitted with coverage accounting. Focused multi-item work
 requires relevance classification; an offline single-item fallback is labeled
 unfiltered. A review-selection claim must cite exactly one distinct allowed
 record, so an otherwise supported sentence cannot select an unrelated extra ID.
-An entity review record is fully checked only after all three category calls
-complete. Interrupted or unavailable category passes remain explicitly partially
+An entity source passage or review record is fully checked only after all three
+category calls complete. Interrupted or unavailable category passes remain explicitly partially
 classified, with the original note in the unclassified appendix and category
 progress in coverage.
 
@@ -200,8 +205,10 @@ they must never split on the first matching delimiter in human-authored text.
 
 Migration 0029 stores each compiler-authored `compilation_basis` separately on its
 Report section. The ordinary section body still contains the complete exported
-text. Reading and editing remove only the exact stored basis suffix; user/source
-text containing the same heading stays visible and editable. Existing sections
+text. Reading uses the separately stored basis to display prose and provenance.
+The edit form submits prose only; submitted text is never stripped by matching a
+suffix, even when the reviewer intentionally copies the exact stored basis.
+User/source text containing the same heading stays visible and editable. Existing sections
 receive an empty basis field, preserving their body verbatim instead of guessing
 where provenance starts. Startup adds the column idempotently under a database
 write transaction. Synthetic backup/clean-restore and legacy-column upgrade tests
@@ -212,3 +219,19 @@ retry. Retrying that request creates one new draft from current selected work;
 it does not resurrect or silently restore the deleted document. Unavailable
 source-check documents, including uncited human overrides, fail validation even
 when their version and stored text have not changed.
+
+Generated provenance has bounded attribution text and explicit omitted-attribution
+counts, so many records supporting one passage cannot create an unsavable section.
+Partial entity-category work retains attributed saved findings and reports the
+unchecked categories rather than claiming that every source was analyzed.
+
+Heartbeat renewal uses an independent SQLite connection while guarded source
+validation is in progress. Lease-token, expiry, authorization and cancellation
+checks remain transactional; a stale worker cannot renew its lease.
+
+Successful report creation and its completion audit event share one transaction.
+The content-free event retains the initiating actor, job identifier and new Report
+identifier even after the Report is deleted. Failed worker outcomes, explicit
+cancellation and retry are also recorded. Read-only administrator overrides do
+not advertise report creation or editing. Matter purge deletes terminal
+compilation requests in the same cleanup transaction as the remaining work.
