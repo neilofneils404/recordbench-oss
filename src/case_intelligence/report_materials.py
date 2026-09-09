@@ -12,10 +12,12 @@ from dataclasses import asdict, replace
 import hashlib
 import json
 import re
+import time
 from typing import Mapping
 
 from .generation import VERIFICATION_OMISSION_NOTICE
 from .report_compilation import CompilationMaterial
+from .unit_stream import UnitRecordLimit
 from .work_product_exports import MAX_EXPORT_TEXT_CHARS, validate_research_basis
 from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, MAX_REPORT_SECTION_CITATIONS, WorkspaceProblem
 
@@ -27,7 +29,25 @@ MAX_CITATION_CHARS = MAX_REPORT_CITATION_EXCERPT_CHARS
 # the export capacity for report prose, headings, attribution and generated
 # findings. The final rendered report must also respect the export limit.
 MAX_TOTAL_CITATION_CHARS = MAX_EXPORT_TEXT_CHARS // 2
+# These bound validation work, including uncited units in frozen source checks.
+# Each collection pass has its own budget; compilation collects once before
+# generation and once before the atomic save.
+MAX_SOURCE_SCAN_CHARS = 50_000_000
+MAX_SOURCE_SCAN_UNITS = 100_000
+MAX_SOURCE_SCAN_SERIALIZED_CHARS = 64_000_000
+MAX_SOURCE_SCAN_RECORD_CHARS = 8_000_000
+MAX_SOURCE_SCAN_SECONDS = 5.0
 _STALE = "Some selected source support changed or lacks an exact saved text version. Reopen that saved work before compiling a report."
+_SCAN_LIMIT = "The selected saved work exceeds the report source-validation limit. Choose fewer or smaller sources; no report was saved."
+
+
+def _decision_review_status(machine, human):
+    if (machine, human) in {("included", "exclude"), ("excluded", "include")}:
+        return "disputed"
+    if (machine, human) in {("included", "include"), ("excluded", "exclude"),
+                            ("included", "agree"), ("excluded", "agree")}:
+        return "confirmed"
+    return "needs_review"
 
 
 class _References:
@@ -37,53 +57,109 @@ class _References:
         self.documents = {}
         self.resolved = {}
         self.bases = {}
-        self.digests = {}
+        self.decision_sources = {}
+        self.scanned = set()
         self.reference_counts = Counter()
         self.citation_chars = 0
+        self.scan_chars = self.scan_units = 0
+        self.serialized_chars = 0
+        self.deadline = time.monotonic() + MAX_SOURCE_SCAN_SECONDS
+
+    def check_budget(self):
+        if (self.scan_units > MAX_SOURCE_SCAN_UNITS
+                or self.scan_chars > MAX_SOURCE_SCAN_CHARS
+                or self.serialized_chars > MAX_SOURCE_SCAN_SERIALIZED_CHARS
+                or time.monotonic() >= self.deadline):
+            raise WorkspaceProblem(_SCAN_LIMIT)
+
+    def charge_read(self, characters):
+        self.serialized_chars += characters
+        self.check_budget()
 
     def digest(self, document_id, chunk_id, unit):
-        key = (document_id, chunk_id)
-        if key not in self.digests:
-            actual = hashlib.sha256(unit.text.encode("utf-8")).hexdigest()
-            if unit.excerpt_digest != actual:
-                raise WorkspaceProblem(_STALE)
-            self.digests[key] = actual
-        return self.digests[key]
+        actual = hashlib.sha256(unit.text.encode("utf-8")).hexdigest()
+        if unit.excerpt_digest != actual:
+            raise WorkspaceProblem(_STALE)
+        return actual
 
     def document(self, document_id):
         if document_id not in self.documents:
             try:
                 document = self.store.get(document_id)
-                self.documents[document_id] = (document, document.parsed_units())
+                self.documents[document_id] = document
             except (KeyError, OSError, RuntimeError, ValueError) as exc:
                 raise WorkspaceProblem(_STALE) from exc
         return self.documents[document_id]
 
     def _index(self, document_id, wanted):
-        document, units = self.document(document_id)
+        self.check_budget()
+        document = self.document(document_id)
         if document.state != "ready":
             return
-        for ordinal, unit in enumerate(units, 1):
-            candidate = self.bench._candidate(self.matter, document, unit, ordinal)
-            for token in self.bench._support_tokens(candidate) & wanted:
-                if token not in self.resolved:
-                    if len(unit.text) > MAX_CITATION_CHARS:
-                        raise WorkspaceProblem("A selected source passage exceeds the 6,000-character report limit. Choose a smaller supported passage.")
-                    # Repeated citations render repeatedly. Charge occurrences,
-                    # including frozen ledger checks, rather than unique text.
-                    self.citation_chars += len(unit.text) * self.reference_counts[token]
-                    if self.citation_chars > MAX_TOTAL_CITATION_CHARS:
-                        raise WorkspaceProblem("The selected source passages exceed the report's total citation-text limit. Choose fewer items of saved work; source passages cannot be shortened safely.")
-                self.resolved[token] = (document, unit, candidate)
-            if wanted <= self.resolved.keys():
-                break
+        self.scanned.add(document_id)
+        pending = wanted - self.resolved.keys()
+        expected_basis = self.decision_sources.get(document_id)
+        basis = hashlib.sha256()
+        basis.update(('{"source_version":' + json.dumps(document.version_id) + ',"units":[').encode())
+        first = True
+        try:
+            for ordinal, unit in enumerate(self._units(document), 1):
+                self.scan_units += 1
+                self.scan_chars += len(unit.text)
+                self.check_budget()
+                if expected_basis is not None:
+                    self.digest(document_id, f"chunk-{ordinal}", unit)
+                    if not first:
+                        basis.update(b",")
+                    first = False
+                    basis.update(json.dumps({
+                        "number": unit.number, "digest": unit.excerpt_digest,
+                        "line_start": unit.line_start, "line_end": unit.line_end,
+                        "start_ms": unit.start_ms, "end_ms": unit.end_ms,
+                    }, separators=(",", ":"), sort_keys=True).encode())
+                if pending:
+                    candidate = self.bench._candidate(self.matter, document, unit, ordinal)
+                    for token in self.bench._support_tokens(candidate) & pending:
+                        if token not in self.resolved:
+                            if len(unit.text) > MAX_CITATION_CHARS:
+                                raise WorkspaceProblem("A selected source passage exceeds the 6,000-character report limit. Choose a smaller supported passage.")
+                            # Charge rendered occurrences, including ledger checks.
+                            self.citation_chars += len(unit.text) * self.reference_counts[token]
+                            if self.citation_chars > MAX_TOTAL_CITATION_CHARS:
+                                raise WorkspaceProblem("The selected source passages exceed the report's total citation-text limit. Choose fewer items of saved work; source passages cannot be shortened safely.")
+                            self.resolved[token] = (document, unit, candidate)
+                            pending.remove(token)
+                # Drain the container even after finding the last citation:
+                # parsed_units previously validated its version and trailer.
+        except WorkspaceProblem:
+            raise
+        except UnitRecordLimit as exc:
+            raise WorkspaceProblem(_SCAN_LIMIT) from exc
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise WorkspaceProblem(_STALE) from exc
+        if expected_basis is not None:
+            basis.update(b"]}")
+            self.bases[document_id] = basis.hexdigest()
+            if expected_basis != self.bases[document_id]:
+                raise WorkspaceProblem(_STALE)
+
+    def _units(self, document):
+        self.check_budget()
+        iterator = getattr(document, "iter_parsed_units", None)
+        if iterator is None:
+            raise WorkspaceProblem("This saved source has no bounded text reader. Reopen it before compiling a report.")
+        yield from iterator(budget_check=self.check_budget, read_check=self.charge_read,
+                            max_record_chars=MAX_SOURCE_SCAN_RECORD_CHARS)
+        self.check_budget()
 
     def prepare(self, references):
+        self.check_budget()
         if len(references) > MAX_REFERENCES:
             raise WorkspaceProblem("That selection has too many source references. Choose fewer items of saved work.")
         known = {}
         unknown = set()
         for value in references:
+            self.check_budget()
             if not isinstance(value, Mapping):
                 raise WorkspaceProblem("A saved finding has unreadable source support.")
             token = value.get("support_token", "")
@@ -99,13 +175,18 @@ class _References:
                 known.setdefault(document_id, set()).add(token)
             else:
                 unknown.add(token)
-        for document_id, tokens in known.items():
-            self._index(document_id, tokens)
+        # Collect every wanted token before reading source text. A decision's
+        # whole-source basis and all known/legacy citations share one scan.
+        for document_id in dict.fromkeys((*known, *self.decision_sources)):
+            tokens = known.get(document_id, set())
+            self._index(document_id, tokens | unknown)
             if not tokens <= self.resolved.keys():
                 raise WorkspaceProblem(_STALE)
         remaining = unknown - self.resolved.keys()
         if remaining:
             for document in self.store.ready_documents():
+                if document.document_id in self.scanned:
+                    continue
                 self._index(document.document_id, remaining)
                 remaining -= self.resolved.keys()
                 if not remaining:
@@ -155,18 +236,13 @@ class _References:
         return canonical
 
     def validate_decision_source(self, item):
-        document, units = self.document(item.document_id)
+        self.check_budget()
+        document = self.document(item.document_id)
         if document.state != "ready" or document.version_id != item.source_version_id or document.display_name != item.source_name:
             raise WorkspaceProblem(_STALE)
-        if item.document_id not in self.bases:
-            for ordinal, unit in enumerate(units, 1):
-                self.digest(document.document_id, f"chunk-{ordinal}", unit)
-            # Reuse loaded units: the shared basis helper must not reload a
-            # derived file for each decision or source reference.
-            cached = replace(document, units=[asdict(unit) for unit in units], units_file="", _units_loader=None)
-            self.bases[item.document_id] = self.bench._document_content_basis(cached)
-        if not item.source_basis_digest or item.source_basis_digest != self.bases[item.document_id]:
+        if not item.source_basis_digest or self.decision_sources.get(item.document_id, item.source_basis_digest) != item.source_basis_digest:
             raise WorkspaceProblem(_STALE)
+        self.decision_sources[item.document_id] = item.source_basis_digest
 
 
 def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, ...], *,
@@ -189,6 +265,7 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
     resolver = _References(bench, matter)
 
     def add(*, material_id, origin, title, text, citations=(), review_status="needs_review", revision="", author="", date_label="", category="note", review_details=""):
+        resolver.check_budget()
         if not isinstance(text, str):
             raise WorkspaceProblem("A selected finding has unreadable text.")
         if not text.strip():
@@ -408,7 +485,7 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
                         raise WorkspaceProblem("That selection has too many source references. Choose fewer items of saved work.")
                 add(material_id=material_id, origin="human" if human else "source_review_ai",
                     title=item.source_name, text=text, citations=references(list(item.citations if verified_citations is None else verified_citations)),
-                    review_status="disputed" if (item.machine_decision, item.human_decision) in {("included", "exclude"), ("excluded", "include")} else "needs_review",
+                    review_status=_decision_review_status(item.machine_decision, item.human_decision),
                     revision=item.updated_at, author=reviewer if human else "AI screening",
                     category="decision" if human else "gap",
                     review_details=f"Frozen source-content basis: {item.source_basis_digest}" if verified_citations is not None else "")
@@ -435,10 +512,34 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
     resolver.prepare(all_references)
     for value in validation_references:
         resolver.resolve(value)
-    return tuple(item if item.material_id in full_text_material_ids else
-                 replace(item, citations=tuple(resolver.resolve(ref) for ref in item.citations)) for item in materials.values())
+    result = tuple(item if item.material_id in full_text_material_ids else
+                   replace(item, citations=tuple(resolver.resolve(ref) for ref in item.citations)) for item in materials.values())
+    resolver.check_budget()
+    return result
 
 
 def material_snapshot_fingerprint(matter_id: str, selections: tuple[str, ...], materials) -> str:
     value = {"matter": matter_id, "selections": selections, "materials": [asdict(item) for item in materials]}
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def validate_compiled_material_citations(materials, sections):
+    """Check draft citations against the current snapshot under its held guards.
+
+    The caller must retain both source and workspace guards from snapshot
+    collection through this check and the atomic save. Exact dictionary equality
+    preserves every canonical identity field and passage; a generated citation
+    cannot introduce a source outside the selected, freshly validated material.
+    """
+    current = {}
+    for material in materials:
+        for citation in material.citations:
+            key = (citation.get("document_id"), citation.get("support_token"))
+            if key in current and current[key] != citation:
+                raise WorkspaceProblem("The selected source locator has conflicting current citations.")
+            current[key] = citation
+    for section in sections:
+        for citation in section["citations"]:
+            key = (citation.get("document_id"), citation.get("support_token"))
+            if current.get(key) != citation:
+                raise WorkspaceProblem("A compiled citation is outside the current validated selection. Retry the report from current saved work.")
