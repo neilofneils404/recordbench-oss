@@ -9569,6 +9569,8 @@ def create_workbench_app(
                 matter.matter_id, context.principal_id, run_id
             )
             criterion_id = run.criterion_id
+            if run.state != "succeeded":
+                raise WorkspaceProblem("Wait for this check to finish successfully before saving it to a Report.")
             criterion = bench.workspace.review_criterion(matter.matter_id, criterion_id)
             version = bench.workspace.review_criterion_version(
                 matter.matter_id, run.criterion_version_id

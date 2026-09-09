@@ -375,3 +375,18 @@ def test_decision_snapshot_does_not_lock_unrelated_reads_or_change_midstream(wor
         thread.join(timeout=5)
     fresh = list(bench.workspace.iter_review_decisions_for_report(matter.matter_id, ACTOR, run.run_id))
     assert fresh[-1].human_note == "Later review"
+
+
+@pytest.mark.parametrize("state", ["queued", "running", "failed", "cancelled"])
+def test_unfinished_check_direct_post_creates_no_report(workspace, state):
+    client, bench, matter = workspace
+    bench.full_review.close()
+    saved_research(bench, matter)
+    _criterion, version = bench.workspace.create_review_criterion(matter.matter_id, ACTOR,
+        title="Unfinished check", instructions="Include bicycle records.")
+    run = bench.workspace.queue_review_run(matter.matter_id, ACTOR, version.criterion_version_id, run_kind="full")
+    with bench.workspace.connection:
+        bench.workspace.connection.execute("UPDATE workbench_review_run SET state=? WHERE run_id=?", (state, run.run_id))
+    response = client.post(f"/matters/{matter.slug}/full-review/{run.run_id}/report", follow_redirects=False)
+    assert response.status_code == 303 and "error=" in response.headers["location"]
+    assert bench.workspace.reports(matter.matter_id, ACTOR) == ()
