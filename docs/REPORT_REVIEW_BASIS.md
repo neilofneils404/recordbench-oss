@@ -17,6 +17,8 @@ these passages need direct review and are not promoted to verified findings.
 A grounding-rejected evidence pass saves its own potential matches, including
 passages omitted from the final synthesis selection.
 
+Only successfully completed every-source checks can be converted; direct requests
+for queued, running, failed or cancelled runs create no Report.
 Every-source Reports separately record the frozen criterion, machine counts,
 human review counts, uncertainty, and opposing machine/human inclusion labels.
 Counts derive from one retrieved decision population, not independently updated
