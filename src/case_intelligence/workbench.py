@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Sequence
@@ -71,6 +71,8 @@ from .generation import (
 )
 from .ingestion import IngestionCoordinator
 from .report_review_basis import research_sections, review_sections
+from .report_compilation import CompilationProblem
+from .report_compilation_flow import ReportCompilationFlow
 from .media_evidence import (
     MediaCoordinator,
     MediaExport,
@@ -948,6 +950,8 @@ class CaseIntelligenceWorkbench:
             workers=review_workers,
             source_concurrency=review_source_concurrency,
         )
+        self.report_compilation = ReportCompilationFlow(self,
+            full_text_support_resolver=self._resolve_full_text_report_support)
         if os.getenv("CASE_INTELLIGENCE_MAINTENANCE_ENABLED", "").strip().casefold() in {
             "1",
             "true",
@@ -1041,6 +1045,8 @@ class CaseIntelligenceWorkbench:
     def close(self) -> None:
         if self.maintenance is not None:
             self.maintenance.close()
+        if getattr(self, "report_compilation", None) is not None:
+            self.report_compilation.close()
         if self.full_review is not None:
             self.full_review.close()
         if self.research is not None:
@@ -3417,33 +3423,23 @@ class CaseIntelligenceWorkbench:
             )
         store = self.source_store(matter)
         with store.mutation_guard():
+            try:
+                self._assert_current_report_section_citations(matter, (
+                    {"citations": tuple(asdict(citation) for citation in citations if citation.kind in {"source", "transcript"})}
+                    for _section, citations in sections
+                ))
+            except (WorkspaceProblem, KeyError, OSError, ValueError, RuntimeError) as exc:
+                raise ExportProblem(
+                    "A report citation no longer resolves to its saved source. "
+                    "Open the Report to repair or remove unavailable source "
+                    "support, then retry the export."
+                ) from exc
             for _section, citations in sections:
                 for citation in citations:
                     try:
                         if citation.kind in {"source", "transcript"}:
-                            document, units, index = self._find_support(
-                                matter, citation.support_token
-                            )
-                            unit = units[index]
-                            candidate = self._candidate(
-                                matter, document, unit, index + 1
-                            )
-                            exact_tokens = self._support_tokens(candidate)
-                            expected_kind = (
-                                "transcript"
-                                if is_media_type(document.media_type)
-                                else "source"
-                            )
-                            if (
-                                citation.support_token not in exact_tokens
-                                or citation.kind != expected_kind
-                                or citation.document_id != document.document_id
-                                or citation.source_version_id != document.version_id
-                                or citation.source_name != document.display_name
-                                or citation.location != candidate.citation
-                                or citation.excerpt != unit.text
-                            ):
-                                raise KeyError(citation.citation_id)
+                            # Already checked in one source stream above.
+                            continue
                         elif citation.kind == "media_clip":
                             clip = self.workspace.media_clip(
                                 matter.matter_id, citation.media_clip_id
@@ -3509,33 +3505,60 @@ class CaseIntelligenceWorkbench:
             ),
         )
 
+    def _resolve_full_text_report_support(self, matter, run, decision, *, citations=None):
+        """Freeze full-text support for Report consumers; leave legacy runs alone."""
+        from .full_text_review import resolve_text_report_citations
+        if not FullTextReviewLedger(self.workspace).enabled(run.run_id):
+            return None
+        try:
+            if (run.matter_id != matter.matter_id or decision.matter_id != matter.matter_id
+                    or decision.run_id != run.run_id):
+                raise WorkspaceProblem("The saved full-text decision does not belong to this Report's source run.")
+            document = self.source_store(matter).get(decision.document_id)
+            if document.display_name != decision.source_name:
+                raise WorkspaceProblem("The frozen full-text source identity changed. Reopen the original check.")
+            return resolve_text_report_citations(self, matter,
+                decision.citations if citations is None else citations,
+                source_basis_digests={decision.document_id: decision.source_basis_digest},
+                source_versions={decision.document_id: decision.source_version_id})
+        except WorkspaceProblem:
+            raise
+        except (WorkflowFailure, KeyError, OSError, ValueError, RuntimeError) as exc:
+            message = str(exc) if isinstance(exc, WorkflowFailure) else "The frozen full-text source is unavailable or changed. Reopen the original check."
+            raise WorkspaceProblem(message) from exc
+
     def _assert_current_report_section_citations(self, matter, sections) -> None:
-        """Validate only copied source passages; caller holds the source guard."""
+        """Validate exact copied passages with one stream per cited source."""
         store = self.source_store(matter)
-        resolved = {}
+        grouped = {}
         for section in sections:
             for value in section["citations"]:
-                document_id = str(value.get("document_id", ""))
-                if document_id not in resolved:
-                    try:
-                        document = store.get(document_id)
-                    except KeyError as exc:
-                        raise WorkspaceProblem("A copied decision source is unavailable. Reopen the original check.") from exc
-                    resolved[document_id] = (document, document.parsed_units())
-                document, units = resolved[document_id]
-                matched = False
-                if document.state == "ready" and document.version_id == value.get("source_version_id"):
-                    for ordinal, unit in enumerate(units, 1):
-                        candidate = self._candidate(matter, document, unit, ordinal)
-                        if (value.get("support_token") in self._support_tokens(candidate)
-                            and value.get("source_name") == document.display_name
-                            and value.get("location") == candidate.citation
-                            and value.get("excerpt") == unit.text
-                            and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source")):
-                            matched = True
-                            break
-                if not matched:
-                    raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
+                grouped.setdefault(str(value.get("document_id", "")), []).append(value)
+        for document_id, pending in grouped.items():
+            try:
+                document = store.get(document_id)
+            except KeyError as exc:
+                raise WorkspaceProblem("A copied decision source is unavailable. Reopen the original check.") from exc
+            if document.state != "ready":
+                raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
+            # The optional streaming API is supplied by the full-text slice.
+            # Older source stores remain supported without importing it.
+            iterator = getattr(document, "iter_parsed_units", None)
+            units = iterator() if iterator is not None else iter(document.parsed_units())
+            for ordinal, unit in enumerate(units, 1):
+                candidate = self._candidate(matter, document, unit, ordinal)
+                tokens = self._support_tokens(candidate)
+                pending = [value for value in pending if not (
+                    document.version_id == value.get("source_version_id")
+                    and value.get("support_token") in tokens
+                    and value.get("source_name") == document.display_name
+                    and value.get("location") == candidate.citation
+                    and value.get("excerpt") == unit.text
+                    and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source"))]
+                if not pending:
+                    break
+            if pending:
+                raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
 
     def export_research_work_product(
         self,
@@ -6996,6 +7019,7 @@ def create_workbench_app(
             "answer_jobs": bench.workspace.answer_counts(),
             "research_jobs": bench.workspace.research_counts(),
             "review_runs": bench.workspace.review_counts(),
+            "report_compilation_jobs": bench.report_compilation.jobs.counts(),
             "maintenance": maintenance,
             "storage": {
                 "status": "ready" if storage["ready"] else "degraded",
@@ -9592,31 +9616,43 @@ def create_workbench_app(
         criterion_id = ""
         try:
             matter = authorized_matter(request, slug)
-            run = bench.workspace.review_run(
-                matter.matter_id, context.principal_id, run_id
-            )
-            criterion_id = run.criterion_id
-            if run.state != "succeeded":
-                raise WorkspaceProblem("Wait for this check to finish successfully before saving it to a Report.")
-            criterion = bench.workspace.review_criterion(matter.matter_id, criterion_id)
-            version = bench.workspace.review_criterion_version(
-                matter.matter_id, run.criterion_version_id
-            )
-            decisions = bench.workspace.iter_review_decisions_for_report(
-                matter.matter_id, context.principal_id, run.run_id
-            )
-            def reviewer_name(reviewer_id):
-                try:
-                    return bench.workspace.get_principal(reviewer_id).display_name
-                except KeyError:
-                    return "Not recorded"
-            sections = review_sections(
-                run, decisions, criterion_title=criterion.title,
-                criterion_version=version.version_number, instructions=version.instructions,
-                ledger_path=_query_url(f"/matters/{slug}/full-review", criterion=run.criterion_id, run=run_id),
-                reviewer_name=reviewer_name,
-            )
-            with bench.source_store(matter).mutation_guard():
+            with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
+                run = bench.workspace.review_run(
+                    matter.matter_id, context.principal_id, run_id
+                )
+                criterion_id = run.criterion_id
+                if run.state != "succeeded":
+                    raise WorkspaceProblem("Wait for this check to finish successfully before saving it to a Report.")
+                criterion = bench.workspace.review_criterion(matter.matter_id, criterion_id)
+                version = bench.workspace.review_criterion_version(
+                    matter.matter_id, run.criterion_version_id
+                )
+                full_text = FullTextReviewLedger(bench.workspace).enabled(run.run_id)
+                decisions = bench.workspace.iter_review_decisions_for_report(
+                    matter.matter_id, context.principal_id, run.run_id
+                )
+                def verified_decisions():
+                    for decision in decisions:
+                        if full_text:
+                            # Validate the complete frozen population, including
+                            # uncited decisions and details beyond the Report cap.
+                            bench._resolve_full_text_report_support(matter, run, decision, citations=())
+                        yield decision
+                def reviewer_name(reviewer_id):
+                    try:
+                        return bench.workspace.get_principal(reviewer_id).display_name
+                    except KeyError:
+                        return "Not recorded"
+                def citation_resolver(decision, selected_locators):
+                    return bench._resolve_full_text_report_support(matter, run, decision, citations=selected_locators)
+                sections = review_sections(
+                    run, verified_decisions(), criterion_title=criterion.title,
+                    criterion_version=version.version_number, instructions=version.instructions,
+                    ledger_path=_query_url(f"/matters/{matter.slug}/full-review", criterion=run.criterion_id, run=run_id),
+                    reviewer_name=reviewer_name,
+                    review_mode="full_text" if full_text else "selected_passages",
+                    citation_resolver=citation_resolver if full_text else None,
+                )
                 bench._assert_current_report_section_citations(matter, sections)
                 report = bench.workspace.create_report_from_sections(
                     matter.matter_id,
@@ -12748,11 +12784,145 @@ def create_workbench_app(
             }, status_code=status_code, headers={"Cache-Control": "no-store"},
         )
 
+    report_labels = {"timeline": "Timeline", "entities": "People, places & things", "topic": "Topic brief"}
+
+    def report_work_choices(matter, actor, selected_from=""):
+        choices = []
+        defaults = []
+        if bench.workspace.all_notebook_items(matter.matter_id, actor, include_dismissed=False, limit=1):
+            choices.append({"value": "notes:active", "title": "Team review notes", "description": "Your saved observations, people, places, events, and open questions"})
+            defaults.append("notes:active")
+        research = [item for item in bench.workspace.research_jobs(matter.matter_id, actor) if item.state == "succeeded"]
+        for index, item in enumerate(research[:15]):
+            choices.append({"value": f"research:{item.job_id}", "title": item.title, "description": "AI investigation · saved findings and gaps"})
+            if index == 0:
+                defaults.append(f"research:{item.job_id}")
+        for conversation in bench.workspace.conversations(matter.matter_id, include_archived=False)[:15]:
+            with bench.workspace._lock:
+                found = bench.workspace.connection.execute("SELECT 1 FROM workbench_message WHERE conversation_id=? AND role='assistant' LIMIT 1", (conversation.conversation_id,)).fetchone()
+            if found:
+                choices.append({"value": f"conversation:{conversation.conversation_id}", "title": conversation.title, "description": "AI conversation · saved answers and team context"})
+                if not any(value.startswith("conversation:") for value in defaults):
+                    defaults.append(f"conversation:{conversation.conversation_id}")
+        for run in bench.workspace.review_runs(matter.matter_id, actor, limit=15):
+            if run.state == "succeeded":
+                criterion = bench.workspace.review_criterion(matter.matter_id, run.criterion_id)
+                choices.append({"value": f"review:{run.run_id}", "title": criterion.title, "description": "Source check · machine screening and human decisions"})
+        if selected_from:
+            if selected_from not in {item["value"] for item in choices}:
+                source, _, identifier = selected_from.partition(":")
+                if source == "conversation":
+                    record = bench.workspace.get_conversation_any(matter.matter_id, identifier)
+                    title = record.title
+                elif source == "research":
+                    record = bench.workspace.research_job(matter.matter_id, actor, identifier)
+                    if record.state != "succeeded":
+                        raise WorkspaceProblem("That investigation has not finished yet.")
+                    title = record.title
+                elif source == "note":
+                    record = bench.workspace.notebook_item(matter.matter_id, actor, identifier)
+                    title = record.title
+                elif source == "review":
+                    record = bench.workspace.review_run(matter.matter_id, actor, identifier)
+                    title = bench.workspace.review_criterion(matter.matter_id, record.criterion_id).title
+                else:
+                    raise WorkspaceProblem("Choose saved work from this matter.")
+                choices.insert(0, {"value": selected_from, "title": title, "description": "The saved work you were reviewing"})
+            defaults = [selected_from]
+        return choices, defaults
+
+    def render_report_compilation(request, matter, *, job=None, kind="timeline", topic="", selected_from="", selected=None, error="", status_code=200):
+        actor = auth_context(request).principal_id
+        choices, defaults = report_work_choices(matter, actor, selected_from) if job is None else ([], [])
+        return templates.TemplateResponse(request=request, name="workbench_report_compile.html",
+            context={**base_context(request, matter), "show_assistant_dock": False,
+                     "matter": matter, "active_job": job, "report_labels": report_labels,
+                     "kind": kind, "topic": topic, "choices": choices,
+                     "selected": defaults if selected is None else selected, "error": error,
+                     "request_key": "report-request-" + uuid.uuid4().hex},
+            status_code=status_code, headers={"Cache-Control": "no-store"})
+
+    @app.get("/matters/{slug}/reports/new", response_class=HTMLResponse)
+    def new_compiled_report(request: Request, slug: str,
+                            selected_from: str = Query("", alias="from", max_length=160),
+                            job: str = Query("", max_length=100),
+                            error: str = Query("", max_length=240)):
+        matter = authorized_matter(request, slug)
+        if getattr(request.state, "administrator_matter_override", None) == matter.matter_id:
+            raise HTTPException(403, "Report creation requires membership in this matter's review team.")
+        actor = auth_context(request).principal_id
+        try:
+            active = bench.report_compilation.jobs.get(matter.matter_id, actor, job) if job else None
+            if active and active.state == "succeeded" and active.report_id:
+                return RedirectResponse(_query_url(f"/matters/{slug}/reports", report=active.report_id, notice="Your draft is ready to read and refine."), status_code=303)
+            return render_report_compilation(request, matter, job=active, selected_from=selected_from, error=error)
+        except KeyError as exc:
+            raise HTTPException(404, "Saved review work not found") from exc
+        except WorkspaceProblem as exc:
+            return render_report_compilation(request, matter, error=str(exc), status_code=409)
+
+    @app.post("/matters/{slug}/reports/compile", dependencies=[Depends(require_csrf)])
+    def compile_matter_report(request: Request, slug: str,
+                              kind: str = Form(..., max_length=24), topic: str = Form("", max_length=500),
+                              selection: list[str] = Form([]), request_key: str = Form(..., max_length=120)):
+        matter = authorized_matter(request, slug)
+        actor = auth_context(request).principal_id
+        try:
+            if not 1 <= len(selection) <= 20:
+                raise CompilationProblem("Choose between 1 and 20 items of saved work for this draft.")
+            job, created = bench.report_compilation.jobs.queue(matter.matter_id, actor, kind, topic, selection, request_key)
+        except (WorkspaceProblem, CompilationProblem) as exc:
+            return render_report_compilation(request, matter, kind=kind, topic=topic, selected=selection, error=str(exc), status_code=409)
+        except KeyError as exc:
+            raise HTTPException(404, "Matter not found") from exc
+        bench.report_compilation.notify()
+        audit(request, "report.compile", "success", context=auth_context(request), matter=matter,
+              object_type="report_compilation", object_id=job.job_id, details={"state": job.state, "count": len(selection)})
+        return RedirectResponse(_query_url(f"/matters/{slug}/reports/new", job=job.job_id), status_code=303)
+
+    @app.get("/matters/{slug}/reports/compile/{job_id}/status")
+    def compiled_report_status(request: Request, slug: str, job_id: str):
+        matter = authorized_matter(request, slug)
+        try:
+            job = bench.report_compilation.jobs.get(matter.matter_id, auth_context(request).principal_id, job_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Report preparation not found") from exc
+        target = _query_url(f"/matters/{slug}/reports", report=job.report_id) if job.state == "succeeded" and job.report_id else _query_url(f"/matters/{slug}/reports/new", job=job.job_id)
+        message = "This draft was deleted. Retry to create another draft." if job.state == "succeeded" and not job.report_id else job.message
+        return JSONResponse({"state": job.state, "message": message,
+            "terminal": job.state in {"succeeded", "failed", "cancelled"}, "result_url": target}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/matters/{slug}/reports/compile/{job_id}/cancel", dependencies=[Depends(require_csrf)])
+    def cancel_compiled_report(request: Request, slug: str, job_id: str):
+        matter = authorized_matter(request, slug)
+        try:
+            job = bench.report_compilation.jobs.cancel(matter.matter_id, auth_context(request).principal_id, job_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Report preparation not found") from exc
+        audit(request, "report.cancel", "success", context=auth_context(request), matter=matter,
+              object_type="report_compilation", object_id=job.job_id, details={"state": job.state})
+        return RedirectResponse(_query_url(f"/matters/{slug}/reports/new", job=job_id), status_code=303)
+
+    @app.post("/matters/{slug}/reports/compile/{job_id}/retry", dependencies=[Depends(require_csrf)])
+    def retry_compiled_report(request: Request, slug: str, job_id: str):
+        matter = authorized_matter(request, slug)
+        try:
+            job = bench.report_compilation.jobs.retry(matter.matter_id, auth_context(request).principal_id, job_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Report preparation not found") from exc
+        except CompilationProblem as exc:
+            return render_report_compilation(request, matter, error=str(exc), status_code=409)
+        audit(request, "report.retry", "success", context=auth_context(request), matter=matter,
+              object_type="report_compilation", object_id=job.job_id, details={"state": job.state})
+        bench.report_compilation.notify()
+        return RedirectResponse(_query_url(f"/matters/{slug}/reports/new", job=job_id), status_code=303)
+
     @app.get("/matters/{slug}/reports", response_class=HTMLResponse)
     def matter_reports(
         request: Request,
         slug: str,
         report: str = Query("", max_length=80),
+        edit: bool = Query(False),
         notice: str = Query("", max_length=240),
         error: str = Query("", max_length=240),
     ):
@@ -12860,6 +13030,11 @@ def create_workbench_app(
                 "clips": tuple(clips[:250]),
                 "notice": notice,
                 "error": error,
+                "report_edit": edit and not administrator_override,
+                "report_can_write": not administrator_override,
+                "show_assistant_dock": False,
+                "report_labels": report_labels,
+                "compilation_jobs": bench.report_compilation.jobs.list(matter.matter_id, context.principal_id, actionable_only=True) if not administrator_override else (),
             },
         )
 

@@ -11,6 +11,7 @@ import sqlite3
 import threading
 import unicodedata
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from importlib import resources
@@ -88,6 +89,8 @@ NOTEBOOK_TYPES = ("fact", "issue", "person", "place", "date", "event", "note")
 NOTEBOOK_STATUSES = ("suggested", "confirmed", "disputed", "needs_review", "dismissed")
 NOTEBOOK_ORIGINS = ("manual", "answer", "citation", "extraction")
 MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS = 3
+MAX_REPORT_CITATION_EXCERPT_CHARS = 6_000
+MAX_REPORT_SECTION_CITATIONS = 100
 _ANALYSIS_RESTART_MESSAGE = (
     "The review map refresh was interrupted by an application restart. "
     "Select Refresh review map to retry. Existing review decisions are unchanged."
@@ -928,6 +931,20 @@ class ReportSectionRecord:
     updated_by: str
     updated_at: str
 
+    compilation_basis: str = ""
+
+    @property
+    def prose_limit(self) -> int:
+        suffix = "\n\nReview basis:\n" + self.compilation_basis if self.compilation_basis else ""
+        return max(0, 50_000 - len(suffix))
+
+    @property
+    def prose(self) -> str:
+        suffix = "\n\nReview basis:\n" + self.compilation_basis
+        if self.compilation_basis and self.body.endswith(suffix):
+            return self.body[:-len(suffix)]
+        return self.body
+
 
 @dataclass(frozen=True)
 class ReportCitationRecord:
@@ -1016,11 +1033,22 @@ class WorkspaceStore:
             "migrations/sqlite/0024_review_source_content_basis.sql",
             "migrations/sqlite/0025_intake_receipts.sql",
             "migrations/sqlite/0026_source_byte_matches.sql",
+            "migrations/sqlite/0027_report_compilation.sql",
             "migrations/sqlite/0028_full_text_review.sql",
+            "migrations/sqlite/0029_report_compilation_basis.sql",
             "migrations/sqlite/0030_full_text_review_limits.sql",
         ):
             migration = resources.files("case_intelligence").joinpath(name).read_text(encoding="utf-8")
             self.connection.executescript(migration)
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            report_section_columns = {
+                str(row[1]) for row in self.connection.execute("PRAGMA table_info(workbench_report_section)")
+            }
+            if "compilation_basis" not in report_section_columns:
+                self.connection.execute(
+                    "ALTER TABLE workbench_report_section ADD COLUMN compilation_basis TEXT NOT NULL DEFAULT ''"
+                )
         from .full_text_review_budget import backfill_legacy_ledgers
         backfill_legacy_ledgers(self)
         session_columns = {
@@ -2552,6 +2580,10 @@ class WorkspaceStore:
                 "workbench_research_job",
                 "state IN ('queued','running')",
             ),
+            "reports": (
+                "workbench_report_compilation_job",
+                "state IN ('queued','running')",
+            ),
             "reviews": (
                 "workbench_review_run",
                 "state IN ('queued','running')",
@@ -2852,6 +2884,9 @@ class WorkspaceStore:
             ).fetchone()
             if lifecycle is None or lifecycle["state"] != "purging":
                 raise KeyError(purge_id)
+            self.connection.execute(
+                "DELETE FROM workbench_report_compilation_job WHERE matter_id=?", (matter_id,)
+            )
             self.connection.execute(
                 "DELETE FROM workbench_answer_job WHERE matter_id=?", (matter_id,)
             )
@@ -6943,6 +6978,7 @@ class WorkspaceStore:
         *,
         origin_id: str,
         sections: Sequence[Mapping[str, object]],
+        transaction_owned: bool = False,
     ) -> ReportRecord:
         """Save a complete converted review atomically, or leave no new Report."""
 
@@ -6962,19 +6998,30 @@ class WorkspaceStore:
             section_heading = self._safe_text(section.get("heading"), label="Section heading", maximum=200)
             body = self._safe_text(section.get("body"), label="Section text", maximum=50_000,
                                    required=False, multiline=True)
+            basis = section.get("compilation_basis", "")
+            if not isinstance(basis, str):
+                raise WorkspaceProblem("The compilation basis must be text.")
+            basis = self._safe_text(basis, label="Compilation basis", maximum=40_000,
+                                    required=False, multiline=True)
+            if basis and not body.endswith("\n\nReview basis:\n" + basis):
+                raise WorkspaceProblem("The compilation basis does not match its saved section.")
             raw_citations = section.get("citations", ())
-            if not isinstance(raw_citations, (list, tuple)) or len(raw_citations) > 100:
-                raise WorkspaceProblem("A report section can cite up to 100 passages.")
+            if not isinstance(raw_citations, (list, tuple)) or len(raw_citations) > MAX_REPORT_SECTION_CITATIONS:
+                raise WorkspaceProblem(f"A report section can cite up to {MAX_REPORT_SECTION_CITATIONS} passages.")
             try:
                 citations = tuple(self._prepare_report_citation(value) for value in raw_citations)
             except (TypeError, ValueError, AttributeError) as exc:
                 raise WorkspaceProblem("The converted Report has invalid source support. Open the original run.") from exc
-            prepared.append((section_heading, body, citations))
+            prepared.append((section_heading, body, basis, citations))
 
         report_id = f"report-{uuid.uuid4().hex}"
         now = self._now()
-        with self._lock, self.connection:
-            self.connection.execute("BEGIN IMMEDIATE")
+        with self._lock, (nullcontext() if transaction_owned else self.connection):
+            if transaction_owned:
+                if not self.connection.in_transaction:
+                    raise RuntimeError("Report creation requires the caller's active transaction")
+            else:
+                self.connection.execute("BEGIN IMMEDIATE")
             self.membership(matter_id, actor)
             self.connection.execute(
                 "INSERT INTO workbench_report("
@@ -6982,14 +7029,14 @@ class WorkspaceStore:
                 "VALUES (?,?,?,?,'draft',?,?,?,?)",
                 (report_id, matter_id, heading, description, actor, now, actor, now),
             )
-            for ordinal, (section_heading, body, citations) in enumerate(prepared, 1):
+            for ordinal, (section_heading, body, basis, citations) in enumerate(prepared, 1):
                 section_id = f"report-section-{uuid.uuid4().hex}"
                 self.connection.execute(
                     "INSERT INTO workbench_report_section("
                     "section_id,report_id,matter_id,ordinal,heading,body,origin,origin_id,"
-                    "created_by,created_at,updated_by,updated_at) VALUES (?,?,?,?,?,?,'finding',?,?,?,?,?)",
+                    "created_by,created_at,updated_by,updated_at,compilation_basis) VALUES (?,?,?,?,?,?,'finding',?,?,?,?,?,?)",
                     (section_id, report_id, matter_id, ordinal, section_heading, body, source_id,
-                     actor, now, actor, now),
+                     actor, now, actor, now, basis),
                 )
                 self.connection.executemany(
                     "INSERT INTO workbench_report_citation("
@@ -7250,7 +7297,7 @@ class WorkspaceStore:
             self._safe_text(
                 str(value.get("excerpt", "")),
                 label="Report citation excerpt",
-                maximum=6_000,
+                maximum=MAX_REPORT_CITATION_EXCERPT_CHARS,
                 required=False,
                 multiline=True,
             ),
@@ -7411,6 +7458,12 @@ class WorkspaceStore:
                                                           expected_status=expected_status)
             current_section = self._report_section_for_edit_locked(matter_id, report_id, section_id,
                                                                    expected_updated_at)
+            if current_section.compilation_basis:
+                suffix = "\n\nReview basis:\n" + current_section.compilation_basis
+                content = self._safe_text(
+                    content + suffix, label="Section text", maximum=50_000,
+                    required=False, multiline=True,
+                )
             now = self._report_edit_time(current_report, current_section)
             changed = self.connection.execute(
                 "UPDATE workbench_report_section SET heading=?,body=?,updated_by=?,updated_at=? "

@@ -135,3 +135,33 @@ workers before upgrading older full-text writers; legacy ledgers are retained
 and charged but require a newly admitted run to resume analysis. Export before
 creator-only terminal deletion if findings or human decisions must be preserved.
 See [Full-text review](FULL_TEXT_REVIEW.md) for limits and rollback boundaries.
+
+## Report workflow migration and recovery
+
+Queued and running report compilations appear in content-free health counts and
+defer backup before services are stopped, alongside other active background work.
+
+
+Report workflow migrations 0027 and 0029 are additive: they introduce a durable
+compilation-request table and the `compilation_basis` section column. A current
+backup and clean restore retain request leases, fingerprints, Report text, and
+separately stored provenance. The restored coordinator fences expired workers
+before retrying work; active requests still prevent an operator backup.
+
+Before upgrading, retain a verified backup of the stopped prior revision. Rollback
+to a revision without these migrations uses that pre-upgrade backup restored into
+a clean target and the matching old application revision. Do not run old code
+against the upgraded database: old section readers do not recognize the added
+column, and old cleanup does not own the new request table. Keep any post-upgrade
+work separately before restoring; a pre-upgrade snapshot does not include it.
+
+The synthetic `scripts/report-storage-restore-drill.py` creates a report using the
+public pre-workflow baseline, takes a SQLite online backup, upgrades a separate
+working copy, then restores the snapshot to a clean target and reads it with that
+original baseline code. It checks report content and SQLite integrity in both
+states. Run with the contributor Python environment and optional
+`--baseline-ref <pre-workflow-commit>`. The default baseline is
+`3f8a768d358643cf27476fc6c4e1af86ba9f076d`. It uses temporary synthetic data and
+does not inspect an installed node. This complements the focused queue and
+provenance backup/clean-restore tests; it does not establish an operator's own
+backup or replacement-host readiness.

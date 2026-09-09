@@ -93,7 +93,8 @@
       <nav class="workflow-completion-bar" aria-label="Completed every-source check actions">
         <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>Source check complete</strong><small>{{ active_run.snapshot_count }} frozen source{% if active_run.snapshot_count != 1 %}s{% endif %}</small></span></span>
         <a href="#decision-ledger">Review support</a>
-        <form method="post" action="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/report"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Save to report</button></form>
+        <a href="/matters/{{ matter.slug }}/reports/new?from=review:{{ active_run.run_id }}">Make report</a>
+        <details><summary>Save complete review record</summary><form method="post" action="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/report"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Copy source check to report</button></form></details>
         <details><summary>Export</summary><div><a href="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/export?format=csv" data-download>Complete CSV</a><a href="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/export?format=docx" data-download>Word summary</a><a href="/matters/{{ matter.slug }}/full-review/{{ active_run.run_id }}/export?format=json" data-download>Complete JSON</a></div></details>
         <a href="#review-controls">Continue reviewing</a>
       </nav>

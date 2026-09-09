@@ -96,12 +96,15 @@ matter bundle includes the JSON ledger and retains its existing bundle byte
 limits. Final synthesis consumers should bind a terminal run and revision; an
 active forward cursor is not a completion watermark.
 
-The optional `resolve_text_report_citations()` helper streams frozen sources
-once, including explicitly listed sources with no citations. It validates actual
-text digests, frozen content bases and versions, and returns at most 100 canonical
-citations. A requested full-unit excerpt over 6,000 characters fails without
-slicing. Report consumers retain their own snapshot/revision transaction and
-must explicitly select this resolver for full-text runs.
+The Reports workflow uses `resolve_text_report_citations()` for full-text saved
+work. It streams frozen sources, including sources with no citations and decisions
+beyond the displayed summary limit. It validates actual text digests, frozen
+content bases, names and versions, and returns at most 100 canonical citations.
+A requested full-unit excerpt over 6,000 characters fails without slicing. Both
+direct Save to Report and the guided composer validate the frozen work while
+holding the source and workspace guards; the composer validates it again at final
+save. Word and Markdown exports use exact streaming citation validation. Reports
+remain bounded summaries with a link to the complete saved review ledger.
 
 ## Migration, validation and rollback
 
@@ -133,9 +136,12 @@ PYTHONPATH=src python scripts/browser-accept-full-text-review.py \
 ```
 
 Before upgrading an existing writer, stop workers and take the consistent backup
-in [Storage, backup, and recovery](STORAGE_AND_BACKUP.md). Before rolling back,
-cancel or finish text reviews and preserve complete ledgers. Older writers do not
-understand their mode or budgets and must not resume them; keep additive tables
-for a later compatible reader. No model revision, model download or deployment
-configuration changes are included. Local synthetic tests do not establish model
+in [Storage, backup, and recovery](STORAGE_AND_BACKUP.md). Rollback of this combined
+Report/full-text schema requires the verified pre-upgrade backup restored into a
+clean target with its matching original application revision. First cancel or
+finish text reviews and preserve complete post-upgrade ledgers separately: a
+pre-upgrade backup does not contain later work. Older writers do not understand
+full-text mode or budgets and must never resume those runs. Retain an upgraded
+backup for a later compatible reader. No model revision, model download or
+deployment configuration changes are included. Local synthetic tests do not establish model
 recall, Linux/GPU capacity, PostgreSQL execution or confidential-workload acceptance.

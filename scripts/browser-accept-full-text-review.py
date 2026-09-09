@@ -98,7 +98,40 @@ def main():
             wait.until(lambda _: bool(list(downloads.glob('*.json'))))
             records = json.loads(next(downloads.glob('*.json')).read_text())['records']
             assert len([row for row in records if row['record_type'] == 'range']) == 15
-            receipt = {'provenance': 'synthetic', 'checks': ['explicit full-text launch', 'late fifteenth-unit finding', 'separate failed-unit coverage', 'desktop and mobile without page overflow', 'complete JSON download']}
+            driver.get(base + f'/matters/{matter.slug}/full-review?criterion={criterion.criterion_id}&run={run.run_id}')
+            copy_form = driver.find_element(By.CSS_SELECTOR, f'form[action$="/{run.run_id}/report"]')
+            details = copy_form.find_element(By.XPATH, 'ancestor::details')
+            summary = details.find_element(By.TAG_NAME, 'summary')
+            driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", summary)
+            summary.click()
+            copy_form.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
+            wait.until(lambda d: '/reports?report=' in d.current_url)
+            page = driver.find_element(By.CSS_SELECTOR, '.report-reading-page')
+            assert 'not the complete range ledger' in page.text
+            assert 'selected passages. This is not an all-page read' not in page.text
+            source_link = driver.find_element(By.CSS_SELECTOR, '.report-reading-sources a')
+            assert 'synthetic-ledger.txt' in source_link.text
+            report_url = driver.current_url
+            driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", source_link)
+            source_link.click()
+            wait.until(lambda d: 'The amber bicycle arrived at noon.' in d.find_element(By.TAG_NAME, 'body').text)
+            driver.get(report_url)
+            wait.until(lambda d: bool(d.find_elements(By.CSS_SELECTOR, '.report-reading-page')))
+            for width, label in ((1440, 'desktop'), (390, 'mobile')):
+                driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', {'width': width, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
+                if width < 901:
+                    wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
+                wait.until(lambda d: d.execute_script('return document.documentElement.scrollWidth <= window.innerWidth'))
+                driver.execute_script('window.scrollTo(0,0)')
+                driver.save_screenshot(str(args.output / f'full-text-report-{label}.png'))
+            driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride', {})
+            markdown = driver.find_element(By.CSS_SELECTOR, 'a[href$="format=markdown"]')
+            driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", markdown)
+            markdown.click()
+            wait.until(lambda _: bool(list(downloads.glob('*.md'))))
+            report_text = next(downloads.glob('*.md')).read_text()
+            assert 'The amber bicycle arrived at noon.' in report_text and 'not the complete range ledger' in report_text
+            receipt = {'provenance': 'synthetic', 'checks': ['explicit full-text launch', 'late fifteenth-unit finding', 'separate failed-unit coverage', 'desktop and mobile without page overflow', 'complete JSON download', 'saved full-text run copied to readable Report', 'bounded full-text scope and source citation retained', 'Report desktop and mobile without overflow', 'Report Markdown download']}
             (args.output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
             print(json.dumps(receipt))
         finally:
