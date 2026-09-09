@@ -1,6 +1,7 @@
 import json
 import html
 import re
+import threading
 from pathlib import Path
 
 import pytest
@@ -200,3 +201,39 @@ def test_preview_finds_late_words_preserves_text_and_keeps_markup_inert():
     assert '<script>depot</script>' in text
     assert ("depot", True) in preview["pieces"]
     assert text.startswith("…")
+
+
+def test_scan_releases_workspace_lock_after_capturing_scope(tmp_path):
+    app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
+    with TestClient(app) as client:
+        response = client.post("/matters", data={"name": "Synthetic concurrent search", "descriptor": ""}, follow_redirects=False)
+        bench = app.state.workbench
+        matter = bench.matter(response.headers["location"].split("/")[2], "development-taylor-morgan")
+        entered, release, workspace_read = threading.Event(), threading.Event(), threading.Event()
+        errors = []
+
+        class PausingBackend:
+            def search(self, documents, query, **kwargs):
+                entered.set()
+                assert release.wait(5)
+                return ReferenceExactSearchBackend().search(documents, query, **kwargs)
+
+        bench.exact_search_backend = PausingBackend()
+        def search():
+            try:
+                bench.exact_search(matter, "red")
+            except Exception as exc:
+                errors.append(exc)
+        worker = threading.Thread(target=search)
+        reader = threading.Thread(target=lambda: (bench.workspace.source_sets(matter.matter_id), workspace_read.set()))
+        worker.start()
+        try:
+            assert entered.wait(2)
+            reader.start()
+            assert workspace_read.wait(2), "Text matching blocked the global workspace lock"
+        finally:
+            release.set()
+            worker.join(5)
+            if reader.ident is not None:
+                reader.join(5)
+        assert not errors

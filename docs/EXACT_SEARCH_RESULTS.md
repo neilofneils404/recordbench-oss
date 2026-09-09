@@ -60,8 +60,11 @@ HTTP 503 with **no exact total or partial results** and guidance to select a
 smaller scope. The time budget is cooperative: source-file I/O, JSON loading,
 Unicode normalization, and lock acquisition are not preempted. This is not a
 hard wall-clock service guarantee. A scan holds the matter's source mutation
-lock and workspace lock for consistent scope and source state; it can delay
-other workspace operations until it returns.
+lock, captures its collection/set membership under the workspace lock, and
+releases the workspace lock before matching. Other matters can continue using
+workspace storage during the scan. Source changes in the searched matter wait
+for the scan; membership edits during a scan affect the next request, where the
+fingerprint detects a changed result population.
 
 This initial adapter deliberately rescans each page. It is not the scalable
 indexed backend. A production-scale adapter should use a consistent database

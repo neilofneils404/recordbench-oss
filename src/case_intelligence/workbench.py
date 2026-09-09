@@ -2569,17 +2569,20 @@ class CaseIntelligenceWorkbench:
         """Enumerate an already-authorized matter, independently of retrieval."""
         store = self.source_store(matter)
         # Source changes project into workspace while holding this same lock.
-        with store._lock, self.workspace._lock:
+        with store._lock:
             store._ensure_active()
-            allowed = None
-            if source_set_id:
-                allowed = self.workspace.source_set_document_ids(matter.matter_id, source_set_id)
-            if collection_id:
-                self.workspace.source_collection(matter.matter_id, collection_id)
-                members = frozenset(item.document_id for item in
-                    self.workspace.source_organizations(matter.matter_id)
-                    if item.collection_id == collection_id)
-                allowed = members if allowed is None else allowed & members
+            # Capture organization membership briefly; text matching must not
+            # hold the global workspace lock or block work in other matters.
+            with self.workspace._lock:
+                allowed = None
+                if source_set_id:
+                    allowed = self.workspace.source_set_document_ids(matter.matter_id, source_set_id)
+                if collection_id:
+                    self.workspace.source_collection(matter.matter_id, collection_id)
+                    members = frozenset(item.document_id for item in
+                        self.workspace.source_organizations(matter.matter_id)
+                        if item.collection_id == collection_id)
+                    allowed = members if allowed is None else allowed & members
             documents = (item for item in store.documents.values()
                          if allowed is None or item.document_id in allowed)
             return self.exact_search_backend.search(
