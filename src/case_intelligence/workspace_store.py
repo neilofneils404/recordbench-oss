@@ -2886,6 +2886,9 @@ class WorkspaceStore:
             if lifecycle is None or lifecycle["state"] != "purging":
                 raise KeyError(purge_id)
             self.connection.execute(
+                "DELETE FROM workbench_report_compilation_job WHERE matter_id=?", (matter_id,)
+            )
+            self.connection.execute(
                 "DELETE FROM workbench_answer_job WHERE matter_id=?", (matter_id,)
             )
             self.connection.execute(
@@ -7458,8 +7461,6 @@ class WorkspaceStore:
                                                                    expected_updated_at)
             if current_section.compilation_basis:
                 suffix = "\n\nReview basis:\n" + current_section.compilation_basis
-                if content.endswith(suffix):
-                    content = content[:-len(suffix)]
                 content = self._safe_text(
                     content + suffix, label="Section text", maximum=50_000,
                     required=False, multiline=True,

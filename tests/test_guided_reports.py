@@ -222,3 +222,79 @@ def test_compilation_basis_migration_mirrors_operator_marker():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     assert (root / "migrations/sqlite/0029_report_compilation_basis.sql").read_bytes() == (root / "src/case_intelligence/migrations/sqlite/0029_report_compilation_basis.sql").read_bytes()
+
+
+def test_exact_copied_compilation_suffix_stays_literal_prose(workspace):
+    client, bench, matter = workspace
+    basis = "Saved synthetic provenance."
+    suffix = "\n\nReview basis:\n" + basis
+    report = bench.workspace.create_report_from_sections(matter.matter_id, ACTOR, "Copied basis", "",
+        origin_id="report-compilation-" + "e" * 32,
+        sections=[{"heading": "Note", "body": "Opening" + suffix, "compilation_basis": basis}])
+    section = bench.workspace.report_sections(matter.matter_id, report.report_id)[0]
+    copied = "The reviewer intentionally copied this:" + suffix
+    response = client.post(f"/matters/{matter.slug}/reports/{report.report_id}/sections/{section.section_id}",
+        data={"heading": section.heading, "body": copied, "expected_updated_at": section.updated_at,
+              "expected_status": report.status}, follow_redirects=False)
+    assert response.status_code == 303
+    updated = bench.workspace.report_sections(matter.matter_id, report.report_id)[0]
+    assert updated.prose == copied and updated.body == copied + suffix
+
+
+def test_compilation_completion_audit_retains_report_link_after_deletion(workspace):
+    client, bench, matter = workspace
+    bench.workspace.create_notebook_item(matter.matter_id, ACTOR, item_type="event", status="confirmed",
+        title="Synthetic observed event", body="Synthetic attributed review text.")
+    job_id = queue(client, matter, ["notes:active"])
+    assert finished(client, matter, job_id)["state"] == "succeeded"
+    job = bench.report_compilation.jobs.get(matter.matter_id, ACTOR, job_id)
+    report = bench.workspace.report(matter.matter_id, job.report_id)
+    response = client.post(f"/matters/{matter.slug}/reports/{report.report_id}/delete",
+        data={"expected_updated_at": report.updated_at}, follow_redirects=False)
+    assert response.status_code == 303
+    event, = [e for e in bench.workspace.audit_events(matter.matter_id) if e.action == "report.compile.complete"]
+    assert event.actor_principal_id == ACTOR and event.request_id == job_id
+    assert event.object_id == report.report_id and event.details == {"state": "succeeded"}
+    assert bench.report_compilation.jobs.get(matter.matter_id, ACTOR, job_id).report_id is None
+
+
+def test_cancel_and_retry_have_content_free_actor_audit(workspace):
+    client, bench, matter = workspace
+    bench.report_compilation.coordinator.close()
+    job_id = queue(client, matter, ["notes:active"])
+    for action in ("cancel", "retry"):
+        response = client.post(f"/matters/{matter.slug}/reports/compile/{job_id}/{action}", follow_redirects=False)
+        assert response.status_code == 303
+    events = [e for e in bench.workspace.audit_events(matter.matter_id) if e.action in {"report.cancel", "report.retry"}]
+    assert [(e.action, e.details) for e in events] == [("report.cancel", {"state": "cancelled"}), ("report.retry", {"state": "queued"})]
+    assert all(e.actor_principal_id == ACTOR and e.object_id == job_id for e in events)
+    bench.report_compilation.jobs.cancel(matter.matter_id, ACTOR, job_id)
+
+
+@pytest.mark.parametrize("state", ["succeeded", "failed", "cancelled"])
+def test_matter_purge_removes_terminal_compilation_jobs(workspace, state):
+    client, bench, matter = workspace
+    bench.report_compilation.coordinator.close()
+    job_id = queue(client, matter, ["notes:active"])
+    report = bench.workspace.create_report(matter.matter_id, ACTOR, "Synthetic purge report", "")
+    with bench.workspace.connection:
+        bench.workspace.connection.execute("UPDATE workbench_report_compilation_job SET state=?,report_id=? WHERE job_id=?",
+            (state, report.report_id if state == "succeeded" else None, job_id))
+    _, lifecycle = bench.workspace.begin_matter_purge(matter.slug, ACTOR, matter.display_name, source_count=0)
+    completed = bench.workspace.complete_matter_purge(matter.matter_id, lifecycle.purge_id)
+    assert completed.state == "deleted"
+    assert not bench.workspace.connection.execute("SELECT 1 FROM workbench_report_compilation_job WHERE matter_id=?", (matter.matter_id,)).fetchone()
+    assert not bench.workspace.connection.execute("SELECT 1 FROM workbench_report WHERE matter_id=?", (matter.matter_id,)).fetchone()
+
+
+def test_read_only_administrator_is_not_offered_report_creation(tmp_path):
+    from tests.test_matter_management import ADMIN
+    app = _app(tmp_path)
+    with TestClient(app, base_url="https://testserver") as client:
+        csrf = _csrf(client.get('/matters/new', headers=_headers(OWNER)).text)
+        slug = _create_matter(client, principal=OWNER, csrf_token=csrf, name="Synthetic read-only reports")
+        page = client.get(f"/matters/{slug}/reports?edit=true", headers=_headers(ADMIN))
+        assert page.status_code == 200
+        assert "Compile saved work" not in page.text and "Make your first report" not in page.text
+        assert f'href="/matters/{slug}/reports/new"' not in page.text
+        assert client.get(f"/matters/{slug}/reports/new", headers=_headers(ADMIN)).status_code == 403

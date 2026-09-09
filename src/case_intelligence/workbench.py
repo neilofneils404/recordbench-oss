@@ -12932,6 +12932,8 @@ def create_workbench_app(
                             job: str = Query("", max_length=100),
                             error: str = Query("", max_length=240)):
         matter = authorized_matter(request, slug)
+        if getattr(request.state, "administrator_matter_override", None) == matter.matter_id:
+            raise HTTPException(403, "Report creation requires membership in this matter's review team.")
         actor = auth_context(request).principal_id
         try:
             active = bench.report_compilation.jobs.get(matter.matter_id, actor, job) if job else None
@@ -12977,20 +12979,24 @@ def create_workbench_app(
     def cancel_compiled_report(request: Request, slug: str, job_id: str):
         matter = authorized_matter(request, slug)
         try:
-            bench.report_compilation.jobs.cancel(matter.matter_id, auth_context(request).principal_id, job_id)
+            job = bench.report_compilation.jobs.cancel(matter.matter_id, auth_context(request).principal_id, job_id)
         except KeyError as exc:
             raise HTTPException(404, "Report preparation not found") from exc
+        audit(request, "report.cancel", "success", context=auth_context(request), matter=matter,
+              object_type="report_compilation", object_id=job.job_id, details={"state": job.state})
         return RedirectResponse(_query_url(f"/matters/{slug}/reports/new", job=job_id), status_code=303)
 
     @app.post("/matters/{slug}/reports/compile/{job_id}/retry", dependencies=[Depends(require_csrf)])
     def retry_compiled_report(request: Request, slug: str, job_id: str):
         matter = authorized_matter(request, slug)
         try:
-            bench.report_compilation.jobs.retry(matter.matter_id, auth_context(request).principal_id, job_id)
+            job = bench.report_compilation.jobs.retry(matter.matter_id, auth_context(request).principal_id, job_id)
         except KeyError as exc:
             raise HTTPException(404, "Report preparation not found") from exc
         except CompilationProblem as exc:
             return render_report_compilation(request, matter, error=str(exc), status_code=409)
+        audit(request, "report.retry", "success", context=auth_context(request), matter=matter,
+              object_type="report_compilation", object_id=job.job_id, details={"state": job.state})
         bench.report_compilation.notify()
         return RedirectResponse(_query_url(f"/matters/{slug}/reports/new", job=job_id), status_code=303)
 
@@ -13107,7 +13113,8 @@ def create_workbench_app(
                 "clips": tuple(clips[:250]),
                 "notice": notice,
                 "error": error,
-                "report_edit": edit,
+                "report_edit": edit and not administrator_override,
+                "report_can_write": not administrator_override,
                 "show_assistant_dock": False,
                 "report_labels": report_labels,
                 "compilation_jobs": tuple(job for job in bench.report_compilation.jobs.list(matter.matter_id, context.principal_id) if job.state in {"queued", "running", "failed", "cancelled"}) if not administrator_override else (),
