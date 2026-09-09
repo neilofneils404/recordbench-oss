@@ -236,3 +236,30 @@ def test_full_text_portable_export_refuses_unresolved_or_oversized_support(works
     assert response.status_code == 409
     assert 'No partial export' in response.text
     assert bench._active_matter_response_count(matter.matter_id) == 0
+
+
+@pytest.mark.parametrize('changed', [False, True])
+def test_full_text_decision_inspector_resolves_exact_support_without_persisting_text(workspace, changed):
+    client, bench, matter = workspace
+    text = 'The amber bicycle arrived. Synthetic inspector support beyond the rationale.'
+    run, documents = completed_text_run(bench, matter, [text])
+    document = documents[0]
+    saved = bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, document.document_id)
+    assert saved.citations and 'excerpt' not in saved.citations[0]
+    if changed:
+        path = bench.source_store(matter).derived / document.units_file
+        payload = json.loads(path.read_text())
+        payload['units'][0]['text'] = 'Synthetic changed inspector passage.'
+        path.write_text(json.dumps(payload))
+    response = client.get(f'/matters/{matter.slug}/full-review', params={
+        'criterion': run.criterion_id, 'run': run.run_id, 'source': document.document_id})
+    assert response.status_code == 200
+    if changed:
+        assert 'Supporting passages are unavailable or changed' in response.text
+        assert text not in response.text and 'Synthetic changed inspector passage.' not in response.text
+        assert '<div class="decision-citations"><a' not in response.text
+    else:
+        assert f'<p>{text}</p>' in response.text
+        assert 'Supporting passages are unavailable or changed' not in response.text
+    retained = bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, document.document_id)
+    assert retained.citations == saved.citations and retained.updated_at == saved.updated_at
