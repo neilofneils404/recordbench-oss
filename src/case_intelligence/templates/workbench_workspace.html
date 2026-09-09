@@ -165,7 +165,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
             <input id="conversation-filter" type="search" placeholder="Find conversation…" autocomplete="off" data-conversation-filter>
           </div>
-          <nav data-conversation-list>
+          <nav data-conversation-list aria-label="Saved conversation list" tabindex="0">
             {% if pinned_conversations %}
             <section class="conversation-history-group" aria-labelledby="pinned-conversations-heading" data-conversation-group>
               <div class="conversation-group-heading">
