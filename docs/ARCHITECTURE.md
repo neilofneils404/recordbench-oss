@@ -171,3 +171,16 @@ parser, not yet a staff search route. [Export readiness](EXPORT_READINESS.md)
 uses the same bounded preparation as the eventual download. The
 [selected acceptance record](SELECTED_ACCEPTANCE_2026-09-09.md) identifies the
 combined candidate and deferred feature stacks.
+
+
+## Full extracted-text review
+
+[Full-text review](FULL_TEXT_REVIEW.md) freezes source/extraction identity and
+resource admission in SQLite before queueing work. Unit streaming creates
+canonical range checkpoints with compact locators, bounded model packets and
+frozen output-token limits. Durable per-actor/matter/instance reservations,
+pre-dispatch call charges, UTF-8 ledger accounting and bounded coverage counters
+keep large and interrupted runs explicit. Source decisions remain compatible with
+selected-passage review; detailed ledgers feed later synthesis consumers. Missing
+extraction, empty/zero-unit sources, failed ranges and unfinished inventories
+remain coverage gaps, independent of relevance-recognition quality.

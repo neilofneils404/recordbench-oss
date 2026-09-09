@@ -187,10 +187,13 @@ def _validate_review_export_scope(
             chunk_id = _plain(citation.get("chunk_id"))
             unit_number = citation.get("unit_number")
             evidence_kind = _plain(citation.get("evidence_kind"))
+            compact = (citation.get("locator_kind") == "text_unit"
+                and type(citation.get("unit_ordinal")) is int and citation["unit_ordinal"] > 0
+                and bool(re.fullmatch(r"[0-9a-f]{64}", _plain(citation.get("unit_digest")))))
             if (
                 not source_name
                 or not location
-                or not excerpt
+                or (not excerpt and not compact)
                 or not re.fullmatch(r"[0-9a-f]{40}", support_token)
                 or not re.fullmatch(r"[0-9a-f]{64}", excerpt_digest)
                 or not chunk_id
@@ -1810,7 +1813,7 @@ def export_matter_bundle(
                     r"[A-Za-z0-9][A-Za-z0-9._/-]{0,240}",
                     path,
                 )
-                or kind not in {"investigation", "source_check", "intake_receipt"}
+                or kind not in {"investigation", "source_check", "intake_receipt", "full_text_review"}
                 or ".." in path.split("/")
                 or path.casefold() in seen_additional_paths
                 or not isinstance(body, bytes)

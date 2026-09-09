@@ -123,3 +123,15 @@ replace an operator's installed-node or replacement-host acceptance.
 
 The tooling remains prerelease. Do not depend on this candidate as the sole copy
 of retained work product until your own scheduled backup and restore drill pass.
+
+
+## Full-text review ledgers
+
+Include additive full-text tables, resource receipts and counters in the control
+SQLite backup. Online backup/clean-restore regression coverage checks saved
+partial outcomes and foreign keys. Logical ledger charges are independent of the
+SQLite/WAL file size, protected disk reserve and backup-retention policy. Stop
+workers before upgrading older full-text writers; legacy ledgers are retained
+and charged but require a newly admitted run to resume analysis. Export before
+creator-only terminal deletion if findings or human decisions must be preserved.
+See [Full-text review](FULL_TEXT_REVIEW.md) for limits and rollback boundaries.
