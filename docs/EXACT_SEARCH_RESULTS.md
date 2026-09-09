@@ -61,7 +61,7 @@ one of those words is present, and alternatives between negated conditions.
 DOCX previews
 label extracted locations as sections, matching source review. Source links use the
 current version's existing source-review token. Transcript links carry the
-matching timestamp and segment anchor instead of a text-unit page parameter.
+matching timestamp, server-visible extracted-unit ordinal for transcript pagination, and segment anchor.
 
 Pagination links carry a fingerprint of the grammar, original/parsed query,
 matter and selected scopes, source membership, names, states, versions, and
@@ -213,3 +213,5 @@ route checks open primary and additional later-passage links, including a zero
 offset, without treating a legacy unit number as a segment ordinal.
 
 Transcript passage links carry a server-visible passage ordinal as well as the playback offset, so matching passages beyond the first 200 segments open on the correct page even at zero or overlapping timestamps. TXT projections must retain consecutive extracted chunk numbers; a missing middle chunk makes the exact scan unavailable instead of returning an exact zero or accepting a negated term.
+
+Ready TXT ingestion persists the retained chunk count in the existing completed/total extraction-unit fields, while `page_count` remains the original line count. Exact scans verify that count, including the final record; whitespace-only omitted chunks do not become invented searchable units. Legacy TXT metadata used line progress counts: a complete final line range remains sufficient, while an unverifiable tail requires reprocessing to establish a chunk count. Timed transcript text must be nonblank, matching the ingestion invariant. Recording links accept the same two-second endpoint allowance as transcript ingestion, then bound player seek to the actual recording duration.

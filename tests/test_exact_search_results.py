@@ -92,6 +92,8 @@ def _file_backed_source(tmp_path, texts):
     with path.open('w', encoding='utf-8') as stream:
         json.dump({'version': 1, 'units': [{'number': index, 'text': text}
                   for index, text in enumerate(texts, 1)]}, stream, ensure_ascii=False)
+    source.page_count = len(texts) * 20
+    source.completed_units = source.total_units = len(texts)
     return source, path
 
 
@@ -991,3 +993,110 @@ def test_media_search_links_open_matching_page_despite_overlapping_segments(tmp_
             assert f'id="segment-{ordinal}"' in opened.text
             assert 'id="segment-1"' not in opened.text
             assert f'data-media-review data-start-ms="{offset}"' in opened.text
+
+
+@pytest.mark.parametrize('query', ['cancelled', 'neutral NOT cancelled'])
+def test_missing_final_production_text_chunk_invalidates_exact_total(tmp_path, query):
+    import io
+    from case_intelligence.pilot_uploads import PilotStore
+    from tests.test_review_tools import CleanScanner
+    store = PilotStore(tmp_path / 'synthetic-tail', malware_scanner=CleanScanner())
+    source, _ = store.store_stream('Synthetic tail.txt', 'text/plain', io.BytesIO(('neutral\n' * 40 + 'cancelled\n').encode()))
+    assert scan([source], 'cancelled').total == 1
+    path = store.derived / source.units_file
+    payload = json.loads(path.read_text()); del payload['units'][-1]; path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([source], query)
+
+
+@pytest.mark.parametrize('blank', ['', ' \n\t'])
+@pytest.mark.parametrize('query', ['red', 'NOT red'])
+def test_blank_timed_transcript_with_matching_digest_invalidates_scan(blank, query):
+    import hashlib
+    source = document(1, blank)
+    source.media_type, source.duration_ms, source.page_count = 'audio/wav', 1000, 1
+    source.units[0].update(start_ms=0, end_ms=1000, excerpt_digest=hashlib.sha256(blank.encode()).hexdigest())
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([source], query)
+
+
+def test_media_seek_with_producer_timestamp_slack_opens_and_uses_transcript_count(tmp_path):
+    app = create_workbench_app(tmp_path / 'runtime', auth_mode='test')
+    with TestClient(app) as client:
+        response = client.post('/matters', data={'name': 'Synthetic longest recording'}, follow_redirects=False)
+        slug = response.headers['location'].split('/')[2]
+        bench = app.state.workbench
+        matter = bench.matter(slug, 'development-taylor-morgan')
+        media = document(1, 'red bicycle', 'red depot')
+        media.version_id = 'a' * 32
+        media.media_type, media.duration_ms, media.page_count = 'audio/wav', 43200000, 2
+        for unit in media.units:
+            unit.update(start_ms=43200001, end_ms=43201000)
+        bench.source_store(matter).documents[media.document_id] = media
+        bench._sync_source_catalog(matter, [media])
+        result = client.get(f'/matters/{slug}/exact-search', params={'words': 'red'})
+        links = re.findall(r'<a class="find-location" href="([^\"]+)">', result.text)
+        assert len(links) == 2
+        for link in links:
+            opened = client.get(html.unescape(link))
+            assert opened.status_code == 200
+            assert 'data-media-review data-start-ms="43199999"' in opened.text
+        assert '2 matching transcript passages' in result.text
+        assert '2 matching pages or sections' not in result.text
+
+
+@pytest.mark.parametrize('blank_tail', [False, True])
+def test_production_txt_chunk_count_survives_backup_and_clean_restore(tmp_path, blank_tail):
+    import io
+    import shutil
+    from case_intelligence.pilot_uploads import PilotStore
+    from tests.test_review_tools import CleanScanner
+    root = tmp_path / 'synthetic-count-source'
+    store = PilotStore(root, malware_scanner=CleanScanner())
+    text = 'neutral\n' * 20 + '\n' * 20 + 'red bicycle\n' + ('\n' * 40 if blank_tail else '')
+    source, _ = store.store_stream('Synthetic sparse text.txt', 'text/plain', io.BytesIO(text.encode()))
+    assert source.completed_units == source.total_units == 2
+    assert scan([source], 'red').total == 1
+    identity = source.document_id
+    store.close()
+    backup = tmp_path / 'synthetic-count-backup'
+    shutil.copytree(root, backup)
+    payload = json.loads((root / 'derived' / source.units_file).read_text())
+    del payload['units'][-1]
+    (root / 'derived' / source.units_file).write_text(json.dumps(payload))
+    reopened = PilotStore(root)
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([reopened.get(identity)], 'red')
+    reopened.close()
+    restored_root = tmp_path / 'synthetic-count-restored'
+    shutil.copytree(backup, restored_root)
+    restored = PilotStore(restored_root)
+    restored_source = restored.get(identity)
+    assert restored_source.total_units == 2 and scan([restored_source], 'red').total == 1
+    restored.close()
+
+
+def test_legacy_txt_line_progress_requires_a_verifiable_tail(tmp_path):
+    import io
+    from case_intelligence.pilot_uploads import PilotStore
+    from tests.test_review_tools import CleanScanner
+    store = PilotStore(tmp_path / 'synthetic-legacy-lines', malware_scanner=CleanScanner())
+    source, _ = store.store_stream('Synthetic legacy lines.txt', 'text/plain', io.BytesIO(('neutral\n' * 40 + 'red\n').encode()))
+    source.completed_units = source.total_units = source.page_count
+    assert scan([source], 'red').total == 1
+    path = store.derived / source.units_file
+    payload = json.loads(path.read_text()); del payload['units'][-1]; path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([source], 'NOT red')
+
+
+@pytest.mark.parametrize('line_count', [0, -1, True, '41'])
+def test_production_txt_rejects_invalid_original_line_count(tmp_path, line_count):
+    import io
+    from case_intelligence.pilot_uploads import PilotStore
+    from tests.test_review_tools import CleanScanner
+    store = PilotStore(tmp_path / 'synthetic-invalid-lines', malware_scanner=CleanScanner())
+    source, _ = store.store_stream('Synthetic invalid lines.txt', 'text/plain', io.BytesIO(b'red bicycle'))
+    source.page_count = line_count
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([source], 'NOT cancelled')
