@@ -55,6 +55,8 @@ def test_management_flag_rejects_ambiguous_or_existing_node_before_writes(tmp_pa
 
 
 def test_interrupted_provisioning_resume_retains_canonical_account_profile(tmp_path, monkeypatch):
+    # Provisioning is stubbed in this coordinate/input test; supply its one-use bootstrap credential.
+    monkeypatch.setattr(installer, '_password', lambda args: 'synthetic-bootstrap-password')
     from tests.test_first_run_handoff import configured_node
     root, _, _ = configured_node(tmp_path)
     monkeypatch.setattr(installer, "_preflight", lambda *args, **kwargs: ())
@@ -2565,3 +2567,53 @@ def test_configuration_uses_the_same_normalized_administrator_as_preflight(tmp_p
     assert result[3:] == ("synthetic.admin", "\u00e9" * 160)
     installation = json.loads((args.root / "installation.json").read_text())
     assert installation["initial_administrator_display_name"] == "\u00e9" * 160
+
+
+@pytest.mark.parametrize('value', ['', 'short\n', 'x' * 1025 + '\n', 'synthetic-password\x00bad\n'])
+@pytest.mark.parametrize('resume', [False, True])
+def test_invalid_bootstrap_password_bytes_stop_before_writes(tmp_path, ready_host, monkeypatch, capsys, value, resume):
+    import io
+    from tests.test_first_run_handoff import configured_node
+    root = tmp_path.resolve() / 'uncreated-node'
+    flags = ['--models', 'none', '--auth', 'local', '--non-interactive', '--password-stdin']
+    if resume:
+        root, _, _ = configured_node(tmp_path.resolve())
+        flags += ['--resume']
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()} if root.exists() else {}
+    capsys.readouterr()
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(value))
+    monkeypatch.setattr(installer, '_prepare_directories', lambda *a, **k: pytest.fail('invalid password reached a write'))
+    monkeypatch.setattr(installer, '_run', lambda *a, **k: pytest.fail('invalid password reached provisioning'))
+    monkeypatch.setattr(sys, 'argv', ['install', 'install', '--root', str(root), *flags])
+    assert installer.main() == 1
+    assert 'administrator password' in capsys.readouterr().out
+    assert ({p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()} if root.exists() else {}) == before
+
+
+@pytest.mark.parametrize('mutation', ['missing', 'symlink', 'directory', 'invalid', 'outside', 'traversal'])
+def test_retained_oidc_ca_is_required_before_resume(tmp_path, request, monkeypatch, mutation):
+    root, args = synthetic_saved_provider(tmp_path, request, monkeypatch, 'oidc')
+    ca = root / 'secrets/organization-ca.pem'
+    if mutation == 'symlink':
+        ca.symlink_to(root / 'secrets/oidc-client-secret')
+    elif mutation == 'directory':
+        ca.mkdir()
+    elif mutation == 'invalid':
+        ca.write_text('synthetic invalid certificate')
+    value = ('/missing/organization-ca.pem' if mutation == 'outside' else
+             '/run/recordbench-secrets/../organization-ca.pem' if mutation == 'traversal' else
+             '/run/recordbench-secrets/organization-ca.pem')
+    installer._replace_env(root / 'config/recordbench.env', 'CASE_INTELLIGENCE_OIDC_CA_FILE', value)
+    monkeypatch.setattr(installer, '_run', lambda *a, **k: pytest.fail('invalid CA reached provisioning'))
+    with pytest.raises(RuntimeError, match='prerequisites'):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+
+
+def test_retained_oidc_ca_accepts_a_readable_certificate(tmp_path, request, monkeypatch):
+    root, args = synthetic_saved_provider(tmp_path, request, monkeypatch, 'oidc')
+    ca = root / 'secrets/organization-ca.pem'
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                    '-subj', '/CN=Synthetic CA', '-keyout', str(tmp_path / 'synthetic.key'), '-out', str(ca)],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    installer._replace_env(root / 'config/recordbench.env', 'CASE_INTELLIGENCE_OIDC_CA_FILE', '/run/recordbench-secrets/organization-ca.pem')
+    assert installer._collect_preflight('none', args, needs_model_staging=False).ready

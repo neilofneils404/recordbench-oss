@@ -397,3 +397,18 @@ backup suite also round-trips synthetic control and managed SQLite stores from
 these prepared nested directories into a clean restore target. That regression
 uses simulated service/backup commands; an operator still needs the real encrypted
 backup and isolated recovery acceptance in [Storage and backup](STORAGE_AND_BACKUP.md).
+
+Retained OIDC CA configuration must point to a readable valid certificate in the
+canonical read-only secrets mount. Resume checks that file before provisioning;
+restore a missing or invalid CA rather than replacing the saved provider options.
+For a local installation that still needs its first account, installation reads
+and validates password input after read-only preflight and before any node writes
+or provisioning commands. Standalone preflight and dry runs do not consume it.
+The one-use input is cleared at account initialization and on error.
+
+A successful doctor check recovers prepared-phase progress from a matching
+provisioning seal even if the current progress receipt is absent or from an older
+release. A successful update records preparation under its new seal and prints
+the same handoff. A healthy, sealed node is not directed to rebuild with resume
+merely because its progress receipt predates the current release. Browser sign-in
+remains a separate unverified step.

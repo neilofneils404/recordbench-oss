@@ -24,6 +24,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -1290,6 +1291,32 @@ def _identity_options_valid(args: argparse.Namespace) -> bool:
     return True
 
 
+def _saved_oidc_ca_valid(root: Path, value: str) -> bool:
+    if not value:
+        return True
+    path = Path(value)
+    # The standard app graph mounts this canonical credential directory. Do not
+    # mistake a host path or a traversal outside that mount for a runtime file.
+    if (path.parent != Path('/run/recordbench-secrets')
+            or path.name in {'', '.', '..'} or '..' in path.parts):
+        return False
+    source = root / 'secrets' / path.name
+    try:
+        if source.lstat().st_mode & 0o022:
+            return False
+        content = _credential_source_content(source)
+        if not content:
+            return False
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        try:
+            context.load_verify_locations(cadata=content.decode('ascii'))
+        except (UnicodeError, ssl.SSLError):
+            context.load_verify_locations(cadata=content)
+        return True
+    except (OSError, ValueError, UnicodeError):
+        return False
+
+
 def _saved_provider_options_valid(args: argparse.Namespace) -> bool:
     """Validate retained provider choices, never substitute new CLI defaults."""
     try:
@@ -1312,6 +1339,8 @@ def _saved_provider_options_valid(args: argparse.Namespace) -> bool:
             origins.add(f"https://{args.server_name}")
         if (origin not in origins or environment.get("CASE_INTELLIGENCE_OIDC_CLIENT_SECRET_FILE", "").strip()
                 != "/run/recordbench-secrets/oidc-client-secret"):
+            return False
+        if not _saved_oidc_ca_valid(args.root, environment.get('CASE_INTELLIGENCE_OIDC_CA_FILE', '').strip()):
             return False
         scopes = set(environment.get("CASE_INTELLIGENCE_OIDC_SCOPES", "openid profile email").split())
         if ("openid" not in scopes or len(scopes) > 12
@@ -1489,7 +1518,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
             add("saved-provider-options", valid,
                 "Saved provider settings are valid" if valid else "Saved provider settings are invalid or disagree with canonical credentials",
                 "Resume with the retained identity provider boundary",
-                "Repair the retained provider settings in config/recordbench.env and matching Compose identity. Keep canonical secret-file references, valid provider options and the configured external origin; replacement command-line values do not change saved settings.")
+                "Repair the retained provider settings in config/recordbench.env and matching Compose identity. Keep canonical secret-file references, a readable valid CA certificate in the secrets mount when configured, valid provider options and the configured external origin; replacement command-line values do not change saved settings.")
             if args.auth == "oidc":
                 valid = _oidc_secret_source_valid(args.root / "secrets/oidc-client-secret", private=True)
                 add("oidc-secret-input", valid,
@@ -1814,9 +1843,22 @@ def _password(args: argparse.Namespace) -> str:
         value = getpass.getpass("Initial administrator password: ")
         if value != getpass.getpass("Confirm administrator password: "):
             raise RuntimeError("administrator passwords did not match")
-    if not 14 <= len(value) <= 1024:
-        raise RuntimeError("administrator password must contain 14 to 1,024 characters")
+    if not 14 <= len(value) <= 1024 or "\x00" in value:
+        raise RuntimeError("administrator password must contain 14 to 1,024 characters without NUL")
     return value
+
+
+@contextmanager
+def _bootstrap_password_input(args: argparse.Namespace, root: Path, auth: str):
+    account_root = (getattr(args, 'account_root', root / 'accounts')
+                    if args.enable_account_management else root / 'secrets')
+    values = []
+    try:
+        if not args.dry_run and auth == 'local' and not (account_root / 'local-accounts.json').exists():
+            values.append(_password(args))
+        yield values
+    finally:
+        values.clear()
 
 
 def _hf_token(args: argparse.Namespace) -> str:
@@ -2194,6 +2236,15 @@ def _install_phase(root: Path, phase: str, state: str) -> None:
     _atomic_private_write(root / "state" / "install-progress.json", json.dumps(progress, indent=2) + "\n")
 
 
+def _record_prepared_phases(root: Path, installation: Mapping[str, object]) -> None:
+    if not _provisioning_complete(root, installation):
+        return
+    for phase in INSTALL_PHASES[:6]:
+        not_selected = (phase == 'administrator' and installation.get('auth') != 'local'
+                        or phase == 'models' and installation.get('models') == 'none')
+        _install_phase(root, phase, 'not-selected' if not_selected else 'complete')
+
+
 def _handoff(console: Console, root: Path, *, dry_run: bool = False) -> None:
     if dry_run:
         console.note("PLAN COMPLETE: no node was prepared, launched or signed in")
@@ -2294,8 +2345,16 @@ def _provision(
     models: str,
     admin_username: str | None,
     admin_display: str | None,
-    *, model_cache_verified: bool = False,
+    *, model_cache_verified: bool = False, password_input: list[str] | None = None,
 ) -> None:
+    if password_input is None:
+        account_root = (getattr(args, 'account_root', root / 'accounts')
+                        if args.enable_account_management else root / 'secrets')
+        if auth == 'local' and not (account_root / 'local-accounts.json').exists() and (not admin_username or not admin_display):
+            raise RuntimeError('unfinished local installation requires --admin-username and --admin-display-name when resumed')
+        with _bootstrap_password_input(args, root, auth) as values:
+            return _provision(console, args, root, auth, models, admin_username, admin_display,
+                              model_cache_verified=model_cache_verified, password_input=values)
     profiles = ["tools"]
     if not args.dry_run:
         for phase in INSTALL_PHASES[1:]:
@@ -2354,7 +2413,9 @@ def _provision(
                 "unfinished local installation requires --admin-username and "
                 "--admin-display-name when resumed"
             )
-        password = "dry-run-password-placeholder" if args.dry_run else _password(args)
+        if not args.dry_run and not password_input:
+            raise RuntimeError('Initial account state changed; rerun preflight before initialization')
+        password = "dry-run-password-placeholder" if args.dry_run else password_input.pop()
         try:
             _run(
                 console,
@@ -2367,6 +2428,7 @@ def _provision(
     if not args.dry_run and auth == "local":
         _run(console, [*compose, "run", "--rm", "--no-deps", "account-admin", "accounts", "list", "--file", account_container_file], capture=True)
         _install_phase(root, "administrator", "complete")
+    password_input.clear()
     console.ok("Managed storage boundary and identity control plane sealed")
 
     if models != "none":
@@ -2533,6 +2595,9 @@ def _doctor(console: Console, args: argparse.Namespace, root: Path) -> None:
     _run(console, [*compose, "ps"], dry_run=args.dry_run)
     if not args.dry_run:
         _wait_health(console, root)
+    if not args.dry_run:
+        installation, _ = _installed_release(root)
+        _record_prepared_phases(root, installation)
     console.ok("Node diagnostic complete")
 
 
@@ -2686,55 +2751,56 @@ def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None
     _preflight(console, models=models, dry_run=args.dry_run, args=args,
                needs_model_staging=needs_model_staging,
                defer_gpu_free_check=recover_running_gpu)
-    console.phase(2, "REJOIN NODE", "Using sealed identity, storage, model, and release coordinates")
-    compose = _compose(root, profiles)
-    _run(console, [*compose, "config", "--quiet"], dry_run=args.dry_run)
-    running: list[str] = []
-    if recover_running_gpu:
-        if args.dry_run:
-            console.note("Dry run: observe this node's running services, stop them if a selected model is running, then recheck GPU capacity; actual free-memory admission is deferred")
-        else:
-            enabled = set(_run(console, [*compose, "config", "--services"], capture=True).stdout.splitlines())
-            observed = set(_run(console, [*compose, "ps", "--status", "running", "--services", "--orphans=false"], capture=True).stdout.splitlines())
-            if any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", service) is None for service in enabled | observed):
-                raise RuntimeError("could not safely identify this node's running services")
-            model_services = set()
-            if models in {"review", "all"}:
-                model_services.add("generator")
-                if args.retrieval_device == "cuda":
-                    model_services.add("retrieval")
-            if models in {"transcription", "all"}:
-                model_services.add("transcription-worker")
-            if enabled & observed & model_services:
-                running = sorted(enabled & observed)
-    stop_attempted = False
-    try:
-        if running:
-            console.note("Stopping this node's observed running services to release its model allocation")
-            stop_attempted = True
-            _run(console, [*compose, "stop", "--timeout", "120", *running])
-        if recover_running_gpu and not args.dry_run:
-            # Deferral never authorizes provisioning: even an empty running
-            # model set must pass admission using actual free device memory.
-            _preflight(console, models=models, dry_run=False, args=args,
-                       needs_model_staging=needs_model_staging)
-        if not args.dry_run:
-            _install_phase(root, "configuration", "complete")
-        console.ok(f"release capsule :: {installation.get('release_id', 'legacy')}")
-        if not prepared:
-            console.warn("Prior boot stopped before the provisioning seal; validating and continuing existing state")
-        else:
-            console.note("Prepared phase receipt found; revalidating storage, accounts and the offline model selection")
-        _provision(console, args, root, auth, models, args.admin_username, args.admin_display_name,
-                   model_cache_verified=not needs_model_staging)
-    except Exception as resume_error:
-        if not stop_attempted:
-            raise
+    with _bootstrap_password_input(args, root, auth) as password_input:
+        console.phase(2, "REJOIN NODE", "Using sealed identity, storage, model, and release coordinates")
+        compose = _compose(root, profiles)
+        _run(console, [*compose, "config", "--quiet"], dry_run=args.dry_run)
+        running: list[str] = []
+        if recover_running_gpu:
+            if args.dry_run:
+                console.note("Dry run: observe this node's running services, stop them if a selected model is running, then recheck GPU capacity; actual free-memory admission is deferred")
+            else:
+                enabled = set(_run(console, [*compose, "config", "--services"], capture=True).stdout.splitlines())
+                observed = set(_run(console, [*compose, "ps", "--status", "running", "--services", "--orphans=false"], capture=True).stdout.splitlines())
+                if any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", service) is None for service in enabled | observed):
+                    raise RuntimeError("could not safely identify this node's running services")
+                model_services = set()
+                if models in {"review", "all"}:
+                    model_services.add("generator")
+                    if args.retrieval_device == "cuda":
+                        model_services.add("retrieval")
+                if models in {"transcription", "all"}:
+                    model_services.add("transcription-worker")
+                if enabled & observed & model_services:
+                    running = sorted(enabled & observed)
+        stop_attempted = False
         try:
-            _run(console, [*compose, "start", *running])
-        except Exception as restore_error:
-            raise RuntimeError("resume failed and restoration also failed; inspect this node's service status before retrying") from restore_error
-        raise RuntimeError("resume failed; previously running services were restarted, but health is not confirmed") from resume_error
+            if running:
+                console.note("Stopping this node's observed running services to release its model allocation")
+                stop_attempted = True
+                _run(console, [*compose, "stop", "--timeout", "120", *running])
+            if recover_running_gpu and not args.dry_run:
+                # Deferral never authorizes provisioning: even an empty running
+                # model set must pass admission using actual free device memory.
+                _preflight(console, models=models, dry_run=False, args=args,
+                           needs_model_staging=needs_model_staging)
+            if not args.dry_run:
+                _install_phase(root, "configuration", "complete")
+            console.ok(f"release capsule :: {installation.get('release_id', 'legacy')}")
+            if not prepared:
+                console.warn("Prior boot stopped before the provisioning seal; validating and continuing existing state")
+            else:
+                console.note("Prepared phase receipt found; revalidating storage, accounts and the offline model selection")
+            _provision(console, args, root, auth, models, args.admin_username, args.admin_display_name,
+                       model_cache_verified=not needs_model_staging, password_input=password_input)
+        except Exception as resume_error:
+            if not stop_attempted:
+                raise
+            try:
+                _run(console, [*compose, "start", *running])
+            except Exception as restore_error:
+                raise RuntimeError("resume failed and restoration also failed; inspect this node's service status before retrying") from restore_error
+            raise RuntimeError("resume failed; previously running services were restarted, but health is not confirmed") from resume_error
 
 
 def _backup_tool(root: Path) -> Path:
@@ -2945,6 +3011,7 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
         if not args.dry_run:
             _wait_health(console, root)
             _seal_provisioning(root, updated)
+            _record_prepared_phases(root, updated)
             if (root / "state" / "backup-unit.json").is_file():
                 _schedule_backup(console, root, dry_run=False)
         console.ok(f"Update committed :: {release_id}")
@@ -3030,6 +3097,7 @@ def main() -> int:
             return 0
         if args.command == "update":
             _update(console, args, root)
+            _handoff(console, root, dry_run=args.dry_run)
             console.line(console.paint("  >>> NODE UPGRADE COMPLETE <<<", C.green + C.bold))
             return 0
         if args.resume and (root / "installation.json").is_file():
@@ -3065,19 +3133,20 @@ def main() -> int:
         # Resolve storage, TLS and the complete hardware plan before creating
         # state. Dry-run discovery uses the same read-only prerequisite checks.
         gpu_devices = _preflight(console, models=models, dry_run=args.dry_run, args=args)
-        paths = _prepare_directories(
-            console,
-            root,
-            storage_root=args.storage_root,
-            resume=args.resume,
-            dry_run=args.dry_run,
-        )
-        console.phase(3, "LOAD RELEASE CAPSULE", "Hashing and staging only the deployable open-source tree")
-        release_id, release_path = _stage_release(console, root, dry_run=args.dry_run)
-        auth, models, _server_name, admin_user, admin_display = _configure(
-            console, args, root, paths, release_id, release_path, gpu_devices
-        )
-        _provision(console, args, root, auth, models, admin_user, admin_display)
+        with _bootstrap_password_input(args, root, args.auth) as password_input:
+            paths = _prepare_directories(
+                console,
+                root,
+                storage_root=args.storage_root,
+                resume=args.resume,
+                dry_run=args.dry_run,
+            )
+            console.phase(3, "LOAD RELEASE CAPSULE", "Hashing and staging only the deployable open-source tree")
+            release_id, release_path = _stage_release(console, root, dry_run=args.dry_run)
+            auth, models, _server_name, admin_user, admin_display = _configure(
+                console, args, root, paths, release_id, release_path, gpu_devices
+            )
+            _provision(console, args, root, auth, models, admin_user, admin_display, password_input=password_input)
         console.line()
         _handoff(console, root, dry_run=args.dry_run)
         return 0
