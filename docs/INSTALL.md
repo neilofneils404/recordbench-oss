@@ -152,7 +152,10 @@ For missing prerequisites:
   choice, IP bind-address syntax, server-name syntax and file access. The bind
   address must be an IPv4 or unbracketed, unscoped IPv6 literal; specify the port
   separately with `--https-port`. Supplied certificate and key paths must not
-  contain control characters. Preflight does not certify the pair's matching keys, identity,
+  contain control characters. Relative TLS paths are made absolute from the
+  launch directory before checking and saving them, so the staged release uses
+  the same files; symbolic-link inputs remain rejected. Preflight does not
+  certify the pair's matching keys, identity,
   expiry or trust chain. Verify those before staff access.
 - For AI tasks, install the NVIDIA driver and
   [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
@@ -284,6 +287,19 @@ Resume and update validate the saved model profile, selected GPU devices,
 generator precision, memory reservation and transcription free-memory threshold.
 They do not substitute an automatically chosen GPU or a smaller model to pass
 these checks. Resume requires sufficient current free memory before provisioning.
+After a prior boot reached its provisioning seal but failed during startup or
+health checks, its model services may still hold GPU memory. A normal resume of
+that prepared GPU node first checks physical capacity and saved compatibility,
+then observes this node's enabled running services. If a selected GPU model
+service is running, resume stops only that observed service set with a 120-second
+grace period and checks actual free memory before continuing. If no model service
+is running, actual free memory must still pass before provisioning. A service
+probe failure blocks the resume. A failure after a stop attempt restarts only
+the previously observed services and explicitly leaves health unconfirmed; no
+volumes are deleted. Fresh installs, resumes before the provisioning seal, and
+`--prepare-only` resumes retain strict initial free-memory admission. A prepared
+GPU resume dry run reports the deferred actual-free check without probing service
+state, stopping services, or running Compose mutations.
 Update first checks compatibility and physical total capacity before backup or
 release commands; its running models may still occupy their existing allocation. Saved `bfloat16` precision requires compute capability 8.0 or newer on
 every selected generator GPU, even when a new automatic plan could use `half`.
