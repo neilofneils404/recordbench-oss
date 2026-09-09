@@ -146,3 +146,10 @@ Matter storage is configurable and may be a dedicated host-mounted NAS path.
 RecordBench remains a temporary review workspace: exports leave the system,
 matters can be closed and purged, and the independent Transcript Studio queue
 has a short expiry.
+
+[Local account lifecycle](LOCAL_ACCOUNT_LIFECYCLE.md) separates read-only live
+account snapshots from operator-authorized mutations of the same private JSON
+file. A shared repository serializes writers and preserves at least one enabled
+administrator. Version 2 account revisions bind local sessions to current
+credentials, enabled state and roles without changing the SQLite session schema
+or granting the web application write access to secrets.

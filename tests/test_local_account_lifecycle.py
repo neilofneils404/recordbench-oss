@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+import json
+import multiprocessing
+import os
+import shutil
+import threading
+from pathlib import Path
+
+import pytest
+
+from case_intelligence import local_accounts
+from case_intelligence.identity import IdentityService, LocalAccountSettings, LocalAuthenticationError
+from case_intelligence.local_accounts import LocalAccountRepository
+from case_intelligence.workspace_store import WorkspaceStore
+from tests.test_local_authentication import _accounts_file
+
+ACTOR = "synthetic-operator"
+PASSWORD = "synthetic-local-password"
+
+
+def repository(tmp_path):
+    result = LocalAccountRepository(tmp_path / "private accounts/accounts.json")
+    result.initialize("alice.admin", "Alice Administrator", PASSWORD, actor=ACTOR)
+    return result
+
+
+def identity(tmp_path, repo):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(exist_ok=True)
+    return IdentityService(WorkspaceStore(runtime / "workbench.sqlite"), runtime,
+                           auth_mode="local", secure_cookie=True,
+                           local_settings=LocalAccountSettings(repo.path))
+
+
+def _concurrent_change(path, operation, username, barrier, queue):
+    repo = LocalAccountRepository(Path(path))
+    barrier.wait(timeout=10)
+    try:
+        if operation == "create":
+            repo.create(username, "Generated Reviewer", PASSWORD, actor=ACTOR)
+        else:
+            repo.set_administrator(username, False, actor=ACTOR)
+        queue.put("ok")
+    except RuntimeError:
+        queue.put("denied")
+
+
+def test_independent_writers_retain_both_account_changes(tmp_path):
+    repo = repository(tmp_path)
+    context = multiprocessing.get_context("spawn")
+    barrier, queue = context.Barrier(2), context.Queue()
+    workers = [context.Process(target=_concurrent_change,
+                               args=(str(repo.path), "create", username, barrier, queue))
+               for username in ("first.reviewer", "second.reviewer")]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=20)
+        assert worker.exitcode == 0
+    assert sorted(queue.get(timeout=2) for _ in workers) == ["ok", "ok"]
+    assert set(repo.read()) == {"alice.admin", "first.reviewer", "second.reviewer"}
+
+
+def test_last_administrator_race_preserves_one_enabled_administrator(tmp_path):
+    repo = repository(tmp_path)
+    repo.create("second.admin", "Second Administrator", PASSWORD, administrator=True, actor=ACTOR)
+    context = multiprocessing.get_context("spawn")
+    barrier, queue = context.Barrier(2), context.Queue()
+    workers = [context.Process(target=_concurrent_change,
+                               args=(str(repo.path), "demote", username, barrier, queue))
+               for username in ("alice.admin", "second.admin")]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=20)
+        assert worker.exitcode == 0
+    assert sorted(queue.get(timeout=2) for _ in workers) == ["denied", "ok"]
+    assert sum(account.enabled and "administrator" in account.roles for account in repo.read().values()) == 1
+
+
+@pytest.mark.parametrize("operation", ["disable", "demote"])
+def test_last_administrator_rejection_does_not_change_file(tmp_path, operation):
+    repo = repository(tmp_path)
+    before = repo.path.read_bytes()
+    with pytest.raises(RuntimeError, match="At least one enabled"):
+        if operation == "disable":
+            repo.set_enabled("alice.admin", False, actor=ACTOR)
+        else:
+            repo.set_administrator("alice.admin", False, actor=ACTOR)
+    assert repo.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("failure", ["replace", "fsync"])
+def test_failed_write_preserves_original_and_releases_writer_lock(tmp_path, monkeypatch, failure):
+    repo = repository(tmp_path)
+    before = repo.path.read_bytes()
+    original = getattr(local_accounts.os, failure)
+    def fail(*args, **kwargs):
+        raise OSError("synthetic write failure")
+    monkeypatch.setattr(local_accounts.os, failure, fail)
+    with pytest.raises(OSError, match="synthetic write failure"):
+        repo.change_display_name("alice.admin", "Changed Name", actor=ACTOR)
+    assert repo.path.read_bytes() == before
+    assert not list(repo.path.parent.glob("*.tmp"))
+    monkeypatch.setattr(local_accounts.os, failure, original)
+    repo.change_display_name("alice.admin", "Changed Name", actor=ACTOR)
+    assert repo.read()["alice.admin"].display_name == "Changed Name"
+
+
+def test_readers_see_complete_snapshots_without_writer_lock(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    ready, release = threading.Event(), threading.Event()
+    original = local_accounts.os.replace
+    failures = []
+    def paused_replace(*args, **kwargs):
+        ready.set()
+        assert release.wait(10)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(local_accounts.os, "replace", paused_replace)
+    def change():
+        try:
+            repo.change_display_name("alice.admin", "After Replacement", actor=ACTOR)
+        except Exception as exc:
+            failures.append(exc)
+    worker = threading.Thread(target=change)
+    worker.start()
+    try:
+        assert ready.wait(10)
+        assert repo.read()["alice.admin"].display_name == "Alice Administrator"
+    finally:
+        release.set()
+        worker.join(timeout=10)
+    assert not failures and not worker.is_alive()
+    assert repo.read()["alice.admin"].display_name == "After Replacement"
+
+
+def test_migration_backup_clean_restore_and_rollback_preserve_accounts(tmp_path):
+    source = _accounts_file(tmp_path)
+    original = source.read_bytes()
+    repo = LocalAccountRepository(source)
+    # Existing v1 sign-in is readable; mutation requires deliberate migration.
+    settings = LocalAccountSettings(source)
+    assert settings.authenticate("alice.reviewer", PASSWORD)
+    with pytest.raises(RuntimeError, match="Migrate local accounts"):
+        repo.change_password("alice.reviewer", "synthetic-new-password", actor=ACTOR)
+    backup = tmp_path / "recovery/accounts-v1.json"
+    repo.migrate(backup, actor=ACTOR)
+    assert backup.read_bytes() == original
+    assert backup.stat().st_mode & 0o777 == 0o600
+    assert json.loads(source.read_bytes())["format_version"] == 2
+    assert settings.authenticate("alice.reviewer", PASSWORD)
+    # New-format backup restored into a clean private directory survives restart.
+    restored = tmp_path / "restored/accounts.json"
+    restored.parent.mkdir(mode=0o700)
+    shutil.copyfile(source, restored)
+    restored.chmod(0o600)
+    assert LocalAccountSettings(restored).authenticate("alice.reviewer", PASSWORD)
+    # A rollback restores exactly the v1 bytes expected by the prior release.
+    rollback = tmp_path / "rollback/accounts.json"
+    rollback.parent.mkdir(mode=0o700)
+    shutil.copyfile(backup, rollback)
+    rollback.chmod(0o600)
+    assert rollback.read_bytes() == original
+    assert json.loads(rollback.read_bytes())["format_version"] == 1
+    assert LocalAccountSettings(rollback).authenticate("alice.reviewer", PASSWORD)
+
+
+def test_failed_migration_backup_does_not_upgrade_or_overwrite_backup(tmp_path):
+    source = _accounts_file(tmp_path)
+    original = source.read_bytes()
+    backup = tmp_path / "existing-backup.json"
+    backup.write_text("synthetic existing recovery copy")
+    backup.chmod(0o600)
+    with pytest.raises(FileExistsError):
+        LocalAccountRepository(source).migrate(backup, actor=ACTOR)
+    assert source.read_bytes() == original
+    assert backup.read_text() == "synthetic existing recovery copy"
+
+
+@pytest.mark.parametrize("operation", ["password", "disable-enable", "demote-promote"])
+def test_changes_revoke_sessions_without_restart_and_never_revive(tmp_path, operation):
+    repo = repository(tmp_path)
+    repo.create("backup.admin", "Backup Administrator", PASSWORD, administrator=True, actor=ACTOR)
+    first, second = identity(tmp_path, repo), identity(tmp_path, repo)
+    context, token = first.login_local("alice.admin", PASSWORD)
+    assert second.resolve(token).is_administrator
+    if operation == "password":
+        repo.change_password("alice.admin", "synthetic-updated-password", actor=ACTOR)
+    elif operation == "disable-enable":
+        repo.set_enabled("alice.admin", False, actor=ACTOR)
+        repo.set_enabled("alice.admin", True, actor=ACTOR)
+    else:
+        repo.set_administrator("alice.admin", False, actor=ACTOR)
+        repo.set_administrator("alice.admin", True, actor=ACTOR)
+    # No request occurred between removal and restoration: the revision still
+    # makes the old token invalid in both already-running settings instances.
+    assert second.resolve(token) is None
+    assert first.resolve(token) is None
+    assert first.store.resolve_session(first.token_digest(token), now="2026-01-01T00:00:00Z", next_idle_expires_at="2026-01-01T01:00:00Z") is None
+    if operation == "password":
+        with pytest.raises(LocalAuthenticationError):
+            first.login_local("alice.admin", PASSWORD)
+        new_password = "synthetic-updated-password"
+    else:
+        new_password = PASSWORD
+    _, fresh = second.login_local("alice.admin", new_password)
+    assert first.resolve(fresh)
+    assert context.session.token_digest != token
+
+
+def test_display_name_refresh_preserves_session_and_new_accounts_are_live(tmp_path):
+    repo = repository(tmp_path)
+    service = identity(tmp_path, repo)
+    _, token = service.login_local("alice.admin", PASSWORD)
+    revision = repo.read()["alice.admin"].session_revision
+    repo.change_display_name("alice.admin", "Updated Administrator", actor=ACTOR)
+    assert service.resolve(token).display_name == "Updated Administrator"
+    assert repo.read()["alice.admin"].session_revision == revision
+    repo.create("new.reviewer", "New Reviewer", PASSWORD, actor=ACTOR)
+    context, _ = service.login_local("new.reviewer", PASSWORD)
+    assert not context.is_administrator
+
+
+def test_invalid_live_file_denies_existing_session_and_sign_in_safely(tmp_path):
+    repo = repository(tmp_path)
+    service = identity(tmp_path, repo)
+    _, token = service.login_local("alice.admin", PASSWORD)
+    repo.path.chmod(0o644)
+    assert service.resolve(token) is None
+    with pytest.raises(LocalAuthenticationError, match="temporarily unavailable"):
+        service.login_local("alice.admin", PASSWORD)
+
+
+def test_safe_file_boundary_rejects_symlink_and_non_regular_inputs(tmp_path):
+    repo = repository(tmp_path)
+    linked = repo.path.parent / "linked.json"
+    linked.symlink_to(repo.path)
+    with pytest.raises(OSError):
+        LocalAccountRepository(linked).read()
+    fifo = repo.path.parent / "fifo.json"
+    os.mkfifo(fifo, 0o600)
+    with pytest.raises(RuntimeError, match="unsafe"):
+        LocalAccountRepository(fifo).read()
+    directory_link = tmp_path / "linked-directory"
+    directory_link.symlink_to(repo.path.parent)
+    with pytest.raises(OSError):
+        LocalAccountRepository(directory_link / "accounts.json").read()
+
+
+def test_cli_uses_shared_changes_and_never_logs_passwords_or_hashes(tmp_path, monkeypatch, capsys):
+    from case_intelligence import admin_cli
+    repo = repository(tmp_path)
+    monkeypatch.setattr("sys.argv", ["recordbench", "accounts", "display-name", "--file", str(repo.path),
+                                   "--username", "alice.admin", "--display-name", "CLI Updated"])
+    admin_cli.main()
+    output = capsys.readouterr().out
+    assert "actor=uid:" in output and "display-name" in output
+    assert PASSWORD not in output and "$argon2" not in output
+    assert repo.read()["alice.admin"].display_name == "CLI Updated"
+
+
+def _long_lived_reader(path, ready, changed, queue):
+    settings = LocalAccountSettings(Path(path))
+    ready.set()
+    if not changed.wait(10):
+        raise RuntimeError("synthetic reader timed out")
+    queue.put(settings.account("alice.admin").display_name)
+
+
+def test_running_process_refreshes_account_after_independent_change(tmp_path):
+    repo = repository(tmp_path)
+    context = multiprocessing.get_context("spawn")
+    ready, changed, queue = context.Event(), context.Event(), context.Queue()
+    worker = context.Process(target=_long_lived_reader, args=(str(repo.path), ready, changed, queue))
+    worker.start()
+    try:
+        assert ready.wait(10)
+        repo.change_display_name("alice.admin", "Fresh Across Processes", actor=ACTOR)
+    finally:
+        changed.set()
+        worker.join(timeout=15)
+    assert worker.exitcode == 0
+    assert queue.get(timeout=2) == "Fresh Across Processes"
+
+
+def test_credential_revision_survives_restart_and_does_not_revoke_other_accounts(tmp_path):
+    repo = repository(tmp_path)
+    repo.create("other.reviewer", "Other Reviewer", PASSWORD, actor=ACTOR)
+    service = identity(tmp_path, repo)
+    _, old = service.login_local("alice.admin", PASSWORD)
+    _, unrelated = service.login_local("other.reviewer", PASSWORD)
+    repo.change_password("alice.admin", "synthetic-updated-password", actor=ACTOR)
+    restarted = identity(tmp_path, repo)
+    assert restarted.resolve(old) is None
+    assert restarted.resolve(unrelated).principal.provider_subject == "other.reviewer"
+    _, fresh = restarted.login_local("alice.admin", "synthetic-updated-password")
+    assert identity(tmp_path, repo).resolve(fresh)
+
+
+def test_reader_does_not_create_lock_or_require_directory_write(tmp_path, monkeypatch):
+    source = _accounts_file(tmp_path)
+    assert not (source.parent / f".{source.name}.lock").exists()
+    original = local_accounts.os.open
+    def read_only(path, flags, *args, **kwargs):
+        assert not flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT)
+        return original(path, flags, *args, **kwargs)
+    monkeypatch.setattr(local_accounts.os, "open", read_only)
+    assert LocalAccountSettings(source).authenticate("alice.reviewer", PASSWORD)
+    assert not (source.parent / f".{source.name}.lock").exists()
