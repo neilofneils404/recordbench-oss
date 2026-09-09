@@ -7,6 +7,8 @@ import pytest
 
 from case_intelligence.pilot_uploads import PilotDocument, PilotUnit
 from case_intelligence.report_materials import snapshot_report_materials
+from case_intelligence import report_materials
+from case_intelligence.work_product_exports import MAX_EXPORT_TEXT_CHARS
 from case_intelligence.workbench import CaseIntelligenceWorkbench
 from case_intelligence.workspace_store import NotebookReferenceRecord, WorkspaceProblem
 
@@ -166,6 +168,71 @@ def test_oversized_canonical_unit_fails_instead_of_truncating():
     bench.workspace.chat = [message(1, answer(reference(bench, document)))]
     with pytest.raises(WorkspaceProblem, match="50,000-character"):
         selected(bench)
+
+
+def test_repeated_full_citations_fit_exact_aggregate_boundary():
+    document = source(1, "x" * 50_000)
+    bench, _ = bench_for(document)
+    ref = reference(bench, document)
+    assert report_materials.MAX_TOTAL_CITATION_CHARS == MAX_EXPORT_TEXT_CHARS // 2
+    count = report_materials.MAX_TOTAL_CITATION_CHARS // len(ref["excerpt"])
+    payload = answer(ref)
+    payload["claims"][0]["citations"] = [ref] * count
+    bench.workspace.chat = [message(1, payload)]
+    result = selected(bench)
+    citations = result[0].citations
+    assert len(citations) == count
+    assert sum(len(value["excerpt"]) for value in citations) == report_materials.MAX_TOTAL_CITATION_CHARS
+    assert all(value["excerpt"] == ref["excerpt"] for value in citations)
+
+
+@pytest.mark.parametrize("across_findings", [False, True])
+def test_duplicate_citations_are_charged_per_rendered_occurrence(monkeypatch, across_findings):
+    document = source(1, "x" * 50_000)
+    bench, _ = bench_for(document)
+    ref = reference(bench, document)
+    monkeypatch.setattr(report_materials, "MAX_TOTAL_CITATION_CHARS", 99_999)
+    if across_findings:
+        bench.workspace.chat = [message(index, answer(ref)) for index in (1, 2)]
+    else:
+        payload = answer(ref)
+        payload["claims"][0]["citations"] = [ref, ref]
+        bench.workspace.chat = [message(1, payload)]
+    with pytest.raises(WorkspaceProblem, match="total citation-text limit"):
+        selected(bench)
+
+
+def test_cumulative_canonical_budget_stops_before_loading_later_sources(monkeypatch):
+    documents = [source(1, "a" * 40_000), source(2, "b" * 40_000),
+                 source(3, "c" * 20_001), source(4)]
+    bench, _ = bench_for(*documents)
+    refs = [reference(bench, document) for document in documents]
+    # A saved preview can be short while the canonical passage is long.
+    for ref in refs:
+        ref["excerpt"] = ref["excerpt"][:20]
+    bench.workspace.chat = [message(index, answer(ref)) for index, ref in enumerate(refs)]
+    monkeypatch.setattr(report_materials, "MAX_TOTAL_CITATION_CHARS", 100_000)
+    documents[-1].units, documents[-1].units_file = [], "synthetic-unneeded.json"
+    documents[-1]._units_loader = lambda _: pytest.fail("Loaded a source after citation budget exhaustion")
+    with pytest.raises(WorkspaceProblem, match="total citation-text limit"):
+        selected(bench)
+
+
+def test_citation_budget_is_shared_across_selected_saved_work(monkeypatch):
+    document = source(1, "x" * 50_000)
+    bench, _ = bench_for(document)
+    ref = reference(bench, document)
+    bench.workspace.chat = [message(1, answer(ref))]
+    bench.workspace.notes = [SimpleNamespace(item_id="note-a", title="Synthetic note", body="Saved finding",
+        status="needs_review", updated_at=REVISION, updated_by_name="Synthetic reviewer",
+        created_by_name="Synthetic reviewer", date_label="", item_type="note")]
+    fields = NotebookReferenceRecord.__dataclass_fields__
+    values = {key: value for key, value in ref.items() if key in fields}
+    values.update(reference_id="reference-a", item_id="note-a", ordinal=1, created_at=REVISION)
+    bench.workspace.refs["note-a"] = (NotebookReferenceRecord(**values),)
+    monkeypatch.setattr(report_materials, "MAX_TOTAL_CITATION_CHARS", 99_999)
+    with pytest.raises(WorkspaceProblem, match="total citation-text limit"):
+        selected(bench, "conversation:conversation-a", "note:note-a")
 
 
 def test_unversioned_transcript_staff_reference_fails_even_though_token_resolves():
