@@ -1,5 +1,9 @@
 # Authentication
 
+Administrators without an assigned matter open [Team setup](FIRST_RUN.md) after
+default sign-in. The checklist links identity setup, source preparation and case
+team access; it derives progress from current workspace evidence.
+
 Local administrators can use **People** to manage accounts when the explicit
 [browser account profile](LOCAL_ACCOUNT_BROWSER.md) is enabled. The same page
 explains operator setup when disabled and directs OIDC/Kerberos account changes

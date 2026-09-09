@@ -2141,6 +2141,17 @@ class WorkspaceStore:
             rows = self.connection.execute(query, parameters).fetchall()
         return tuple(self._audit_event(row) for row in rows)
 
+    def member_access_seen(self, matter_id: str, principal_id: str, *, since: str) -> bool:
+        """Whether a current member opened this matter after the current grant."""
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT 1 FROM workbench_audit_event WHERE matter_id=? "
+                "AND actor_principal_id=? AND occurred_at>=? AND outcome='success' "
+                "AND action IN ('matter.home','matter.open') LIMIT 1",
+                (matter_id, principal_id, since),
+            ).fetchone()
+        return row is not None
+
     def create_matter(
         self,
         display_name: str,

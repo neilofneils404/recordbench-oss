@@ -35,6 +35,17 @@ const changedPassword = 'synthetic-reset-password';
     }
     await login(admin, 'alice.admin');
     assert.ok(['/admin/people', '/admin/setup'].includes(new URL(admin.url()).pathname));
+    const onboarding = new URL(admin.url()).pathname === '/admin/setup';
+    if (onboarding) {
+      await admin.getByRole('heading', {name: 'Bring your team into RecordBench'}).waitFor();
+      await admin.screenshot({path: path.join(process.env.RECORDBENCH_QA_ARTIFACTS, 'setup-desktop.png'), fullPage: true});
+      await admin.setViewportSize({width: 390, height: 844});
+      await admin.reload();
+      assert.equal(await admin.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+      await admin.screenshot({path: path.join(process.env.RECORDBENCH_QA_ARTIFACTS, 'setup-mobile.png'), fullPage: true});
+      await admin.setViewportSize({width: 1440, height: 1000});
+      await admin.reload();
+    }
     await create('first.reviewer', 'First Reviewer');
     await create('second.reviewer', 'Second Reviewer');
     await login(first, 'first.reviewer');
@@ -50,6 +61,10 @@ const changedPassword = 'synthetic-reset-password';
     assert.equal((await first.goto(origin + '/matters/' + slug + '/home')).status(), 200);
     assert.ok([403, 404].includes((await second.goto(origin + '/matters/' + slug + '/home')).status()));
     assert.equal((await second.goto(origin + '/admin/people')).status(), 403);
+    if (onboarding) {
+      await admin.goto(origin + '/admin/setup?matter=' + slug);
+      await admin.getByText('A current teammate has opened this matter since their latest access grant.', {exact: true}).waitFor();
+    }
     await admin.goto(origin + '/admin/people/accounts/first.reviewer');
     await admin.getByLabel('New password', {exact: true}).fill(changedPassword);
     await admin.getByLabel('Enter new password again', {exact: true}).fill(changedPassword);

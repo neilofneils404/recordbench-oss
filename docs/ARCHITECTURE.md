@@ -1,5 +1,10 @@
 # Architecture
 
+[First-run guidance](FIRST_RUN.md) derives browser setup from existing source
+readiness, memberships and matter-open audit events. The installer separately
+records versioned preparation/transport observations; neither mechanism grants
+identity, changes authorization or treats browser sign-in as verified.
+
 ```text
 staff browser
     │ HTTPS

@@ -86,12 +86,13 @@ def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path, ready_ho
         "FORGE RUNTIME",
         "SEAL CONTROL PLANE",
         "NODE ARMED",
-        "ACCESS GRANTED",
+        "PLAN COMPLETE",
     ):
         assert marker in output
     assert not node.exists()
     assert "password=" not in output.casefold()
     assert "token=" not in output.casefold()
+    assert "ACCESS GRANTED" not in output
 
 
 def test_capability_profiles_have_conservative_gpu_contracts() -> None:

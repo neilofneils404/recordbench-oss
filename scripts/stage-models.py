@@ -155,9 +155,55 @@ def _write_manifest(cache: Path, artifacts: list[dict[str, object]]) -> None:
     print(f"[vault] transcription manifest sealed: {len(artifacts)} artifact sets")
 
 
+def _stage_receipt(root: Path, catalog: Path, groups: frozenset[str], profile: str,
+                   files: Iterable[Path]) -> None:
+    root = root.resolve(strict=True)
+    inventory = {}
+    for path in files:
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(root) or not resolved.is_file():
+            raise RuntimeError("Staged model receipt contains an unsafe artifact")
+        relative = resolved.relative_to(root).as_posix()
+        inventory[relative] = {"size_bytes": resolved.stat().st_size, "sha256": _sha256(resolved)}
+    if not inventory:
+        raise RuntimeError("Staged model receipt has no artifacts")
+    payload = {"format_version": 1, "catalog_sha256": _sha256(catalog), "groups": sorted(groups),
+               "review_profile": profile, "files": inventory}
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".stage-receipt-", dir=root)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            json.dump(payload, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, root / ".recordbench-stage-receipt.json")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _verify_stage(root: Path, catalog: Path, groups: frozenset[str], profile: str) -> None:
+    """Verify the last complete exact selection without network or filesystem writes."""
+    receipt = root / ".recordbench-stage-receipt.json"
+    if receipt.is_symlink() or not receipt.is_file() or receipt.stat().st_size > 32 * 1024 * 1024:
+        raise RuntimeError("Model staging receipt is unavailable; resume staging")
+    value = json.loads(receipt.read_text())
+    if (not isinstance(value, dict) or value.get("format_version") != 1 or value.get("catalog_sha256") != _sha256(catalog)
+            or value.get("groups") != sorted(groups) or value.get("review_profile") != profile
+            or not isinstance(value.get("files"), dict) or not value["files"]):
+        raise RuntimeError("Model selection changed or staging is incomplete; resume staging")
+    for name, metadata in value["files"].items():
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts or not isinstance(metadata, dict):
+            raise RuntimeError("Model staging receipt contains an unsafe artifact")
+        candidate = root / relative
+        if (candidate.is_symlink() or not candidate.is_file() or not candidate.resolve().is_relative_to(root.resolve())
+                or candidate.stat().st_size != metadata.get("size_bytes") or _sha256(candidate) != metadata.get("sha256")):
+            raise RuntimeError("A staged model artifact is missing or changed; resume staging")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("stage", nargs="?")
+    parser.add_argument("command", nargs="?", choices=("stage", "verify"), default="stage")
     parser.add_argument("--catalog", type=Path, default=Path("config/models.json"))
     parser.add_argument("--model-root", type=Path, default=Path("/models"))
     parser.add_argument(
@@ -180,6 +226,12 @@ def main() -> int:
     )
     root = args.model_root.resolve()
     cache = root / "huggingface" / "hub"
+    if args.command == "verify":
+        if args.token_stdin:
+            parser.error("offline verification does not accept a token")
+        _verify_stage(root, args.catalog, groups, args.review_profile)
+        print("[vault] existing model selection verified offline; no model artifacts changed")
+        return 0
     cache.mkdir(parents=True, exist_ok=True)
     payload = _catalog(args.catalog)
     token = _token(args)
@@ -187,6 +239,7 @@ def main() -> int:
         from huggingface_hub import snapshot_download
         transcription_artifacts: list[dict[str, object]] = []
         dependency_index = 0
+        staged_files: list[Path] = []
         for raw in payload.get("models", []):
             if not isinstance(raw, dict) or not _selected(
                 raw, groups, review_profile=args.review_profile
@@ -206,6 +259,7 @@ def main() -> int:
                     local_files_only=False,
                 )
             )
+            staged_files.extend(path for path in snapshot_path.rglob("*") if path.is_file())
             if str(raw["group"]).startswith("transcription-"):
                 role = str(raw["role"])
                 if role == "diarization_dependency":
@@ -221,6 +275,7 @@ def main() -> int:
                 continue
             print(f"[vault] acquiring {raw['model_id']} alignment artifact")
             target = _download_direct(raw, cache)
+            staged_files.append(target)
             transcription_artifacts.append(
                 _artifact(
                     raw,
@@ -242,6 +297,9 @@ def main() -> int:
             if not nltk.download("punkt_tab", download_dir=nltk_root, quiet=True):
                 raise RuntimeError("NLTK punkt_tab staging failed")
             _write_manifest(cache, transcription_artifacts)
+            staged_files.extend(path for path in nltk_root.rglob("*") if path.is_file())
+            staged_files.append(cache / "approved-model-manifest.json")
+        _stage_receipt(root, args.catalog, groups, args.review_profile, staged_files)
     finally:
         token = None
     print("[vault] pinned model staging complete; no access token retained")

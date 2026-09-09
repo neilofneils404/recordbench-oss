@@ -6,11 +6,13 @@ import argparse
 import csv
 import getpass
 import hashlib
+import http.client
 import json
 import os
 import platform
 import re
 import secrets
+import shlex
 import shutil
 import ssl
 import subprocess
@@ -1372,6 +1374,11 @@ def _configure(
         admin_display = args.admin_display_name or _ask(
             "Administrator display name", "RecordBench Administrator", non_interactive=args.non_interactive
         )
+        admin_username = admin_username.strip().casefold()
+        if re.fullmatch(r"[a-z0-9][a-z0-9._@-]{2,127}", admin_username) is None:
+            raise RuntimeError("Initial administrator username is invalid")
+        if not admin_display.strip() or len(admin_display) > 160 or any(ord(char) < 32 for char in admin_display):
+            raise RuntimeError("Initial administrator display name is invalid")
     elif auth == "oidc":
         issuer = args.oidc_issuer or _ask(
             "OIDC issuer URL",
@@ -1515,6 +1522,9 @@ def _configure(
                     "storage_root": str(paths["storage"]),
                     "auth": auth,
                     "local_account_management": bool(args.enable_account_management),
+                    "initial_administrator": admin_username if auth == "local" else None,
+                    "initial_administrator_display_name": admin_display if auth == "local" else None,
+                    "tls_source": "operator" if args.tls_cert is not None else "loopback-smoke",
                     "models": models,
                     "transcription_languages": list(transcription_languages),
                     "transcription_diarization": bool(args.enable_diarization),
@@ -1567,6 +1577,8 @@ def _configure(
         console.ok(
             f"review model    :: {review_model.profile} ({review_model.model_id})"
         )
+    if not args.dry_run:
+        _install_phase(root, "configuration", "complete")
     console.ok(f"front door      :: https://{server_name}:{args.https_port}")
     return auth, models, server_name, admin_username, admin_display
 
@@ -1601,6 +1613,91 @@ def _atomic_private_write(path: Path, value: str) -> None:
 
 def _provision_marker(root: Path) -> Path:
     return root / "state" / "provisioned.json"
+
+
+INSTALL_PHASES = ("configuration", "runtime", "storage", "administrator", "models", "prepared", "running", "login_reachable", "basic_review", "selected_capabilities")
+
+
+def _install_progress(root: Path) -> dict[str, object]:
+    installation, _ = _installed_release(root)
+    path = root / "state" / "install-progress.json"
+    empty = {"format_version": 1, "release_id": installation.get("release_id"), "phases": {}}
+    if not path.exists():
+        return empty
+    metadata = path.lstat()
+    if path.is_symlink() or not path.is_file() or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o777 != 0o600 or metadata.st_size > 16_384:
+        raise RuntimeError("Installation progress receipt is unsafe; keep the node stopped and inspect its owner-only state directory")
+    value = json.loads(path.read_text())
+    if (not isinstance(value, dict) or value.get("format_version") != 1 or not isinstance(value.get("phases"), dict)
+            or any(key not in INSTALL_PHASES or not isinstance(state, str) or state not in {"checking", "complete", "incomplete", "not-selected"} for key, state in value["phases"].items())):
+        raise RuntimeError("Installation progress receipt format is unsupported; use the matching reviewed installer")
+    return value if value.get("release_id") == installation.get("release_id") else empty
+
+
+def _install_phase(root: Path, phase: str, state: str) -> None:
+    if phase not in INSTALL_PHASES or state not in {"checking", "complete", "incomplete", "not-selected"}:
+        raise RuntimeError("Installation progress state is invalid")
+    progress = _install_progress(root)
+    if progress["phases"].get(phase) == state:
+        return
+    progress["phases"][phase] = state
+    progress["observed_unix"] = int(time.time())
+    _atomic_private_write(root / "state" / "install-progress.json", json.dumps(progress, indent=2) + "\n")
+
+
+def _handoff(console: Console, root: Path, *, dry_run: bool = False) -> None:
+    if dry_run:
+        console.note("PLAN COMPLETE: no node was prepared, launched or signed in")
+        return
+    installation, _ = _installed_release(root)
+    progress = _install_progress(root)["phases"]
+    env = _dotenv(root / "compose.env")
+    host = _valid_host(str(installation["server_name"]))
+    port = int(env.get("RECORDBENCH_HTTPS_PORT", "8443"))
+    console.line("\n  INSTALLATION HANDOFF")
+    console.ok(f"Open in your browser: https://{host}:{port}/auth/login")
+    console.note(f"Sign-in mode: {installation['auth']}")
+    username = installation.get("initial_administrator")
+    if installation.get("auth") == "local" and isinstance(username, str) and re.fullmatch(r"[a-z0-9][a-z0-9._@-]{2,127}", username):
+        console.note(f"Initial administrator username: {username}")
+    elif installation.get("auth") == "local":
+        console.note("Initial administrator username: not recorded by this older installer; use your issued local account")
+    for phase in ("prepared", "running", "login_reachable", "basic_review", "selected_capabilities"):
+        console.note(f"{phase.replace('_', ' ')}: {progress.get(phase, 'not verified')}")
+    console.note("Browser sign-in: not verified by the installer; sign in and follow Team setup")
+    if installation.get("tls_source") == "loopback-smoke":
+        console.warn("Loopback smoke certificate: arrange a trusted certificate and matching hostname before team access; do not bypass browser certificate protection")
+    else:
+        console.note("Use the configured hostname and confirm its certificate is trusted on each team device")
+    incomplete = next((name for name in INSTALL_PHASES if progress.get(name) not in {"complete", "not-selected"}), None)
+    if incomplete:
+        console.warn(f"Next unverified step: {incomplete.replace('_', ' ')}")
+        console.note(f"Continue with: ./install install --root {shlex.quote(str(root))} --resume")
+    console.note("No password or token is included in this handoff")
+
+
+def _login_reachable(root: Path) -> bool:
+    installation, _ = _installed_release(root)
+    port = int(_dotenv(root / "compose.env").get("RECORDBENCH_HTTPS_PORT", "8443"))
+    host = _valid_host(str(installation["server_name"]))
+    # Bounded loopback transport probes never follow redirects. They do not
+    # establish browser certificate trust, sign-in, or remote reachability.
+    def probe(route: str):
+        connection = http.client.HTTPSConnection("127.0.0.1", port, timeout=5, context=ssl._create_unverified_context())
+        try:
+            connection.request("GET", route, headers={"Host": host})
+            response = connection.getresponse()
+            return response.status, response.getheader("WWW-Authenticate", ""), response.read(262_144)
+        finally:
+            connection.close()
+    try:
+        status, challenge, body = probe("/auth/login")
+        if installation.get("auth") == "kerberos":
+            health_status, health_challenge, _ = probe("/health")
+            return status == health_status == 401 and "Negotiate" in challenge and "Negotiate" in health_challenge
+        return status == 200 and b"RecordBench" in body
+    except (OSError, ValueError, http.client.HTTPException):
+        return False
 
 
 def _provisioning_complete(root: Path, installation: Mapping[str, object]) -> bool:
@@ -1641,6 +1738,9 @@ def _provision(
     admin_display: str | None,
 ) -> None:
     profiles = ["tools"]
+    if not args.dry_run:
+        for phase in INSTALL_PHASES[1:]:
+            _install_phase(root, phase, "incomplete")
     if models in {"all", "review"}:
         profiles.append("ai")
     if models in {"all", "transcription"}:
@@ -1648,6 +1748,8 @@ def _provision(
     compose = _compose(root, profiles, auth=auth, local_accounts=args.enable_account_management)
 
     console.phase(5, "FORGE RUNTIME", "Building isolated OCR, review, retrieval, and transcription images")
+    if not args.dry_run:
+        _install_phase(root, "runtime", "checking")
     targets = ["app", "account-admin"]
     if auth == "kerberos":
         targets.append("kerberos-proxy")
@@ -1656,6 +1758,8 @@ def _provision(
     if models in {"all", "transcription"}:
         targets.extend(("transcription-api", "transcription-worker"))
     _run(console, [*compose, "build", *targets], dry_run=args.dry_run)
+    if not args.dry_run:
+        _install_phase(root, "runtime", "complete")
     console.ok("Runtime images forged")
 
     console.phase(6, "SEAL CONTROL PLANE", "Initializing managed storage and attributed access")
@@ -1668,14 +1772,22 @@ def _provision(
             raise RuntimeError("installed matter storage path is invalid")
         storage_root = Path(configured_storage)
     marker = storage_root / ".recordbench-managed-storage.json"
+    if not args.dry_run:
+        _install_phase(root, "storage", "checking")
     if not marker.exists():
         _run(
             console,
             [*compose, "run", "--rm", "--no-deps", "account-admin", "storage", "init", "--root", "/var/lib/recordbench/matter-storage"],
             dry_run=args.dry_run,
         )
+    if not args.dry_run:
+        # The storage tool validates the existing ownership marker without reset.
+        _run(console, [*compose, "run", "--rm", "--no-deps", "account-admin", "storage", "status", "--root", "/var/lib/recordbench/matter-storage"], capture=True)
+        _install_phase(root, "storage", "complete")
     account_directory = root / ("accounts" if args.enable_account_management else "secrets")
     account_container_file = "/var/lib/recordbench-accounts/local-accounts.json" if args.enable_account_management else "/run/recordbench-secrets/local-accounts.json"
+    if not args.dry_run:
+        _install_phase(root, "administrator", "checking" if auth == "local" else "not-selected")
     if auth == "local" and not (account_directory / "local-accounts.json").exists():
         if not admin_username or not admin_display:
             raise RuntimeError(
@@ -1692,9 +1804,14 @@ def _provision(
             )
         finally:
             password = ""
+    if not args.dry_run and auth == "local":
+        _run(console, [*compose, "run", "--rm", "--no-deps", "account-admin", "accounts", "list", "--file", account_container_file], capture=True)
+        _install_phase(root, "administrator", "complete")
     console.ok("Managed storage boundary and identity control plane sealed")
 
     if models != "none":
+        if not args.dry_run:
+            _install_phase(root, "models", "checking")
         console.phase(7, "OPEN MODEL VAULT", "Acquiring exact revisions, hashing artifacts, then cutting network access")
         languages = _transcription_languages(args.transcription_languages)
         groups = ",".join(
@@ -1704,45 +1821,56 @@ def _provision(
                 diarization=bool(args.enable_diarization),
             )
         )
-        token = None
-        if models in {"all", "transcription"} and args.enable_diarization:
-            if not args.accept_model_terms:
-                if args.non_interactive:
-                    raise RuntimeError("transcription staging requires --accept-model-terms")
-                console.warn("Community-1 is gated and CC-BY-4.0; accept its upstream terms before continuing")
-                if input("Type ACCEPT after reviewing the linked model terms: ").strip() != "ACCEPT":
-                    raise RuntimeError("model terms were not accepted")
-            token = _hf_token(args)
-        command = [
-            *compose,
-            "run",
-            "--rm",
-            "--no-deps",
-            "-T",
-            "model-stager",
-            "stage",
-            "--groups",
-            groups,
-            "--review-profile",
-            args.review_model_profile,
-        ]
-        if token is not None:
-            command.append("--token-stdin")
-        try:
-            _run(console, command, input_value=(token + "\n") if token else None, dry_run=args.dry_run)
-        finally:
+        verification = _run(console, [*compose, "run", "--rm", "--no-deps", "-T", "model-stager", "verify",
+            "--groups", groups, "--review-profile", args.review_model_profile], check=False, capture=True, dry_run=args.dry_run)
+        verified = not args.dry_run and verification.returncode == 0
+        if verified:
+            console.ok("Existing model selection verified offline; staging and token entry skipped")
+        else:
             token = None
+            if models in {"all", "transcription"} and args.enable_diarization:
+                if not args.accept_model_terms:
+                    if args.non_interactive:
+                        raise RuntimeError("transcription staging requires --accept-model-terms")
+                    console.warn("Community-1 is gated and CC-BY-4.0; accept its upstream terms before continuing")
+                    if input("Type ACCEPT after reviewing the linked model terms: ").strip() != "ACCEPT":
+                        raise RuntimeError("model terms were not accepted")
+                token = _hf_token(args)
+            command = [
+                *compose,
+                "run",
+                "--rm",
+                "--no-deps",
+                "-T",
+                "model-stager",
+                "stage",
+                "--groups",
+                groups,
+                "--review-profile",
+                args.review_model_profile,
+            ]
+            if token is not None:
+                command.append("--token-stdin")
+            try:
+                _run(console, command, input_value=(token + "\n") if token else None, dry_run=args.dry_run)
+            finally:
+                token = None
         if models in {"all", "transcription"} and not args.dry_run:
             _replace_env(root / "config" / "transcription.env", "TRANSCRIPTION_V2_PIPELINE", "whisperx")
         console.ok("Model vault sealed; runtime services retain no hub token")
+        if not args.dry_run:
+            _install_phase(root, "models", "complete")
+    elif not args.dry_run:
+        _install_phase(root, "models", "not-selected")
 
     if not args.dry_run:
         installation, _release = _installed_release(root)
         _seal_provisioning(root, installation)
+        _install_phase(root, "prepared", "complete")
 
     if args.prepare_only:
         console.phase(8, "NODE ARMED", "Preparation complete; services intentionally remain stopped")
-        console.ok(f"Resume with: ./install install --root {root} --resume")
+        console.ok(f"Resume with: ./install install --root {shlex.quote(str(root))} --resume")
         return
     console.phase(8, "IGNITE NODE", "Launching the private service mesh and waiting for health consensus")
     active = []
@@ -1751,6 +1879,8 @@ def _provision(
     if models in {"all", "transcription"}:
         active.append("transcription")
     runtime_compose = _compose(root, active, local_accounts=args.enable_account_management)
+    if not args.dry_run:
+        _install_phase(root, "running", "checking")
     _run(console, [*runtime_compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
     if not args.dry_run:
         _wait_health(console, root)
@@ -1774,66 +1904,52 @@ def _selected_capabilities_ready(payload: Mapping[str, object], models: str) -> 
 
 
 def _wait_health(console: Console, root: Path) -> None:
-    settings = json.loads((root / "installation.json").read_text(encoding="utf-8"))
+    settings, _ = _installed_release(root)
     env = _dotenv(root / "compose.env")
-    host = settings["server_name"]
+    host = _valid_host(str(settings["server_name"]))
     port = int(env.get("RECORDBENCH_HTTPS_PORT", "8443"))
     url = f"https://127.0.0.1:{port}/health"
-    context = ssl._create_unverified_context()
     deadline = time.monotonic() + 900
     next_report = time.monotonic() + 15
-    last = None
-    if settings.get("auth") == "kerberos":
-        compose = _compose(root, settings.get("profiles", []))
-        models = str(settings.get("models", "none"))
-        probe = (
-            "import json,urllib.request; "
-            "p=json.load(urllib.request.urlopen('http://127.0.0.1:8786/health',timeout=5)); "
-            "assert p.get('status') in {'ok','degraded'} and p.get('product')=='RecordBench' "
-            "and p.get('storage',{}).get('status')=='ready'; "
-            f"c=p.get('capabilities',{{}}); m={models!r}; "
-            "assert m not in {'review','all'} or "
-            "(c.get('answering')=='ready' and c.get('search')=='word + meaning'); "
-            "assert m not in {'transcription','all'} or "
-            "str(c.get('transcription','')).startswith('local WhisperX')"
-        )
-        _run(console, [*compose, "exec", "-T", "app", "python", "-c", probe])
-        console.ok("Application health passed behind the Kerberos boundary")
-        try:
-            request = urllib.request.Request(url, headers={"Host": host})
-            urllib.request.urlopen(request, timeout=5, context=context)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 401 and "Negotiate" in exc.headers.get("WWW-Authenticate", ""):
-                console.ok("HTTPS front door issued the expected Negotiate challenge")
-                return
-            raise RuntimeError("Kerberos gateway did not issue a valid challenge") from exc
-        raise RuntimeError("Kerberos gateway did not protect the unauthenticated health route")
+    last = "services are starting"
+    for phase in ("running", "login_reachable", "basic_review", "selected_capabilities"):
+        _install_phase(root, phase, "checking")
     while time.monotonic() < deadline:
+        payload = None
         try:
-            request = urllib.request.Request(url, headers={"Host": host})
-            with urllib.request.urlopen(request, timeout=5, context=context) as response:
-                payload = json.load(response)
-            storage = payload.get("storage")
-            if (
-                payload.get("status") in {"ok", "degraded"}
-                and payload.get("product") == "RecordBench"
-                and isinstance(storage, dict)
-                and storage.get("status") == "ready"
-                and _selected_capabilities_ready(
-                    payload, str(settings.get("models", "none"))
-                )
-            ):
-                console.ok("HTTPS gateway and application health contract passed")
-                if payload.get("status") == "degraded":
-                    console.warn(
-                        "Node is useful but an unselected optional capability is unavailable"
-                    )
-                return
-            last = "health or selected capability contract was not ready"
-        except Exception as exc:
+            if settings.get("auth") == "kerberos":
+                compose = _compose(root, settings.get("profiles", []))
+                probe = "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8786/health',timeout=5).read(262144).decode())"
+                result = _run(console, [*compose, "exec", "-T", "app", "python", "-c", probe], capture=True)
+                payload = json.loads(result.stdout)
+            else:
+                request = urllib.request.Request(url, headers={"Host": host})
+                with urllib.request.urlopen(request, timeout=5, context=ssl._create_unverified_context()) as response:
+                    payload = json.loads(response.read(262_144))
+        except (OSError, ValueError, subprocess.CalledProcessError, http.client.HTTPException) as exc:
             last = exc.__class__.__name__
+        if isinstance(payload, dict) and payload.get("product") == "RecordBench":
+            storage, capabilities = payload.get("storage", {}), payload.get("capabilities", {})
+            base_ready = (payload.get("status") in {"ok", "degraded"} and isinstance(storage, dict)
+                          and storage.get("status") == "ready" and isinstance(capabilities, dict)
+                          and capabilities.get("source_review") == "ready"
+                          and capabilities.get("malware_scan") in {"ready", "not required"})
+            login_ready = _login_reachable(root)
+            selected_ready = base_ready and _selected_capabilities_ready(payload, str(settings.get("models", "none")))
+            _install_phase(root, "running", "complete")
+            _install_phase(root, "basic_review", "complete" if base_ready else "incomplete")
+            _install_phase(root, "login_reachable", "complete" if login_ready else "incomplete")
+            _install_phase(root, "selected_capabilities", "complete" if selected_ready else "incomplete")
+            if selected_ready and login_ready:
+                console.ok("Application health, selected capabilities and sign-in endpoint passed")
+                if payload.get("status") == "degraded":
+                    console.warn("Basic review is available; an unselected optional capability remains unavailable")
+                return
+            last = "selected capabilities are incomplete" if base_ready else "basic review needs attention"
+            if not login_ready:
+                last += "; sign-in endpoint is not reachable"
         if time.monotonic() >= next_report:
-            console.note(f"health consensus pending :: {last or 'services are starting'}")
+            console.note(f"health consensus pending :: {last}")
             next_report = time.monotonic() + 15
         time.sleep(3)
     raise RuntimeError(f"node did not reach health before timeout ({last})")
@@ -1859,6 +1975,8 @@ def _doctor(console: Console, args: argparse.Namespace, root: Path) -> None:
 def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None:
     installation, _release = _installed_release(root)
     args.enable_account_management = installation.get("local_account_management") is True
+    args.admin_username = args.admin_username or installation.get("initial_administrator")
+    args.admin_display_name = args.admin_display_name or installation.get("initial_administrator_display_name")
     auth = str(installation.get("auth", ""))
     models = str(installation.get("models", "none"))
     installed_languages = installation.get("transcription_languages", ["en"])
@@ -1884,24 +2002,14 @@ def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None
     console.phase(2, "REJOIN NODE", "Using sealed identity, storage, model, and release coordinates")
     compose = _compose(root, profiles)
     _run(console, [*compose, "config", "--quiet"], dry_run=args.dry_run)
+    if not args.dry_run:
+        _install_phase(root, "configuration", "complete")
     console.ok(f"release capsule :: {installation.get('release_id', 'legacy')}")
     if not _provisioning_complete(root, installation):
-        console.warn("Prior boot stopped before the provisioning seal; safely replaying idempotent phases")
-        _provision(
-            console,
-            args,
-            root,
-            auth,
-            models,
-            args.admin_username,
-            args.admin_display_name,
-        )
-        return
-    console.phase(3, "IGNITE NODE", "Launching the prepared service mesh and waiting for health consensus")
-    _run(console, [*compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
-    if not args.dry_run:
-        _wait_health(console, root)
-    console.ok("Prepared RecordBench node is online")
+        console.warn("Prior boot stopped before the provisioning seal; validating and continuing existing state")
+    else:
+        console.note("Prepared phase receipt found; revalidating storage, accounts and the offline model selection")
+    _provision(console, args, root, auth, models, args.admin_username, args.admin_display_name)
 
 
 def _backup_tool(root: Path) -> Path:
@@ -2164,6 +2272,7 @@ def main() -> int:
         root = args.root.expanduser().resolve(strict=False)
         if args.command == "doctor":
             _doctor(console, args, root)
+            _handoff(console, root, dry_run=args.dry_run)
             return 0
         if args.command == "backup":
             _backup(console, args, root)
@@ -2179,8 +2288,7 @@ def main() -> int:
             return 0
         if args.resume and (root / "installation.json").is_file():
             _resume_node(console, args, root)
-            console.line(console.paint("  >>> ACCESS GRANTED // RECORD BENCH READY <<<", C.green + C.bold))
-            console.line(console.paint(f"  node state :: {root}", C.dim))
+            _handoff(console, root, dry_run=args.dry_run)
             return 0
         if args.models is None:
             args.models = _choose(
@@ -2218,13 +2326,16 @@ def main() -> int:
         )
         _provision(console, args, root, auth, models, admin_user, admin_display)
         console.line()
-        console.line(console.paint("  >>> ACCESS GRANTED // RECORD BENCH READY <<<", C.green + C.bold))
-        console.line(console.paint(f"  node state :: {root}", C.dim))
+        _handoff(console, root, dry_run=args.dry_run)
         return 0
     except (OSError, RuntimeError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
         console.line()
         console.warn(f"BOOT SEQUENCE HALTED :: {exc}")
-        console.line("  No secret values were written to terminal output.")
+        if not args.dry_run and "root" in locals() and (root / "installation.json").is_file():
+            try:
+                _handoff(console, root)
+            except (OSError, RuntimeError, KeyError, ValueError):
+                console.warn("Handoff unavailable; inspect the retained node configuration before resuming")
         return 1
 
 
