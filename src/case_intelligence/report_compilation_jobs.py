@@ -241,7 +241,7 @@ class ReportCompilationJobs:
     def retry(self, matter_id: str, actor_id: str, job_id: str) -> CompilationJobRecord:
         with self._transaction() as connection:
             job = self.get(matter_id, actor_id, job_id)
-            if job.state not in {"failed", "cancelled"}:
+            if job.state not in {"failed", "cancelled"} and not (job.state == "succeeded" and not job.report_id):
                 return job
             self._admit(connection, actor_id)
             connection.execute("UPDATE workbench_report_compilation_job SET state='queued',attempts=0,cancellation_requested=0,input_fingerprint='',worker_id=NULL,lease_token=NULL,lease_expires_at=NULL,finished_at=NULL,message='Queued for retry.',updated_at=? WHERE job_id=?", (self.clock(), job_id))

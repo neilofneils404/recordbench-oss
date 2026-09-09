@@ -157,3 +157,68 @@ def test_long_canonical_source_support_survives_compilation_and_both_exports(wor
         else:
             text = response.text
         assert 'END-OF-CANONICAL-SOURCE.' in text
+
+
+def test_deleted_compiled_result_can_be_recreated_without_changing_original_request(workspace):
+    client, bench, matter = workspace
+    note, _ = bench.workspace.create_notebook_item(matter.matter_id, ACTOR,
+        item_type="event", status="confirmed", title="Synthetic arrival", body="Reviewer records an unresolved arrival.")
+    job_id = queue(client, matter, [f"note:{note.item_id}"], key="synthetic-delete-recreate")
+    assert finished(client, matter, job_id)["state"] == "succeeded"
+    original = bench.workspace.reports(matter.matter_id, ACTOR)[0]
+    bench.workspace.delete_report(matter.matter_id, original.report_id, ACTOR, expected_updated_at=original.updated_at)
+    progress = client.get(f"/matters/{matter.slug}/reports/new?job={job_id}")
+    assert "This draft was deleted" in progress.text
+    response = client.post(f"/matters/{matter.slug}/reports/compile/{job_id}/retry", follow_redirects=False)
+    assert response.status_code == 303
+    assert finished(client, matter, job_id)["state"] == "succeeded"
+    reports = bench.workspace.reports(matter.matter_id, ACTOR)
+    assert len(reports) == 1 and reports[0].report_id != original.report_id
+
+
+def test_source_delimiters_remain_prose_and_compilation_basis_survives_restore(workspace, tmp_path):
+    import sqlite3
+    from case_intelligence.workspace_store import WorkspaceStore
+    client, bench, matter = workspace
+    marker = "\n\nReview basis:\n"
+    user_text = "Synthetic visible opening." + marker + "This is user text and must stay editable."
+    basis = "Compiler-authored synthetic provenance."
+    report = bench.workspace.create_report_from_sections(matter.matter_id, ACTOR, "Literal marker", "",
+        origin_id="report-compilation-" + "d" * 32,
+        sections=[{"heading": "Human note", "body": user_text + marker + basis, "compilation_basis": basis}])
+    section = bench.workspace.report_sections(matter.matter_id, report.report_id)[0]
+    assert section.prose == user_text and section.compilation_basis == basis
+    page = client.get(f"/matters/{matter.slug}/reports?report={report.report_id}")
+    assert 'class="report-reading-text">' + user_text in page.text
+    edit = client.get(f"/matters/{matter.slug}/reports?report={report.report_id}&edit=true")
+    assert user_text + "</textarea>" in edit.text
+    replacement = "The user removed the confusing quoted marker."
+    bench.workspace.update_report_section(matter.matter_id, report.report_id, section.section_id, ACTOR,
+        expected_updated_at=section.updated_at, expected_status=report.status, heading=section.heading, body=replacement)
+    updated = bench.workspace.report_sections(matter.matter_id, report.report_id)[0]
+    assert updated.prose == replacement and updated.compilation_basis == basis
+    destination = tmp_path / "clean-basis-restore.sqlite"
+    with sqlite3.connect(destination) as restored:
+        bench.workspace.connection.backup(restored)
+    with_store = WorkspaceStore(destination)
+    try:
+        retained = with_store.report_sections(matter.matter_id, report.report_id)[0]
+        assert retained == updated
+        assert with_store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        with_store.close()
+    # Startup is repeatable, and legacy text is never heuristically split.
+    with sqlite3.connect(destination) as legacy:
+        legacy.execute("ALTER TABLE workbench_report_section DROP COLUMN compilation_basis")
+    legacy_store = WorkspaceStore(destination)
+    try:
+        legacy_section = legacy_store.report_sections(matter.matter_id, report.report_id)[0]
+        assert not legacy_section.compilation_basis and legacy_section.prose == updated.body
+    finally:
+        legacy_store.close()
+
+
+def test_compilation_basis_migration_mirrors_operator_marker():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    assert (root / "migrations/sqlite/0029_report_compilation_basis.sql").read_bytes() == (root / "src/case_intelligence/migrations/sqlite/0029_report_compilation_basis.sql").read_bytes()

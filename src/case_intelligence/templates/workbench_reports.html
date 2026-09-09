@@ -66,7 +66,7 @@
       <section class="report-section-list" aria-labelledby="report-sections-heading">
         <header><div><p class="eyebrow">Report body</p><h2 id="report-sections-heading">{{ sections|length }} assembled section{% if sections|length != 1 %}s{% endif %}</h2></div><span>Drag-free controls preserve keyboard access</span></header>
         {% for section in sections %}
-        {% set edit_parts = section.body.split('\n\nReview basis:\n', 1) if section.origin_id.startswith('report-compilation-') else [section.body] %}
+        {% set edit_parts = [section.prose, section.compilation_basis] if section.compilation_basis else [section.body] %}
         <article class="report-section-card" id="{{ section.section_id }}">
           <div class="report-section-order"><span>{{ section.ordinal }}</span><form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/sections/{{ section.section_id }}/move"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_updated_at" value="{{ report.updated_at }}"><input type="hidden" name="direction" value="up"><button type="submit" {% if loop.first %}disabled{% endif %} aria-label="Move {{ section.heading }} up">↑</button></form><form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/sections/{{ section.section_id }}/move"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_updated_at" value="{{ report.updated_at }}"><input type="hidden" name="direction" value="down"><button type="submit" {% if loop.last %}disabled{% endif %} aria-label="Move {{ section.heading }} down">↓</button></form></div>
           <div class="report-section-content">
