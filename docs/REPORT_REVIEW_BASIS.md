@@ -14,6 +14,8 @@ before creation. Stale or inconsistent support returns to the original run with
 an error; it does not produce an apparently supported Report.
 Abstentions retain their potential source matches in separately labeled sections:
 these passages need direct review and are not promoted to verified findings.
+A grounding-rejected evidence pass saves its own potential matches, including
+passages omitted from the final synthesis selection.
 
 Every-source Reports separately record the frozen criterion, machine counts,
 human review counts, uncertainty, and opposing machine/human inclusion labels.
@@ -21,13 +23,17 @@ Counts derive from one retrieved decision population, not independently updated
 aggregate metrics. Decision details prioritize disagreements and attention
 items, then frozen order. They retain rationale, human notes, reviewer display
 name when available, review time, source version, and decision revision.
-The decision population streams through one database read cursor in batches;
+The decision population streams through a dedicated read-only database snapshot
+in batches without holding the shared workspace lock while consuming decisions;
 only the selected detail records stay in memory. It is not limited by the
 100,000-row export-page boundary.
 
 At most 50 decision details and 100 citation entries are reproduced. The Report
 states exactly how many are included and omitted and gives the original ledger
-path. The complete ledger export remains necessary for all decision detail.
+path, including its saved criterion. Downloaded decision counts must be checked
+before closing the matter. Runs over 100,000 decisions explicitly warn that the
+current ledger download cannot preserve the entire run; keep the original matter
+available until complete preservation is verified.
 Neither a frozen source population nor a completed screening run means every
 page was analyzed. An incomplete population cannot be summarized as complete.
 

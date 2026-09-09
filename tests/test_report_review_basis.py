@@ -4,13 +4,15 @@ from dataclasses import replace
 import io
 import json
 import sqlite3
+import threading
+from urllib.parse import parse_qs, urlparse
 from types import SimpleNamespace
 import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
 
-from case_intelligence.generation import UnavailableGenerator
+from case_intelligence.generation import GenerationGroundingRejected, UnavailableGenerator
 from case_intelligence.report_review_basis import research_sections, review_sections
 from case_intelligence.workbench import create_workbench_app
 from case_intelligence.workspace_store import WorkspaceProblem, WorkspaceStore
@@ -202,10 +204,16 @@ def test_every_source_http_conversion_keeps_team_decision_and_original_support(w
     bench.workspace.adjudicate_review_decision(matter.matter_id, ACTOR, run.run_id, document.document_id,
         human_decision="exclude", expected_updated_at=decision.updated_at,
         note="This is a conflicting account requiring follow-up.")
+    bench.workspace.create_review_criterion(matter.matter_id, ACTOR,
+        title="Newer synthetic criterion", instructions="Include red tricycle records.")
     response = client.post(f"/matters/{matter.slug}/full-review/{run.run_id}/report", follow_redirects=False)
     assert response.status_code == 303 and "/reports?report=" in response.headers["location"]
     report = bench.workspace.reports(matter.matter_id, ACTOR)[0]
     sections = bench.workspace.report_sections(matter.matter_id, report.report_id)
+    ledger_line = next(line for line in sections[-1].body.splitlines() if line.startswith("Open the original"))
+    ledger_path = ledger_line.split(": ", 1)[1]
+    assert parse_qs(urlparse(ledger_path).query)["criterion"] == [criterion.criterion_id]
+    assert client.get(ledger_path).status_code == 200
     text = "\n".join(item.body for item in sections)
     assert "Opposing machine/human inclusion labels: 1" in text
     assert "Human decision: exclude" in text and "Machine: included" in text
@@ -260,6 +268,9 @@ def test_large_stream_keeps_late_disagreement_without_export_page_ceiling():
     assert sections[3]["heading"] == "Decision detail 100001"
     assert "Late disagreement" in sections[3]["body"]
     assert "50 of 100,001" in sections[-1]["body"]
+    assert "cannot preserve this entire run" in sections[-1]["body"]
+    assert "Keep the original matter available" in sections[-1]["body"]
+    assert "Export that ledger for complete" not in sections[-1]["body"]
 
 
 def test_http_conversion_streams_more_than_one_export_page(workspace):
@@ -293,3 +304,74 @@ def test_http_conversion_streams_more_than_one_export_page(workspace):
     assert sections[3].heading == "Decision detail 100001"
     assert "Late conflicting account" in sections[3].body
     assert "50 of 100,001" in sections[-1].body
+
+
+def test_rejected_pass_preserves_matches_omitted_from_synthesis(workspace, monkeypatch):
+    client, bench, matter = workspace
+    _old, document = saved_research(bench, matter)
+    queued, _ = bench.workspace.queue_research_job(matter.matter_id, ACTOR,
+        "When did the bicycle arrive?", "Rejected pass", "research-request-" + "d" * 32)
+    job = bench.workspace.claim_research_job("synthetic-rejected-pass-worker")
+    assert job.job_id == queued.job_id
+    job = replace(job, plan={"queries": ["bicycle arrival"], "method": "One recorded search."})
+    candidate = bench._candidate(matter, document, document.parsed_units()[0], 1)
+    citation = bench._citation(matter, candidate)
+    monkeypatch.setattr(bench, "_answer_search", lambda *args, **kwargs: (candidate,))
+    selections = iter(((citation,), ()))
+    monkeypatch.setattr(bench, "_answer_evidence_citations", lambda *args, **kwargs: next(selections))
+    def reject_pass(question, evidence):
+        if evidence:
+            raise GenerationGroundingRejected("Synthetic rejection")
+        return bench._verification_abstention()
+    monkeypatch.setattr(bench.generator, "answer", reject_pass)
+    result = bench._process_research_job(job, lambda: False)
+    assert result["passes"][0]["answer"]["source_matches"][0]["support_token"] == citation.support_token
+    assert not result["answer"].get("source_matches")
+    finished = bench._finish_research_job(job, result)
+    report = convert(client, bench, matter, finished)
+    sections = bench.workspace.report_sections(matter.matter_id, report.report_id)
+    potential = next(item for item in sections if item.heading == "Potential sources from evidence pass 1")
+    assert "not verified as findings" in potential.body
+    assert bench.workspace.report_citations(matter.matter_id, report.report_id, potential.section_id)[0].support_token == citation.support_token
+
+
+def test_decision_snapshot_does_not_lock_unrelated_reads_or_change_midstream(workspace):
+    _client, bench, matter = workspace
+    bench.full_review.close()
+    saved_research(bench, matter)
+    _criterion, version = bench.workspace.create_review_criterion(matter.matter_id, ACTOR,
+        title="Snapshot test", instructions="Include bicycle records.")
+    run = bench.workspace.queue_review_run(matter.matter_id, ACTOR, version.criterion_version_id, run_kind="full")
+    other = bench.workspace.create_matter("Other synthetic matter", "Concurrent access", ACTOR)
+    with bench.workspace.connection:
+        first = bench.workspace.connection.execute("SELECT * FROM workbench_review_decision WHERE run_id=?", (run.run_id,)).fetchone()
+        columns = list(first.keys())
+        values = [tuple((ordinal if key == "ordinal" else f"{ordinal:032x}" if key == "document_id" else first[key])
+                        for key in columns) for ordinal in range(2, 1003)]
+        bench.workspace.connection.executemany(
+            "INSERT INTO workbench_review_decision (" + ",".join(columns) + ") VALUES (" + ",".join("?" for _ in columns) + ")", values)
+    stream = bench.workspace.iter_review_decisions_for_report(matter.matter_id, ACTOR, run.run_id)
+    assert next(stream).ordinal == 1
+    finished = threading.Event()
+    errors = []
+    def unrelated_read_and_update():
+        try:
+            assert bench.workspace.membership(other.matter_id, ACTOR).principal_id == ACTOR
+            with bench.workspace._lock, bench.workspace.connection:
+                bench.workspace.connection.execute("UPDATE workbench_review_decision SET human_note='Later review' WHERE run_id=? AND ordinal=1002", (run.run_id,))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+    thread = threading.Thread(target=unrelated_read_and_update)
+    thread.start()
+    try:
+        assert finished.wait(2), "Report iteration blocked unrelated workspace access"
+        assert not errors
+        remaining = list(stream)
+        assert remaining[-1].ordinal == 1002 and remaining[-1].human_note == ""
+    finally:
+        stream.close()
+        thread.join(timeout=5)
+    fresh = list(bench.workspace.iter_review_decisions_for_report(matter.matter_id, ACTOR, run.run_id))
+    assert fresh[-1].human_note == "Later review"

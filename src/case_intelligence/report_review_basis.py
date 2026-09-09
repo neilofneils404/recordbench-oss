@@ -220,8 +220,11 @@ def review_sections(
         f"Citation entries included: {citation_count:,} of {available_citations:,}. "
         f"{available_citations - citation_count:,} citation entries are not reproduced.\n"
         "Details prioritize opposing human/machine labels and sources needing attention, then frozen source order.\n"
-        f"Open the original decision ledger while this matter is available: {ledger_path}\n"
-        "Export that ledger for complete decision detail before closing the matter. "
+        f"Open the original decision ledger while this matter is available: {ledger_path}\n" +
+        ("The current ledger download includes at most 100,000 decisions and cannot preserve this entire run. "
+         "Keep the original matter available until complete preservation is verified. "
+         if total > 100_000 else
+         "Export the original ledger and verify the downloaded decision count before closing the matter. ") +
         "This Report is editable work product, not a replacement for the full frozen ledger.",
     ))
     return tuple(sections)

@@ -4809,10 +4809,12 @@ class CaseIntelligenceWorkbench:
                         "candidate_sources": len({item.document_id for item in found}),
                     }
                 except GenerationGroundingRejected:
+                    rejected_answer = self._verification_abstention()
                     pass_result = {
                         "query": query,
                         "status": "needs_review",
-                        "text": "Potential passages were found, but this research step did not produce a source-verified finding.",
+                        "text": rejected_answer.text,
+                        "answer": self._answer_payload(rejected_answer, evidence),
                         "candidate_passages": len(found),
                         "candidate_sources": len({item.document_id for item in found}),
                     }
@@ -9490,12 +9492,14 @@ def create_workbench_app(
     )
     def full_review_to_report(request: Request, slug: str, run_id: str):
         context = auth_context(request)
+        criterion_id = ""
         try:
             matter = authorized_matter(request, slug)
             run = bench.workspace.review_run(
                 matter.matter_id, context.principal_id, run_id
             )
-            criterion = bench.workspace.review_criterion(matter.matter_id, run.criterion_id)
+            criterion_id = run.criterion_id
+            criterion = bench.workspace.review_criterion(matter.matter_id, criterion_id)
             version = bench.workspace.review_criterion_version(
                 matter.matter_id, run.criterion_version_id
             )
@@ -9510,7 +9514,7 @@ def create_workbench_app(
             sections = review_sections(
                 run, decisions, criterion_title=criterion.title,
                 criterion_version=version.version_number, instructions=version.instructions,
-                ledger_path=_query_url(f"/matters/{slug}/full-review", run=run_id),
+                ledger_path=_query_url(f"/matters/{slug}/full-review", criterion=run.criterion_id, run=run_id),
                 reviewer_name=reviewer_name,
             )
             with bench.source_store(matter).mutation_guard():
@@ -9527,7 +9531,7 @@ def create_workbench_app(
             raise HTTPException(404, "Review run not found") from exc
         except WorkspaceProblem as exc:
             return RedirectResponse(
-                _query_url(f"/matters/{slug}/full-review", run=run_id, error=str(exc)),
+                _query_url(f"/matters/{slug}/full-review", criterion=criterion_id, run=run_id, error=str(exc)),
                 status_code=303,
             )
         audit(

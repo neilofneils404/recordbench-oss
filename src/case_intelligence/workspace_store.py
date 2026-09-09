@@ -10706,19 +10706,27 @@ class WorkspaceStore:
     def iter_review_decisions_for_report(self, matter_id: str, actor_id: str, run_id: str):
         """Stream one SQLite read snapshot without an export-page population cap.
 
-        A single live cursor preserves the read snapshot across fetch batches;
-        callers consume it fully before starting Report writes.
+        A dedicated read-only connection preserves a snapshot without holding
+        the shared workspace lock while callers consume and rank decisions.
+        Callers must exhaust or close the iterator before starting Report writes.
         """
         self.review_run(matter_id, actor_id, run_id)
-        with self._lock:
-            cursor = self.connection.execute(
-                "SELECT * FROM workbench_review_decision WHERE run_id=? ORDER BY ordinal", (run_id,)
+        connection = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("BEGIN")
+            cursor = connection.execute(
+                "SELECT * FROM workbench_review_decision WHERE matter_id=? AND run_id=? ORDER BY ordinal",
+                (matter_id, run_id),
             )
             try:
                 while rows := cursor.fetchmany(1_000):
                     yield from (self._review_decision(row) for row in rows)
             finally:
                 cursor.close()
+        finally:
+            connection.close()
 
     def _review_decision_time(self, previous: str) -> str:
         earlier = datetime.fromisoformat(previous.replace("Z", "+00:00"))
