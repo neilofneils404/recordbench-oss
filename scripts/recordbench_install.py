@@ -2723,8 +2723,8 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
 
 def main() -> int:
     args = _parser().parse_args()
-    if args.enable_account_management and (args.command != "install" or args.auth != "local"):
-        _parser().error("--enable-account-management requires a new install with explicit --auth local; use the account relocation playbook for an existing node")
+    if args.enable_account_management and (args.command not in {"install", "preflight"} or args.auth != "local"):
+        _parser().error("--enable-account-management requires install or preflight with explicit --auth local; existing nodes retain their saved account configuration")
     console = Console(
         color=sys.stdout.isatty() and not args.no_color and os.getenv("NO_COLOR") is None,
         quiet=args.quiet,
@@ -2733,7 +2733,22 @@ def main() -> int:
         _parser().error("--json is only supported by the preflight command")
     if args.command == "preflight":
         args.root = (args.root or Path("/srv/recordbench")).expanduser()
-        result = _collect_preflight(args.models or "none", args)
+        try:
+            needs_model_staging = True
+            if args.resume and (args.root / "installation.json").is_file():
+                root = args.root.resolve(strict=False)
+                installation, release = _saved_node_arguments(args, root)
+                args.admin_username = args.admin_username or installation.get("initial_administrator")
+                args.admin_display_name = args.admin_display_name or installation.get("initial_administrator_display_name")
+                needs_model_staging = not _saved_models_verified(args, root, release)
+            result = _collect_preflight(args.models or "none", args,
+                                        needs_model_staging=needs_model_staging)
+        except (OSError, RuntimeError, ValueError):
+            result = PreflightResult((PreflightCheck(
+                "saved-node", "fail", "Saved node configuration or storage coordinates are unavailable or unsafe",
+                "Inspect the existing node using its canonical account, storage and model configuration", True,
+                "Restore a valid installation record, saved configuration and accessible protected mounts before resuming. Preflight does not change the saved account mode or paths.",
+            ),))
         if args.json:
             print(json.dumps(result.payload(), indent=2))
         else:
