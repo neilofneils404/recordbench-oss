@@ -136,12 +136,13 @@ def test_unknown_staff_locators_use_one_matter_traversal_and_load_each_source_on
     calls = {item.document_id: 0 for item in documents}
     for item in documents:
         units = item.parsed_units()
-        def load(_, item=item, units=units):
+        def load(_, item=item, units=units, **kwargs):
             calls[item.document_id] += 1
             return units
         item.units = []
         item.units_file = "synthetic-derived.json"
-        item._units_loader = load
+        item._units_iterator = load
+        item._units_loader = lambda _: pytest.fail("Materialized a file-backed source")
     bench.workspace.chat = [message(index, answer(refs[index % 4])) for index in range(80)]
     result = selected(bench)
     assert len(result) == 80

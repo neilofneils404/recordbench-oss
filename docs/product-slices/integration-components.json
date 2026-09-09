@@ -22,7 +22,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/search-cleanup-20260909",
-      "headRefOid": "42582de21b7a9f2645566af24327f32c89b3798f",
+      "headRefOid": "e2638eb0cb2fbfbab9161f21ac780ac27a57e358",
       "number": 53,
       "title": "Restore complete source search and proximity evidence",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/53"
@@ -46,7 +46,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/report-workflow-cleanup-20260909",
-      "headRefOid": "16924d06f937f470c1e7efb8b2e13cb3af5e5f3f",
+      "headRefOid": "5c2687dec3ad53dded4d1aaad9c9a48780f0c795",
       "number": 56,
       "title": "Compile saved review work into recoverable report drafts",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/56"
@@ -54,7 +54,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/team-setup-cleanup-20260909",
-      "headRefOid": "c661db2a5dcbbd32ac1d248c3e5c37c8b34f072e",
+      "headRefOid": "d0f8b6fc23c36c7c4b987a3c8bebf2a5c694a02c",
       "number": 57,
       "title": "Guide resumable installation and local team administration",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/57"
@@ -62,7 +62,7 @@
     {
       "baseRefName": "codex/report-workflow-cleanup-20260909",
       "headRefName": "codex/full-text-cleanup-20260909",
-      "headRefOid": "e7542b37f74ae2ba6aba4024e2dc90a36eae9435",
+      "headRefOid": "63692bfe7dba8369160e8699cb40a26c543e549d",
       "number": 58,
       "title": "Review extracted text with durable limits and report support",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/58"

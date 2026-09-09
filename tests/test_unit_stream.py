@@ -88,11 +88,12 @@ def test_store_streams_real_derived_file_without_whole_file_loader(tmp_path, mon
 
 
 def test_store_default_error_contract_and_budget_callback_identity(tmp_path, monkeypatch):
-    from case_intelligence.exact_search_results import ExactSearchUnavailable
+    class SyntheticBudgetExpired(ValueError):
+        pass
     from case_intelligence import unit_stream
     store = PilotStore(tmp_path / 'synthetic-error-contract')
     source, _ = store.store_stream('Synthetic.txt', 'text/plain', io.BytesIO(b'Synthetic'))
-    for failure in (ValueError('synthetic callback'), ExactSearchUnavailable('synthetic budget')):
+    for failure in (ValueError('synthetic callback'), SyntheticBudgetExpired('synthetic budget')):
         def stop():
             raise failure
         with pytest.raises(type(failure)) as caught:
