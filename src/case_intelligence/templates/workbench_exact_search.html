@@ -68,7 +68,7 @@
     </header>
     {% if results.exclusions %}<div class="find-coverage-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/></svg><div>
       <p>Some sources couldn't be searched yet.</p>
-      <span>{% for reason, count in results.exclusions.items() %}{{ count }} {{ 'still preparing or need attention' if reason == 'Not ready' else 'have no readable text' }}{% if not loop.last %} · {% endif %}{% endfor %}. <a href="/matters/{{ matter.slug }}/setup?view=list">Review sources</a></span>
+      <span>{% for reason, count in results.exclusions.items() %}{{ count }} {{ 'still preparing or need attention' if reason == 'Not ready' else 'have incomplete page coverage and were left out' if reason == 'Incomplete page coverage' else 'have no readable text' }}{% if not loop.last %} · {% endif %}{% endfor %}. <a href="/matters/{{ matter.slug }}/setup?view=list">Review sources</a></span>
     </div></div>{% endif %}
     {% for item in results.items %}
     <article class="find-document">
@@ -77,10 +77,10 @@
         <div class="find-document-title"><h3><a href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}">{{ item.source_name }}</a></h3><a class="find-open-source" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}">Open source <span aria-hidden="true">↗</span></a></div>
         {% if item.passages %}
           {% set first = previews[item.document_id][0] %}
-          <a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}?unit={{ first.position }}">{{ first.location }}</a>
+          <a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if first.start_ms is not none %}?start_ms={{ first.start_ms }}#segment-{{ first.number }}{% else %}?unit={{ first.position }}{% endif %}">{{ first.location }}</a>
           <p class="find-excerpt">{% for text, highlighted in first.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p>
           {% if item.matching_unit_count > 1 %}<details class="find-more-passages"><summary>More places in this source <span>{{ item.matching_unit_count }} matching pages or sections</span></summary>
-            {% for unit in previews[item.document_id][1:] %}<div><a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}?unit={{ unit.position }}">{{ unit.location }}</a><p class="find-excerpt">{% for text, highlighted in unit.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p></div>{% endfor %}
+            {% for unit in previews[item.document_id][1:] %}<div><a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if unit.start_ms is not none %}?start_ms={{ unit.start_ms }}#segment-{{ unit.number }}{% else %}?unit={{ unit.position }}{% endif %}">{{ unit.location }}</a><p class="find-excerpt">{% for text, highlighted in unit.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p></div>{% endfor %}
             {% if item.matching_unit_count > 3 %}<p>Open the source to review every matching page or section.</p>{% endif %}
           </details>{% endif %}
         {% else %}<p class="find-excerpt">This source matches the exclusions in your search.</p>{% endif %}
