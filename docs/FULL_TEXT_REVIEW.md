@@ -187,3 +187,5 @@ locators are unchanged. The existing portable export byte bound applies to the
 hydrated support, and unresolved, changed or oversized support refuses the export
 rather than emitting empty or truncated cited passages. Uncited attention and
 coverage outcomes remain exportable.
+
+The source-decision inspector resolves the selected decision's compact citations against its frozen source before displaying supporting passages. This read does not persist excerpts. If the source support is unavailable or changed, the inspector shows a caution and omits unresolved passage links; reopen the source and rerun the check before relying on that decision.

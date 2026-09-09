@@ -80,6 +80,17 @@ def main():
             wait.until(lambda d: 'run=' in d.current_url)
             run = bench.workspace.review_runs(matter.matter_id, actor)[0]
             wait.until(lambda _: bench.workspace.review_run(matter.matter_id, actor, run.run_id).state == 'succeeded')
+            driver.get(base + f'/matters/{matter.slug}/full-review?criterion={criterion.criterion_id}&run={run.run_id}&source={document.document_id}')
+            support = driver.find_element(By.CSS_SELECTOR, '#decision-inspector .decision-citations p')
+            assert support.text == 'The amber bicycle arrived at noon.'
+            retained = bench.workspace.review_decision(matter.matter_id, actor, run.run_id, document.document_id)
+            assert 'excerpt' not in retained.citations[0]
+            for width, label in ((1440, 'desktop'), (390, 'mobile')):
+                driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', {'width': width, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
+                wait.until(lambda d: d.execute_script('return document.documentElement.scrollWidth <= window.innerWidth'))
+                driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", support)
+                driver.save_screenshot(str(args.output / f'full-text-inspector-{label}.png'))
+            driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride', {})
             driver.get(base + f'/matters/{matter.slug}/full-review/{run.run_id}/text')
             assert '14</strong> units fully processed' in driver.page_source and '1</strong> unit with failed ranges' in driver.page_source
             assert 'The amber bicycle arrived at noon.' in driver.page_source
@@ -131,7 +142,7 @@ def main():
             wait.until(lambda _: bool(list(downloads.glob('*.md'))))
             report_text = next(downloads.glob('*.md')).read_text()
             assert 'The amber bicycle arrived at noon.' in report_text and 'not the complete range ledger' in report_text
-            receipt = {'provenance': 'synthetic', 'checks': ['explicit full-text launch', 'late fifteenth-unit finding', 'separate failed-unit coverage', 'desktop and mobile without page overflow', 'complete JSON download', 'saved full-text run copied to readable Report', 'bounded full-text scope and source citation retained', 'Report desktop and mobile without overflow', 'Report Markdown download']}
+            receipt = {'provenance': 'synthetic', 'checks': ['explicit full-text launch', 'decision inspector shows exact support without persisting excerpts', 'late fifteenth-unit finding', 'separate failed-unit coverage', 'desktop and mobile without page overflow', 'complete JSON download', 'saved full-text run copied to readable Report', 'bounded full-text scope and source citation retained', 'Report desktop and mobile without overflow', 'Report Markdown download']}
             (args.output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
             print(json.dumps(receipt))
         finally:

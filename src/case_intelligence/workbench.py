@@ -9275,6 +9275,18 @@ def create_workbench_app(
                     matter.matter_id, read_actor, active_run.run_id, source
                 ) if active_run and source else None
             )
+            citation_error = ""
+            if selected_decision is not None:
+                try:
+                    selected_decision = bench._hydrate_full_text_export_decisions(
+                        matter, active_run, (selected_decision,)
+                    )[0]
+                except ExportProblem:
+                    citation_error = (
+                        "Supporting passages are unavailable or changed. "
+                        "Open the source and rerun the check before relying on this decision."
+                    )
+                    selected_decision = replace(selected_decision, citations=())
             metrics = (
                 bench.workspace.review_validation_metrics(
                     matter.matter_id, read_actor, active_run.run_id
@@ -9313,6 +9325,7 @@ def create_workbench_app(
                 "decision_page": decision_page,
                 "selected_decision": selected_decision,
                 "reviewer_name": decision_reviewer_name(selected_decision),
+                "citation_error": citation_error,
                 "validation": metrics,
                 "source_sets": source_sets,
                 "notice": notice,
