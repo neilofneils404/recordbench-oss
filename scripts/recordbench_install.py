@@ -1029,10 +1029,15 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
             "Stage the selected AI capabilities",
             "Choose --transcription-languages en, es, or en,es. Enable diarization only with --models transcription or all.")
         for name, path in (("node-storage", args.root), ("matter-storage", args.storage_root or args.root / "matter-storage")):
-            path = path.expanduser()
+            entered_path = path.expanduser()
             try:
-                safe = path.is_absolute() and path not in {Path("/"), Path.home()}
-                safe = safe and not any(part.is_symlink() for part in (path, *path.parents))
+                safe = entered_path.is_absolute() and not any(
+                    part.is_symlink() for part in (entered_path, *entered_path.parents)
+                )
+                # Match the canonical path installation will actually use while
+                # retaining the refusal of symlinks in the entered path.
+                path = entered_path.resolve(strict=False)
+                safe = safe and path not in {Path("/"), Path.home().resolve(strict=False)}
                 ancestor = path
                 while not ancestor.exists() and ancestor != ancestor.parent:
                     ancestor = ancestor.parent
@@ -1060,7 +1065,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
                         f"Alpha evaluation target: {target} GiB before matter data",
                         "Leave headroom for images and selected models",
                         "Plan additional SSD capacity for the selected profile. These evaluation targets are not validated minimums.", blocking=False)
-            except OSError:
+            except (OSError, RuntimeError):
                 add(name, False, "Directory metadata unavailable", "Inspect storage before installation",
                     "Ask the storage administrator to restore directory access, then rerun preflight.")
         bind = args.bind_address or "127.0.0.1"
@@ -1077,6 +1082,15 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
             "Bind the HTTPS gateway", "Choose --https-port between 1 and 65535.")
 
     if not _required_gpu_count(models):
+        try:
+            _resolve_gpu_plans(args or _parser().parse_args(["--models", models]), models, ())
+            gpu_options_ok = True
+        except RuntimeError:
+            gpu_options_ok = False
+        add("gpu-options", gpu_options_ok,
+            "GPU option syntax is valid for CPU evaluation" if gpu_options_ok else "GPU option values or selections conflict",
+            "Configure the selected CPU evaluation profile",
+            "Remove GPU overrides when using --models none, or choose values accepted by the GPU/model options. CPU evaluation does not require a GPU.")
         checks.append(PreflightCheck("gpu", "pass", "GPU optional for CPU evaluation",
             "Intake, extraction, OCR, word search, source review and exports; no generated answers or transcription",
             False, ""))

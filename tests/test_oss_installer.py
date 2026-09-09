@@ -671,7 +671,16 @@ def test_preflight_nonempty_root_requires_explicit_resume(tmp_path, ready_host, 
     args = preflight_args(tmp_path)
     args.root.mkdir()
     (args.root / "existing.txt").write_text("synthetic existing data")
-    monkeypatch.setattr(installer.os, "geteuid", installer.os.getuid)
+    original_stat = installer.Path.stat
+    def synthetic_owned(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if path == args_root:
+            fields = list(result)
+            fields[4] = 1000
+            return installer.os.stat_result(fields)
+        return result
+    args_root = args.root
+    monkeypatch.setattr(installer.Path, "stat", synthetic_owned)
     blocked = installer._collect_preflight("none", args)
     assert not blocked.ready
     assert checks_by_name(blocked)["node-empty"].state == "fail"
@@ -686,3 +695,29 @@ def test_invalid_model_options_stop_install_before_state_creation(tmp_path, read
                                      "--enable-diarization", "--non-interactive"])
     assert installer.main() == 1
     assert not node.exists()
+
+
+@pytest.mark.parametrize("options", [
+    ["--generator-gpu-utilization", "1"],
+    ["--retrieval-device", "cpu", "--retrieval-gpu", "0"],
+])
+def test_cpu_preflight_validates_gpu_options_without_gpu_probe(tmp_path, ready_host, monkeypatch, options):
+    args = preflight_args(tmp_path, "--models", "none", *options)
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["gpu-options"].state == "fail"
+    assert not args.root.exists()
+
+
+@pytest.mark.parametrize("field", ["root", "storage_root"])
+def test_preflight_rejects_home_directory_dot_dot_alias(tmp_path, ready_host, monkeypatch, field):
+    synthetic_home = tmp_path.resolve() / "synthetic-home"
+    synthetic_home.mkdir()
+    monkeypatch.setattr(installer.Path, "home", classmethod(lambda cls: synthetic_home))
+    args = preflight_args(tmp_path, "--resume")
+    setattr(args, field, synthetic_home / "missing" / "..")
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    check = "node-storage" if field == "root" else "matter-storage"
+    assert checks_by_name(result)[check].state == "fail"
+    assert list(synthetic_home.iterdir()) == []
