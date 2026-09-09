@@ -223,3 +223,13 @@ The new capsule is built without overwriting
 the prior image set. If startup acceptance fails, configuration is returned to
 the previous release and its images are relaunched. Old releases and images are
 retained for deliberate operator cleanup; the updater never prunes them.
+
+
+Storage preflight requires the nearest existing creation directory to belong to
+the service account and deny group/other writes. Every parent must belong to
+root or that service account and prevent replacement of its child. A trusted
+sticky system directory may contain an existing private service-owned directory;
+it is never accepted as the creation directory itself. Root-owned protected
+parents such as `/srv` are supported when the operator first creates the
+service-owned directory beneath them. Non-sticky shared writable ancestors and
+parents owned by another non-root account are refused before installation.

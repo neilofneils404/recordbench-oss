@@ -13,6 +13,7 @@ import re
 import secrets
 import shutil
 import ssl
+import stat
 import subprocess
 import sys
 import time
@@ -977,6 +978,24 @@ def _probe(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
 
 
+def _storage_ancestors_safe(ancestor: Path) -> bool:
+    """Require a private creation point and a non-replaceable parent chain."""
+    uid = os.geteuid()
+    creation = ancestor.stat()
+    if not stat.S_ISDIR(creation.st_mode) or creation.st_uid != uid or creation.st_mode & 0o022:
+        return False
+    for parent in ancestor.parents:
+        metadata = parent.stat()
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid not in {0, uid}:
+            return False
+        # A trusted sticky system directory protects each owned child from
+        # replacement, e.g. an existing private test directory beneath /tmp.
+        # It is never itself accepted as the writable creation point above.
+        if metadata.st_mode & 0o022 and not metadata.st_mode & stat.S_ISVTX:
+            return False
+    return True
+
+
 def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> PreflightResult:
     checks: list[PreflightCheck] = []
     devices: tuple[GpuDevice, ...] = ()
@@ -1047,7 +1066,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
                 ancestor = path
                 while not ancestor.exists() and ancestor != ancestor.parent:
                     ancestor = ancestor.parent
-                safe = safe and ancestor.is_dir()
+                safe = safe and _storage_ancestors_safe(ancestor)
                 if path.exists():
                     safe = safe and path.is_dir() and path.stat().st_uid == os.geteuid()
                 writable = safe and os.access(ancestor, os.W_OK | os.X_OK)
@@ -1059,7 +1078,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None) -> P
                         "Choose a new empty node directory. Use --resume only when this directory belongs to the RecordBench node being resumed.")
                 add(name, writable, "Directory access checks pass (no write attempted)" if writable else "Unsafe path, ownership, or directory access",
                     "Create private application state" if name == "node-storage" else "Store and process admitted sources",
-                    "Choose a dedicated absolute directory without symlinks, owned by the service account. Have an administrator grant that account narrow write and search access; do not use a home directory or shared export root.")
+                    "Choose a dedicated absolute directory without symlinks, owned by the service account. Use an existing service-owned creation directory without group or other write access, beneath root-owned or service-owned protected parents; do not use a home directory or shared export root.")
                 free = shutil.disk_usage(ancestor).free / (1024 ** 3) if safe else None
                 add(name + "-reserve", free is not None and free > 100,
                     f"{free:.1f} GiB free" if free is not None else "Capacity could not be checked safely",
