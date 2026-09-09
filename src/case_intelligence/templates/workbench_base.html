@@ -7,9 +7,10 @@
   <title>{% block title %}{{ product_name }}{% endblock %}</title>
   <link rel="icon" href="{{ url_for('static', path='favicon.svg') }}?v=stacked-record-1">
   <link rel="stylesheet" href="{{ url_for('static', path='case-intelligence.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='workspace-layout.css') }}">
   <script src="{{ url_for('static', path='case-intelligence.js') }}" defer></script>
 </head>
-<body class="{% block body_class %}{% endblock %}{% if show_assistant_dock %} assistant-available{% endif %}" data-csrf-token="{{ csrf_token }}" data-assistant-default="{{ assistant_default|default('open') }}">
+<body class="{% block body_class %}{% endblock %}{% if active_matter %} matter-page{% endif %}{% if show_assistant_dock %} assistant-available{% endif %}" data-csrf-token="{{ csrf_token }}" data-assistant-default="{{ assistant_default|default('open') }}">
   <header class="topbar">
     <div class="brand-zone">
       <button class="icon-button menu-button" type="button" aria-label="Hide matters" aria-controls="matter-rail" aria-expanded="true" data-rail-toggle>
@@ -103,7 +104,7 @@
           <span class="visually-hidden">Find a matter</span>
           <input id="matter-filter" type="search" placeholder="Find matter…" autocomplete="off" data-matter-filter>
         </label>
-        <nav class="matter-list" aria-label="Matters">
+        <nav class="matter-list" aria-label="Matters" tabindex="0">
           {% for row in matter_navigation %}
           {% set item = row.matter %}
           <a class="matter-link {% if active_matter and item.slug == active_matter.slug %}selected{% endif %}" href="/matters/{{ item.slug }}/home" title="{{ item.display_name }}" data-matter-item data-search-text="{{ item.display_name }} {{ item.descriptor }}"{% if active_matter and item.slug == active_matter.slug %} aria-current="page"{% endif %}>

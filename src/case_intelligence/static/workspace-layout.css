@@ -1,0 +1,91 @@
+/* Shared matter-page geometry. Feature styles own their inner content; this
+   sheet owns the outer edge and scrolling of persistent navigation/tools. */
+:root {
+  --workspace-gutter: 22px;
+  --workspace-top: 20px;
+  --workspace-sticky-gap: 16px;
+}
+
+.matter-page .app-frame > main {
+  grid-column: 2;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin-inline: 0;
+}
+
+.matter-page .app-frame > main:not(.workspace-shell):not(.setup-main),
+.matter-page .workspace-main,
+.matter-page .setup-workspace {
+  padding-top: var(--workspace-top);
+  padding-inline: var(--workspace-gutter);
+}
+
+.matter-page .matter-heading > div:first-child { min-width: 0; }
+
+/* The global matter list already has its own fixed rail. Keep its controls
+   outside the scrolling list even beside a very long document. */
+.rail-content > :not(.matter-list) { flex-shrink: 0; }
+.matter-list { scroll-padding-block: 8px; }
+
+@media (min-width: 761px) {
+  .notebook-tools {
+    align-self: start;
+    min-height: 0;
+    max-height: calc(100dvh - var(--topbar-height) - 2 * var(--workspace-sticky-gap));
+    top: calc(var(--topbar-height) + var(--workspace-sticky-gap));
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+    scroll-padding-block: 12px;
+    padding: 3px 6px 3px 3px;
+    margin: -3px -6px -3px -3px;
+  }
+
+  .conversation-history {
+    position: sticky;
+    top: 12px;
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: max(0px, calc(100dvh - var(--topbar-height) - var(--workspace-top) - var(--review-composer-height, 160px) - var(--review-composer-offset, 0px) - 24px));
+  }
+
+  .conversation-history > :not(nav) { flex-shrink: 0; }
+  .conversation-history nav {
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scroll-padding-block: 8px;
+  }
+}
+
+@media (max-width: 900px) {
+  .matter-page .app-frame > main { grid-column: 1; }
+}
+
+@media (max-width: 760px) {
+  :root { --workspace-gutter: 16px; --workspace-top: 16px; }
+  /* Stacked tools are part of the page, with no nested sticky viewport. */
+  .notebook-tools { max-height: none; overflow: visible; }
+  .matter-page main .matter-section-tabs {
+    width: 100%;
+    margin-inline: 0;
+  }
+}
+
+/* On short tablets the drawer and composer leave room for only a few rows.
+   Scroll the complete history panel so its filter never consumes the entire
+   available list viewport. */
+@media (min-width: 761px) and (max-width: 900px) and (max-height: 700px) {
+  .support-is-open .conversation-history {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+  .support-is-open .conversation-history nav {
+    flex-shrink: 0;
+    overflow: visible;
+  }
+}

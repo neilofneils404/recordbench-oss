@@ -1918,6 +1918,24 @@
   textarea?.addEventListener("input", resizeTextarea);
   resizeTextarea();
 
+  const reviewPane = document.querySelector(".workspace-main");
+  const reviewComposer = reviewPane?.querySelector(".composer-wrap");
+  if (reviewPane && reviewComposer) {
+    // Keep conversation navigation clear of the sticky composer as its text
+    // field, progress notices, or responsive rows change height.
+    const measureReviewComposer = () => {
+      reviewPane.style.setProperty("--review-composer-height", `${Math.ceil(reviewComposer.getBoundingClientRect().height)}px`);
+      reviewPane.style.setProperty("--review-composer-offset", `${parseFloat(getComputedStyle(reviewComposer).bottom) || 0}px`);
+    };
+    measureReviewComposer();
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(measureReviewComposer).observe(reviewComposer);
+    }
+    // The tablet support drawer changes the sticky bottom offset on resize,
+    // even when the composer itself keeps the same dimensions.
+    window.addEventListener("resize", measureReviewComposer);
+  }
+
   const questionForm = document.querySelector("[data-question-form]");
   const answerWaitStatus = document.querySelector("[data-answer-wait-status]");
   const answerWaitTitle = document.querySelector("[data-answer-wait-title]");
