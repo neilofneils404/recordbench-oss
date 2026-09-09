@@ -347,6 +347,26 @@ def test_installed_transcript_missing_valid_tail_invalidates_positive_and_negati
             scan([document(1, 'cancelled'), source], query)
 
 
+@pytest.mark.parametrize('query', ['cancelled', 'NOT cancelled'])
+def test_installed_transcript_empty_projection_cannot_claim_exact_total(tmp_path, query):
+    source, path = _installed_transcript_source(tmp_path)
+    payload = json.loads(path.read_text())
+    payload['units'] = []
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([document(1, 'cancelled'), source], query)
+
+
+@pytest.mark.parametrize('query', ['cancelled', 'introduced', 'NOT cancelled'])
+def test_stored_excerpt_digest_rejects_altered_text(tmp_path, query):
+    source, path = _installed_transcript_source(tmp_path)
+    payload = json.loads(path.read_text())
+    payload['units'][1]['text'] = 'introduced bicycle'
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([document(1, 'cancelled'), source], query)
+
+
 @pytest.mark.parametrize('count', [None, True, 2.0, '2', 0, -1, 1, 3])
 def test_installed_timed_transcript_requires_an_exact_integer_segment_count(tmp_path, count):
     source, _ = _installed_transcript_source(tmp_path)

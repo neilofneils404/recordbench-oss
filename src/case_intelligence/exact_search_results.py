@@ -140,6 +140,8 @@ def _validate_unit(unit: PilotUnit) -> None:
         raise ValueError('Invalid derived unit number')
     if not isinstance(unit.text, str) or not isinstance(unit.location_label, str):
         raise ValueError('Invalid derived unit text or location')
+    if unit.excerpt_digest and unit.excerpt_digest != hashlib.sha256(unit.text.encode('utf-8')).hexdigest():
+        raise ValueError('Invalid derived excerpt digest')
     # Transcript projections also store millisecond offsets in the legacy line
     # fields, so zero is valid there as well as in explicit media timestamps.
     for value, minimum in ((unit.line_start, 0), (unit.line_end, 0),
@@ -333,6 +335,8 @@ def search_documents(
                 has_text = has_text or bool(tokenize_text(unit.text, budget_check=check_budget))
             if section_backed and len(units) != document.page_count:
                 raise ValueError('Incomplete derived section coverage')
+            if media and not units and document.page_count != 0:
+                raise ValueError('Incomplete derived transcript coverage')
             if timed_media and (type(document.page_count) is not int or len(units) != document.page_count):
                 raise ValueError('Incomplete derived transcript coverage')
         except ExactSearchUnavailable:
