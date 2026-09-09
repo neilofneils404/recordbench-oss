@@ -203,6 +203,21 @@ the initial administrator and password input; missing saved mount directories
 remain blocked. These checks do not modify accounts, read a password, or report
 account contents.
 
+OIDC and Kerberos resume likewise validate the retained provider choices before
+Compose builds or service changes, including in a dry run. New provider flags do
+not override `config/recordbench.env` or replace canonical saved credentials.
+OIDC checks the saved issuer, client, groups, scopes, claim names, token method,
+matching external origin and canonical secret reference, then validates the
+owned mode-0600 `secrets/oidc-client-secret` using the same UTF-8 rules as a fresh
+installation. Kerberos checks the saved realm, admission groups/principals,
+matching HTTP service identity, canonical proxy-secret reference, a nonempty
+owned mode-0600 `secrets/recordbench.keytab`, and the owned mode-0600 proxy secret's
+32–256-character ASCII syntax. Both refuse symbolic-link credential files and
+keep their contents out of output. Missing SSSD or Kerberos configuration paths
+block resume; these presence checks do not establish a working domain exchange.
+The proxy still checks that the keytab contains its configured HTTP principal
+when it starts.
+
 ```bash
 ./install
 ```
@@ -222,6 +237,12 @@ The phases are deliberately explicit:
 6. storage and administrator initialization;
 7. pinned model staging and offline manifest sealing;
 8. launch and health acceptance.
+
+Health and sign-in acceptance connect to the configured HTTPS bind address while
+retaining the configured hostname in the HTTP `Host` header. IPv4 and IPv6
+wildcard binds use `127.0.0.1` and `::1` respectively for these local probes;
+concrete IPv4/IPv6 bindings use their selected address. These checks do not prove
+remote browser reachability, certificate trust, or a completed user sign-in.
 
 Use `--prepare-only` to build and configure without starting services. Use
 `--dry-run --no-color` to inspect the exact command sequence without writes.

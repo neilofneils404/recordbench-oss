@@ -361,7 +361,7 @@ def _private_write(path: Path, value: str, *, replace: bool = False) -> None:
 
 
 def _credential_source_available(source: Path | None, *, minimum_bytes: int = 1,
-                                 maximum_bytes: int = 1024 * 1024) -> bool:
+                                 maximum_bytes: int = 1024 * 1024, private: bool = False) -> bool:
     """Check credential-file metadata without opening or retaining its contents."""
     if source is None:
         return False
@@ -369,33 +369,55 @@ def _credential_source_available(source: Path | None, *, minimum_bytes: int = 1,
         source = source.expanduser()
         metadata = source.lstat()
         return (stat.S_ISREG(metadata.st_mode) and minimum_bytes <= metadata.st_size <= maximum_bytes
+                and (not private or metadata.st_uid == os.geteuid() and stat.S_IMODE(metadata.st_mode) == 0o600)
                 and os.access(source, os.R_OK))
     except OSError:
         return False
 
 
-def _oidc_secret_source_valid(source: Path | None) -> bool:
+def _credential_source_content(source: Path | None, *, private: bool = False) -> bytes | None:
     """Read a bounded source without following its final link or reporting secrets."""
-    if not _credential_source_available(source):
-        return False
+    if not _credential_source_available(source, private=private):
+        return None
     try:
         descriptor = os.open(source.expanduser(), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
             before = os.fstat(descriptor)
-            if not stat.S_ISREG(before.st_mode) or before.st_size > 1024 * 1024:
-                return False
+            if (not stat.S_ISREG(before.st_mode) or before.st_size > 1024 * 1024
+                    or private and (before.st_uid != os.geteuid() or stat.S_IMODE(before.st_mode) != 0o600)):
+                return None
             with os.fdopen(descriptor, "rb", closefd=False) as stream:
                 content = stream.read(1024 * 1024 + 1)
             after = os.fstat(descriptor)
             if len(content) > 1024 * 1024 or _read_identity(before) != _read_identity(after):
-                return False
-            # Match OidcSettings.from_env: UTF-8, trailing CR/LF only, then
-            # character bounds and rejection of embedded CR/LF/NUL.
-            secret = content.decode("utf-8").rstrip("\r\n")
-            return 16 <= len(secret) <= 4096 and not any(value in secret for value in ("\x00", "\r", "\n"))
+                return None
+            return content
         finally:
             os.close(descriptor)
     except (OSError, ValueError):
+        return None
+
+
+def _oidc_secret_source_valid(source: Path | None, *, private: bool = False) -> bool:
+    content = _credential_source_content(source, private=private)
+    if content is None:
+        return False
+    try:
+        # Match OidcSettings.from_env: UTF-8, trailing CR/LF only, then
+        # character bounds and rejection of embedded CR/LF/NUL.
+        secret = content.decode("utf-8").rstrip("\r\n")
+        return 16 <= len(secret) <= 4096 and not any(value in secret for value in ("\x00", "\r", "\n"))
+    except UnicodeDecodeError:
+        return False
+
+
+def _kerberos_proxy_source_valid(source: Path) -> bool:
+    content = _credential_source_content(source, private=True)
+    if content is None:
+        return False
+    try:
+        return re.fullmatch(r"[A-Za-z0-9_-]{32,256}", content.decode("ascii").rstrip("\r\n")) is not None
+    except UnicodeDecodeError:
         return False
 
 
@@ -1226,8 +1248,20 @@ def _identity_options_valid(args: argparse.Namespace) -> bool:
         groups.append(selected)
     if args.auth == "kerberos":
         realm = values["kerberos_realm"].strip().upper()
+        principals = []
+        for name, limit in (("kerberos_allowed_principals", 200), ("kerberos_admin_principals", 50)):
+            selected = {value.strip().casefold() for value in getattr(args, name, "").split(",") if value.strip()}
+            if len(selected) > limit:
+                return False
+            for principal in selected:
+                if len(principal) > 255 or principal.count("@") != 1:
+                    return False
+                login, principal_realm = principal.rsplit("@", 1)
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", login) is None or principal_realm.upper() != realm:
+                    return False
+            principals.append(selected)
         return bool(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", realm)
-                    and "." in realm and any(groups))
+                    and "." in realm and (any(groups) or any(principals)))
     client = values["oidc_client_id"].strip()
     if not client or len(client) > 512 or any(ord(character) < 32 for character in client):
         return False
@@ -1254,6 +1288,42 @@ def _identity_options_valid(args: argparse.Namespace) -> bool:
         except ValueError:
             return False
     return True
+
+
+def _saved_provider_options_valid(args: argparse.Namespace) -> bool:
+    """Validate retained provider choices, never substitute new CLI defaults."""
+    try:
+        environment = _dotenv(args.root / "config/recordbench.env")
+        compose = _dotenv(args.root / "compose.env")
+        options = argparse.Namespace(**vars(args))
+        for name, _prompt, _default in IDENTITY_FIELDS[args.auth]:
+            setattr(options, name, environment.get("CASE_INTELLIGENCE_" + name.upper(), ""))
+        if args.auth == "kerberos":
+            for name in ("kerberos_allowed_principals", "kerberos_admin_principals"):
+                setattr(options, name, environment.get("CASE_INTELLIGENCE_" + name.upper(), ""))
+        if not _identity_options_valid(options):
+            return False
+        if args.auth == "kerberos":
+            return (environment.get("CASE_INTELLIGENCE_KERBEROS_PROXY_SECRET_FILE", "").strip() == "/run/recordbench-secrets/kerberos-proxy-secret"
+                    and compose.get("RECORDBENCH_KERBEROS_PRINCIPAL") == f"HTTP/{args.server_name}@{options.kerberos_realm.strip().upper()}")
+        origin = environment.get("CASE_INTELLIGENCE_EXTERNAL_ORIGIN", "").strip().rstrip("/")
+        origins = {f"https://{args.server_name}:{args.https_port}"}
+        if args.https_port == 443:
+            origins.add(f"https://{args.server_name}")
+        if (origin not in origins or environment.get("CASE_INTELLIGENCE_OIDC_CLIENT_SECRET_FILE", "").strip()
+                != "/run/recordbench-secrets/oidc-client-secret"):
+            return False
+        scopes = set(environment.get("CASE_INTELLIGENCE_OIDC_SCOPES", "openid profile email").split())
+        if ("openid" not in scopes or len(scopes) > 12
+                or any(re.fullmatch(r"[A-Za-z0-9:._/-]{1,80}", value) is None for value in scopes)):
+            return False
+        for name, default in (("GROUPS", "groups"), ("DISPLAY_NAME", "name"), ("LOGIN_NAME", "preferred_username")):
+            claim = environment.get(f"CASE_INTELLIGENCE_OIDC_{name}_CLAIM", default).strip()
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,79}", claim) is None:
+                return False
+        return environment.get("CASE_INTELLIGENCE_OIDC_TOKEN_AUTH_METHOD", "client_secret_post").strip() in {"client_secret_basic", "client_secret_post"}
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def _matter_storage_layout_valid(path: Path) -> bool:
@@ -1414,6 +1484,29 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 "Password input selected; no password read" if args.password_stdin else "Initial administrator password input not selected",
                 "Create the initial local administrator account",
                 "Pass --password-stdin and supply the initial administrator password through controlled standard input when installation runs.")
+        if existing_resume and args.auth in {"oidc", "kerberos"}:
+            valid = _saved_provider_options_valid(args)
+            add("saved-provider-options", valid,
+                "Saved provider settings are valid" if valid else "Saved provider settings are invalid or disagree with canonical credentials",
+                "Resume with the retained identity provider boundary",
+                "Repair the retained provider settings in config/recordbench.env and matching Compose identity. Keep canonical secret-file references, valid provider options and the configured external origin; replacement command-line values do not change saved settings.")
+            if args.auth == "oidc":
+                valid = _oidc_secret_source_valid(args.root / "secrets/oidc-client-secret", private=True)
+                add("oidc-secret-input", valid,
+                    "Saved OIDC secret is valid; contents not reported" if valid else "Saved OIDC secret is missing, unsafe or invalid",
+                    "Start the configured OIDC provider",
+                    "Restore secrets/oidc-client-secret as an owned mode-0600 regular file. UTF-8 content must contain 16–4096 characters after trailing CR/LF removal, without embedded CR/LF or NUL.")
+            else:
+                valid = _credential_source_available(args.root / "secrets/recordbench.keytab", private=True)
+                add("kerberos-keytab-input", valid,
+                    "Saved keytab metadata is valid" if valid else "Saved keytab is missing or unsafe",
+                    "Start the configured Kerberos gateway",
+                    "Restore secrets/recordbench.keytab as a nonempty owned mode-0600 regular file of at most 1 MiB. The proxy still validates its HTTP service principal at startup.")
+                valid = _kerberos_proxy_source_valid(args.root / "secrets/kerberos-proxy-secret")
+                add("kerberos-proxy-secret", valid,
+                    "Saved proxy secret is valid; contents not reported" if valid else "Saved proxy secret is missing, unsafe or invalid",
+                    "Preserve the gateway's trusted-proxy identity boundary",
+                    "Restore secrets/kerberos-proxy-secret as an owned mode-0600 regular file containing 32–256 ASCII letters, digits, underscores or dashes, with optional trailing CR/LF.")
         if not existing_resume:
             if args.auth in {"oidc", "kerberos"}:
                 valid = _identity_options_valid(args)
@@ -1436,12 +1529,12 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                         observation if available else "Required credential source is missing, unsafe or invalid",
                         "Configure the selected identity provider",
                         f"Supply {option} as a readable regular file of at most 1 MiB without a symbolic link. It must be {requirement}.")
-            if args.auth == "kerberos" and not args.dry_run:
-                host_join = Path("/var/lib/sss/pipes").is_dir() and Path("/etc/krb5.conf").is_file()
-                add("kerberos-host", host_join,
-                    "Host SSSD and Kerberos configuration paths are present" if host_join else "Host SSSD or Kerberos configuration is missing",
-                    "Connect the Kerberos gateway to the host identity service",
-                    "Complete the host SSSD/NSS join and Kerberos configuration before installation. Presence checks do not prove a working identity exchange.")
+        if args.auth == "kerberos" and (existing_resume or not args.dry_run):
+            host_join = Path("/var/lib/sss/pipes").is_dir() and Path("/etc/krb5.conf").is_file()
+            add("kerberos-host", host_join,
+                "Host SSSD and Kerberos configuration paths are present" if host_join else "Host SSSD or Kerberos configuration is missing",
+                "Connect the Kerberos gateway to the host identity service",
+                "Complete the host SSSD/NSS join and Kerberos configuration before installation. Presence checks do not prove a working identity exchange.")
         storage_root = args.storage_root or args.root / "matter-storage"
         compatible = _storage_roots_compatible(args.root, storage_root)
         add("storage-separation", compatible,
@@ -1870,14 +1963,8 @@ def _configure(
             app_values["CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT"] = "/var/lib/recordbench-accounts"
         else:
             app_values["CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE"] = "/run/recordbench-secrets/local-accounts.json"
-        admin_username = args.admin_username
-        admin_display = args.admin_display_name
-        admin_username = admin_username.strip().casefold()
-        admin_display = admin_display.strip()
-        if re.fullmatch(r"[a-z0-9][a-z0-9._@-]{2,127}", admin_username) is None:
-            raise RuntimeError("Initial administrator username is invalid")
-        if not admin_display.strip() or len(admin_display) > 160 or any(ord(char) < 32 for char in admin_display):
-            raise RuntimeError("Initial administrator display name is invalid")
+        admin_username, admin_display = _account_format()["normalized_account"](
+            args.admin_username, args.admin_display_name)
     elif auth == "oidc":
         app_values.update(
             {
@@ -2138,14 +2225,23 @@ def _handoff(console: Console, root: Path, *, dry_run: bool = False) -> None:
     console.note("No password or token is included in this handoff")
 
 
+def _gateway_probe_address(environment: Mapping[str, str]) -> str:
+    address = ipaddress.ip_address(environment.get("RECORDBENCH_BIND_ADDRESS", "127.0.0.1"))
+    if address.is_unspecified:
+        return "127.0.0.1" if address.version == 4 else "::1"
+    return str(address)
+
+
 def _login_reachable(root: Path) -> bool:
     installation, _ = _installed_release(root)
-    port = int(_dotenv(root / "compose.env").get("RECORDBENCH_HTTPS_PORT", "8443"))
+    environment = _dotenv(root / "compose.env")
+    port = int(environment.get("RECORDBENCH_HTTPS_PORT", "8443"))
+    address = _gateway_probe_address(environment)
     host = _valid_host(str(installation["server_name"]))
-    # Bounded loopback transport probes never follow redirects. They do not
+    # Bounded probes of the configured bind never follow redirects. They do not
     # establish browser certificate trust, sign-in, or remote reachability.
     def probe(route: str):
-        connection = http.client.HTTPSConnection("127.0.0.1", port, timeout=5, context=ssl._create_unverified_context())
+        connection = http.client.HTTPSConnection(address, port, timeout=5, context=ssl._create_unverified_context())
         try:
             connection.request("GET", route, headers={"Host": host})
             response = connection.getresponse()
@@ -2374,7 +2470,9 @@ def _wait_health(console: Console, root: Path) -> None:
     env = _dotenv(root / "compose.env")
     host = _valid_host(str(settings["server_name"]))
     port = int(env.get("RECORDBENCH_HTTPS_PORT", "8443"))
-    url = f"https://127.0.0.1:{port}/health"
+    address = _gateway_probe_address(env)
+    authority = f"[{address}]" if ":" in address else address
+    url = f"https://{authority}:{port}/health"
     deadline = time.monotonic() + 900
     next_report = time.monotonic() + 15
     last = "services are starting"
