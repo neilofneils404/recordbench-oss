@@ -44,7 +44,10 @@ def test_reordered_support_deduplicates_without_losing_first_display_order(first
         assert findings[0]["body"].startswith("A synthetic delivery was recorded.")
         assert findings[1]["body"].startswith("The synthetic delivery was then reviewed.")
         assert all(section["citations"] == expected_citations for section in findings)
-    assert draft.coverage["omitted_sections"] == 0
+    # Generated duplicates consume no extra slots; the two distinct original
+    # saved assertions are disclosed when the explicit section budget is full.
+    assert draft.coverage["omitted_sections"] == len(selected)
+    assert set(draft.coverage["uncompiled_material_ids"]) == {item.material_id for item in selected}
 
 
 def test_same_text_with_different_support_sets_remains_distinct():

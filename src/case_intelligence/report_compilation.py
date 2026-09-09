@@ -22,7 +22,7 @@ from .generation import (
     MAX_EVIDENCE_ITEMS, MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEM_CHARS, MAX_ANSWER_CLAIMS,
 )
 
-COMPILATION_VERSION = 11
+COMPILATION_VERSION = 12
 KINDS = frozenset({"timeline", "entities", "topic"})
 HUMAN_ORIGINS = frozenset({"human", "notebook", "human_review", "review_decision", "source_review"})
 UNRESOLVED_STATES = frozenset({"disputed", "needs_review", "needs_attention", "flagged", "unreviewed"})
@@ -501,7 +501,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 if len(generated_candidates) < policy.max_sections:
                     generated_candidates.append({"heading": heading, "body": body, "citations": cited,
                                                  "items": items, "date_key": date_key, "category": category,
-                                                 "compilation_basis": basis, "omitted_attribution_count": omitted})
+                                                 "compilation_basis": basis, "omitted_attribution_count": omitted, "assertion_text": claim.text, "assertion_keys": frozenset(keys)})
                 else:
                     omitted_sections += 1
 
@@ -520,10 +520,17 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                           and item.material_id not in excluded_review_ids}
     if len(reserved_human_ids) > policy.max_sections:
         raise CompilationProblem("The retained human review exceeds the section budget. Select fewer saved items or increase the section budget.")
+    represented_assertions: set[str] = set()
     for candidate in generated_candidates:
         omitted = candidate.pop("omitted_attribution_count")
+        claim_text = candidate.pop("assertion_text")
+        citation_keys = candidate.pop("assertion_keys")
         if append_section(**candidate):
             generated_materials.update(item.material_id for item in candidate["items"])
+            # Sharing source support establishes provenance, not equivalence
+            # between a saved assertion and the newly generated assertion.
+            represented_assertions.update(item.material_id for item in candidate["items"]
+                if item.text == claim_text and {_citation_key(citation) for citation in item.citations} == citation_keys)
             sections[-1]["omitted_attribution_count"] = omitted
             omitted_attributions += omitted
         else:
@@ -540,12 +547,12 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             if human:
                 omitted_human_materials.append(item.material_id)
             continue
-        if not human and item.material_id in generated_materials and item.material_id not in incomplete_materials:
+        if not human and item.material_id in represented_assertions and item.material_id not in incomplete_materials:
             continue
         if not human and not saved_limit and not item.citations:
             uncompiled_materials.append(item.material_id)
             continue
-        if not human and not saved_limit and usable_model and item.material_id not in incomplete_materials and (focused or kind == "entities"):
+        if not human and not saved_limit and usable_model and item.material_id not in generated_materials and item.material_id not in incomplete_materials and (focused or kind == "entities"):
             uncompiled_materials.append(item.material_id)
             continue
         if not item.text.strip():
@@ -579,6 +586,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             categories = ["; ".join(categories)]
         date_key = _exact_date(item.text, item.date_label, citations=item.citations) if kind == "timeline" else ""
         basis = _attribution(item)
+        if not human and item.material_id in generated_materials:
+            basis += "\nThis distinct saved assertion is retained in its original wording; a generated finding using the same passage does not independently verify this assertion."
         if item.material_id in unclassified_review_ids:
             basis += "\nThis saved review record is retained because its topic relevance has not been fully checked."
         if not human and item.material_id in incomplete_materials:
@@ -594,6 +603,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 heading = f"{category} (no source support): {item.title}"
             if not append_section(heading, body, item.citations, (item,), date_key=date_key, category=category, compilation_basis=basis):
                 omitted_sections += 1
+                if item.material_id not in uncompiled_materials:
+                    uncompiled_materials.append(item.material_id)
             elif item.material_id in unclassified_review_ids:
                 retained_unclassified_review_ids.add(item.material_id)
     if cancelled is not None and cancelled():

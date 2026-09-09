@@ -451,7 +451,9 @@ def test_repeated_generated_provenance_fits_real_report_storage_with_explicit_om
         matter = store.create_matter("Synthetic provenance", "Synthetic", actor.principal_id)
         report = store.create_report_from_sections(matter.matter_id, actor.principal_id, title=draft.title,
                                                   purpose=draft.purpose, origin_id="synthetic-compilation", sections=draft.sections)
-        assert len(store.report_sections(matter.matter_id, report.report_id)) == 4
+        assert len(store.report_sections(matter.matter_id, report.report_id)) == len(draft.sections) == 201
+        assert draft.coverage["omitted_sections"] == 3
+        assert len(draft.coverage["uncompiled_material_ids"]) == 3
     finally:
         store.close()
 

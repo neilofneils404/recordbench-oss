@@ -57,9 +57,9 @@
     <div class="notice notice-neutral download-status" data-download-status role="status" aria-live="polite" hidden></div>
     {% endif %}
 
-    {% if active_work.uploads or active_work.ingestion or active_work.media or active_work.overviews or active_work.analysis or active_work.playback or active_work.exports or active_work.answers or active_work.research or active_work.reviews %}
+    {% if active_work.uploads or active_work.ingestion or active_work.media or active_work.overviews or active_work.analysis or active_work.playback or active_work.exports or active_work.answers or active_work.research or active_work.reviews or active_work.reports %}
     <div class="notice notice-neutral" role="status">
-      Wait for active work to finish before deleting: {{ active_work.uploads }} upload{% if active_work.uploads != 1 %}s{% endif %}, {{ active_work.ingestion }} source task{% if active_work.ingestion != 1 %}s{% endif %}, {{ active_work.media }} media task{% if active_work.media != 1 %}s{% endif %}, {{ active_work.overviews }} transcript overview{% if active_work.overviews != 1 %}s{% endif %}, {{ active_work.analysis }} analysis run{% if active_work.analysis != 1 %}s{% endif %}, {{ active_work.playback }} playback preparation{% if active_work.playback != 1 %}s{% endif %}, {{ active_work.exports }} work-product download{% if active_work.exports != 1 %}s{% endif %}, {{ active_work.answers }} answer{% if active_work.answers != 1 %}s{% endif %}, {{ active_work.research }} investigation{% if active_work.research != 1 %}s{% endif %}, and {{ active_work.reviews }} every-source check{% if active_work.reviews != 1 %}s{% endif %}.
+      Wait for active work to finish before deleting: {{ active_work.uploads }} upload{% if active_work.uploads != 1 %}s{% endif %}, {{ active_work.ingestion }} source task{% if active_work.ingestion != 1 %}s{% endif %}, {{ active_work.media }} media task{% if active_work.media != 1 %}s{% endif %}, {{ active_work.overviews }} transcript overview{% if active_work.overviews != 1 %}s{% endif %}, {{ active_work.analysis }} analysis run{% if active_work.analysis != 1 %}s{% endif %}, {{ active_work.playback }} playback preparation{% if active_work.playback != 1 %}s{% endif %}, {{ active_work.exports }} work-product download{% if active_work.exports != 1 %}s{% endif %}, {{ active_work.answers }} answer{% if active_work.answers != 1 %}s{% endif %}, {{ active_work.research }} investigation{% if active_work.research != 1 %}s{% endif %}, {{ active_work.reviews }} every-source check{% if active_work.reviews != 1 %}s{% endif %}, and {{ active_work.reports }} report compilation{% if active_work.reports != 1 %}s{% endif %}.
     </div>
     {% endif %}
 
@@ -73,7 +73,7 @@
         <span>I understand this permanently deletes the workbench matter and cannot be undone.</span>
       </label>
       <div class="close-matter-actions">
-        <button class="button button-danger" type="submit" {% if active_work.uploads or active_work.ingestion or active_work.media or active_work.overviews or active_work.analysis or active_work.playback or active_work.exports or active_work.answers or active_work.research or active_work.reviews %}disabled{% endif %}>
+        <button class="button button-danger" type="submit" {% if active_work.uploads or active_work.ingestion or active_work.media or active_work.overviews or active_work.analysis or active_work.playback or active_work.exports or active_work.answers or active_work.research or active_work.reviews or active_work.reports %}disabled{% endif %}>
           {{ 'Try deletion again' if lifecycle.state == 'purge_failed' else 'Delete matter' }}
         </button>
         {% if lifecycle.state == 'active' %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/settings">Keep matter open</a>{% else %}<a class="button button-secondary" href="/matters/manage">Return to matters</a>{% endif %}

@@ -20,4 +20,4 @@
     <span>Settings</span>
   </a>
 </nav>
-{% include "workbench_processing_status.html" %}
+{% if not hide_processing_status %}{% include "workbench_processing_status.html" %}{% endif %}

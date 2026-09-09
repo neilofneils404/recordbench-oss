@@ -1,0 +1,35 @@
+{% extends "workbench_base.html" %}
+{% block title %}Make a report · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}report-compilation-page{% endblock %}
+{% block content %}
+<main class="report-compose-shell">
+  <header class="report-compose-heading"><a href="/matters/{{ matter.slug }}/reports">← Reports</a><h1>What would you like to understand?</h1><p>Turn saved AI answers and your team's review into a report you can use.</p></header>
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+  {% if active_job %}
+  <section class="report-progress-card" data-workflow-monitor data-status-url="/matters/{{ matter.slug }}/reports/compile/{{ active_job.job_id }}/status" data-terminal="{{ 'false' if active_job.state in ('queued','running') else 'true' }}" aria-live="polite">
+    <p class="eyebrow">{{ report_labels[active_job.kind] }}</p>
+    <h2>{% if active_job.state in ('queued','running') %}Your report is taking shape{% elif active_job.state == 'succeeded' and not active_job.report_id %}This draft was deleted{% elif active_job.state == 'succeeded' %}Your draft is ready{% else %}Your report needs attention{% endif %}</h2>
+    {% if active_job.topic %}<p>{{ active_job.topic }}</p>{% endif %}
+    <p data-workflow-stage>{% if active_job.state == 'succeeded' and not active_job.report_id %}You can compile a new draft from the same selected work.{% else %}{{ active_job.message }}{% endif %}</p>
+    {% if active_job.state in ('queued','running') %}<progress aria-label="Compiling report"></progress><p>You can leave this page. Your draft will appear in Reports when it's ready.</p><form method="post" action="/matters/{{ matter.slug }}/reports/compile/{{ active_job.job_id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Stop compiling</button></form>
+    {% elif active_job.state == 'succeeded' and active_job.report_id %}<a class="button button-primary" href="/matters/{{ matter.slug }}/reports?report={{ active_job.report_id }}">Read your draft</a>
+    {% else %}<form method="post" action="/matters/{{ matter.slug }}/reports/compile/{{ active_job.job_id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">Try again</button></form><a href="/matters/{{ matter.slug }}/reports/new">Choose different work</a>{% endif %}
+  </section>
+  {% else %}
+  <form class="report-compose-form" method="post" action="/matters/{{ matter.slug }}/reports/compile" data-working-form data-working-label="Starting your report…">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="request_key" value="{{ request_key }}">
+    <fieldset class="report-format-choices"><legend>Choose your report</legend>
+      <label><input type="radio" name="kind" value="timeline" {% if kind == 'timeline' %}checked{% endif %}><span><span class="report-format-symbol" aria-hidden="true">↳</span><strong>A timeline</strong><small>What happened, when, and where accounts differ.</small></span></label>
+      <label><input type="radio" name="kind" value="entities" {% if kind == 'entities' %}checked{% endif %}><span><span class="report-format-symbol" aria-hidden="true">◎</span><strong>People, places &amp; things</strong><small>Who's involved and what the record says about them.</small></span></label>
+      <label><input type="radio" name="kind" value="topic" {% if kind == 'topic' %}checked{% endif %}><span><span class="report-format-symbol" aria-hidden="true">≡</span><strong>A topic brief</strong><small>Relevant findings, different accounts, and open questions.</small></span></label>
+    </fieldset>
+    <label class="report-topic-label">What should it focus on?<textarea name="topic" rows="2" maxlength="500" placeholder="For example: the delivery delay, or who approved the change">{{ topic }}</textarea><small>Required for a topic brief. Optional for other reports.</small></label>
+    <section class="report-work-selection"><div><h2>Use this saved work</h2><p>We've selected a starting point. Add or remove work to fit your report.</p></div>
+      {% for choice in choices %}<label class="report-work-choice"><input type="checkbox" name="selection" value="{{ choice.value }}" {% if choice.value in selected %}checked{% endif %}><span><strong>{{ choice.title }}</strong><small>{{ choice.description }}</small></span></label>
+      {% else %}<div class="report-no-work"><strong>Your report starts with a finding.</strong><p>Ask the AI about this matter, or save a note from your review. Then compile that work here.</p><a class="button button-primary" href="/matters/{{ matter.slug }}#matter-question">Ask about this matter</a><a href="/matters/{{ matter.slug }}/notebook">Open team notes</a></div>{% endfor %}
+    </section>
+    {% if choices %}<footer class="report-compose-submit"><p>Your draft keeps source links, human review, and unresolved questions. It uses the saved work you select.</p><button class="button button-primary" type="submit">Compile draft <span aria-hidden="true">→</span></button></footer>{% endif %}
+  </form>
+  {% endif %}
+</main>
+{% endblock %}

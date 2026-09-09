@@ -1,11 +1,10 @@
 # Report compiler: human review capacity
 
-This is an isolated compiler foundation extracted from the public #44 head
-`e5fbd9ac3857c53453402589b30b82aee13c84ed` and reconciled against accepted main
-`1fed77a2c50686b073e4c3255421d77aa16fefe5`. It includes the pure compiler and
-synthetic tests, with the human-capacity correction below. It does not enable
-a Reports composer, background jobs, or a new persistence format. Those parts
-of #44 remain separate work; the existing Report workflows are unchanged.
+The pure compiler foundation was extracted from public #44 and accepted as the
+separate #51 dependency. The [Reports workflow](REPORT_COMPILATION.md) now uses
+that foundation for saved-work selection, durable preparation, readable drafts,
+review, editing, and exports. The compiler retains the capacity, citation,
+qualification, and relevance safeguards described below.
 
 ## User outcome
 
@@ -106,12 +105,15 @@ not return a partial human record set as a completed draft.
   citations keep generated and saved timeline dates non-exact regardless of the
   phrasing or a supplied date label. This decision follows the finding's own
   support: document-only findings in a mixed source answer can retain exact dates.
-- Compiler version 11 changes the fingerprint so earlier previews cannot share
+- Compiler version 12 changes the fingerprint so earlier previews cannot share
   an identity with the corrected allocation, relevance, citation, and
-  qualification policy.
-- This work does not resolve #44's separate finding about distinct machine
-  assertions sharing a passage, or its deleted-result and cancellation UI
-  findings. This foundation is not acceptance of the full #44 workflow.
+  qualification and assertion-retention policy.
+- A saved machine assertion is represented only when an admitted generated claim
+  has the exact same assertion text and citation-key set. A distinct assertion
+  sharing a generated finding's passage remains attributed in its original words.
+  Retention does not independently verify it. Machine assertions omitted by the
+  section budget remain identified in `uncompiled_material_ids`; human capacity
+  remains reserved. Extra sourced limitations stay with the generated claim.
 
 ## Synthetic validation
 
@@ -135,8 +137,8 @@ failures in classification and source generation.
 Existing compiler tests also exercise grounding, coverage, cancellation, export text
 limits, current Report storage compatibility, and source snapshot fingerprints.
 
-No schema, storage, authentication, dependency, model revision, or deployment
-behavior changes are included. Deterministic synthetic generators test the
+The pure compiler changes no storage format or model revision. The separate
+workflow adds the documented queue and provenance migrations. Deterministic synthetic generators test the
 allocation contract; they do not establish model quality or live-workload
 readiness. Full application and transcription suites, Compose validation,
 Python compilation, publication checks, and final-commit hosted review remain
