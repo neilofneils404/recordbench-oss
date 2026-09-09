@@ -627,7 +627,7 @@ def test_phrase_preview_anchors_on_complete_phrase_and_preserves_unicode():
         assert (phrase, True) in preview["pieces"]
 
 
-def test_skipped_pdf_pages_link_to_matching_extracted_unit_position(tmp_path):
+def test_repeated_pdf_pages_link_to_matching_extracted_unit_position(tmp_path):
     app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
     with TestClient(app) as client:
         response = client.post("/matters", data={"name": "Synthetic skipped page", "descriptor": ""}, follow_redirects=False)
@@ -635,11 +635,13 @@ def test_skipped_pdf_pages_link_to_matching_extracted_unit_position(tmp_path):
         bench = app.state.workbench
         matter = bench.matter(slug, "development-taylor-morgan")
         source = document(1, "opening", "target bicycle", "following extracted page")
-        source.units[1]["number"] = 3
-        source.units[2]["number"] = 4
+        source.media_type = "application/pdf"
+        source.page_count = 2
+        source.units[1]["number"] = 1
+        source.units[2]["number"] = 2
         bench.source_store(matter).documents[source.document_id] = source
         result = bench.exact_search(matter, "bicycle")
-        assert result.items[0].passages[0].number == 3
+        assert result.items[0].passages[0].number == 1
         assert result.items[0].passage_positions == (2,)
         page = client.get(f"/matters/{slug}/exact-search", params={"words": "bicycle"})
         match = re.search(r'<a class="find-location" href="([^"]+)">', page.text)
@@ -764,7 +766,7 @@ def test_media_timestamp_links_and_partial_page_warning_are_visible(tmp_path):
         assert result.status_code == 200 and "1 source found" in result.text
         assert "have incomplete page coverage and were left out" in result.text
         match = re.search(r'<a class="find-location" href="([^"]+)">', result.text)
-        assert match and match.group(1).endswith("?start_ms=45000#segment-2")
+        assert match and match.group(1).endswith("?start_ms=45000&amp;unit=2#segment-2")
         assert "00:45–00:46" in result.text and "Lines 45000" not in result.text
 
 
@@ -926,8 +928,66 @@ def test_legacy_media_result_links_seek_to_offset_and_extracted_position(tmp_pat
         assert result.status_code == 200 and '1 source found' in result.text
         links = re.findall(r'<a class="find-location" href="([^"]+)">', result.text)
         assert len(links) == 2
-        assert links[0].endswith(f'?start_ms={offset}#segment-2')
-        assert links[1].endswith('?start_ms=50000#segment-3')
+        assert links[0].endswith(f'?start_ms={offset}&amp;unit=2#segment-2')
+        assert links[1].endswith('?start_ms=50000&amp;unit=3#segment-3')
         opened = client.get(html.unescape(links[0]))
         assert opened.status_code == 200
         assert f'data-media-review data-start-ms="{offset}"' in opened.text
+
+
+@pytest.mark.parametrize('query', ['cancelled', 'neutral NOT cancelled'])
+def test_missing_middle_production_text_chunk_invalidates_exact_total(tmp_path, query):
+    import io
+    from case_intelligence.pilot_uploads import PilotStore
+    from tests.test_review_tools import CleanScanner
+    store = PilotStore(tmp_path / 'synthetic-text', malware_scanner=CleanScanner())
+    data = ('neutral\n' * 20 + 'cancelled\n' * 20 + 'neutral\n').encode()
+    source, _ = store.store_stream('Synthetic chunks.txt', 'text/plain', io.BytesIO(data))
+    assert source.state == 'ready' and source.page_count == 41
+    path = store.derived / source.units_file
+    payload = json.loads(path.read_text())
+    assert [unit['number'] for unit in payload['units']] == [1, 2, 3]
+    assert scan([source], 'cancelled').total == 1
+    del payload['units'][1]
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([source], query)
+
+
+@pytest.mark.parametrize('offset', [0, 45000])
+def test_media_search_links_open_matching_page_despite_overlapping_segments(tmp_path, monkeypatch, offset):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from case_intelligence.workspace_store import TranscriptSegmentRecord
+    app = create_workbench_app(tmp_path / 'runtime', auth_mode='test')
+    with TestClient(app) as client:
+        response = client.post('/matters', data={'name': 'Synthetic paged transcript'}, follow_redirects=False)
+        slug = response.headers['location'].split('/')[2]
+        bench = app.state.workbench
+        matter = bench.matter(slug, 'development-taylor-morgan')
+        media = document(1, *(['neutral'] * 200 + ['red bicycle', 'red depot']))
+        media.version_id = 'a' * 32
+        media.media_type, media.duration_ms = 'audio/wav', 60000
+        for unit in media.units:
+            unit.update(line_start=offset, line_end=offset + 1000)
+        bench.source_store(matter).documents[media.document_id] = media
+        bench._sync_source_catalog(matter, [media])
+        segments = tuple(TranscriptSegmentRecord(
+            segment_id=f'synthetic-segment-{index}', transcript_id='synthetic-transcript',
+            matter_id=matter.matter_id, ordinal=index, external_segment_id=str(index),
+            start_ms=offset, end_ms=offset + 1000, speaker_cluster='', model_text=unit['text'],
+            translated_text=None, confidence=None, low_confidence=0, overlap=1,
+            current_text=unit['text'], current_revision=0, speaker_display_name='',
+            speaker_identity_state='unconfirmed', speaker_revision=0, created_at='2026-01-01T00:00:00Z',
+        ) for index, unit in enumerate(media.units, 1))
+        original = bench.media_review
+        monkeypatch.setattr(bench, 'media_review', lambda *args, **kwargs: replace(original(*args, **kwargs), segments=segments, transcript=SimpleNamespace(segment_count=len(segments), review_state='machine_draft')))
+        result = client.get(f'/matters/{slug}/exact-search', params={'words': 'red'})
+        links = re.findall(r'<a class="find-location" href="([^"]+)">', result.text)
+        assert len(links) == 2
+        for ordinal, link in zip((201, 202), links):
+            opened = client.get(html.unescape(link))
+            assert opened.status_code == 200
+            assert f'id="segment-{ordinal}"' in opened.text
+            assert 'id="segment-1"' not in opened.text
+            assert f'data-media-review data-start-ms="{offset}"' in opened.text

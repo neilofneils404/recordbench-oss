@@ -317,7 +317,7 @@ def search_documents(
             for ordinal, unit in enumerate(document.iter_parsed_units(budget_check=check_budget,
                     read_check=charge_read, max_record_chars=max_record_chars), 1):
                 _validate_unit(unit)
-                if section_backed and unit.number != ordinal:
+                if (section_backed or document.media_type == "text/plain") and unit.number != ordinal:
                     raise ValueError('Invalid derived section numbering')
                 if media:
                     has_timestamps = unit.start_ms is not None or unit.end_ms is not None

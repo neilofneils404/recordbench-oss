@@ -211,3 +211,5 @@ previews use those offsets for the timestamp label and recording seek URL, and
 use the extracted passage position for the transcript segment anchor. Synthetic
 route checks open primary and additional later-passage links, including a zero
 offset, without treating a legacy unit number as a segment ordinal.
+
+Transcript passage links carry a server-visible passage ordinal as well as the playback offset, so matching passages beyond the first 200 segments open on the correct page even at zero or overlapping timestamps. TXT projections must retain consecutive extracted chunk numbers; a missing middle chunk makes the exact scan unavailable instead of returning an exact zero or accepting a negated term.
