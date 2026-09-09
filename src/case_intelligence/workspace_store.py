@@ -6919,6 +6919,81 @@ class WorkspaceStore:
             )
         return self.report(matter_id, report_id)
 
+    def create_report_from_sections(
+        self,
+        matter_id: str,
+        actor_id: str,
+        title: str,
+        purpose: str,
+        *,
+        origin_id: str,
+        sections: Sequence[Mapping[str, object]],
+    ) -> ReportRecord:
+        """Save a complete converted review atomically, or leave no new Report."""
+
+        actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
+        heading = self._safe_text(title, label="Report title", maximum=200)
+        description = self._safe_text(purpose, label="Report purpose", maximum=2_000,
+                                      required=False, multiline=True)
+        source_id = self._safe_text(origin_id, label="Section origin", maximum=120)
+        if not 1 <= len(sections) <= 500:
+            raise WorkspaceProblem("A converted Report needs between 1 and 500 sections.")
+        prepared = []
+        for section in sections:
+            if not isinstance(section, Mapping):
+                raise WorkspaceProblem("A converted Report section is invalid.")
+            if not isinstance(section.get("heading"), str) or not isinstance(section.get("body"), str):
+                raise WorkspaceProblem("A converted Report section needs text for its heading and body.")
+            section_heading = self._safe_text(section.get("heading"), label="Section heading", maximum=200)
+            body = self._safe_text(section.get("body"), label="Section text", maximum=50_000,
+                                   required=False, multiline=True)
+            raw_citations = section.get("citations", ())
+            if not isinstance(raw_citations, (list, tuple)) or len(raw_citations) > 100:
+                raise WorkspaceProblem("A report section can cite up to 100 passages.")
+            try:
+                citations = tuple(self._prepare_report_citation(value) for value in raw_citations)
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise WorkspaceProblem("The converted Report has invalid source support. Open the original run.") from exc
+            prepared.append((section_heading, body, citations))
+
+        report_id = f"report-{uuid.uuid4().hex}"
+        now = self._now()
+        with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            self.membership(matter_id, actor)
+            self.connection.execute(
+                "INSERT INTO workbench_report("
+                "report_id,matter_id,title,purpose,status,created_by,created_at,updated_by,updated_at) "
+                "VALUES (?,?,?,?,'draft',?,?,?,?)",
+                (report_id, matter_id, heading, description, actor, now, actor, now),
+            )
+            for ordinal, (section_heading, body, citations) in enumerate(prepared, 1):
+                section_id = f"report-section-{uuid.uuid4().hex}"
+                self.connection.execute(
+                    "INSERT INTO workbench_report_section("
+                    "section_id,report_id,matter_id,ordinal,heading,body,origin,origin_id,"
+                    "created_by,created_at,updated_by,updated_at) VALUES (?,?,?,?,?,?,'finding',?,?,?,?,?)",
+                    (section_id, report_id, matter_id, ordinal, section_heading, body, source_id,
+                     actor, now, actor, now),
+                )
+                self.connection.executemany(
+                    "INSERT INTO workbench_report_citation("
+                    "citation_id,section_id,report_id,matter_id,ordinal,kind,document_id,"
+                    "source_version_id,source_name,location,support_token,excerpt,media_clip_id,"
+                    "start_ms,end_ms,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [(f"report-citation-{uuid.uuid4().hex}", section_id, report_id, matter_id,
+                      citation_ordinal, *citation, now)
+                     for citation_ordinal, citation in enumerate(citations, 1)],
+                )
+            row = self.connection.execute(
+                "SELECT r.*,? AS section_count FROM workbench_report r WHERE r.report_id=?",
+                (len(prepared), report_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Converted Report was not saved")
+            report = self._report(row)
+        return report
+
     def reports(
         self,
         matter_id: str,
@@ -10627,6 +10702,31 @@ class WorkspaceStore:
                 "ORDER BY ordinal LIMIT ?", (run_id, cursor, bounded)
             ).fetchall()
         return tuple(self._review_decision(row) for row in rows)
+
+    def iter_review_decisions_for_report(self, matter_id: str, actor_id: str, run_id: str):
+        """Stream one SQLite read snapshot without an export-page population cap.
+
+        A dedicated read-only connection preserves a snapshot without holding
+        the shared workspace lock while callers consume and rank decisions.
+        Callers must exhaust or close the iterator before starting Report writes.
+        """
+        self.review_run(matter_id, actor_id, run_id)
+        connection = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("BEGIN")
+            cursor = connection.execute(
+                "SELECT * FROM workbench_review_decision WHERE matter_id=? AND run_id=? ORDER BY ordinal",
+                (matter_id, run_id),
+            )
+            try:
+                while rows := cursor.fetchmany(1_000):
+                    yield from (self._review_decision(row) for row in rows)
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
 
     def _review_decision_time(self, previous: str) -> str:
         earlier = datetime.fromisoformat(previous.replace("Z", "+00:00"))
