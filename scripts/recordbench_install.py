@@ -7,6 +7,7 @@ import csv
 import getpass
 import hashlib
 import http.client
+import ipaddress
 import json
 import os
 import platform
@@ -20,6 +21,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -558,9 +560,13 @@ def _installed_release(root: Path) -> tuple[dict[str, object], Path]:
         raise RuntimeError("RecordBench node is not installed")
     try:
         installation = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         raise RuntimeError("RecordBench installation record is invalid") from exc
-    if not isinstance(installation, dict):
+    if (not isinstance(installation, dict)
+            or installation.get("auth") not in ("local", "oidc", "kerberos")
+            or installation.get("models", "none") not in ("none", "review", "transcription", "all")
+            or not isinstance(installation.get("profiles", []), list)
+            or not all(isinstance(profile, str) for profile in installation.get("profiles", []))):
         raise RuntimeError("RecordBench installation record is invalid")
     configured = installation.get("release_path")
     release = Path(configured) if isinstance(configured, str) else PROJECT
@@ -1110,6 +1116,79 @@ def _existing_storage_path(path: Path) -> Path:
     raise RuntimeError("saved storage path or protected ancestry is unavailable; restore safe ownership and access before resuming")
 
 
+def _identity_options_valid(args: argparse.Namespace) -> bool:
+    """Mirror non-secret identity.py settings without importing runtime dependencies."""
+    values = {name: getattr(args, name) if getattr(args, name) is not None else default
+              for name, _prompt, default in IDENTITY_FIELDS[args.auth]}
+    if any(any(character in value for character in ("\x00", "\r", "\n"))
+           for value in values.values()):
+        return False
+    groups = []
+    for suffix, limit in (("allowed_groups", 100), ("admin_groups", 50)):
+        selected = {value.strip() for value in values[f"{args.auth}_{suffix}"].split(",") if value.strip()}
+        if args.auth == "kerberos":
+            selected = {value.casefold() for value in selected}
+            valid = all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@\\ -]{0,254}", value) for value in selected)
+        else:
+            valid = all(len(value) <= 256 and not any(ord(character) < 32 for character in value)
+                        for value in selected)
+        if len(selected) > limit or not valid:
+            return False
+        groups.append(selected)
+    if args.auth == "kerberos":
+        realm = values["kerberos_realm"].strip().upper()
+        return bool(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", realm)
+                    and "." in realm and any(groups))
+    client = values["oidc_client_id"].strip()
+    if not client or len(client) > 512 or any(ord(character) < 32 for character in client):
+        return False
+    for value, origin_only in ((values["oidc_issuer"], False),
+                               (f"https://{(args.server_name or 'recordbench.example.test').strip().casefold()}:{args.https_port}", True)):
+        candidate = value.strip().rstrip("/")
+        if not candidate or len(candidate) > 1024:
+            return False
+        try:
+            parsed = urllib.parse.urlsplit(candidate)
+            if (parsed.scheme != "https" or not parsed.hostname
+                    or parsed.username is not None or parsed.password is not None
+                    or parsed.query or parsed.fragment
+                    or (origin_only and parsed.path not in {"", "/"})):
+                return False
+            hostname = parsed.hostname.casefold()
+            if hostname == "localhost":
+                return False
+            try:
+                if ipaddress.ip_address(hostname).is_loopback:
+                    return False
+            except ValueError:
+                pass
+        except ValueError:
+            return False
+    return True
+
+
+def _matter_storage_layout_valid(path: Path) -> bool:
+    """Inspect initialization names and existing marker metadata without probes or writes."""
+    marker = path / ".recordbench-managed-storage.json"
+    owned = tuple(path / name for name in ("matters", ".matter-purging", "ingestion-staging"))
+    if not marker.exists() and not marker.is_symlink():
+        return not any(entry.exists() or entry.is_symlink() for entry in owned)
+    try:
+        if marker.is_symlink() or not marker.is_file() or marker.stat().st_size > 4096:
+            return False
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        if (not isinstance(payload, dict) or payload.get("format_version") != 1
+                or payload.get("product") != "RecordBench"
+                or not isinstance(payload.get("storage_id"), str)
+                or not payload["storage_id"].startswith("recordbench-storage-")):
+            return False
+        device = path.stat().st_dev
+        return all(not entry.is_symlink() and entry.is_dir() and entry.stat().st_dev == device
+                   and os.access(entry, os.R_OK | os.W_OK | os.X_OK) for entry in owned)
+    except (OSError, ValueError):
+        return False
+
+
 def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                        model_args: argparse.Namespace | None = None,
                        needs_model_staging: bool = True) -> PreflightResult:
@@ -1175,7 +1254,13 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 "Authorize one-time gated model staging without retaining credentials",
                 "Pass --hf-token-stdin and supply a read-only token through controlled standard input when staging runs.")
     if args is not None:
-        existing_resume = args.resume and (args.root / "installation.json").is_file()
+        existing_resume = False
+        if args.resume:
+            try:
+                _installed_release(args.root)
+                existing_resume = True
+            except RuntimeError:
+                pass
         account_directory = (getattr(args, "account_root", args.root / "accounts")
                              if args.enable_account_management else args.root / "secrets")
         needs_local_account = args.auth in {None, "local"} and (
@@ -1201,13 +1286,11 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 "Pass --password-stdin and supply the initial administrator password through controlled standard input when installation runs.")
         if not existing_resume:
             if args.auth in {"oidc", "kerberos"}:
-                values = (getattr(args, name) for name, _prompt, _default in IDENTITY_FIELDS[args.auth])
-                valid = all(value is None or not any(character in value for character in ("\x00", "\r", "\n"))
-                            for value in values)
+                valid = _identity_options_valid(args)
                 add("identity-options", valid,
-                    "Identity configuration text is valid" if valid else "Identity configuration contains unsupported control characters",
-                    "Write the selected identity provider configuration",
-                    "Use single-line issuer, client, realm and group values without NUL, carriage return or newline characters.")
+                    "Identity provider settings are valid" if valid else "Identity provider settings are invalid",
+                    "Configure an identity provider accepted by the runtime",
+                    "Use an HTTPS issuer and non-loopback server name for OIDC, a nonempty client ID of at most 512 characters, and group names of at most 256 characters. Kerberos requires a dotted realm and at least one valid admission group. Limit allowed/admin groups to 100/50; omit control characters. See docs/INSTALL.md.")
             for auth, source, name, option in (
                 ("oidc", args.oidc_client_secret_file, "oidc-secret-input", "--oidc-client-secret-file"),
                 ("kerberos", args.kerberos_keytab, "kerberos-keytab-input", "--kerberos-keytab"),
@@ -1229,7 +1312,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 path, ancestor, safe = _storage_path_status(path)
                 writable = safe and os.access(ancestor, os.W_OK | os.X_OK)
                 if name == "node-storage" and safe and path.is_dir():
-                    empty_or_resume = args.resume or not any(path.iterdir())
+                    empty_or_resume = existing_resume or not any(path.iterdir())
                     add("node-empty", empty_or_resume,
                         "Existing root can be prepared" if empty_or_resume else "Installation root already contains files",
                         "Prepare a dedicated installation root",
@@ -1237,6 +1320,12 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                 add(name, writable, "Directory access checks pass (no write attempted)" if writable else "Unsafe path, ownership, or directory access",
                     "Create private application state" if name == "node-storage" else "Store and process admitted sources",
                     "Choose a dedicated absolute directory without symlinks, owned by the service account. Use an existing service-owned creation directory without group or other write access, beneath root-owned or service-owned protected parents. The service account needs read and search access to every ancestor; do not use a home directory or shared export root.")
+                if name == "matter-storage" and writable:
+                    layout_ok = _matter_storage_layout_valid(path)
+                    add("matter-storage-layout", layout_ok,
+                        "Managed storage initialization metadata is compatible" if layout_ok else "Managed storage initialization names conflict or existing metadata is invalid",
+                        "Initialize or reopen the managed source boundary",
+                        "Choose an empty dedicated matter storage root, or an intact initialized RecordBench storage root. Without a valid marker, matters, .matter-purging and ingestion-staging must not exist; do not delete existing data to bypass this check.")
                 free = shutil.disk_usage(ancestor).free / (1024 ** 3) if safe else None
                 add(name + "-reserve", free is not None and free > 100,
                     f"{free:.1f} GiB free" if free is not None else "Capacity could not be checked safely",
@@ -1260,7 +1349,16 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
             "Server name is valid" if server_name_ok else "Server name is invalid",
             "Configure the HTTPS gateway identity",
             "Choose --server-name using letters, digits, dots and hyphens, starting and ending with a letter or digit.")
-        bind = args.bind_address or "127.0.0.1"
+        bind = args.bind_address if args.bind_address is not None else "127.0.0.1"
+        try:
+            ipaddress.ip_address(bind)
+            bind_ok = "%" not in bind and not any(ord(character) < 32 for character in bind)
+        except ValueError:
+            bind_ok = False
+        add("bind-address", bind_ok,
+            "Bind address is an IP literal" if bind_ok else "Bind address is invalid",
+            "Bind the private HTTPS gateway",
+            "Use --bind-address with an IPv4 or unbracketed, unscoped IPv6 literal, without a hostname, port or control characters. Set the port separately with --https-port.")
         pair = bool(args.tls_cert) == bool(args.tls_key)
         supplied = bool(args.tls_cert and args.tls_key)
         readable = supplied and all(path.is_file() and not path.is_symlink() and os.access(path, os.R_OK)
@@ -1655,7 +1753,7 @@ def _configure(
                     getpass.getpass("OIDC client secret: ") + "\n",
                 )
     else:
-        realm = args.kerberos_realm
+        realm = args.kerberos_realm.strip().upper()
         compose_values["RECORDBENCH_KERBEROS_PRINCIPAL"] = f"HTTP/{server_name}@{realm}"
         app_values.update(
             {
