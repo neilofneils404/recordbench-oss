@@ -189,3 +189,15 @@ states. Run with the contributor Python environment and optional
 does not inspect an installed node. This complements the focused queue and
 provenance backup/clean-restore tests; it does not establish an operator's own
 backup or replacement-host readiness.
+
+## Local account format rollback
+
+A v1 migration recovery artifact preserves exact old bytes, which can restore
+an old cookie's account binding. After any control-database recovery, keep the
+application and all operator account writers stopped and run the
+[account rollback command](LOCAL_ACCOUNT_LIFECYCLE.md#existing-installations-explicit-migration-and-recovery)
+against the database the previous release will actually use. It commits local
+session invalidation before restoring the v1 file, without database initialization or
+migration. Preserve the original recovery artifact; require fresh sign-in and
+administrator recovery after restart. Never overwrite the invalidated session database with
+an earlier snapshot before opening access.

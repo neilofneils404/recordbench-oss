@@ -52,9 +52,22 @@ printf 'Standard and Kerberos Compose graphs are valid.\n'
 
 RECORDBENCH_LOCAL_ACCOUNT_ROOT="$scratch/accounts" \
 docker compose \
+  --profile tools \
   --env-file "$project_root/.env.example" \
   -f "$project_root/compose.yaml" \
   -f "$project_root/compose.local-accounts.yaml" \
-  config --quiet
+  config --format json > "$scratch/local-accounts.json"
+
+python3 - "$scratch/local-accounts.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    services = json.load(stream)["services"]
+for name in ("app", "account-admin"):
+    mounts = {mount["target"]: mount for mount in services[name]["volumes"]}
+    assert mounts["/run/recordbench-secrets"].get("read_only") is True, name
+    assert not mounts["/var/lib/recordbench-accounts"].get("read_only", False), name
+PY
 
 printf 'Dedicated local-account Compose graph is valid.\n'

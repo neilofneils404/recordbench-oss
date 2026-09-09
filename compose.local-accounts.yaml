@@ -8,5 +8,9 @@ services:
   account-admin:
     volumes:
       - type: bind
+        source: ${RECORDBENCH_SECRETS_ROOT:?set RECORDBENCH_SECRETS_ROOT}
+        target: /run/recordbench-secrets
+        read_only: true
+      - type: bind
         source: ${RECORDBENCH_LOCAL_ACCOUNT_ROOT:?set the dedicated owner-only account directory}
         target: /var/lib/recordbench-accounts

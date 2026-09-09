@@ -65,11 +65,14 @@ encrypted backup, database import or replacement-host recovery acceptance.
 
 ## Rollback boundaries
 
-Account format version 2 is not writable by older version 1 tools. Stop all
-account writers before restoring the exact pre-migration recovery copy and the
-matching previous application. Later account changes will be absent from that
-copy and must be reconciled deliberately. Do not strip revision fields from a
-live file or allow older and newer writer tools to run together.
+Account format version 2 is not writable by older version 1 tools. Stop the
+application and all account writers, then use the
+[operator rollback command](LOCAL_ACCOUNT_LIFECYCLE.md#existing-installations-explicit-migration-and-recovery)
+to invalidate local sessions from the final recovery database before restoring the
+exact pre-migration copy. Restart the matching previous application and verify
+fresh administrator sign-in. A raw file copy can revive an unresolved old cookie.
+Later account changes are absent and must be reconciled deliberately. Do not
+strip revision fields or allow older and newer writer tools to run together.
 
 Browser account relocation changes the canonical account path. A rollback must
 restore the matching mount configuration and account-file location; reverting

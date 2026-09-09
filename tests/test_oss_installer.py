@@ -2347,3 +2347,221 @@ def test_saved_account_preflight_allows_missing_leaf_with_initial_password_input
     assert result["ready"]
     assert next(row for row in result["checks"] if row["name"] == "admin-password-input")["state"] == "pass"
     assert not account_file.exists()
+
+
+@pytest.mark.parametrize("bind,target", [("127.0.0.1", "127.0.0.1"), ("::1", "::1"),
+    ("192.0.2.44", "192.0.2.44"), ("2001:db8::44", "2001:db8::44"),
+    ("0.0.0.0", "127.0.0.1"), ("::", "::1")])
+@pytest.mark.parametrize("auth", ["local", "oidc", "kerberos"])
+def test_gateway_acceptance_uses_configured_bind_for_health_and_login(tmp_path, monkeypatch, bind, target, auth):
+    import io
+    from tests.test_first_run_handoff import configured_node
+    root, _, _ = configured_node(tmp_path.resolve())
+    installation = json.loads((root / "installation.json").read_text())
+    installation["auth"] = auth
+    (root / "installation.json").write_text(json.dumps(installation))
+    installer._replace_env(root / "compose.env", "RECORDBENCH_BIND_ADDRESS", bind)
+    payload = {"product": "RecordBench", "status": "ok", "storage": {"status": "ready"},
+        "capabilities": {"source_review": "ready", "malware_scan": "ready"}}
+    requests = []
+    class Connection:
+        def __init__(self, address, port, **kwargs):
+            assert address == target and port == 8443
+            assert kwargs["timeout"] == 5
+        def request(self, method, route, *, headers):
+            assert method == "GET" and headers == {"Host": "recordbench.example.test"}
+            requests.append(route)
+        def getresponse(self):
+            return self
+        @property
+        def status(self):
+            return 401 if auth == "kerberos" else 200
+        def getheader(self, name, default):
+            return "Negotiate" if auth == "kerberos" else default
+        def read(self, limit):
+            assert limit == 262_144
+            return b"Synthetic RecordBench sign-in page"
+        def close(self):
+            pass
+    def health_request(request, **kwargs):
+        address = f"[{target}]" if ":" in target else target
+        assert request.full_url == f"https://{address}:8443/health"
+        assert request.get_header("Host") == "recordbench.example.test"
+        requests.append("health-transport")
+        return io.BytesIO(json.dumps(payload).encode())
+    def internal_probe(console, command, **kwargs):
+        assert auth == "kerberos" and "exec" in command and "app" in command
+        requests.append("internal-kerberos-health")
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+    monkeypatch.setattr(installer.http.client, "HTTPSConnection", Connection)
+    monkeypatch.setattr(installer.urllib.request, "urlopen", health_request)
+    monkeypatch.setattr(installer, "_run", internal_probe)
+    monkeypatch.setattr(installer.time, "sleep", lambda *a: pytest.fail("valid configured bind was not accepted"))
+    assert installer._login_reachable(root)
+    installer._wait_health(installer.Console(color=False, quiet=True), root)
+    assert "/auth/login" in requests
+    assert ("internal-kerberos-health" if auth == "kerberos" else "health-transport") in requests
+    assert installer._install_progress(root)["phases"]["login_reachable"] == "complete"
+
+
+def synthetic_saved_provider(tmp_path, request, monkeypatch, auth, mutation=None):
+    from tests.test_first_run_handoff import configured_node
+    root, _, paths = configured_node(tmp_path.resolve())
+    installation = json.loads((root / "installation.json").read_text())
+    installation.update(auth=auth, local_account_management=False)
+    (root / "installation.json").write_text(json.dumps(installation))
+    environment = installer._dotenv(root / "config/recordbench.env")
+    environment["CASE_INTELLIGENCE_AUTH_MODE"] = auth
+    if auth == "oidc":
+        environment.update({"CASE_INTELLIGENCE_EXTERNAL_ORIGIN": "https://recordbench.example.test:8443",
+            "CASE_INTELLIGENCE_OIDC_ISSUER": "https://identity.example.test/realm",
+            "CASE_INTELLIGENCE_OIDC_CLIENT_ID": "synthetic-client",
+            "CASE_INTELLIGENCE_OIDC_CLIENT_SECRET_FILE": "/run/recordbench-secrets/oidc-client-secret",
+            "CASE_INTELLIGENCE_OIDC_ALLOWED_GROUPS": "synthetic-reviewers",
+            "CASE_INTELLIGENCE_OIDC_ADMIN_GROUPS": "synthetic-administrators",
+            "CASE_INTELLIGENCE_OIDC_SCOPES": "openid profile email"})
+        credential = paths["secrets"] / "oidc-client-secret"
+        installer._private_write(credential, "synthetic-oidc-secret-value\r\n")
+    else:
+        environment.update({"CASE_INTELLIGENCE_KERBEROS_REALM": "EXAMPLE.TEST",
+            "CASE_INTELLIGENCE_KERBEROS_ALLOWED_GROUPS": "synthetic-users@example.test",
+            "CASE_INTELLIGENCE_KERBEROS_ADMIN_GROUPS": "synthetic-admins@example.test",
+            "CASE_INTELLIGENCE_KERBEROS_PROXY_SECRET_FILE": "/run/recordbench-secrets/kerberos-proxy-secret"})
+        installer._replace_env(root / "compose.env", "RECORDBENCH_KERBEROS_PRINCIPAL", "HTTP/recordbench.example.test@EXAMPLE.TEST")
+        credential = paths["secrets"] / "kerberos-proxy-secret"
+        installer._private_write(credential, "synthetic_proxy_secret_" + "x" * 32 + "\r\n")
+        installer._private_write(paths["secrets"] / "recordbench.keytab", "synthetic opaque keytab bytes")
+    invalid_options = {
+        "issuer": ("CASE_INTELLIGENCE_OIDC_ISSUER", "http://identity.example.test"),
+        "client": ("CASE_INTELLIGENCE_OIDC_CLIENT_ID", ""),
+        "oidc-groups": ("CASE_INTELLIGENCE_OIDC_ALLOWED_GROUPS", "x" * 257),
+        "scopes": ("CASE_INTELLIGENCE_OIDC_SCOPES", "profile email"),
+        "claim": ("CASE_INTELLIGENCE_OIDC_GROUPS_CLAIM", "bad claim"),
+        "token-auth": ("CASE_INTELLIGENCE_OIDC_TOKEN_AUTH_METHOD", "unsupported"),
+        "origin": ("CASE_INTELLIGENCE_EXTERNAL_ORIGIN", "https://wrong.example.test"),
+        "oidc-source": ("CASE_INTELLIGENCE_OIDC_CLIENT_SECRET_FILE", "/run/recordbench-secrets/other-secret"),
+        "realm": ("CASE_INTELLIGENCE_KERBEROS_REALM", "INVALID"),
+        "kerberos-groups": ("CASE_INTELLIGENCE_KERBEROS_ALLOWED_GROUPS", "bad/group"),
+        "proxy-source": ("CASE_INTELLIGENCE_KERBEROS_PROXY_SECRET_FILE", "/run/recordbench-secrets/other-secret"),
+    }
+    if mutation in invalid_options:
+        key, value = invalid_options[mutation]
+        environment[key] = value
+    if mutation == "no-admission":
+        environment["CASE_INTELLIGENCE_KERBEROS_ALLOWED_GROUPS"] = ""
+        environment["CASE_INTELLIGENCE_KERBEROS_ADMIN_GROUPS"] = ""
+    if mutation == "principal":
+        installer._replace_env(root / "compose.env", "RECORDBENCH_KERBEROS_PRINCIPAL", "HTTP/other.example.test@EXAMPLE.TEST")
+    if mutation and mutation.startswith("keytab-"):
+        credential = paths["secrets"] / "recordbench.keytab"
+    if mutation and mutation.endswith("-missing") and not mutation.startswith("host-"):
+        credential.unlink()
+    elif mutation and mutation.endswith("-mode"):
+        credential.chmod(0o644)
+    elif mutation and mutation.endswith("-empty"):
+        credential.write_bytes(b"")
+    elif mutation and mutation.endswith("-symlink"):
+        target = credential.with_name("synthetic-replacement")
+        credential.rename(target)
+        credential.symlink_to(target)
+    elif mutation == "secret-invalid":
+        credential.write_text("synthetic\ninvalid")
+    elif mutation == "proxy-invalid":
+        credential.write_text("synthetic invalid proxy secret!" * 2)
+    (root / "config/recordbench.env").write_text(installer._env_text(environment, "synthetic retained provider configuration"))
+    request.getfixturevalue("ready_host")
+    original_is_dir, original_is_file = Path.is_dir, Path.is_file
+    monkeypatch.setattr(Path, "is_dir", lambda path: mutation != "host-sssd-missing" if path == Path("/var/lib/sss/pipes") else original_is_dir(path))
+    monkeypatch.setattr(Path, "is_file", lambda path: mutation != "host-krb-missing" if path == Path("/etc/krb5.conf") else original_is_file(path))
+    if mutation and mutation.endswith("-owner"):
+        original_lstat = Path.lstat
+        def foreign_owner(path):
+            metadata = original_lstat(path)
+            if path == credential:
+                values = list(metadata)
+                values[4] = 12345
+                return os.stat_result(values)
+            return metadata
+        monkeypatch.setattr(Path, "lstat", foreign_owner)
+    args = installer._parser().parse_args(["install", "--root", str(root), "--resume", "--non-interactive"])
+    installer._saved_node_arguments(args, root)
+    return root, args
+
+
+@pytest.mark.parametrize("auth,mutation", [
+    *(('oidc', value) for value in ['issuer', 'client', 'oidc-groups', 'scopes', 'claim', 'token-auth', 'origin', 'oidc-source', 'secret-missing', 'secret-empty', 'secret-mode', 'secret-owner', 'secret-symlink', 'secret-invalid']),
+    *(('kerberos', value) for value in ['realm', 'kerberos-groups', 'no-admission', 'principal', 'proxy-source', 'proxy-missing', 'proxy-mode', 'proxy-owner', 'proxy-symlink', 'proxy-invalid', 'keytab-missing', 'keytab-empty', 'keytab-mode', 'keytab-owner', 'keytab-symlink', 'host-sssd-missing', 'host-krb-missing']),
+])
+def test_resume_rejects_invalid_saved_provider_before_provisioning(tmp_path, request, monkeypatch, auth, mutation):
+    root, args = synthetic_saved_provider(tmp_path, request, monkeypatch, auth, mutation)
+    # New CLI values cannot replace or conceal invalid retained configuration.
+    args.oidc_issuer = "https://replacement.example.test"
+    args.kerberos_realm = "REPLACEMENT.TEST"
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("invalid saved provider reached an external command"))
+    monkeypatch.setattr(installer, "_provision", lambda *a, **k: pytest.fail("invalid saved provider reached provisioning"))
+    result = installer._collect_preflight("none", args, needs_model_staging=False)
+    assert not result.ready
+    with pytest.raises(RuntimeError, match="prerequisites"):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert "synthetic-oidc-secret-value" not in json.dumps(result.payload())
+    assert "synthetic_proxy_secret_" not in json.dumps(result.payload())
+
+
+@pytest.mark.parametrize("auth", ["oidc", "kerberos"])
+def test_saved_provider_preflight_accepts_valid_canonical_material_without_changes(tmp_path, request, monkeypatch, capsys, auth):
+    root, args = synthetic_saved_provider(tmp_path, request, monkeypatch, auth)
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    capsys.readouterr()
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("standalone preflight issued a runtime command"))
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(root), "--resume", "--non-interactive", "--json"])
+    assert installer.main() == 0
+    assert json.loads(capsys.readouterr().out)["ready"]
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_saved_provider_preflight_accepts_explicit_principal_admission(tmp_path, request, monkeypatch):
+    root, args = synthetic_saved_provider(tmp_path, request, monkeypatch, "kerberos")
+    for key, value in {"CASE_INTELLIGENCE_KERBEROS_ALLOWED_GROUPS": "", "CASE_INTELLIGENCE_KERBEROS_ADMIN_GROUPS": "",
+        "CASE_INTELLIGENCE_KERBEROS_ALLOWED_PRINCIPALS": "synthetic.user@EXAMPLE.TEST"}.items():
+        installer._replace_env(root / "config/recordbench.env", key, value)
+    result = installer._collect_preflight("none", args, needs_model_staging=False)
+    assert result.ready
+    assert checks_by_name(result)["saved-provider-options"].state == "pass"
+
+
+@pytest.mark.parametrize("auth", ["oidc", "kerberos"])
+def test_saved_provider_malformed_environment_is_a_blocking_json_check(tmp_path, request, monkeypatch, capsys, auth):
+    root, _args = synthetic_saved_provider(tmp_path, request, monkeypatch, auth)
+    (root / "config/recordbench.env").write_text('INVALID="unterminated\n')
+    capsys.readouterr()
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("malformed saved provider reached a runtime command"))
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(root), "--resume", "--non-interactive", "--json"])
+    assert installer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert not payload["ready"]
+    assert payload["checks"][0]["name"] == "saved-node"
+
+
+@pytest.mark.parametrize("auth,mutation", [("oidc", "secret-missing"), ("kerberos", "host-sssd-missing")])
+def test_saved_provider_dry_run_retains_credential_and_host_checks(tmp_path, request, monkeypatch, auth, mutation):
+    _root, args = synthetic_saved_provider(tmp_path, request, monkeypatch, auth, mutation)
+    args.dry_run = True
+    assert not installer._collect_preflight("none", args, needs_model_staging=False).ready
+
+
+def test_configuration_uses_the_same_normalized_administrator_as_preflight(tmp_path, ready_host):
+    args = preflight_args(tmp_path, "--auth", "local", "--models", "none", "--non-interactive", "--password-stdin",
+        "--admin-username", "Synthetic.Admin", "--admin-display-name", "e\u0301" * 160)
+    assert installer._collect_preflight("none", args).ready
+    paths = installer._paths(args.root)
+    for path in paths.values():
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    certificate, key = paths["tls"] / "synthetic.crt", paths["tls"] / "synthetic.key"
+    certificate.write_text("synthetic certificate")
+    key.write_text("synthetic key")
+    args.tls_cert, args.tls_key = certificate, key
+    installer._collect_identity_choices(args)
+    result = installer._configure(installer.Console(color=False, quiet=True), args, args.root, paths, "synthetic-release", ROOT, ())
+    assert result[3:] == ("synthetic.admin", "\u00e9" * 160)
+    installation = json.loads((args.root / "installation.json").read_text())
+    assert installation["initial_administrator_display_name"] == "\u00e9" * 160
