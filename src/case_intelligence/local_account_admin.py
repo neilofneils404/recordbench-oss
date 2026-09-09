@@ -9,7 +9,7 @@ import threading
 from typing import Mapping
 from urllib.parse import parse_qs, quote, urlencode
 
-from fastapi import HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -171,12 +171,16 @@ def register_local_account_routes(app, *, identity, bench, templates, auth_conte
         destination = "/admin/people/accounts/" + quote(username, safe="")
         return RedirectResponse(destination + "?" + urlencode({"notice": message}), status_code=303)
 
-    async def mutate(request: Request, *, username: str | None, action: str):
+    async def require_csrf(request: Request) -> dict[str, str]:
         context = administrator(request, mutate=True)
         form = await _read_form(request)
         if not identity.csrf_valid(context, form.get("csrf_token")):
             audit(request, "security.csrf", "denied", context=context)
             raise HTTPException(403, "This form expired. Refresh the page and try again.")
+        return form
+
+    async def mutate(request: Request, form: dict[str, str], *, username: str | None, action: str):
+        context = administrator(request, mutate=True)
         if not mutations.acquire(blocking=False):
             raise HTTPException(429, "Account changes are busy. Wait a moment and try again.")
         try:
@@ -221,11 +225,11 @@ def register_local_account_routes(app, *, identity, bench, templates, auth_conte
         return people(request, account=username, notice=notice)
 
     @app.post("/admin/people/create", include_in_schema=False)
-    async def create_person(request: Request):
-        return await mutate(request, username=None, action="create")
+    async def create_person(request: Request, form: dict[str, str] = Depends(require_csrf)):
+        return await mutate(request, form, username=None, action="create")
 
     @app.post("/admin/people/accounts/{username}/{action}", include_in_schema=False)
-    async def change_person(request: Request, username: str, action: str):
+    async def change_person(request: Request, username: str, action: str, form: dict[str, str] = Depends(require_csrf)):
         if action not in {"name", "password", "state", "role"}:
             raise HTTPException(404, "That account action is unavailable.")
-        return await mutate(request, username=username, action=action)
+        return await mutate(request, form, username=username, action=action)
