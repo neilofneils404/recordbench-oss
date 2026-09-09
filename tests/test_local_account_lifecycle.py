@@ -308,3 +308,66 @@ def test_reader_does_not_create_lock_or_require_directory_write(tmp_path, monkey
     monkeypatch.setattr(local_accounts.os, "open", read_only)
     assert LocalAccountSettings(source).authenticate("alice.reviewer", PASSWORD)
     assert not (source.parent / f".{source.name}.lock").exists()
+
+
+@pytest.mark.parametrize("operation", ["migrate", "relocate"])
+@pytest.mark.parametrize("fail_sync", [False, True])
+def test_account_move_syncs_each_new_parent_before_canonical_change(tmp_path, monkeypatch, operation, fail_sync):
+    repo = LocalAccountRepository(_accounts_file(tmp_path)) if operation == "migrate" else repository(tmp_path)
+    before = repo.path.read_bytes()
+    destination = tmp_path / "new-target" / "managed" / "local-accounts.json"
+    backup = tmp_path / "new-recovery" / "snapshot" / "accounts.json"
+    pending = set()
+    synced = []
+    real_mkdir, real_fsync = os.mkdir, os.fsync
+    real_replace, real_unlink = os.replace, os.unlink
+
+    def make_directory(path, mode=0o777, *, dir_fd=None):
+        assert not pending, "A new parent was used before its directory entry was synced"
+        result = real_mkdir(path, mode, dir_fd=dir_fd)
+        if dir_fd is not None:
+            metadata = os.fstat(dir_fd)
+            pending.add((metadata.st_dev, metadata.st_ino))
+        return result
+
+    def sync_directory(descriptor):
+        metadata = os.fstat(descriptor)
+        inode = (metadata.st_dev, metadata.st_ino)
+        if inode in pending:
+            if fail_sync:
+                raise OSError("Synthetic directory persistence failure")
+            synced.append(inode)
+            pending.remove(inode)
+        return real_fsync(descriptor)
+
+    def replace(*args, **kwargs):
+        assert not pending, "Canonical replacement preceded parent persistence"
+        return real_replace(*args, **kwargs)
+
+    def unlink(*args, **kwargs):
+        assert not pending, "Canonical removal preceded parent persistence"
+        return real_unlink(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "mkdir", make_directory)
+        patch.setattr(os, "fsync", sync_directory)
+        patch.setattr(os, "replace", replace)
+        patch.setattr(os, "unlink", unlink)
+        def change():
+            if operation == "migrate":
+                repo.migrate(backup, actor=ACTOR)
+            else:
+                repo.relocate(destination, backup, actor=ACTOR, writers_stopped=True)
+        if fail_sync:
+            with pytest.raises(OSError, match="persistence failure"):
+                change()
+            assert repo.path.read_bytes() == before
+            assert not destination.exists() and not backup.exists()
+        else:
+            change()
+            assert not pending and len(synced) == (2 if operation == "migrate" else 4)
+            assert backup.read_bytes() == before
+            if operation == "relocate":
+                assert not repo.path.exists() and destination.exists()
+            else:
+                assert json.loads(repo.path.read_bytes())["format_version"] == 2
