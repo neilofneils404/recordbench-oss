@@ -194,3 +194,21 @@ Every section includes its exact compiler-authored `compilation_basis`; the same
 string is appended to its body after `\n\nReview basis:\n` for existing exports.
 Readers must use that separately stored basis and verify the exact body suffix;
 they must never split on the first matching delimiter in human-authored text.
+
+
+## Stored provenance and recovery
+
+Migration 0029 stores each compiler-authored `compilation_basis` separately on its
+Report section. The ordinary section body still contains the complete exported
+text. Reading and editing remove only the exact stored basis suffix; user/source
+text containing the same heading stays visible and editable. Existing sections
+receive an empty basis field, preserving their body verbatim instead of guessing
+where provenance starts. Startup adds the column idempotently under a database
+write transaction. Synthetic backup/clean-restore and legacy-column upgrade tests
+verify retained prose and provenance.
+
+A deleted compiled Report leaves its successful request available for explicit
+retry. Retrying that request creates one new draft from current selected work;
+it does not resurrect or silently restore the deleted document. Unavailable
+source-check documents, including uncited human overrides, fail validation even
+when their version and stored text have not changed.

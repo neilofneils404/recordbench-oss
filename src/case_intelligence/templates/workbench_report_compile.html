@@ -1,5 +1,5 @@
 {% extends "workbench_base.html" %}
-{% block title %}Make a report · {{ matter.display_name }}{% endblock %}
+{% block title %}Make a report · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}report-compilation-page{% endblock %}
 {% block content %}
 <main class="report-compose-shell">
@@ -8,9 +8,9 @@
   {% if active_job %}
   <section class="report-progress-card" data-workflow-monitor data-status-url="/matters/{{ matter.slug }}/reports/compile/{{ active_job.job_id }}/status" data-terminal="{{ 'false' if active_job.state in ('queued','running') else 'true' }}" aria-live="polite">
     <p class="eyebrow">{{ report_labels[active_job.kind] }}</p>
-    <h2>{% if active_job.state in ('queued','running') %}Your report is taking shape{% elif active_job.state == 'succeeded' %}Your draft is ready{% else %}Your report needs attention{% endif %}</h2>
+    <h2>{% if active_job.state in ('queued','running') %}Your report is taking shape{% elif active_job.state == 'succeeded' and not active_job.report_id %}This draft was deleted{% elif active_job.state == 'succeeded' %}Your draft is ready{% else %}Your report needs attention{% endif %}</h2>
     {% if active_job.topic %}<p>{{ active_job.topic }}</p>{% endif %}
-    <p data-workflow-stage>{{ active_job.message }}</p>
+    <p data-workflow-stage>{% if active_job.state == 'succeeded' and not active_job.report_id %}You can compile a new draft from the same selected work.{% else %}{{ active_job.message }}{% endif %}</p>
     {% if active_job.state in ('queued','running') %}<progress aria-label="Compiling report"></progress><p>You can leave this page. Your draft will appear in Reports when it's ready.</p><form method="post" action="/matters/{{ matter.slug }}/reports/compile/{{ active_job.job_id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Stop compiling</button></form>
     {% elif active_job.state == 'succeeded' and active_job.report_id %}<a class="button button-primary" href="/matters/{{ matter.slug }}/reports?report={{ active_job.report_id }}">Read your draft</a>
     {% else %}<form method="post" action="/matters/{{ matter.slug }}/reports/compile/{{ active_job.job_id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">Try again</button></form><a href="/matters/{{ matter.slug }}/reports/new">Choose different work</a>{% endif %}

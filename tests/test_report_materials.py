@@ -234,7 +234,7 @@ def test_cited_qualification_coverage_and_user_correction_survive():
     assert "Correction:" in human.text and human.author == "Conversation participant"
     limitation = next(item for item in result if item.material_id.endswith(":limitation"))
     assert limitation.category == "gap" and limitation.citations
-    assert any(item.category == "coverage" and "candidate_source_count" in item.text for item in result)
+    assert any(item.category == "coverage" and "candidate_source_count" in item.review_details for item in result)
     assert any("not ready" in item.text for item in result)
 
 
@@ -308,5 +308,20 @@ def test_uncited_human_override_still_validates_frozen_source_content():
     result = selected(bench, "review:review-a")
     assert result[0].origin == "human" and result[0].review_status == "disputed" and not result[0].citations
     document.units = source(1, "A changed synthetic source after the override.").units
+    with pytest.raises(WorkspaceProblem):
+        selected(bench, "review:review-a")
+
+
+@pytest.mark.parametrize("state", ["processing", "failed", "cancelled"])
+def test_uncited_review_cannot_use_unavailable_source_with_same_content(state):
+    document = source(1)
+    bench, _ = bench_for(document)
+    decision = SimpleNamespace(document_id=document.document_id, source_version_id=document.version_id,
+        source_name=document.display_name, source_basis_digest=bench._document_content_basis(document),
+        machine_decision="excluded", human_decision="include", reviewed_by="", rationale="Synthetic screening.",
+        human_note="Synthetic uncited override.", citations=(), error_message="", updated_at=REVISION)
+    bench.workspace.runs["review-a"] = SimpleNamespace(run_id="review-a", state="succeeded", snapshot_count=1, updated_at=REVISION)
+    bench.workspace.decisions["review-a"] = (decision,)
+    document.state = state
     with pytest.raises(WorkspaceProblem):
         selected(bench, "review:review-a")

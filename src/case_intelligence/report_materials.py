@@ -140,7 +140,7 @@ class _References:
 
     def validate_decision_source(self, item):
         document, units = self.document(item.document_id)
-        if document.version_id != item.source_version_id or document.display_name != item.source_name:
+        if document.state != "ready" or document.version_id != item.source_version_id or document.display_name != item.source_name:
             raise WorkspaceProblem(_STALE)
         if item.document_id not in self.bases:
             for ordinal, unit in enumerate(units, 1):
@@ -161,14 +161,14 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
     validation_references = []
     resolver = _References(bench, matter)
 
-    def add(*, material_id, origin, title, text, citations=(), review_status="needs_review", revision="", author="", date_label="", category="note"):
+    def add(*, material_id, origin, title, text, citations=(), review_status="needs_review", revision="", author="", date_label="", category="note", review_details=""):
         if not isinstance(text, str):
             raise WorkspaceProblem("A selected finding has unreadable text.")
         if not text.strip():
             return
         material = CompilationMaterial(material_id=material_id, origin=origin,
             title=title, text=text, citations=tuple(citations), review_status=review_status,
-            revision=revision, author=author, date_label=date_label, category=category)
+            revision=revision, author=author, date_label=date_label, category=category, review_details=review_details)
         if material_id in materials:
             if material != materials[material_id]:
                 raise WorkspaceProblem("Overlapping selections contain conflicting versions of saved work.")
@@ -199,19 +199,20 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
         for key, title in (("evidence_notice", "Saved evidence notice"), ("review_scope", "Saved review scope"),
                            ("source_coverage", "Saved source coverage"), ("modality_coverage", "Saved media coverage")):
             value = payload.get(key)
+            review_details = ""
             if isinstance(value, str):
                 text = value
             elif isinstance(value, Mapping):
                 text = str(value.get("notice") or value.get("summary") or "Recorded coverage")
                 # Retain original numeric coverage and qualifications rather
                 # than replacing them with a generic completeness statement.
-                text += "\n\nReview basis:\nSaved coverage values:\n" + json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
+                review_details = "Saved coverage values:\n" + json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
             elif value is None:
                 continue
             else:
                 raise WorkspaceProblem("A saved answer has unreadable coverage information.")
             add(material_id=f"{prefix}:{key}", origin=origin, title=title, text=text,
-                revision=revision, category="coverage", author="AI assistance")
+                revision=revision, category="coverage", author="AI assistance", review_details=review_details)
 
     def claims(payload, prefix, title, revision, origin, ledger=None, fallback=""):
         if not isinstance(payload, Mapping):
