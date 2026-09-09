@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -536,7 +537,17 @@ def test_partial_local_resume_requires_explicit_bootstrap_identity(tmp_path, mon
 
 
 @pytest.fixture
-def ready_host(monkeypatch):
+def ready_host(monkeypatch, tmp_path):
+    actual_uid = os.geteuid()
+    original_stat = Path.stat
+    def synthetic_owner(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if result.st_uid == actual_uid and (actual_uid != 0 or path == tmp_path or tmp_path in path.parents):
+            fields = list(result)
+            fields[4] = 1000
+            return os.stat_result(fields)
+        return result
+    monkeypatch.setattr(Path, "stat", synthetic_owner)
     import pwd
     from types import SimpleNamespace
     monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir="/home/synthetic-service"))
@@ -803,3 +814,59 @@ def test_preflight_refuses_effective_service_home_when_home_is_inherited(tmp_pat
     result = installer._collect_preflight("none", args)
     assert not result.ready
     assert checks_by_name(result)["matter-storage" if storage else "node-storage"].state == "fail"
+
+
+@pytest.mark.parametrize("storage", [False, True])
+@pytest.mark.parametrize("kind", ["shared", "group-writable", "nonowned", "unsafe-grandparent"])
+def test_preflight_refuses_replaceable_creation_ancestors(tmp_path, ready_host, monkeypatch, storage, kind):
+    parent = tmp_path / "synthetic-parent"
+    parent.mkdir(mode=0o700)
+    if kind == "shared":
+        parent.chmod(0o777)
+    elif kind == "group-writable":
+        parent.chmod(0o770)
+    elif kind == "unsafe-grandparent":
+        parent.chmod(0o777)
+        parent = parent / "private-child"
+        parent.mkdir(mode=0o700)
+    else:
+        original = Path.stat
+        def foreign_owner(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            if path == parent:
+                fields = list(result)
+                fields[4] = 2000
+                return os.stat_result(fields)
+            return result
+        monkeypatch.setattr(Path, "stat", foreign_owner)
+    args = preflight_args(tmp_path)
+    target = parent / "new-private-node"
+    if storage:
+        args.storage_root = target
+    else:
+        args.root = target
+    result = installer._collect_preflight("none", args)
+    assert checks_by_name(result)["matter-storage" if storage else "node-storage"].state == "fail"
+    assert not result.ready and not target.exists()
+
+
+def test_storage_chain_accepts_protected_root_parent_and_sticky_system_parent(tmp_path, ready_host, monkeypatch):
+    system = tmp_path / "synthetic-system"
+    system.mkdir(mode=0o755)
+    creation = system / "service-owned"
+    creation.mkdir(mode=0o700)
+    original = Path.stat
+    def root_owner(path, *args, **kwargs):
+        result = original(path, *args, **kwargs)
+        if path == system:
+            fields = list(result)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return result
+    monkeypatch.setattr(Path, "stat", root_owner)
+    assert installer._storage_ancestors_safe(creation)
+    system.chmod(0o1777)
+    assert installer._storage_ancestors_safe(creation)
+    assert not installer._storage_ancestors_safe(system)
+    system.chmod(0o777)
+    assert not installer._storage_ancestors_safe(creation)
