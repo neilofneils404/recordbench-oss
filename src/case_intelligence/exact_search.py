@@ -173,9 +173,7 @@ class ParsedQuery:
             if not tokens:
                 continue
             has_text = True
-            for literal in literals - found:
-                if next(matching_spans(tokens, literal, budget_check=budget_check), None) is not None:
-                    found.add(literal)
+            found.update(match_positionals(tokens, literals - found, budget_check=budget_check))
 
         def witness(node: Expression, desired: bool = True) -> tuple[Positional, ...] | None:
             if isinstance(node, (Literal, Proximity)):
@@ -201,6 +199,20 @@ class ParsedQuery:
 
 
 
+def match_positionals(tokens: tuple[str, ...], nodes: Iterable[Positional], *, budget_check=None):
+    """Match simple terms with one shared set; scan positions only when needed."""
+    nodes = tuple(nodes)
+    words = set(tokens) if any(isinstance(node, Literal) and len(node.words) == 1 for node in nodes) else None
+    for node in nodes:
+        if budget_check is not None:
+            budget_check()
+        if isinstance(node, Literal) and len(node.words) == 1:
+            if node.words[0] in words:
+                yield node
+        elif next(matching_spans(tokens, node, budget_check=budget_check), None) is not None:
+            yield node
+
+
 def matching_spans(tokens: tuple[str, ...], node: Positional, *, budget_check=None):
     """Yield half-open token spans; proximity operands never overlap.
 
@@ -215,20 +227,23 @@ def matching_spans(tokens: tuple[str, ...], node: Positional, *, budget_check=No
             if tokens[index:index + width] == node.words:
                 yield index, index + width
         return
-    left = tuple(matching_spans(tokens, node.left, budget_check=budget_check))
-    right = tuple(matching_spans(tokens, node.right, budget_check=budget_check))
-    directions = ((left, right),) if node.ordered else ((left, right), (right, left))
-    for earlier, later in directions:
-        position = 0
+    directions = ((node.left, node.right),)
+    if not node.ordered and node.left.words != node.right.words:
+        directions += ((node.right, node.left),)
+    for earlier_node, later_node in directions:
+        earlier = matching_spans(tokens, earlier_node, budget_check=budget_check)
+        later = matching_spans(tokens, later_node, budget_check=budget_check)
+        next_later = next(later, None)
         for index, span in enumerate(earlier):
             if budget_check is not None and index % 4096 == 0:
                 budget_check()
-            while position < len(later) and later[position][0] < span[1]:
-                if budget_check is not None and position % 4096 == 0:
-                    budget_check()
-                position += 1
-            if position < len(later) and later[position][0] - span[1] <= node.gap:
-                yield span[0], later[position][1]
+            while next_later is not None and next_later[0] < span[1]:
+                next_later = next(later, None)
+            if next_later is None:
+                break
+            if next_later[0] - span[1] <= node.gap:
+                yield span[0], next_later[1]
+
 
 
 @dataclass(frozen=True)

@@ -200,3 +200,49 @@ def test_long_proximity_preview_keeps_both_operands_with_an_explicit_omission():
     assert len(visible) <= 603
     assert any(highlight and "red" in text for text, highlight in preview["pieces"])
     assert any(highlight and "bicycle" in text for text, highlight in preview["pieces"])
+
+
+def test_single_word_conjunctions_use_shared_lookup_without_positional_rescans(monkeypatch):
+    import case_intelligence.exact_search as module
+    original = module.matching_spans
+    calls = []
+    def positions(tokens, node, **kwargs):
+        calls.append(node)
+        return original(tokens, node, **kwargs)
+    monkeypatch.setattr(module, "matching_spans", positions)
+    query = " ".join(f"w{index}" for index in range(100))
+    assert not module.parse_query(query).matches_units(["neutral " * 125000])
+    assert calls == []
+    text = " ".join(f"w{index}" for index in range(100)) + " neutral" * 1000
+    assert module.parse_query(query).matches_units([text])
+    assert calls == []
+
+
+def test_proximity_pairing_consumes_occurrences_incrementally(monkeypatch):
+    import case_intelligence.exact_search as module
+    original = module.matching_spans
+    consumed = []
+    def positions(tokens, node, **kwargs):
+        for span in original(tokens, node, **kwargs):
+            if isinstance(node, Literal):
+                consumed.append(span)
+            yield span
+    monkeypatch.setattr(module, "matching_spans", positions)
+    node = Proximity(Literal(("red",)), Literal(("red",)), 0)
+    assert next(module.matching_spans(("red",) * 100000, node)) == (0, 2)
+    assert len(consumed) == 3, "Pairing eagerly retained occurrence lists before its first result"
+
+
+def test_preview_retains_only_explaining_occurrences_for_repeated_matches(monkeypatch):
+    import case_intelligence.exact_search_results as module
+    original = module.matching_spans
+    retained = []
+    def positions(*args, **kwargs):
+        for span in original(*args, **kwargs):
+            retained.append(span)
+            yield span
+    monkeypatch.setattr(module, "matching_spans", positions)
+    unit = document(1, "red " * 10000).parsed_units()[0]
+    result = module.passage_preview(unit, parse_query("red NEAR/0 red"))
+    assert retained == [(0, 2)]
+    assert ("red red", True) in result["pieces"]
