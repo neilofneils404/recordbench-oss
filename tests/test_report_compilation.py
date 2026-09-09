@@ -296,7 +296,12 @@ def test_note_classification_shares_model_budget_and_discloses_unchecked_notes()
     assert draft.coverage["unclassified_review_material_ids"]
     assert draft.coverage["classification_truncated_chars"] > 0
     assert draft.coverage["stop_reason"] == "budget_reached"
-    assert len(draft.coverage["omitted_human_material_ids"]) == 12
+    unchecked = set(draft.coverage["unclassified_review_material_ids"])
+    assert unchecked.isdisjoint(draft.coverage["omitted_human_material_ids"])
+    assert set(draft.coverage["retained_unclassified_review_material_ids"]) == unchecked
+    for note in notes:
+        if note.material_id in unchecked:
+            assert any(section["body"].startswith(note.text) for section in draft.sections)
 
 
 @pytest.mark.parametrize('kind', ['timeline', 'entities'])
@@ -442,14 +447,16 @@ def test_repeated_generated_provenance_fits_real_report_storage_with_explicit_om
 def test_repeated_generated_passages_fail_before_export_capacity_is_exceeded(markdown_special):
     from case_intelligence.work_product_exports import MAX_EXPORT_TEXT_CHARS
     marker = "*" if markdown_special else "x"
-    source_text = " ".join(f"Synthetic event {index}." for index in range(200)).ljust(50_000, marker)
+    source_text = " ".join(f"Synthetic event {index}." for index in range(200)).ljust(6_000, marker)
     class RepeatedSources:
         available = True
         def answer(self, question, evidence, **kwargs):
-            return VerifiedAnswer(True, "", tuple(VerifiedClaim(f"Synthetic event {index}.", ("S1",))
-                                                  for index in range(200)), None, "", ("S1",), True, 1)
+            ids = tuple(item.evidence_id for item in evidence)
+            return VerifiedAnswer(True, "", tuple(VerifiedClaim(f"Synthetic event {index}.", ids)
+                                                  for index in range(200)), None, "", ids, True, 1)
     with pytest.raises(CompilationProblem, match="too large to save and export completely"):
-        compile_report("topic", "synthetic events", (material(citations=(citation(text=source_text),)),), RepeatedSources())
+        compile_report("topic", "synthetic events", (material(citations=tuple(citation(index, text=source_text) for index in range(1, 13))),),
+                       RepeatedSources(), budget=CompilationBudget(max_sections=400))
     small = compile_report("topic", "synthetic events", (material(),), service())
     assert small.coverage["estimated_export_characters"] < small.coverage["export_character_limit"] == MAX_EXPORT_TEXT_CHARS
 
@@ -558,7 +565,8 @@ def test_empty_and_topic_excluded_humans_do_not_reserve_sections():
     assert len(draft.sections) == 3
     assert any(section.get("category") == "Topic findings" for section in draft.sections)
     assert any(section["body"].startswith(notes[0].text) for section in draft.sections)
-    assert draft.coverage["omitted_human_material_ids"] == (notes[1].material_id, notes[2].material_id)
+    assert draft.coverage["omitted_human_material_ids"] == (notes[1].material_id,)
+    assert notes[2].material_id not in draft.coverage["retained_unclassified_review_material_ids"]
 
 
 def test_failed_model_retains_humans_with_reserved_capacity():
@@ -576,3 +584,84 @@ def test_failed_model_retains_humans_with_reserved_capacity():
     assert draft.sections[0]["material_ids"] == (note.material_id,)
     assert draft.sections[0]["body"].startswith(note.text)
     assert draft.coverage["mode"] == "unfiltered_saved_material_arrangement"
+
+
+@pytest.mark.parametrize("kind", ["topic", "timeline", "entities"])
+@pytest.mark.parametrize("failure", ["unavailable", "rejected"])
+def test_failed_relevance_check_preserves_dispute_when_source_generation_succeeds(kind, failure):
+    from case_intelligence.generation import GenerationRejected, GenerationUnavailable
+
+    class MixedService(EveryRecordService):
+        def answer(self, question, evidence, **kwargs):
+            if evidence[0].source_name == "Saved review record":
+                raise (GenerationUnavailable if failure == "unavailable" else GenerationRejected)("Synthetic classification failure")
+            return super().answer(question, evidence, **kwargs)
+
+    note = material(2, origin="human", review_status="disputed", author="Synthetic reviewer",
+                    text="The synthetic delivery date is disputed.")
+    draft = compile_report(kind, "delivery", (material(), note), MixedService(),
+                           budget=CompilationBudget(max_sections=2))
+    saved = next(section for section in draft.sections if section["body"].startswith(note.text))
+    assert saved["material_ids"] == (note.material_id,)
+    assert saved["citations"] == note.citations
+    assert note.author in saved["compilation_basis"]
+    assert "relevance has not been fully checked" in saved["compilation_basis"]
+    assert "disputed" in saved["compilation_basis"]
+    assert draft.coverage["omitted_human_material_ids"] == ()
+    assert draft.coverage["retained_unclassified_review_material_ids"] == (note.material_id,)
+    assert draft.coverage["mode"] == "model_assisted"
+    assert "retained without a complete topic relevance check" in draft.sections[-1]["body"]
+
+
+def test_partial_entity_relevance_does_not_exclude_unchecked_disagreement():
+    from case_intelligence.generation import GenerationUnavailable
+
+    class PartialService(EveryRecordService):
+        def answer(self, question, evidence, **kwargs):
+            if evidence[0].source_name == "Saved review record":
+                if "named places" in question:
+                    raise GenerationUnavailable("Synthetic unavailable Places classification")
+                return VerifiedAnswer(False, "", (), None, "No related mention identified.", (), True, 1)
+            return super().answer(question, evidence, **kwargs)
+
+    note = material(2, origin="human", review_status="disputed", text="Synthetic reviewers dispute the delivery location.")
+    draft = compile_report("entities", "delivery", (material(), note), PartialService())
+    saved = next(section for section in draft.sections if section["body"].startswith(note.text))
+    assert saved["category"] == "Unclassified review notes"
+    assert "relevance has not been fully checked" in saved["compilation_basis"]
+    assert draft.coverage["classified_review_records"] == 0
+    assert draft.coverage["partially_classified_review_material_ids"] == (note.material_id,)
+    assert draft.coverage["omitted_human_material_ids"] == ()
+    assert draft.coverage["retained_unclassified_review_material_ids"] == (note.material_id,)
+
+
+@pytest.mark.parametrize("origin,status", [("research", "verified"), ("human", "disputed")])
+def test_oversized_citations_fail_before_model_work(origin, status):
+    class UnexpectedService:
+        @property
+        def available(self):
+            pytest.fail("Oversized citations must be rejected before consulting the model")
+
+    item = material(origin=origin, review_status=status, citations=(citation(text="x" * 6_001),))
+    with pytest.raises(CompilationProblem, match="6,000-character.*citation"):
+        compile_report("timeline", materials=(item,), generator=UnexpectedService())
+
+
+@pytest.mark.parametrize("use_model", [False, True])
+def test_exact_citation_size_limit_compiles_and_persists_without_shortening(tmp_path, use_model):
+    from case_intelligence.workspace_store import WorkspaceStore
+
+    item = material(citations=(citation(text="Synthetic delivery source. ".ljust(6_000, "x")),))
+    draft = compile_report("timeline", materials=(item,), generator=EveryRecordService() if use_model else None)
+    assert draft.sections[0]["citations"] == item.citations
+    store = WorkspaceStore(tmp_path / "workspace.sqlite")
+    try:
+        actor = store.upsert_principal("test", "synthetic-compiler", "Synthetic compiler", "synthetic-compiler", preferred_principal_id="synthetic-compiler")
+        matter = store.create_matter("Synthetic citation capacity", "Synthetic", actor.principal_id)
+        report = store.create_report_from_sections(matter.matter_id, actor.principal_id, title=draft.title,
+                                                  purpose=draft.purpose, origin_id="synthetic-compilation", sections=draft.sections)
+        saved_sections = store.report_sections(matter.matter_id, report.report_id)
+        assert len(saved_sections) == len(draft.sections)
+        assert store.report_citations(matter.matter_id, report.report_id, saved_sections[0].section_id)[0].excerpt == item.citations[0]["excerpt"]
+    finally:
+        store.close()

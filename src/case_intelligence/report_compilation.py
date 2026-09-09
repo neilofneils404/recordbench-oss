@@ -15,13 +15,14 @@ from datetime import date
 from typing import Callable, Mapping, Protocol, Sequence
 
 from .work_product_exports import MAX_EXPORT_TEXT_CHARS, _markdown_escape
+from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS
 
 from .generation import (
     EvidenceItem, GenerationRejected, GenerationUnavailable, VerifiedAnswer,
     MAX_EVIDENCE_ITEMS, MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEM_CHARS,
 )
 
-COMPILATION_VERSION = 4
+COMPILATION_VERSION = 5
 KINDS = frozenset({"timeline", "entities", "topic"})
 HUMAN_ORIGINS = frozenset({"human", "notebook", "human_review", "review_decision", "source_review"})
 UNRESOLVED_STATES = frozenset({"disputed", "needs_review", "needs_attention", "flagged", "unreviewed"})
@@ -210,13 +211,16 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     for item in selected:
         if not item.citations:
             unsourced.append(item.material_id)
+        for citation in item.citations:
+            if not isinstance(citation, Mapping) or not isinstance(citation.get("excerpt"), str):
+                raise CompilationProblem("Compilation references need validated source excerpts.")
+            if len(citation["excerpt"]) > MAX_REPORT_CITATION_EXCERPT_CHARS:
+                raise CompilationProblem(f"A selected passage exceeds the {MAX_REPORT_CITATION_EXCERPT_CHARS:,}-character Report citation limit. Select a shorter source passage; citation text cannot be shortened safely.")
         # Unsettled human interpretation is preserved as attributed review,
         # never silently promoted to independently established source facts.
         if item.category in {"gap", "coverage"} or (item.origin in HUMAN_ORIGINS and item.review_status in UNRESOLVED_STATES):
             continue
         for citation in item.citations:
-            if not isinstance(citation, Mapping) or not isinstance(citation.get("excerpt"), str):
-                raise CompilationProblem("Compilation references need validated source excerpts.")
             if not citation["excerpt"].strip():
                 continue
             key = _citation_key(citation)
@@ -392,7 +396,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                     rejected += 1
                     continue
                 keys = tuple(dict.fromkeys(lookup[identifier][0] for identifier in claim.evidence_ids))
-                identity = (category, claim.text, keys)
+                identity = (category, claim.text, frozenset(keys))
                 if identity in generated_keys:
                     continue
                 generated_keys.add(identity)
@@ -415,8 +419,14 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     # With no usable model output, saved machine statements remain attributed
     # work for review rather than being mislabeled as a new semantic synthesis.
     usable_model = model_available and not (calls and unavailable == calls)
+    # Only a completed relevance check can exclude a review record. Successful
+    # source synthesis says nothing about an unavailable/unfinished note check.
+    excluded_review_ids = classified_ids - relevant_note_ids if focused else set()
+    unclassified_review_ids = {item.material_id for item in classification_items
+        if focused and item.text.strip() and item.material_id not in classified_ids}
+    retained_unclassified_review_ids: set[str] = set()
     reserved_human_ids = {item.material_id for item in human_materials if item.text.strip()
-                          and (not focused or not usable_model or item.material_id in relevant_note_ids)}
+                          and item.material_id not in excluded_review_ids}
     if len(reserved_human_ids) > policy.max_sections:
         raise CompilationProblem("The retained human review exceeds the section budget. Select fewer saved items or increase the section budget.")
     for candidate in generated_candidates:
@@ -434,7 +444,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     for item in selected:
         human = item.origin in HUMAN_ORIGINS
         saved_limit = item.category in {"gap", "coverage"}
-        if focused and usable_model and (human or item.category == "gap") and item.material_id not in relevant_note_ids:
+        if item.material_id in excluded_review_ids:
             uncompiled_materials.append(item.material_id)
             if human:
                 omitted_human_materials.append(item.material_id)
@@ -478,6 +488,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             categories = ["; ".join(categories)]
         date_key = _exact_date(item.text, item.date_label) if kind == "timeline" else ""
         basis = _attribution(item)
+        if item.material_id in unclassified_review_ids:
+            basis += "\nThis saved review record is retained because its topic relevance has not been fully checked."
         if not human and item.material_id in incomplete_materials:
             basis += "\nThis saved finding is retained because its source analysis is incomplete."
             if focused:
@@ -491,6 +503,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 heading = f"{category} (no source support): {item.title}"
             if not append_section(heading, body, item.citations, (item,), date_key=date_key, category=category, compilation_basis=basis):
                 omitted_sections += 1
+            elif item.material_id in unclassified_review_ids:
+                retained_unclassified_review_ids.add(item.material_id)
     if cancelled is not None and cancelled():
         raise CompilationProblem("Report compilation cancelled.")
     if not any(section.get("category") != "Selected work coverage" for section in sections):
@@ -516,6 +530,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 "partially_classified_review_material_ids": tuple(item.material_id for item in classification_items if item.material_id in classified_categories and item.material_id not in classified_ids),
                 "review_classification_categories": {key: tuple(sorted(value)) for key, value in classified_categories.items()},
                 "unclassified_review_material_ids": tuple(item.material_id for item in classification_items if item.material_id not in classified_ids),
+                "retained_unclassified_review_material_ids": tuple(item.material_id for item in selected if item.material_id in retained_unclassified_review_ids),
                 "omitted_human_material_ids": tuple(omitted_human_materials),
                 "classification_truncated_chars": classification_truncated_chars,
                 "unsourced_material_ids": tuple(unsourced), "uncompiled_material_ids": tuple(uncompiled_materials), "source_passages": len(source_rows),
@@ -536,6 +551,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
               f"source characters omitted from model packets: {truncated_chars}. "
               f"Review records checked: {len(classified_ids)} of {len(classification_items)}; relevant review records: {len(relevant_note_ids)}; "
               f"unchecked review records: {len(classification_items) - len(classified_ids)}; omitted human notes: {len(omitted_human_materials)}; "
+              f"review records retained without a complete topic relevance check: {len(retained_unclassified_review_ids)}; "
               f"review-note characters omitted from classification packets: {classification_truncated_chars}. "
               "Saved findings are attributed to their original material and revision. "
               "Same-name mentions remain separate; uncertain dates and human disagreements are retained. "
@@ -548,6 +564,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                             f"{len(relevant_note_ids)} related records were retained; {len(omitted_human_materials)} human notes were not included. ")
         else:
             explanation += "AI assistance was unavailable. The selected work is unfiltered and its topic relevance has not been checked. "
+        if retained_unclassified_review_ids:
+            explanation += f"{len(retained_unclassified_review_ids)} saved review records were retained without a complete topic relevance check. Their relevance remains unconfirmed. "
     if kind == "entities":
         explanation += "People, places, and things remain source-linked mentions; unclassified notes appear separately. Similar names do not establish the same identity. "
     if kind == "timeline":

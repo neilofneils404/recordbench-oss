@@ -88,6 +88,7 @@ NOTEBOOK_TYPES = ("fact", "issue", "person", "place", "date", "event", "note")
 NOTEBOOK_STATUSES = ("suggested", "confirmed", "disputed", "needs_review", "dismissed")
 NOTEBOOK_ORIGINS = ("manual", "answer", "citation", "extraction")
 MAX_AUTOMATIC_MEDIA_SUMMARY_ATTEMPTS = 3
+MAX_REPORT_CITATION_EXCERPT_CHARS = 6_000
 _ANALYSIS_RESTART_MESSAGE = (
     "The review map refresh was interrupted by an application restart. "
     "Select Refresh review map to retry. Existing review decisions are unchanged."
@@ -7246,7 +7247,7 @@ class WorkspaceStore:
             self._safe_text(
                 str(value.get("excerpt", "")),
                 label="Report citation excerpt",
-                maximum=6_000,
+                maximum=MAX_REPORT_CITATION_EXCERPT_CHARS,
                 required=False,
                 multiline=True,
             ),
