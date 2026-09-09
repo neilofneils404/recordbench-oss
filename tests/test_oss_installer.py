@@ -60,10 +60,9 @@ def test_interrupted_provisioning_resume_retains_canonical_account_profile(tmp_p
     assert calls == [True]
 
 
-def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path) -> None:
-    node = tmp_path / "node"
-    result = subprocess.run(
-        [
+def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path, ready_host, monkeypatch, capsys) -> None:
+    node = tmp_path.resolve() / "node"
+    monkeypatch.setattr(sys, "argv", [
             str(ROOT / "install"),
             "install",
             "--root",
@@ -76,12 +75,9 @@ def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path) -> None:
             "--prepare-only",
             "--dry-run",
             "--no-color",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
+        ])
+    assert installer.main() == 0
+    output = capsys.readouterr().out
     for marker in (
         "HOST HANDSHAKE",
         "CLAIM NODE STORAGE",
@@ -92,10 +88,10 @@ def test_installer_dry_run_has_real_phases_and_writes_nothing(tmp_path) -> None:
         "NODE ARMED",
         "ACCESS GRANTED",
     ):
-        assert marker in result.stdout
+        assert marker in output
     assert not node.exists()
-    assert "password=" not in result.stdout.casefold()
-    assert "token=" not in result.stdout.casefold()
+    assert "password=" not in output.casefold()
+    assert "token=" not in output.casefold()
 
 
 def test_capability_profiles_have_conservative_gpu_contracts() -> None:
@@ -345,10 +341,9 @@ def test_selected_profile_cannot_accept_missing_ai_capabilities() -> None:
     assert not installer._selected_capabilities_ready(missing, "all")
 
 
-def test_plain_noninteractive_install_defaults_to_cpu_evaluation(tmp_path) -> None:
-    node = tmp_path / "node"
-    result = subprocess.run(
-        [
+def test_plain_noninteractive_install_defaults_to_cpu_evaluation(tmp_path, ready_host, monkeypatch, capsys) -> None:
+    node = tmp_path.resolve() / "node"
+    monkeypatch.setattr(sys, "argv", [
             str(ROOT / "install"),
             "install",
             "--root",
@@ -359,14 +354,11 @@ def test_plain_noninteractive_install_defaults_to_cpu_evaluation(tmp_path) -> No
             "--prepare-only",
             "--dry-run",
             "--no-color",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    assert "model payload   :: none" in result.stdout
-    assert "nvidia-smi" not in result.stdout
+        ])
+    assert installer.main() == 0
+    output = capsys.readouterr().out
+    assert "model payload   :: none" in output
+    assert "nvidia-smi" not in output
     assert not node.exists()
 
 
@@ -540,3 +532,252 @@ def test_partial_local_resume_requires_explicit_bootstrap_identity(tmp_path, mon
             None,
             None,
         )
+
+
+@pytest.fixture
+def ready_host(monkeypatch):
+    monkeypatch.setattr(installer.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(installer.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(installer.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(installer.os, "getegid", lambda: 1000)
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(installer.shutil, "disk_usage", lambda path: type("Disk", (), {"free": 400 * 1024**3})())
+    monkeypatch.setattr(installer, "_probe", lambda command: subprocess.CompletedProcess(command, 0, '{"nvidia": {}}' if "{{json .Runtimes}}" in command else "1.0", ""))
+
+
+def preflight_args(tmp_path, *extra):
+    return installer._parser().parse_args(["preflight", "--root", str(tmp_path.resolve() / "new node with spaces"), *extra])
+
+
+def checks_by_name(result):
+    return {check.name: check for check in result.checks}
+
+
+def test_preflight_cpu_has_optional_gpu_and_never_writes(tmp_path, ready_host, monkeypatch):
+    args = preflight_args(tmp_path)
+    monkeypatch.setattr(installer.Path, "mkdir", lambda *a, **kw: pytest.fail("preflight attempted a write"))
+    result = installer._collect_preflight("none", args)
+    assert result.ready
+    assert checks_by_name(result)["gpu"].blocking is False
+    assert not args.root.exists()
+    assert result.payload()["schema_version"] == 1
+    assert set(result.payload()["checks"][0]) == {"name", "state", "observed", "required_capability", "blocking", "remedy"}
+
+
+@pytest.mark.parametrize("system,machine", [("Darwin", "arm64"), ("Linux", "aarch64"), ("Windows", "AMD64")])
+def test_preflight_unsupported_host_stops_before_other_probes(tmp_path, ready_host, monkeypatch, system, machine):
+    monkeypatch.setattr(installer.platform, "system", lambda: system)
+    monkeypatch.setattr(installer.platform, "machine", lambda: machine)
+    monkeypatch.setattr(installer, "_probe", lambda command: pytest.fail("unsupported host reached runtime"))
+    result = installer._collect_preflight("none", preflight_args(tmp_path))
+    assert not result.ready
+    assert [check.name for check in result.checks] == ["host"]
+
+
+@pytest.mark.parametrize("missing", ["docker", "openssl"])
+def test_preflight_missing_tools_are_actionable(tmp_path, ready_host, monkeypatch, missing):
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None if name == missing else "/usr/bin/" + name)
+    result = installer._collect_preflight("none", preflight_args(tmp_path))
+    check = checks_by_name(result)[missing]
+    assert not result.ready and check.blocking and check.remedy
+
+
+@pytest.mark.parametrize("failed", ["docker-access", "compose"])
+def test_preflight_runtime_failure_never_echoes_output(tmp_path, ready_host, monkeypatch, failed):
+    def probe(command):
+        failure = ("compose" in command) == (failed == "compose")
+        return subprocess.CompletedProcess(command, int(failure), "synthetic-private-output", "synthetic-private-output")
+    monkeypatch.setattr(installer, "_probe", probe)
+    result = installer._collect_preflight("none", preflight_args(tmp_path))
+    assert checks_by_name(result)[failed].state == "fail"
+    assert "synthetic-private-output" not in json.dumps(result.payload())
+
+
+@pytest.mark.parametrize("uid,gid", [(0, 1000), (1000, 0)])
+def test_preflight_root_identity_blocks_even_dry_run(tmp_path, ready_host, monkeypatch, uid, gid):
+    monkeypatch.setattr(installer.os, "geteuid", lambda: uid)
+    monkeypatch.setattr(installer.os, "getegid", lambda: gid)
+    args = preflight_args(tmp_path, "--dry-run")
+    assert checks_by_name(installer._collect_preflight("none", args))["ownership"].state == "fail"
+
+
+def test_preflight_capacity_and_write_access_are_separate(tmp_path, ready_host, monkeypatch):
+    monkeypatch.setattr(installer.os, "access", lambda *a: False)
+    monkeypatch.setattr(installer.shutil, "disk_usage", lambda path: type("Disk", (), {"free": 99 * 1024**3})())
+    checks = checks_by_name(installer._collect_preflight("none", preflight_args(tmp_path)))
+    assert checks["node-storage"].state == "fail"
+    assert checks["node-storage-reserve"].state == "fail"
+    assert checks["capacity-target"].blocking is False
+
+
+def test_preflight_symlink_and_non_directory_storage_block(tmp_path, ready_host):
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    args = preflight_args(tmp_path, "--storage-root", str(link / "new"))
+    assert checks_by_name(installer._collect_preflight("none", args))["matter-storage"].state == "fail"
+    target.rmdir()
+    target.write_text("synthetic")
+    args.storage_root = target
+    assert checks_by_name(installer._collect_preflight("none", args))["matter-storage"].state == "fail"
+
+
+@pytest.mark.parametrize("options", [["--bind-address", "0.0.0.0"], ["--tls-cert", "/missing/cert"], ["--tls-cert", "/missing/cert", "--tls-key", "/missing/key"]])
+def test_preflight_tls_missing_prerequisites_block(tmp_path, ready_host, options):
+    result = installer._collect_preflight("none", preflight_args(tmp_path, *options))
+    assert checks_by_name(result)["tls"].state == "fail"
+
+
+def test_preflight_selected_gpu_profile_checks_real_plan(tmp_path, ready_host, monkeypatch):
+    def probe(command):
+        output = '{"nvidia": {}}' if "{{json .Runtimes}}" in command else "0, Synthetic GPU, 24576, 24000, 8.0" if command[0] == "nvidia-smi" else "1.0"
+        return subprocess.CompletedProcess(command, 0, output, "")
+    monkeypatch.setattr(installer, "_probe", probe)
+    args = preflight_args(tmp_path, "--models", "review")
+    assert installer._collect_preflight("review", args).ready
+    args.generator_gpus = "9"
+    assert checks_by_name(installer._collect_preflight("review", args))["gpu"].state == "fail"
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None if name == "nvidia-smi" else name)
+    assert not installer._collect_preflight("review", args).ready
+    assert installer._collect_preflight("none", args).ready
+
+
+def test_preflight_json_is_single_document_and_returns_failure(tmp_path, ready_host, monkeypatch, capsys):
+    monkeypatch.setattr(installer.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--root", str(tmp_path / "new"), "--json"])
+    assert installer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert not (tmp_path / "new").exists()
+
+
+def test_install_blocking_preflight_does_not_create_state(tmp_path, ready_host, monkeypatch):
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+    node = tmp_path / "new"
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--non-interactive"])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("output,returncode", [('{}', 0), ('[]', 0), ('not-json', 0), ('{"nvidia": {}}', 1)])
+def test_preflight_gpu_runtime_requires_successful_registered_engine(tmp_path, ready_host, monkeypatch, output, returncode):
+    def probe(command):
+        if "{{json .Runtimes}}" in command:
+            return subprocess.CompletedProcess(command, returncode, output, "")
+        return subprocess.CompletedProcess(command, 0, "0, Synthetic GPU, 24576, 24000, 8.0", "")
+    monkeypatch.setattr(installer, "_probe", probe)
+    result = installer._collect_preflight("review", preflight_args(tmp_path))
+    assert checks_by_name(result)["gpu"].state == "pass"
+    assert checks_by_name(result)["gpu-runtime"].state == "fail"
+
+
+def test_preflight_runtime_timeout_is_actionable(tmp_path, ready_host, monkeypatch):
+    def probe(command):
+        raise subprocess.TimeoutExpired(command, 20)
+    monkeypatch.setattr(installer, "_probe", probe)
+    result = installer._collect_preflight("review", preflight_args(tmp_path))
+    assert not result.ready
+    assert checks_by_name(result)["docker-access"].remedy
+    assert checks_by_name(result)["gpu"].remedy
+
+
+def test_preflight_existing_directory_requires_current_owner(tmp_path, ready_host, monkeypatch):
+    args = preflight_args(tmp_path)
+    args.root.mkdir()
+    monkeypatch.setattr(installer.os, "geteuid", lambda: args.root.stat().st_uid + 1)
+    assert checks_by_name(installer._collect_preflight("none", args))["node-storage"].state == "fail"
+
+
+def test_preflight_supplied_lan_tls_pair_is_read_only(tmp_path, ready_host):
+    cert, key = tmp_path / "synthetic.crt", tmp_path / "synthetic.key"
+    cert.write_text("synthetic certificate placeholder")
+    key.write_text("synthetic key placeholder")
+    args = preflight_args(tmp_path, "--bind-address", "0.0.0.0", "--tls-cert", str(cert), "--tls-key", str(key))
+    check = checks_by_name(installer._collect_preflight("none", args))["tls"]
+    assert check.state == "pass"
+    assert "trust must be verified" in check.observed
+    assert not args.root.exists()
+
+
+@pytest.mark.parametrize("options", [
+    ["--models", "none", "--enable-diarization"],
+    ["--models", "review", "--enable-diarization"],
+    ["--models", "transcription", "--transcription-languages", "fr"],
+    ["--models", "all", "--transcription-languages", ""],
+])
+def test_preflight_rejects_invalid_model_option_combinations(tmp_path, ready_host, options):
+    args = preflight_args(tmp_path, *options)
+    result = installer._collect_preflight(args.models, args)
+    assert not result.ready
+    assert checks_by_name(result)["model-options"].state == "fail"
+    assert not args.root.exists()
+
+
+def test_preflight_nonempty_root_requires_explicit_resume(tmp_path, ready_host, monkeypatch):
+    args = preflight_args(tmp_path)
+    args.root.mkdir()
+    (args.root / "existing.txt").write_text("synthetic existing data")
+    original_stat = installer.Path.stat
+    def synthetic_owned(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if path == args_root:
+            fields = list(result)
+            fields[4] = 1000
+            return installer.os.stat_result(fields)
+        return result
+    args_root = args.root
+    monkeypatch.setattr(installer.Path, "stat", synthetic_owned)
+    blocked = installer._collect_preflight("none", args)
+    assert not blocked.ready
+    assert checks_by_name(blocked)["node-empty"].state == "fail"
+    args.resume = True
+    assert installer._collect_preflight("none", args).ready
+    assert (args.root / "existing.txt").read_text() == "synthetic existing data"
+
+
+def test_invalid_model_options_stop_install_before_state_creation(tmp_path, ready_host, monkeypatch):
+    node = tmp_path.resolve() / "uncreated node"
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "none",
+                                     "--enable-diarization", "--non-interactive"])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("options", [
+    ["--generator-gpu-utilization", "1"],
+    ["--retrieval-device", "cpu", "--retrieval-gpu", "0"],
+])
+def test_cpu_preflight_validates_gpu_options_without_gpu_probe(tmp_path, ready_host, monkeypatch, options):
+    args = preflight_args(tmp_path, "--models", "none", *options)
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["gpu-options"].state == "fail"
+    assert not args.root.exists()
+
+
+@pytest.mark.parametrize("field", ["root", "storage_root"])
+def test_preflight_rejects_home_directory_dot_dot_alias(tmp_path, ready_host, monkeypatch, field):
+    synthetic_home = tmp_path.resolve() / "synthetic-home"
+    synthetic_home.mkdir()
+    monkeypatch.setattr(installer.Path, "home", classmethod(lambda cls: synthetic_home))
+    args = preflight_args(tmp_path, "--resume")
+    setattr(args, field, synthetic_home / "missing" / "..")
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    check = "node-storage" if field == "root" else "matter-storage"
+    assert checks_by_name(result)[check].state == "fail"
+    assert list(synthetic_home.iterdir()) == []
+
+
+
+def test_preflight_dot_dot_cannot_hide_a_symlink_component(tmp_path, ready_host):
+    target = tmp_path.resolve() / "separate-target"
+    target.mkdir()
+    (tmp_path / "linked").symlink_to(target)
+    args = preflight_args(tmp_path)
+    args.root = tmp_path.resolve() / "missing" / ".." / "linked" / "node"
+    result = installer._collect_preflight("none", args)
+    assert not result.ready
+    assert checks_by_name(result)["node-storage"].state == "fail"
+    assert list(target.iterdir()) == []
