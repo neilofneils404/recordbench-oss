@@ -14,7 +14,7 @@ import unicodedata
 import time
 from typing import Iterable, Protocol
 
-from .exact_search import And, Literal, Not, Or, ParsedQuery, Proximity, matching_spans, parse_query, tokenize_text
+from .exact_search import And, Literal, Not, Or, ParsedQuery, Proximity, match_positionals, matching_spans, parse_query, tokenize_text
 from .pilot_uploads import PilotDocument, PilotStore, PilotUnit
 
 
@@ -150,7 +150,11 @@ def passage_preview(unit: PilotUnit, query: ParsedQuery, limit: int = 600, *, bu
     for literal in _positive_literals(query):
         if budget_check is not None:
             budget_check()
-        for start_token, end_token in matching_spans(token_words, literal, budget_check=budget_check):
+        # A preview needs one explaining occurrence per positive condition,
+        # not every repeated occurrence in the complete source unit.
+        span = next(matching_spans(token_words, literal, budget_check=budget_check), None)
+        if span is not None:
+            start_token, end_token = span
             hits.append((tokens[start_token][1], tokens[end_token - 1][2]))
     # Merge overlapping term/phrase spans so source text is rendered once.
     merged = []
@@ -262,8 +266,8 @@ def search_documents(
         if positives is not None:
             matching_units = []
             for position, unit in enumerate(units, 1):
-                supported = tuple(literal for literal in positives if
-                    ParsedQuery("", literal).matches_units([unit.text], budget_check=check_budget))
+                supported = tuple(match_positionals(
+                    tokenize_text(unit.text, budget_check=check_budget), positives, budget_check=check_budget))
                 if supported:
                     matching_units.append((position, unit, supported))
             # Give each positive part of the selected Boolean proof a chance

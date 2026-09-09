@@ -56,12 +56,15 @@ new versioned plan and reject changes between pages.
 
 ## Matching, previews, and operating limits
 
-Proximity uses sorted occurrence spans and forward scans, avoiding a Cartesian
-product for repeated words. The exact service still scans the entire authorized
+Proximity streams sorted occurrence spans through forward scans, retaining
+only the current pair rather than complete occurrence lists or a Cartesian
+product. Single-word literals use one shared token-set lookup per unit; only
+phrases and proximity require positional scans. The exact service still scans the entire authorized
 population before returning totals, paginates all matches, rejects incomplete
 scans, and exposes unavailable or tokenless sources separately. Positive
 proximity previews anchor on a satisfying pair and highlight its complete span,
-including intervening words. Long spans show both ends with an explicit
+including intervening words. Previews retain one explaining occurrence per
+positive condition rather than every repeated match in a large unit. Long spans show both ends with an explicit
 omission between them. Preview length and the three-unit display limit do
 not limit matching or membership.
 
