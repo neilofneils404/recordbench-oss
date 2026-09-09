@@ -1125,11 +1125,11 @@ def test_unattended_diarization_blocks_missing_staging_options_before_writes(
     monkeypatch.setattr(installer, "_hf_token", lambda *a: pytest.fail("preflight read a token"))
     monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("missing staging choices reached writes"))
     args = installer._parser().parse_args(["install", "--root", str(node), "--models", models,
-                                          "--enable-diarization", "--non-interactive", *flags])
+                                          "--enable-diarization", "--non-interactive", "--password-stdin", *flags])
     result = installer._collect_preflight(models, args)
     assert {row.name for row in result.checks if row.blocking and row.state == "fail"} == missing
     monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", models,
-                                     "--enable-diarization", "--non-interactive", *flags])
+                                     "--enable-diarization", "--non-interactive", "--password-stdin", *flags])
     assert installer.main() == 1
     assert not node.exists()
 
@@ -1142,7 +1142,7 @@ def test_diarization_preflight_checks_flags_without_consuming_standard_input(tmp
     monkeypatch.setattr(installer, "_probe", lambda command: subprocess.CompletedProcess(command, 0,
         "0, Synthetic GPU, 49152, 47000, 8.9" if command[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
     args = preflight_args(tmp_path, "--models", "transcription", "--enable-diarization", "--non-interactive",
-                          "--accept-model-terms", "--hf-token-stdin")
+                          "--accept-model-terms", "--hf-token-stdin", "--password-stdin")
     result = installer._collect_preflight("transcription", args)
     assert result.ready
     assert checks_by_name(result)["model-token-input"].state == "pass"
@@ -1150,7 +1150,10 @@ def test_diarization_preflight_checks_flags_without_consuming_standard_input(tmp
 
 def saved_gpu_node(tmp_path, *, model_profile="quality", models="review"):
     from tests.test_first_run_handoff import configured_node
-    root, _, _ = configured_node(tmp_path.resolve())
+    root, _, paths = configured_node(tmp_path.resolve())
+    from case_intelligence.local_accounts import LocalAccountRepository
+    LocalAccountRepository(paths["accounts"] / "local-accounts.json").initialize(
+        "alice.admin", "Alice Administrator", "synthetic-saved-node-password", actor="synthetic-operator")
     installation = json.loads((root / "installation.json").read_text())
     installation.update({
         "release_id": "synthetic", "release_path": str(ROOT), "auth": "local", "models": models,
@@ -1166,6 +1169,150 @@ def saved_gpu_node(tmp_path, *, model_profile="quality", models="review"):
     (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved GPU plan"))
     (root / "config" / "transcription.env").write_text('TRANSCRIPTION_V2_MIN_FREE_VRAM_MB="16000"\n')
     return root, installation, environment
+
+
+@pytest.mark.parametrize("auth", [[], ["--auth", "local"]])
+@pytest.mark.parametrize("resume", [[], ["--resume"]])
+def test_fresh_local_unattended_password_choice_blocks_before_writes(
+    tmp_path, ready_host, monkeypatch, capsys, auth, resume,
+):
+    node = tmp_path.resolve() / "uncreated-node"
+    flags = ["--root", str(node), "--models", "none", "--non-interactive", *auth, *resume]
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("password choice reached writes"))
+    monkeypatch.setattr(installer, "_password", lambda *a: pytest.fail("preflight read a password"))
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--json", *flags])
+    assert installer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    failed = [row for row in payload["checks"] if row["blocking"] and row["state"] == "fail"]
+    assert [row["name"] for row in failed] == ["admin-password-input"]
+    assert "--password-stdin" in failed[0]["remedy"]
+    monkeypatch.setattr(sys, "argv", ["install", *flags])
+    assert installer.main() == 1
+    assert not node.exists()
+
+
+@pytest.mark.parametrize("options", [["--password-stdin"], ["--dry-run"], ["--auth", "oidc", "--dry-run"], ["--auth", "kerberos", "--dry-run"]])
+def test_unattended_password_preflight_accepts_available_input_without_reading(
+    tmp_path, ready_host, monkeypatch, options,
+):
+    class UnreadInput:
+        def readline(self, *args):
+            pytest.fail("preflight must not consume the password")
+    monkeypatch.setattr(sys, "stdin", UnreadInput())
+    args = preflight_args(tmp_path, "--non-interactive", *options)
+    assert installer._collect_preflight("none", args).ready
+    assert not args.root.exists()
+
+
+@pytest.mark.parametrize("flags,check", [
+    (["--admin-username", "bad/name"], "admin-identity"),
+    (["--admin-username", "ab"], "admin-identity"),
+    (["--admin-display-name", "   "], "admin-identity"),
+    (["--admin-display-name", "synthetic\nname"], "admin-identity"),
+    (["--admin-display-name", "x" * 161], "admin-identity"),
+    (["--auth", "oidc"], "oidc-secret-input"),
+    (["--auth", "oidc", "--oidc-client-secret-file", "/missing/synthetic-secret"], "oidc-secret-input"),
+    (["--auth", "kerberos"], "kerberos-keytab-input"),
+])
+def test_invalid_identity_inputs_block_fresh_install_before_writes(
+    tmp_path, ready_host, monkeypatch, flags, check,
+):
+    args = preflight_args(tmp_path, "--non-interactive", "--password-stdin", *flags)
+    assert checks_by_name(installer._collect_preflight("none", args))[check].state == "fail"
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("invalid identity reached writes"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(args.root), "--models", "none",
+                                     "--non-interactive", "--password-stdin", *flags])
+    assert installer.main() == 1
+    assert not args.root.exists()
+
+
+@pytest.mark.parametrize("kind", ["regular", "empty", "large", "directory", "symlink"])
+def test_oidc_credential_preflight_checks_metadata_without_reading(tmp_path, ready_host, monkeypatch, kind):
+    source = tmp_path / "synthetic-secret"
+    if kind == "directory":
+        source.mkdir()
+    elif kind == "symlink":
+        target = tmp_path / "synthetic-target"
+        target.write_text("synthetic placeholder")
+        source.symlink_to(target)
+    else:
+        source.write_text("" if kind == "empty" else "x" * (1024 * 1024 + 1) if kind == "large" else "synthetic placeholder")
+    monkeypatch.setattr(Path, "read_text", lambda *a, **k: pytest.fail("preflight read a credential"))
+    monkeypatch.setattr(Path, "read_bytes", lambda *a, **k: pytest.fail("preflight read a credential"))
+    args = preflight_args(tmp_path, "--auth", "oidc", "--non-interactive", "--oidc-client-secret-file", str(source))
+    result = installer._collect_preflight("none", args)
+    assert checks_by_name(result)["oidc-secret-input"].state == ("pass" if kind == "regular" else "fail")
+    assert result.ready is (kind == "regular")
+    assert str(source) not in json.dumps(result.payload())
+    assert not args.root.exists()
+
+
+def test_local_identity_preflight_accepts_account_admin_normalization(tmp_path, ready_host):
+    args = preflight_args(tmp_path, "--non-interactive", "--password-stdin", "--admin-username", " Synthetic.ADMIN ",
+                          "--admin-display-name", " Synthetic Administrator ")
+    assert installer._collect_preflight("none", args).ready
+
+
+@pytest.mark.parametrize("dtype,compute", [("half", 7.5), ("half", 8.9), ("bfloat16", 8.0)])
+def test_supported_saved_generator_precision_is_preserved(tmp_path, dtype, compute):
+    root, installation, environment = saved_gpu_node(tmp_path)
+    environment["RECORDBENCH_GENERATOR_DTYPE"] = dtype
+    args = installer._parser().parse_args(["install", "--root", str(root)])
+    installer._restore_model_options(args, installation, environment, {})
+    _, plan = installer._resolve_gpu_plans(args, "review", (installer.GpuDevice("0", "Synthetic GPU", 49152, 47000, compute),))
+    assert plan.dtype == dtype
+
+
+def test_fresh_diarization_dry_run_never_consumes_credentials(tmp_path, ready_host, monkeypatch):
+    node = tmp_path.resolve() / "uncreated-node"
+    monkeypatch.setattr(installer, "_probe", lambda cmd: subprocess.CompletedProcess(cmd, 0,
+        "0, Synthetic GPU, 49152, 47000, 8.9" if cmd[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
+    monkeypatch.setattr(installer, "_hf_token", lambda *a: pytest.fail("dry-run consumed a token"))
+    monkeypatch.setattr(installer, "_password", lambda *a: pytest.fail("dry-run consumed a password"))
+    monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", "transcription", "--enable-diarization",
+                                     "--non-interactive", "--accept-model-terms", "--hf-token-stdin", "--dry-run"])
+    assert installer.main() == 0
+    assert not node.exists()
+
+
+def test_relative_node_root_has_same_blocking_result_in_preflight_and_install(
+    tmp_path, ready_host, monkeypatch, capsys,
+):
+    monkeypatch.chdir(tmp_path.resolve())
+    flags = ["--root", "relative-node", "--models", "none", "--non-interactive", "--dry-run"]
+    monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("relative root reached writes"))
+    monkeypatch.setattr(sys, "argv", ["install", "preflight", "--json", *flags])
+    assert installer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert next(row for row in payload["checks"] if row["name"] == "node-storage")["state"] == "fail"
+    monkeypatch.setattr(sys, "argv", ["install", *flags])
+    assert installer.main() == 1
+    assert not (tmp_path / "relative-node").exists()
+
+
+@pytest.mark.parametrize("command", ["resume", "update"])
+@pytest.mark.parametrize("dtype", ["bfloat16", None])
+def test_saved_bfloat16_blocks_older_replacement_gpu_before_commands(
+    tmp_path, request, monkeypatch, command, dtype,
+):
+    root, installation, environment = saved_gpu_node(tmp_path)
+    request.getfixturevalue("ready_host")
+    environment.pop("RECORDBENCH_GENERATOR_DTYPE", None)
+    if dtype is not None:
+        environment["RECORDBENCH_GENERATOR_DTYPE"] = dtype
+    (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved precision"))
+    before = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    monkeypatch.setattr(installer, "_probe", lambda cmd: subprocess.CompletedProcess(cmd, 0,
+        "0, Synthetic Replacement GPU, 49152, 47000, 7.5" if cmd[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
+    assert installer._collect_preflight("review").ready
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("unsupported saved precision reached a command"))
+    monkeypatch.setattr(installer, "_stage_release", lambda *a, **k: pytest.fail("unsupported saved precision staged a release"))
+    args = installer._parser().parse_args(["install" if command == "resume" else "update", "--root", str(root),
+                                          "--non-interactive", "--no-backup"])
+    action = installer._resume_node if command == "resume" else installer._update
+    with pytest.raises(RuntimeError, match="prerequisites"):
+        action(installer.Console(color=False, quiet=True), args, root)
+    assert {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
 
 
 @pytest.mark.parametrize("command", ["resume", "update"])
@@ -1238,3 +1385,39 @@ def test_completed_diarization_resume_uses_saved_plan_without_new_token(tmp_path
     assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
     assert args.transcription_gpu == "1" and args.transcription_languages == "en,es"
     assert args.transcription_min_free_vram_mib == 16000
+
+
+@pytest.mark.parametrize("account_present", [False, True])
+def test_resumed_local_initialization_requires_input_before_commands(tmp_path, request, monkeypatch, account_present):
+    from tests.test_first_run_handoff import configured_node
+    from case_intelligence.local_accounts import LocalAccountRepository
+    root, _, paths = configured_node(tmp_path.resolve())
+    if account_present:
+        LocalAccountRepository(paths["accounts"] / "local-accounts.json").initialize(
+            "alice.admin", "Alice Administrator", "synthetic-resume-password", actor="synthetic-operator")
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    request.getfixturevalue("ready_host")
+    commands = []
+    monkeypatch.setattr(installer, "_run", lambda *a, **kw: commands.append(a[1]))
+    monkeypatch.setattr(installer, "_provision", lambda *a, **kw: commands.append("provision"))
+    monkeypatch.setattr(installer, "_password", lambda *a: pytest.fail("preflight consumed a password"))
+    args = installer._parser().parse_args(["install", "--root", str(root), "--resume", "--non-interactive"])
+    if account_present:
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+        assert commands and commands[-1] == "provision"
+    else:
+        with pytest.raises(RuntimeError, match="prerequisites"):
+            installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+        assert not commands
+        assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_configure_normalizes_padded_administrator_display_name(tmp_path):
+    display = "A" * 160
+    args = installer._parser().parse_args(["install", "--auth", "local", "--models", "none", "--non-interactive",
+        "--dry-run", "--admin-display-name", "  " + display + "  "])
+    root = tmp_path.resolve() / "node"
+    result = installer._configure(installer.Console(color=False, quiet=True), args, root,
+        installer._paths(root), "synthetic-release", ROOT, ())
+    assert result[-1] == display
+    assert not root.exists()

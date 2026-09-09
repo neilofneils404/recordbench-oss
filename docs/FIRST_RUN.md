@@ -126,3 +126,7 @@ does not establish those target-host outcomes.
 A resumed dry-run can use the verified local model receipt to plan an offline
 restart without requesting a staging token. Real provisioning still verifies the
 selected model artifacts through its runtime image before launch.
+
+If interruption occurred before local administrator creation, unattended resume
+requires the saved administrator identity and `--password-stdin` before runtime
+commands. Existing canonical account stores do not require password re-entry.
