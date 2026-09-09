@@ -176,3 +176,21 @@ The existing generation service can make one additional source-close repair
 request inside each call; this is part of its established verification contract.
 It is not a count of raw model-server requests. Coverage records this unit
 explicitly rather than presenting repair requests as unbounded or nonexistent.
+
+Optional focus applies to Timeline and People/Places/Things source prompts and
+human-record selection as well as Topic reports. Related disputes remain visible;
+unrelated notes are omitted with coverage accounting. Focused multi-item work
+requires relevance classification; an offline single-item fallback is labeled
+unfiltered. A review-selection claim must cite exactly one distinct allowed
+record, so an otherwise supported sentence cannot select an unrelated extra ID.
+An entity review record is fully checked only after all three category calls
+complete. Interrupted or unavailable category passes remain explicitly partially
+classified, with the original note in the unclassified appendix and category
+progress in coverage.
+
+`CompilationMaterial.review_details` carries saved technical review details
+separately from user prose and participates in the full snapshot fingerprint.
+Every section includes its exact compiler-authored `compilation_basis`; the same
+string is appended to its body after `\n\nReview basis:\n` for existing exports.
+Readers must use that separately stored basis and verify the exact body suffix;
+they must never split on the first matching delimiter in human-authored text.

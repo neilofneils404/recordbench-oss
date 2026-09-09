@@ -41,6 +41,7 @@ class CompilationMaterial:
     author: str = ""
     date_label: str = ""
     category: str = ""
+    review_details: str = ""
 
 
 @dataclass(frozen=True)
@@ -117,7 +118,8 @@ def _attribution(material: CompilationMaterial) -> str:
     origin = "Human review" if material.origin in HUMAN_ORIGINS else "Saved AI-assisted work"
     author = f" by {material.author}" if material.author else ""
     return (f"{origin}{author}: {material.title}. Review status: {material.review_status or 'unknown'}. "
-            f"Material {material.material_id}; revision {material.revision}.")
+            f"Material {material.material_id}; revision {material.revision}." +
+            ("\n" + material.review_details if material.review_details else ""))
 
 
 def _exact_date(text: str, label: str = "") -> str:
@@ -141,6 +143,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     if cancelled is not None and cancelled():
         raise CompilationProblem("Report compilation cancelled.")
     topic = _request(kind, topic)
+    focused = bool(topic)
     policy = budget or DEFAULT_COMPILATION_BUDGET
     materials = tuple(deepcopy(item) for item in materials)
     fingerprint = compilation_fingerprint(kind, topic, materials, budget=policy)
@@ -170,7 +173,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             source_rows[key] = dict(citation)
             source_materials.setdefault(key, []).append(item)
 
-    def append_section(heading, body, citations, items, *, date_key="", category=""):
+    def append_section(heading, body, citations, items, *, date_key="", category="", compilation_basis=""):
         if len(sections) >= policy.max_sections:
             return False
         sections.append({"heading": heading[:200], "body": body, "citations": tuple(citations),
@@ -178,7 +181,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                          "provenance": tuple({"material_id": item.material_id, "origin": item.origin,
                                               "review_status": item.review_status, "revision": item.revision,
                                               "author": item.author} for item in items),
-                         "date_key": date_key, "category": category})
+                         "date_key": date_key, "category": category, "compilation_basis": compilation_basis})
         return True
 
     queries = {
@@ -190,6 +193,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
         ],
         "topic": [("Topic findings", f"Compile findings specifically relevant to this topic: {topic}. Preserve contradictory evidence and uncertainty; do not include a claim merely because it appears in the packet. Give separate source-supported findings.")],
     }[kind]
+    if focused and kind != "topic":
+        queries = [(category, question + f" Limit this report to material specifically relevant to this focus: {topic}. Omit unrelated events or mentions.") for category, question in queries]
     batches: list[list[tuple]] = []
     current: list[tuple] = []
     chars = 0
@@ -213,24 +218,28 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     model_available = bool(generator is not None and generator.available)
     human_materials = tuple(item for item in selected if item.origin in HUMAN_ORIGINS)
     classification_items = tuple(item for item in selected
-        if (kind == "topic" and (item.origin in HUMAN_ORIGINS or item.category == "gap"))
+        if (focused and (item.origin in HUMAN_ORIGINS or item.category == "gap"))
         or (kind == "entities" and item.origin in HUMAN_ORIGINS
             and item.category not in {"person", "place", "thing", "gap", "coverage"}))
     classified_ids: set[str] = set()
+    classified_categories: dict[str, set[str]] = {}
     relevant_note_ids: set[str] = set()
     note_categories: dict[str, list[str]] = {}
     classification_calls = 0
     classification_truncated_chars = 0
-    if kind == "topic" and not model_available and len(selected) > 1:
+    if focused and not model_available and len(selected) > 1:
         raise CompilationProblem("Topic relevance could not be checked. Try again when AI assistance is available or select one relevant saved item.")
     classification_queries = (
         (("Topic", f"Which saved review records relate specifically to this topic: {topic}? Include related disagreements and unresolved questions, but exclude unrelated notes. Return a separate supported statement for each relevant review record and cite its identifier."),)
-        if kind == "topic" else (
+        if kind in {"topic", "timeline"} else (
             ("People", "Which saved review records contain mentions of named people? Return a separate supported statement for each matching review record and cite its identifier. Do not infer an identity merely from similar names."),
             ("Places", "Which saved review records contain mentions of named places? Return a separate supported statement for each matching review record and cite its identifier."),
             ("Things", "Which saved review records mention named or distinctly identified objects, devices, organizations, or other things? Return a separate supported statement for each matching review record and cite its identifier."),
         )
     )
+    if focused and kind == "entities":
+        classification_queries = [(category, question + f" Select only records specifically related to this focus: {topic}.") for category, question in classification_queries]
+    required_categories = {category for category, _question in classification_queries}
     # Classify review records as review records. Only their selected identifiers
     # are consumed; model classification prose never becomes a source fact.
     note_batches = []
@@ -270,10 +279,14 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 raise CompilationProblem("Report compilation cancelled.")
             if not isinstance(classified, VerifiedAnswer):
                 raise CompilationProblem("Review classification requires independently verified model answers.")
-            classified_ids.update(item.material_id for item, _excerpt in note_batch)
+            for item, _excerpt in note_batch:
+                completed = classified_categories.setdefault(item.material_id, set())
+                completed.add(category)
+                if completed >= required_categories:
+                    classified_ids.add(item.material_id)
             rejected += classified.omitted_claims
             for claim in classified.claims if classified.answerable else ():
-                if not claim.evidence_ids or any(identifier not in note_lookup for identifier in claim.evidence_ids):
+                if len(set(claim.evidence_ids)) != 1 or any(identifier not in note_lookup for identifier in claim.evidence_ids):
                     rejected += 1
                     continue
                 for identifier in claim.evidence_ids:
@@ -323,8 +336,9 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
                 items = tuple(origins.values())
                 date_key = _exact_date(claim.text) if kind == "timeline" else ""
                 heading = f"{category} — {date_key or 'dates as stated'}" if kind == "timeline" else f"{category} — source-linked finding"
-                body = claim.text + "\n\nReview basis:\nAI-assisted compilation from resolved source passages.\n" + "\n".join(_attribution(item) for item in items)
-                if append_section(heading, body, cited, items, date_key=date_key, category=category):
+                basis = "AI-assisted compilation from resolved source passages.\n" + "\n".join(_attribution(item) for item in items)
+                body = claim.text + "\n\nReview basis:\n" + basis
+                if append_section(heading, body, cited, items, date_key=date_key, category=category, compilation_basis=basis):
                     generated_materials.update(origins)
                 else:
                     omitted_sections += 1
@@ -337,7 +351,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     for item in selected:
         human = item.origin in HUMAN_ORIGINS
         saved_limit = item.category in {"gap", "coverage"}
-        if kind == "topic" and model_available and (human or item.category == "gap") and item.material_id not in relevant_note_ids:
+        if focused and model_available and (human or item.category == "gap") and item.material_id not in relevant_note_ids:
             uncompiled_materials.append(item.material_id)
             if human:
                 omitted_human_materials.append(item.material_id)
@@ -347,7 +361,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
         if not human and not saved_limit and not item.citations:
             uncompiled_materials.append(item.material_id)
             continue
-        if not human and not saved_limit and model_available and kind in {"entities", "topic"}:
+        if not human and not saved_limit and model_available and (focused or kind == "entities"):
             uncompiled_materials.append(item.material_id)
             continue
         if not item.text.strip():
@@ -355,7 +369,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
         categories = []
         if kind == "entities" and human:
             typed = {"person": "People", "place": "Places", "thing": "Things"}.get(item.category)
-            categories = [typed] if typed else note_categories.get(item.material_id, [])
+            requires_classification = item in classification_items
+            categories = ([typed] if typed else note_categories.get(item.material_id, [])) if (not requires_classification or item.material_id in classified_ids) else []
             if categories:
                 suffix = "unresolved human review" if item.review_status in UNRESOLVED_STATES else "human review"
                 categories = [f"{category} — {suffix}" for category in categories]
@@ -371,17 +386,18 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             categories = ["Human review"]
         else:
             categories = ["Saved findings awaiting compilation" if model_available else "Unclassified saved findings — arranged without AI"]
-        if kind == "topic" and not model_available:
+        if focused and not model_available:
             categories = ["Unfiltered selected work — relevance not checked"]
         date_key = _exact_date(item.text, item.date_label) if kind == "timeline" else ""
-        body = item.text + "\n\nReview basis:\n" + _attribution(item)
+        basis = _attribution(item)
         if human and not item.citations:
-            body += "\n\nThis human note has no attached source support."
+            basis += "\n\nThis human note has no attached source support."
+        body = item.text + "\n\nReview basis:\n" + basis
         for category in categories:
             heading = f"{category}: {item.title}"
             if human and not item.citations:
                 heading = f"{category} (no source support): {item.title}"
-            if not append_section(heading, body, item.citations, (item,), date_key=date_key, category=category):
+            if not append_section(heading, body, item.citations, (item,), date_key=date_key, category=category, compilation_basis=basis):
                 omitted_sections += 1
     if cancelled is not None and cancelled():
         raise CompilationProblem("Report compilation cancelled.")
@@ -391,13 +407,15 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
         sections.sort(key=lambda section: (not bool(section["date_key"]), section["date_key"]))
 
     status = "model_assisted" if generated_materials or (model_available and relevant_note_ids) else "saved_material_arrangement"
-    if kind == "topic" and not model_available:
+    if focused and not model_available:
         status = "unfiltered_saved_material_arrangement"
     stop = "budget_reached" if (omitted_materials or omitted_sections or (model_available and calls >= policy.max_model_calls and calls < len(batches) * len(queries) + len(note_batches) * len(classification_queries))) else "compiled_selected_material"
     coverage = {"version": COMPILATION_VERSION, "mode": status, "requested_materials": len(materials),
                 "selected_materials": len(selected), "omitted_material_ids": tuple(omitted_materials),
                 "human_materials": len(human_materials), "classified_review_records": len(classified_ids),
                 "selected_review_records": len(relevant_note_ids), "classification_calls": classification_calls,
+                "partially_classified_review_material_ids": tuple(item.material_id for item in classification_items if item.material_id in classified_categories and item.material_id not in classified_ids),
+                "review_classification_categories": {key: tuple(sorted(value)) for key, value in classified_categories.items()},
                 "unclassified_review_material_ids": tuple(item.material_id for item in classification_items if item.material_id not in classified_ids),
                 "omitted_human_material_ids": tuple(omitted_human_materials),
                 "classification_truncated_chars": classification_truncated_chars,
@@ -418,7 +436,8 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
               "Same-name mentions remain separate; uncertain dates and human disagreements are retained. "
               "These counts describe selected saved work, not pages read or an exhaustive matter review.")
     explanation = "This draft brings together selected saved findings and human review. "
-    if kind == "topic":
+    if focused:
+        explanation += f"Requested focus: {topic}. "
         if model_available:
             explanation += (f"AI assistance checked topic relevance for {len(classified_ids)} saved review records. "
                             f"{len(relevant_note_ids)} related records were retained; {len(omitted_human_materials)} human notes were not included. ")
@@ -431,7 +450,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     if omitted_materials or omitted_sections or uncompiled_materials:
         explanation += "Some selected work was not included; the review basis records those limits. "
     explanation += "This is a review of selected saved work, not an exhaustive review of the matter."
-    sections.append({"heading": "Compilation coverage", "body": explanation + "\n\nReview basis:\n" + ledger, "citations": (), "material_ids": (), "provenance": ()})
+    sections.append({"heading": "Compilation coverage", "body": explanation + "\n\nReview basis:\n" + ledger, "citations": (), "material_ids": (), "provenance": (), "compilation_basis": ledger})
     title = {"timeline": "Timeline", "entities": "People, Places, and Things", "topic": f"Topic: {topic}"}[kind]
     return CompilationDraft(title[:200], f"Compiled from selected saved AI-assisted work and human review. {topic}".strip(),
                             tuple(sections), fingerprint, coverage)
