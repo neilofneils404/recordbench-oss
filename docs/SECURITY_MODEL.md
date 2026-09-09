@@ -89,3 +89,14 @@ received data, including cancelling bound empty upload attempts. The same source
 mutation lock covers chunk writes/offset commits and cleanup; cleanup checks saved
 partial files as well as control rows. Requests recheck upload state after reading
 their body and acquiring that lock, so a delayed request cannot write after cleanup.
+
+## Local account changes
+
+[Local account mutations](LOCAL_ACCOUNT_LIFECYCLE.md) retain the owner-only
+secrets-file boundary and the application's read-only mount. A process writer
+lock serializes fresh reads, last-enabled-administrator validation and atomic
+replacement. Every local session resolution validates the opened file metadata,
+reuses only an unchanged validated snapshot, and checks its revision binding.
+Password, enabled-state and role changes invalidate
+previous sessions without requiring a process restart. Version 1 migration
+requires an explicit verified backup, and no browser mutation endpoint is added.
