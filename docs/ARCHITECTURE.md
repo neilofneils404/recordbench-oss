@@ -146,3 +146,9 @@ Matter storage is configurable and may be a dedicated host-mounted NAS path.
 RecordBench remains a temporary review workspace: exports leave the system,
 matters can be closed and purged, and the independent Transcript Studio queue
 has a short expiry.
+
+[Full extracted-text review](FULL_TEXT_REVIEW.md) extends frozen source runs with
+per-unit/range checkpoints, separate extraction/analysis coverage, bounded
+overlapping model packets, and incremental ledger exports. Selected-passage
+screening remains a distinct mode. Both share the existing private model service
+and matter-owned SQLite lifecycle; original source units stay in managed storage.

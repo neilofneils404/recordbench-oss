@@ -573,6 +573,16 @@ class PilotDocument:
         default=None, repr=False, compare=False
     )
 
+    _units_iterator: Callable | None = field(default=None, repr=False, compare=False)
+
+    def iter_parsed_units(self):
+        if self.units:
+            yield from (PilotUnit(**unit) for unit in self.units)
+        elif self.units_file and self._units_iterator is not None:
+            yield from self._units_iterator(self.units_file)
+        elif self.units_file and self._units_loader is not None:
+            yield from self._units_loader(self.units_file)
+
     def parsed_units(self) -> tuple[PilotUnit, ...]:
         if self.units:
             return tuple(PilotUnit(**unit) for unit in self.units)
@@ -1063,6 +1073,7 @@ class PilotStore:
         for document in loaded:
             before = self._document_payload(document)
             document._units_loader = self._load_units
+            document._units_iterator = self._iter_units
             if document.origin == "upload":
                 path = self.files / document.stored_name
                 if path.parent != self.files or path.is_symlink() or not path.is_file():
@@ -1176,6 +1187,18 @@ class PilotStore:
             and metadata.st_size > 0
             and metadata.st_size == document.playback_size
         )
+
+    def _iter_units(self, name: str):
+        from .unit_stream import iter_unit_records
+        if not self._units_file_is_safe(name):
+            raise RuntimeError("derived searchable text is unavailable")
+        try:
+            fd = os.open(self.derived / name, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, encoding="utf-8") as stream:
+                for item in iter_unit_records(stream):
+                    yield PilotUnit(**item)
+        except (OSError, TypeError, ValueError) as exc:
+            raise RuntimeError("derived searchable text could not be loaded") from exc
 
     def _load_units(self, name: str) -> tuple[PilotUnit, ...]:
         if not self._units_file_is_safe(name):
@@ -1498,6 +1521,7 @@ class PilotStore:
                     else "Queued to prepare browser-compatible playback."
                 ),
                 _units_loader=self._load_units,
+                _units_iterator=self._iter_units,
             )
             if suffix in MEDIA_TYPES:
                 document.state = "queued"
@@ -1763,6 +1787,7 @@ class PilotStore:
                     else "Queued to prepare browser-compatible playback."
                 ),
                 _units_loader=self._load_units,
+                _units_iterator=self._iter_units,
             )
             final = self.files / stored_name
             try:
@@ -2165,6 +2190,7 @@ class PilotStore:
                         stable_mtime_ns=int(getattr(source, "stable_mtime_ns")),
                         processing_stage="Queued",
                         _units_loader=self._load_units,
+                        _units_iterator=self._iter_units,
                     )
                 )
             for document in created:

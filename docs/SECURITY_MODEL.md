@@ -25,8 +25,10 @@ commit.
 Models can be wrong, transcripts can mishear, diarization can miscluster, and
 retrieval can omit relevant material. The UI must preserve citations,
 limitations, coverage, excluded-source notices, and direct source review. Do
-not represent a generated answer as an exhaustive review unless the dedicated
-**Check every source** task actually evaluated each frozen source.
+not represent a generated answer as an exhaustive review. **Check selected
+passages** evaluates retrieved passages within each frozen source. **Review all
+extracted text** records every available text range and preserves extraction and
+analysis gaps; neither establishes recognition of every relevant fact.
 
 Matter closure is a separate, deliberate application policy: either the matter
 owner or an authenticated RecordBench administrator may request permanent
