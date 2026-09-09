@@ -412,3 +412,5 @@ release. A successful update records preparation under its new seal and prints
 the same handoff. A healthy, sealed node is not directed to rebuild with resume
 merely because its progress receipt predates the current release. Browser sign-in
 remains a separate unverified step.
+
+Resume never initializes a replacement account store when a provisioning seal exists, including a seal from an older release or a damaged seal. Restore the canonical account backup first. Retained application account-file and management-root settings must exactly match the selected managed or read-only account layout before any Compose command runs.

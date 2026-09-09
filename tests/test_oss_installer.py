@@ -2617,3 +2617,55 @@ def test_retained_oidc_ca_accepts_a_readable_certificate(tmp_path, request, monk
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     installer._replace_env(root / 'config/recordbench.env', 'CASE_INTELLIGENCE_OIDC_CA_FILE', '/run/recordbench-secrets/organization-ca.pem')
     assert installer._collect_preflight('none', args, needs_model_staging=False).ready
+
+
+@pytest.mark.parametrize('management', [False, True])
+@pytest.mark.parametrize('seal', ['current', 'older-release', 'invalid'])
+def test_resume_refuses_missing_prepared_account_store_before_password_or_commands(tmp_path, request, monkeypatch, management, seal):
+    from tests.test_first_run_handoff import configured_node
+    root, _, paths = configured_node(tmp_path.resolve())
+    installation = json.loads((root / 'installation.json').read_text())
+    installation['local_account_management'] = management
+    (root / 'installation.json').write_text(json.dumps(installation))
+    if not management:
+        installer._replace_env(paths['config'] / 'recordbench.env', 'CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE', '/run/recordbench-secrets/local-accounts.json')
+        installer._replace_env(paths['config'] / 'recordbench.env', 'CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT', '')
+    installer._seal_provisioning(root, installation)
+    marker = installer._provision_marker(root)
+    if seal == 'older-release':
+        value = json.loads(marker.read_text()); value['release_id'] = 'synthetic-prior-release'; marker.write_text(json.dumps(value))
+    elif seal == 'invalid':
+        marker.write_text('synthetic damaged provisioning seal')
+    before = {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    request.getfixturevalue('ready_host')
+    monkeypatch.setattr(installer, '_password', lambda *a: pytest.fail('missing prepared account store consumed a password'))
+    monkeypatch.setattr(installer, '_run', lambda *a, **k: pytest.fail('missing prepared account store issued a command'))
+    args = installer._parser().parse_args(['install', '--root', str(root), '--resume', '--non-interactive', '--password-stdin', '--admin-username', 'alice.admin', '--admin-display-name', 'Alice Administrator'])
+    with pytest.raises(RuntimeError, match='account store.*missing.*restore'):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()} == before
+
+
+@pytest.mark.parametrize('management', [False, True])
+@pytest.mark.parametrize('field', ['CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE', 'CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT'])
+def test_resume_refuses_inconsistent_application_account_paths_before_commands(tmp_path, request, monkeypatch, management, field):
+    from tests.test_first_run_handoff import configured_node
+    from case_intelligence.local_accounts import LocalAccountRepository
+    root, _, paths = configured_node(tmp_path.resolve())
+    installation = json.loads((root / 'installation.json').read_text())
+    installation['local_account_management'] = management
+    (root / 'installation.json').write_text(json.dumps(installation))
+    app = paths['config'] / 'recordbench.env'
+    installer._replace_env(app, 'CASE_INTELLIGENCE_LOCAL_ACCOUNTS_FILE', '/var/lib/recordbench-accounts/local-accounts.json' if management else '/run/recordbench-secrets/local-accounts.json')
+    installer._replace_env(app, 'CASE_INTELLIGENCE_LOCAL_ACCOUNT_MANAGEMENT_ROOT', '/var/lib/recordbench-accounts' if management else '')
+    account_root = paths['accounts'] if management else paths['secrets']
+    LocalAccountRepository(account_root / 'local-accounts.json').initialize('alice.admin', 'Alice Administrator', 'synthetic-retained-password', actor='synthetic-operator')
+    installer._replace_env(app, field, '/synthetic-wrong-account-path')
+    before = {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    request.getfixturevalue('ready_host')
+    monkeypatch.setattr(installer, '_password', lambda *a: pytest.fail('retained account mismatch consumed a password'))
+    monkeypatch.setattr(installer, '_run', lambda *a, **k: pytest.fail('retained account mismatch issued a command'))
+    args = installer._parser().parse_args(['install', '--root', str(root), '--resume', '--non-interactive'])
+    with pytest.raises(RuntimeError, match='saved local.account.*configuration'):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()} == before
