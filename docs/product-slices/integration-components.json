@@ -1,0 +1,85 @@
+{
+  "format_version": 1,
+  "purpose": "Unmerged portable validation candidate; not a release, target acceptance, or maintainer acceptance.",
+  "baseline_commit": "1fed77a2c50686b073e4c3255421d77aa16fefe5",
+  "components": [
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/selected-material-capacity-20260909",
+      "headRefOid": "3f8a768d358643cf27476fc6c4e1af86ba9f076d",
+      "number": 51,
+      "title": "Preserve review material and source qualifications in compiler foundation",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/51"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/layout-cleanup-20260909",
+      "headRefOid": "c5afc96285cce58a8648594b578ac783542c2810",
+      "number": 52,
+      "title": "Keep matter navigation reachable beside long review content",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/52"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/search-cleanup-20260909",
+      "headRefOid": "42582de21b7a9f2645566af24327f32c89b3798f",
+      "number": 53,
+      "title": "Restore complete source search and proximity evidence",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/53"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/installer-cleanup-20260909",
+      "headRefOid": "c9c41ad729022ee5e471cf113eb676c609e3d3b3",
+      "number": 54,
+      "title": "Validate installation inputs and protect nested storage paths",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/54"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/account-lifecycle-cleanup-20260909",
+      "headRefOid": "6b28cb73c944d2b06be52de0408975abe2155a33",
+      "number": 55,
+      "title": "Keep local account sessions current with validated snapshot caching",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/55"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/report-workflow-cleanup-20260909",
+      "headRefOid": "16924d06f937f470c1e7efb8b2e13cb3af5e5f3f",
+      "number": 56,
+      "title": "Compile saved review work into recoverable report drafts",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/56"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/team-setup-cleanup-20260909",
+      "headRefOid": "33041f72adb94d652453871a463e8f3d83ddb96c",
+      "number": 57,
+      "title": "Guide resumable installation and local team administration",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/57"
+    },
+    {
+      "baseRefName": "codex/report-workflow-cleanup-20260909",
+      "headRefName": "codex/full-text-cleanup-20260909",
+      "headRefOid": "e7542b37f74ae2ba6aba4024e2dc90a36eae9435",
+      "number": 58,
+      "title": "Review extracted text with durable limits and report support",
+      "url": "https://github.com/neilofneils404/recordbench-oss/pull/58"
+    }
+  ],
+  "dependencies": {
+    "56": [
+      51
+    ],
+    "57": [
+      54,
+      55
+    ],
+    "58": [
+      56
+    ]
+  },
+  "assembly": "Exact component commits merged into this branch. Resolve the containing candidate commit from the handoff or git rev-parse HEAD; this manifest cannot name itself.",
+  "target_validation": "Not run. Use TARGET_VALIDATION.md and TARGET_VALIDATION_RECEIPT.md."
+}
