@@ -79,7 +79,7 @@
           {% set first = previews[item.document_id][0] %}
           <a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if first.start_ms is not none %}?start_ms={{ first.start_ms }}&amp;unit={{ first.position }}#segment-{{ first.position }}{% else %}?unit={{ first.position }}{% endif %}">{{ first.location }}</a>
           <p class="find-excerpt">{% for text, highlighted in first.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p>
-          {% if item.matching_unit_count > 1 %}<details class="find-more-passages"><summary>More places in this source <span>{{ item.matching_unit_count }} matching pages or sections</span></summary>
+          {% if item.matching_unit_count > 1 %}<details class="find-more-passages"><summary>More places in this source <span>{{ item.matching_unit_count }} matching {% if item.media_type.startswith("audio/") or item.media_type.startswith("video/") %}transcript passages{% else %}pages or sections{% endif %}</span></summary>
             {% for unit in previews[item.document_id][1:] %}<div><a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if unit.start_ms is not none %}?start_ms={{ unit.start_ms }}&amp;unit={{ unit.position }}#segment-{{ unit.position }}{% else %}?unit={{ unit.position }}{% endif %}">{{ unit.location }}</a><p class="find-excerpt">{% for text, highlighted in unit.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p></div>{% endfor %}
             {% if item.matching_unit_count > 3 %}<p>Open the source to review every matching page or section.</p>{% endif %}
           </details>{% endif %}

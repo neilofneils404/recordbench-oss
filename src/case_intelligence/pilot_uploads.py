@@ -2141,8 +2141,12 @@ class PilotStore:
         document.page_count = len(lines)
         document.state = "ready"
         document.message = f"{len(lines)} lines ready and searchable"
+        # Ready TXT progress counts extracted chunks, while page_count retains
+        # original line count. This persists tail completeness without changing
+        # the registry format or inventing searchable whitespace-only units.
+        document.completed_units = document.total_units = len(units)
         if progress is not None:
-            progress("Extracting text", len(lines), len(lines))
+            progress("Extracting text", len(units), len(units))
 
     def register_linked_source(
         self,

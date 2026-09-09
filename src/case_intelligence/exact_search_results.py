@@ -16,7 +16,7 @@ from typing import Iterable, Protocol
 
 from .exact_search import And, Literal, Not, Or, ParsedQuery, Proximity, match_positionals, matching_spans, parse_query, tokenize_text
 from .media_evidence import format_timestamp
-from .pilot_uploads import DOCX_MEDIA_TYPE, EMAIL_MEDIA_TYPES, SPREADSHEET_MEDIA_TYPES, PilotDocument, PilotStore, PilotUnit, is_media_type
+from .pilot_uploads import DOCX_MEDIA_TYPE, EMAIL_MEDIA_TYPES, SPREADSHEET_MEDIA_TYPES, TEXT_LINES_PER_CHUNK, PilotDocument, PilotStore, PilotUnit, is_media_type
 from .unit_stream import UnitRecordLimit
 
 _SECTION_MEDIA_TYPES = {DOCX_MEDIA_TYPE} | EMAIL_MEDIA_TYPES | SPREADSHEET_MEDIA_TYPES
@@ -156,6 +156,7 @@ def _validate_media_locator(document: PilotDocument, unit: PilotUnit,
                             ordinal: int, previous_start: int) -> None:
     """Match the locator relationships required by install_media_transcript."""
     if (type(document.duration_ms) is not int or document.duration_ms < 0
+            or not unit.text.strip()
             or unit.number != ordinal or unit.start_ms is None or unit.end_ms is None
             or unit.start_ms < previous_start or unit.end_ms <= unit.start_ms
             or unit.end_ms > document.duration_ms + 2000):
@@ -300,7 +301,7 @@ def search_documents(
         check_budget()
         digest = hashlib.sha256(json.dumps([
             document.document_id, document.version_id, document.state, document.display_name,
-            document.media_type, document.page_count,
+            document.media_type, document.page_count, document.completed_units, document.total_units,
         ], ensure_ascii=True).encode())
         if document.state != "ready":
             exclusions["Not ready"] += 1
@@ -338,6 +339,24 @@ def search_documents(
                 has_text = has_text or bool(tokenize_text(unit.text, budget_check=check_budget))
             if section_backed and len(units) != document.page_count:
                 raise ValueError('Incomplete derived section coverage')
+            if document.media_type == "text/plain" and (document.units_file or document.page_count or document.total_units or document.completed_units):
+                if type(document.page_count) is not int or document.page_count < 1:
+                    raise ValueError('Invalid TXT line count')
+                maximum_chunks = math.ceil(document.page_count / TEXT_LINES_PER_CHUNK)
+                count = document.total_units
+                if (type(count) is not int or count < 0
+                        or type(document.completed_units) is not int
+                        or document.completed_units != count):
+                    raise ValueError('Invalid TXT extraction count')
+                if 0 < count <= maximum_chunks:
+                    if len(units) != count:
+                        raise ValueError('Incomplete TXT chunk coverage')
+                elif not units or units[-1].line_end != document.page_count:
+                    # Older ready TXT metadata counted lines, not chunks. Its
+                    # final range can prove a complete tail; otherwise reprocess
+                    # to establish the persisted chunk count (including when
+                    # whitespace-only trailing blocks were omitted).
+                    raise ValueError('Unverified legacy TXT tail coverage')
             if media and not units and document.page_count != 0:
                 raise ValueError('Incomplete derived transcript coverage')
             if timed_media and (type(document.page_count) is not int or len(units) != document.page_count):

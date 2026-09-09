@@ -11125,7 +11125,7 @@ def create_workbench_app(
         slug: str,
         token: str,
         unit: int | None = Query(None, ge=1, le=100_000),
-        start_ms: int = Query(0, ge=0, le=43_200_000),
+        start_ms: int = Query(0, ge=0, le=43_202_000),
         segment: str = Query("", max_length=100),
         q: str = Query("", max_length=240),
         speaker: str = Query("", max_length=100),
