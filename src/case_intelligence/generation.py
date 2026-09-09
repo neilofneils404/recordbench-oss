@@ -22,6 +22,7 @@ MAX_EVIDENCE_ITEMS = DEFAULT_REVIEW_BUDGET.synthesis_inputs
 MAX_EVIDENCE_CHARS = DEFAULT_REVIEW_BUDGET.evidence_chars
 MAX_EVIDENCE_ITEM_CHARS = DEFAULT_REVIEW_BUDGET.evidence_item_chars
 MAX_ANSWER_CLAIMS = 8
+VERIFICATION_OMISSION_NOTICE = "Some generated statements were omitted because their source support could not be verified."
 MAX_HISTORY_CHARS = 6_000
 MAX_WORKING_CONTEXT_CHARS = 12_000
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -133,6 +134,12 @@ class VerifiedReviewDecision:
     elapsed_ms: int
 
 
+def _classification_token_limit(value: int) -> int:
+    if type(value) is not int or not 1 <= value <= DEFAULT_REVIEW_BUDGET.output_tokens:
+        raise ValueError("Classifier output must be between 1 and 1,200 tokens.")
+    return value
+
+
 class GeneratorClient(Protocol):
     @property
     def available(self) -> bool: ...
@@ -154,6 +161,7 @@ class GeneratorClient(Protocol):
         include_guidance: str,
         exclude_guidance: str,
         evidence: Sequence[EvidenceItem],
+        output_tokens: int = 400,
     ) -> Mapping[str, object]: ...
 
 
@@ -527,6 +535,7 @@ class OllamaGenerator:
         include_guidance: str,
         exclude_guidance: str,
         evidence: Sequence[EvidenceItem],
+        output_tokens: int = 400,
     ) -> Mapping[str, object]:
         system, user = _review_prompt(
             criterion, include_guidance, exclude_guidance, evidence
@@ -541,7 +550,7 @@ class OllamaGenerator:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "options": {"temperature": 0.0, "num_ctx": 8192},
+                "options": {"temperature": 0.0, "num_ctx": 8192, "num_predict": _classification_token_limit(output_tokens)},
                 "keep_alive": "5m",
             },
             timeout=self.timeout,
@@ -634,6 +643,7 @@ class OpenAICompatibleGenerator:
         include_guidance: str,
         exclude_guidance: str,
         evidence: Sequence[EvidenceItem],
+        output_tokens: int = 400,
     ) -> Mapping[str, object]:
         system, user = _review_prompt(
             criterion, include_guidance, exclude_guidance, evidence
@@ -641,7 +651,7 @@ class OpenAICompatibleGenerator:
         request: dict[str, object] = {
             "model": self.model,
             "temperature": 0.0,
-            "max_tokens": 400,
+            "max_tokens": _classification_token_limit(output_tokens),
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -1011,9 +1021,12 @@ class GroundedGenerationService:
         include_guidance: str,
         exclude_guidance: str,
         evidence: Sequence[EvidenceItem],
+        output_tokens: int | None = None,
     ) -> VerifiedReviewDecision:
         """Apply a dedicated review contract; never infer relevance from Q&A answerability."""
 
+        if output_tokens is not None:
+            _classification_token_limit(output_tokens)
         rule = " ".join((criterion or "").split()).strip()
         include = " ".join((include_guidance or "").split()).strip()
         exclude = " ".join((exclude_guidance or "").split()).strip()
@@ -1050,6 +1063,8 @@ class GroundedGenerationService:
             )
         classify = getattr(self.client, "classify_source", None)
         if not callable(classify):
+            if output_tokens is not None:
+                raise GenerationUnavailable("This classifier cannot enforce the frozen output-token limit.")
             # Compatibility for deterministic test clients and older adapters.
             question = (
                 "Does this one source expressly satisfy the saved inclusion rule? "
@@ -1084,6 +1099,7 @@ class GroundedGenerationService:
                 include_guidance=include,
                 exclude_guidance=exclude,
                 evidence=bounded,
+                **({"output_tokens": output_tokens} if output_tokens is not None else {}),
             )
             with self._counter_lock:
                 self.requests_completed += 1
@@ -1269,7 +1285,7 @@ class GroundedGenerationService:
         source_limitation = limitation
         verification_notice = ""
         if omitted and not transcript_only_claims:
-            verification_notice = "Some generated statements were omitted because their source support could not be verified."
+            verification_notice = VERIFICATION_OMISSION_NOTICE
             generated_notice = VerifiedClaim(
                 verification_notice,
                 (),

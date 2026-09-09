@@ -25,8 +25,10 @@ commit.
 Models can be wrong, transcripts can mishear, diarization can miscluster, and
 retrieval can omit relevant material. The UI must preserve citations,
 limitations, coverage, excluded-source notices, and direct source review. Do
-not represent a generated answer as an exhaustive review unless the dedicated
-**Check every source** task actually evaluated each frozen source.
+not represent a generated answer as an exhaustive review. **Check selected
+passages** evaluates retrieved passages within each frozen source. **Review all
+extracted text** records every available text range and preserves extraction and
+analysis gaps; neither establishes recognition of every relevant fact.
 
 Matter closure is a separate, deliberate application policy: either the matter
 owner or an authenticated RecordBench administrator may request permanent
@@ -112,3 +114,16 @@ root-owned mode-1777 intermediate directories. Browser rename projection and
 direction-specific completion audits share the writer lock with the mutation.
 Frozen browser-account backups and clean restores validate the required store,
 permissions and shared bounded format before claiming success.
+
+
+## Full extracted-text resource boundary
+
+[Full-text review](FULL_TEXT_REVIEW.md) admits frozen character, call and ledger
+reservations under an immediate SQLite transaction across actor, matter and
+instance scopes. UTF-8 metadata charges include retained work; classifier calls
+are charged before dispatch and survive cancellation/restart. Recovery/retry
+control growth is charged, and terminal creator-only deletion releases retained
+capacity. Attempt fences and streamed source/citation revalidation protect late
+worker saves. Constant-size counters expose unresolved extraction and zero-unit
+gaps without polling the full range ledger. Legacy unbudgeted runs remain readable
+but cannot resume; malformed locators remain in exports and cannot become links.

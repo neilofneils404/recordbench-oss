@@ -392,3 +392,71 @@ def test_uncited_review_cannot_use_unavailable_source_with_same_content(state):
     document.state = state
     with pytest.raises(WorkspaceProblem):
         selected(bench, "review:review-a")
+
+
+@pytest.mark.parametrize('origin', ['conversation', 'research'])
+@pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.parametrize('sourced_limitation', [False, True])
+def test_saved_answer_round_trip_keeps_service_notice_uncited(tmp_path, monkeypatch, origin, legacy, sourced_limitation):
+    import sys
+    from case_intelligence.generation import EvidenceItem, GroundedGenerationService, VERIFICATION_OMISSION_NOTICE
+    from case_intelligence.workspace_store import WorkspaceStore
+
+    workspace = WorkspaceStore(tmp_path / 'synthetic-provenance.sqlite')
+    try:
+        workspace.upsert_principal('test', ACTOR, 'Synthetic Reviewer', ACTOR, preferred_principal_id=ACTOR)
+        matter = workspace.create_matter('Synthetic saved-answer provenance', '', ACTOR)
+        monkeypatch.setattr(sys.modules[__name__], 'MATTER', matter)
+        documents = (source(1, 'A synthetic delivery was recorded.'),
+                     source(2, 'The synthetic delivery date remains unconfirmed.'))
+        bench, _ = bench_for(*documents)
+        bench.workspace = workspace
+        class PartlySupportedClient:
+            available = True
+            def generate(self, *, evidence, **kwargs):
+                return {'answerable': True, 'claims': [
+                    {'text': evidence[0].excerpt, 'evidence_ids': ['S1']},
+                    {'text': 'An unsupported helicopter arrived at 99:99.', 'evidence_ids': ['S1']},
+                ], 'limitation': {'text': evidence[1].excerpt, 'evidence_ids': ['S2']} if sourced_limitation else None,
+                    'missing_information': ''}
+        service = GroundedGenerationService(PartlySupportedClient())
+        citations = {f'S{index}': bench._citation(matter, bench._candidate(matter, document, document.parsed_units()[0], 1))
+                     for index, document in enumerate(documents, 1)}
+        evidence = tuple(EvidenceItem(key, value.source_name, value.location, value.excerpt)
+                         for key, value in citations.items())
+        verified = service.answer('What is recorded about the synthetic delivery?', evidence)
+        assert verified.omitted_claims == 1
+        payload = bench._answer_payload(verified, citations)
+        assert payload['verification_notice'] == VERIFICATION_OMISSION_NOTICE
+        assert (payload['source_limitation'] is not None) == sourced_limitation
+        if legacy:
+            payload.pop('source_limitation')
+            payload.pop('verification_notice')
+        if origin == 'conversation':
+            conversation = workspace.get_conversation(matter.matter_id)
+            workspace.append_message(matter.matter_id, conversation.conversation_id, 'assistant', verified.text, payload)
+            saved = workspace.messages(matter.matter_id, conversation.conversation_id)[-1].payload
+            selections = (f'conversation:{conversation.conversation_id}',)
+        else:
+            queued, _ = workspace.queue_research_job(matter.matter_id, ACTOR, 'Synthetic delivery?', 'Synthetic investigation',
+                                                     'research-request-' + 'a'*32)
+            workspace.claim_research_job('synthetic-provenance-worker')
+            result = {'evidence': [bench._workflow_citation_payload(value) for value in citations.values()],
+                      'answer': payload, 'summary': verified.text, 'passes': [], 'gaps': [],
+                      'coverage': {'notice': 'Selected passages only.'}}
+            workspace.finish_research_job(queued.job_id, result)
+            saved = workspace.research_job(matter.matter_id, ACTOR, queued.job_id).result['answer']
+            selections = (f'research:{queued.job_id}',)
+        assert saved == payload
+        materials = snapshot_report_materials(bench, matter, ACTOR, selections)
+        notices = [item for item in materials if VERIFICATION_OMISSION_NOTICE in item.text]
+        assert len(notices) == 1 and not notices[0].citations
+        assert notices[0].category == 'coverage'
+        qualifications = [item for item in materials if item.material_id.endswith(':limitation')]
+        assert len(qualifications) == int(sourced_limitation)
+        if sourced_limitation:
+            assert qualifications[0].text == documents[1].parsed_units()[0].text
+            assert len(qualifications[0].citations) == 1
+            assert VERIFICATION_OMISSION_NOTICE not in qualifications[0].text
+    finally:
+        workspace.close()

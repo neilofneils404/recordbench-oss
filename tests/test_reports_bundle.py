@@ -127,12 +127,12 @@ def test_cited_report_matches_individual_export_and_opens_exact_support(workspac
 def test_bundle_resolves_report_citations_once_for_both_formats(workspace, monkeypatch):
     client, bench, matter = workspace
     cited_report(bench, matter)
-    original_find = bench._find_support
+    original_validate = bench._assert_current_report_section_citations
     resolved = []
     def count_resolution(*args, **kwargs):
         resolved.append(True)
-        return original_find(*args, **kwargs)
-    monkeypatch.setattr(bench, "_find_support", count_resolution)
+        return original_validate(*args, **kwargs)
+    monkeypatch.setattr(bench, "_assert_current_report_section_citations", count_resolution)
     response = client.get(f"/matters/{matter.slug}/export")
     assert response.status_code == 200
     assert len(resolved) == 1

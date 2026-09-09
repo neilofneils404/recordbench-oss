@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Sequence
@@ -63,6 +63,7 @@ from .identity import (
     OidcProviderClient,
     OidcSettings,
 )
+from .full_text_review import FullTextReviewLedger, iter_text_export
 from .generation import (
     EvidenceItem,
     GenerationGroundingRejected,
@@ -957,7 +958,8 @@ class CaseIntelligenceWorkbench:
             workers=review_workers,
             source_concurrency=review_source_concurrency,
         )
-        self.report_compilation = ReportCompilationFlow(self)
+        self.report_compilation = ReportCompilationFlow(self,
+            full_text_support_resolver=self._resolve_full_text_report_support)
         if os.getenv("CASE_INTELLIGENCE_MAINTENANCE_ENABLED", "").strip().casefold() in {
             "1",
             "true",
@@ -2057,25 +2059,18 @@ class CaseIntelligenceWorkbench:
 
     @staticmethod
     def _document_content_basis(document: PilotDocument) -> str:
-        encoded = json.dumps(
-            {
-                "source_version": document.version_id,
-                "units": [
-                    {
-                        "number": unit.number,
-                        "digest": unit.excerpt_digest,
-                        "line_start": unit.line_start,
-                        "line_end": unit.line_end,
-                        "start_ms": unit.start_ms,
-                        "end_ms": unit.end_ms,
-                    }
-                    for unit in document.parsed_units()
-                ],
-            },
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        digest = hashlib.sha256()
+        digest.update(('{"source_version":' + json.dumps(document.version_id) + ',"units":[').encode())
+        for ordinal, unit in enumerate(document.iter_parsed_units()):
+            if ordinal:
+                digest.update(b',')
+            digest.update(json.dumps({
+                "number": unit.number, "digest": unit.excerpt_digest,
+                "line_start": unit.line_start, "line_end": unit.line_end,
+                "start_ms": unit.start_ms, "end_ms": unit.end_ms,
+            }, separators=(",", ":"), sort_keys=True).encode())
+        digest.update(b']}')
+        return digest.hexdigest()
 
     @staticmethod
     def _source_state(document: PilotDocument) -> tuple[str, str]:
@@ -3465,33 +3460,23 @@ class CaseIntelligenceWorkbench:
             )
         store = self.source_store(matter)
         with store.mutation_guard():
+            try:
+                self._assert_current_report_section_citations(matter, (
+                    {"citations": tuple(asdict(citation) for citation in citations if citation.kind in {"source", "transcript"})}
+                    for _section, citations in sections
+                ))
+            except (WorkspaceProblem, KeyError, OSError, ValueError, RuntimeError) as exc:
+                raise ExportProblem(
+                    "A report citation no longer resolves to its saved source. "
+                    "Open the Report to repair or remove unavailable source "
+                    "support, then retry the export."
+                ) from exc
             for _section, citations in sections:
                 for citation in citations:
                     try:
                         if citation.kind in {"source", "transcript"}:
-                            document, units, index = self._find_support(
-                                matter, citation.support_token
-                            )
-                            unit = units[index]
-                            candidate = self._candidate(
-                                matter, document, unit, index + 1
-                            )
-                            exact_tokens = self._support_tokens(candidate)
-                            expected_kind = (
-                                "transcript"
-                                if is_media_type(document.media_type)
-                                else "source"
-                            )
-                            if (
-                                citation.support_token not in exact_tokens
-                                or citation.kind != expected_kind
-                                or citation.document_id != document.document_id
-                                or citation.source_version_id != document.version_id
-                                or citation.source_name != document.display_name
-                                or citation.location != candidate.citation
-                                or citation.excerpt != unit.text
-                            ):
-                                raise KeyError(citation.citation_id)
+                            # Already checked in one source stream above.
+                            continue
                         elif citation.kind == "media_clip":
                             clip = self.workspace.media_clip(
                                 matter.matter_id, citation.media_clip_id
@@ -3557,33 +3542,60 @@ class CaseIntelligenceWorkbench:
             ),
         )
 
+    def _resolve_full_text_report_support(self, matter, run, decision, *, citations=None):
+        """Freeze full-text support for Report consumers; leave legacy runs alone."""
+        from .full_text_review import resolve_text_report_citations
+        if not FullTextReviewLedger(self.workspace).enabled(run.run_id):
+            return None
+        try:
+            if (run.matter_id != matter.matter_id or decision.matter_id != matter.matter_id
+                    or decision.run_id != run.run_id):
+                raise WorkspaceProblem("The saved full-text decision does not belong to this Report's source run.")
+            document = self.source_store(matter).get(decision.document_id)
+            if document.display_name != decision.source_name:
+                raise WorkspaceProblem("The frozen full-text source identity changed. Reopen the original check.")
+            return resolve_text_report_citations(self, matter,
+                decision.citations if citations is None else citations,
+                source_basis_digests={decision.document_id: decision.source_basis_digest},
+                source_versions={decision.document_id: decision.source_version_id})
+        except WorkspaceProblem:
+            raise
+        except (WorkflowFailure, KeyError, OSError, ValueError, RuntimeError) as exc:
+            message = str(exc) if isinstance(exc, WorkflowFailure) else "The frozen full-text source is unavailable or changed. Reopen the original check."
+            raise WorkspaceProblem(message) from exc
+
     def _assert_current_report_section_citations(self, matter, sections) -> None:
-        """Validate only copied source passages; caller holds the source guard."""
+        """Validate exact copied passages with one stream per cited source."""
         store = self.source_store(matter)
-        resolved = {}
+        grouped = {}
         for section in sections:
             for value in section["citations"]:
-                document_id = str(value.get("document_id", ""))
-                if document_id not in resolved:
-                    try:
-                        document = store.get(document_id)
-                    except KeyError as exc:
-                        raise WorkspaceProblem("A copied decision source is unavailable. Reopen the original check.") from exc
-                    resolved[document_id] = (document, document.parsed_units())
-                document, units = resolved[document_id]
-                matched = False
-                if document.state == "ready" and document.version_id == value.get("source_version_id"):
-                    for ordinal, unit in enumerate(units, 1):
-                        candidate = self._candidate(matter, document, unit, ordinal)
-                        if (value.get("support_token") in self._support_tokens(candidate)
-                            and value.get("source_name") == document.display_name
-                            and value.get("location") == candidate.citation
-                            and value.get("excerpt") == unit.text
-                            and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source")):
-                            matched = True
-                            break
-                if not matched:
-                    raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
+                grouped.setdefault(str(value.get("document_id", "")), []).append(value)
+        for document_id, pending in grouped.items():
+            try:
+                document = store.get(document_id)
+            except KeyError as exc:
+                raise WorkspaceProblem("A copied decision source is unavailable. Reopen the original check.") from exc
+            if document.state != "ready":
+                raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
+            # The optional streaming API is supplied by the full-text slice.
+            # Older source stores remain supported without importing it.
+            iterator = getattr(document, "iter_parsed_units", None)
+            units = iterator() if iterator is not None else iter(document.parsed_units())
+            for ordinal, unit in enumerate(units, 1):
+                candidate = self._candidate(matter, document, unit, ordinal)
+                tokens = self._support_tokens(candidate)
+                pending = [value for value in pending if not (
+                    document.version_id == value.get("source_version_id")
+                    and value.get("support_token") in tokens
+                    and value.get("source_name") == document.display_name
+                    and value.get("location") == candidate.citation
+                    and value.get("excerpt") == unit.text
+                    and value.get("kind") == ("transcript" if is_media_type(document.media_type) else "source"))]
+                if not pending:
+                    break
+            if pending:
+                raise WorkspaceProblem("A copied decision citation no longer resolves. Repair or rerun the original source check.")
 
     def export_research_work_product(
         self,
@@ -4144,6 +4156,9 @@ class CaseIntelligenceWorkbench:
                 ],
             }
 
+        # Keep the legacy combined limitation for conversation display, while
+        # retaining provenance for saved-work consumers and later compilation.
+        source_limitation = answer.source_limitation if answer.verification_notice else answer.limitation
         payload: dict[str, object] = {
             "kind": (
                 "generated"
@@ -4154,6 +4169,8 @@ class CaseIntelligenceWorkbench:
             "introduction": answer.introduction,
             "claims": [claim_payload(claim) for claim in answer.claims],
             "limitation": claim_payload(answer.limitation) if answer.limitation else None,
+            "source_limitation": claim_payload(source_limitation) if source_limitation else None,
+            "verification_notice": answer.verification_notice,
             "missing_information": answer.missing_information,
             "model_called": answer.model_called,
             "elapsed_ms": answer.elapsed_ms,
@@ -5013,6 +5030,9 @@ class CaseIntelligenceWorkbench:
             raise WorkflowFailure("Access to this matter was removed during the every-source check.") from exc
         if cancelled():
             raise WorkflowFailure("Review cancelled.")
+        from .full_text_review import FullTextReviewLedger, process_text_source
+        if FullTextReviewLedger(self.workspace).enabled(run.run_id):
+            return process_text_source(self, run, decision, cancelled)
         matter = self._matter_by_id(run.matter_id)
         try:
             frozen_document = self.source_store(matter).get(decision.document_id)
@@ -5192,24 +5212,30 @@ class CaseIntelligenceWorkbench:
         matter = self._matter_by_id(run.matter_id)
         with self.source_store(matter).mutation_guard():
             try:
-                exact_citations = tuple(
-                    self._workflow_citation(citation)
-                    for citation in result.citations
-                )
-                if any(
-                    self._current_workflow_citation(matter, citation) is None
-                    for citation in exact_citations
-                ):
-                    raise WorkflowFailure(
-                        "The frozen source changed before its decision could be saved."
+                if FullTextReviewLedger(self.workspace).enabled(run.run_id):
+                    from .full_text_review import validate_text_citations
+                    validate_text_citations(self, matter, result.citations,
+                        source_basis_digests={decision.document_id: decision.source_basis_digest},
+                        source_versions={decision.document_id: decision.source_version_id})
+                else:
+                    exact_citations = tuple(
+                        self._workflow_citation(citation)
+                        for citation in result.citations
                     )
-                self._assert_current_payload_support(
-                    matter,
-                    result.citations,
-                    failure=WorkflowFailure,
-                    message="The frozen source changed before its decision could be saved.",
-                )
-            except WorkflowFailure:
+                    if any(
+                        self._current_workflow_citation(matter, citation) is None
+                        for citation in exact_citations
+                    ):
+                        raise WorkflowFailure(
+                            "The frozen source changed before its decision could be saved."
+                        )
+                    self._assert_current_payload_support(
+                        matter,
+                        result.citations,
+                        failure=WorkflowFailure,
+                        message="The frozen source changed before its decision could be saved.",
+                    )
+            except (WorkflowFailure, WorkspaceProblem, KeyError, TypeError, ValueError):
                 result = ReviewDecisionResult(
                     "needs_attention",
                     "This source changed while it was being checked, so no decision was saved from the replacement.",
@@ -5223,10 +5249,12 @@ class CaseIntelligenceWorkbench:
                 rationale=result.rationale,
                 citations=result.citations,
                 error_message=result.error_message,
+                expected_attempt=run.attempts,
             )
 
     def _finish_review_run(self, run: ReviewRunRecord) -> ReviewRunRecord:
         matter = self._matter_by_id(run.matter_id)
+        text_mode = FullTextReviewLedger(self.workspace).enabled(run.run_id)
         with self.source_store(matter).mutation_guard():
             after_ordinal = 0
             while True:
@@ -5247,29 +5275,38 @@ class CaseIntelligenceWorkbench:
                             document.state == "ready"
                             and document.version_id == decision.source_version_id
                             and bool(decision.source_basis_digest)
-                            and self._document_content_basis(document)
-                            == decision.source_basis_digest
+                            and (text_mode or self._document_content_basis(document)
+                            == decision.source_basis_digest)
                         )
                     except KeyError:
                         pass
                     citations_current = source_current
                     if citations_current:
                         try:
-                            citations_current = all(
-                                self._current_workflow_citation(
-                                    matter, self._workflow_citation(value)
+                            if text_mode:
+                                from .full_text_review import validate_text_citations
+                                validate_text_citations(self, matter, decision.citations,
+                                    source_basis_digests={decision.document_id: decision.source_basis_digest},
+                                    source_versions={decision.document_id: decision.source_version_id})
+                            else:
+                                citations_current = all(
+                                    self._current_workflow_citation(
+                                        matter, self._workflow_citation(value)
+                                    )
+                                    is not None
+                                    for value in decision.citations
                                 )
-                                is not None
-                                for value in decision.citations
-                            )
-                        except (KeyError, TypeError, ValueError):
+                        except (KeyError, TypeError, ValueError, WorkflowFailure, WorkspaceProblem):
                             citations_current = False
                     if not citations_current:
+                        text_ledger = FullTextReviewLedger(self.workspace)
+                        if text_ledger.enabled(run.run_id):
+                            text_ledger.invalidate(run, decision.document_id)
                         self.workspace.mark_review_decision_source_changed(
                             run.run_id, decision.document_id
                         )
                 after_ordinal = decisions[-1].ordinal
-            return self.workspace.finish_review_run(run.run_id)
+            return self.workspace.finish_review_run(run.run_id, expected_attempt=run.attempts)
 
     def record_answer_error(
         self,
@@ -9229,6 +9266,7 @@ def create_workbench_app(
                 "active_criterion": active_criterion,
                 "active_version": active_version,
                 "review_runs": runs,
+                "text_review_runs": {item.run_id for item in runs if FullTextReviewLedger(bench.workspace).enabled(item.run_id)},
                 "active_run": active_run,
                 "decision_page": decision_page,
                 "selected_decision": selected_decision,
@@ -9350,7 +9388,8 @@ def create_workbench_app(
                 matter.matter_id,
                 context.principal_id,
                 criterion_version_id,
-                run_kind=run_kind,
+                run_kind="full" if run_kind == "full_text" else run_kind,
+                review_mode="full_text" if run_kind == "full_text" else "selected_passages",
                 source_set_id=source_set or None,
             )
         except KeyError as exc:
@@ -9392,9 +9431,70 @@ def create_workbench_app(
             )
         except KeyError as exc:
             raise HTTPException(404, "Review run not found") from exc
-        return JSONResponse(
-            review_status_projection(matter, run), headers={"Cache-Control": "no-store"}
-        )
+        payload = review_status_projection(matter, run)
+        payload["text_review"] = FullTextReviewLedger(bench.workspace).coverage(matter.matter_id, matter.owner_id if administrator_override else actor, run.run_id)
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    @app.get("/matters/{slug}/full-review/{run_id}/text")
+    def full_text_ledger(request: Request, slug: str, run_id: str, after: int = Query(0, ge=0)):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            actor = matter.owner_id if getattr(request.state, "administrator_matter_override", None) == matter.matter_id else context.principal_id
+            run = bench.workspace.review_run(matter.matter_id, actor, run_id)
+            ledger = FullTextReviewLedger(bench.workspace)
+            coverage = ledger.coverage(matter.matter_id, actor, run_id)
+            if coverage is None:
+                raise KeyError(run_id)
+            rows = ledger.rows(matter.matter_id, actor, run_id, after=after, limit=100)
+            for row in rows:
+                from .full_text_review import read_locator
+                try:
+                    row["citation"] = read_locator(row.pop("citation_json"))
+                except WorkspaceProblem as exc:
+                    row["citation"] = {}
+                    row["locator_error"] = str(exc)
+            sources = ledger.extraction_rows(matter.matter_id, actor, run_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Text review not found") from exc
+        audit(request, "full_review.text_open", "success", context=context, matter=matter,
+            object_type="review_run", object_id=run.run_id)
+        return templates.TemplateResponse(request=request, name="workbench_text_review.html", context={
+            **base_context(request, matter), "matter": matter, "run": run, "coverage": coverage,
+            "rows": rows, "sources": sources, "after": after,
+            "next_cursor": rows[-1]["cursor"] if len(rows) == 100 else None,
+        }, headers={"Cache-Control": "no-store"})
+
+    @app.post("/matters/{slug}/full-review/{run_id}/text/delete", dependencies=[Depends(require_csrf)])
+    def delete_full_text_ledger(request: Request, slug: str, run_id: str):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            run = FullTextReviewLedger(bench.workspace).delete(matter.matter_id, context.principal_id, run_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Text review not found") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(_query_url(f"/matters/{slug}/full-review", run=run_id, error=str(exc)), status_code=303)
+        audit(request, "full_review.text_delete", "success", context=context, matter=matter,
+            object_type="review_run", object_id=run_id)
+        return RedirectResponse(_query_url(f"/matters/{slug}/full-review", criterion=run.criterion_id), status_code=303)
+
+    @app.get("/matters/{slug}/full-review/{run_id}/text/export")
+    def export_full_text_ledger(request: Request, slug: str, run_id: str, format_name: str = Query("json", alias="format", pattern="^(json|csv)$")):
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            override = getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+            bench.workspace.review_run(matter.matter_id, context.principal_id, run_id, administrator_override=override)
+            if not FullTextReviewLedger(bench.workspace).enabled(run_id):
+                raise KeyError(run_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Text review not found") from exc
+        audit(request, "full_review.text_export", "success", context=context, matter=matter,
+            object_type="review_run", object_id=run_id, details={"format": format_name})
+        return StreamingResponse(iter_text_export(bench.workspace, matter.matter_id, context.principal_id, run_id,
+            format_name, administrator_override=override), media_type="application/json" if format_name == "json" else "text/csv",
+            headers={"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="full-text-review.{format_name}"'})
 
     @app.post(
         "/matters/{slug}/full-review/{run_id}/cancel",
@@ -9572,31 +9672,43 @@ def create_workbench_app(
         criterion_id = ""
         try:
             matter = authorized_matter(request, slug)
-            run = bench.workspace.review_run(
-                matter.matter_id, context.principal_id, run_id
-            )
-            criterion_id = run.criterion_id
-            if run.state != "succeeded":
-                raise WorkspaceProblem("Wait for this check to finish successfully before saving it to a Report.")
-            criterion = bench.workspace.review_criterion(matter.matter_id, criterion_id)
-            version = bench.workspace.review_criterion_version(
-                matter.matter_id, run.criterion_version_id
-            )
-            decisions = bench.workspace.iter_review_decisions_for_report(
-                matter.matter_id, context.principal_id, run.run_id
-            )
-            def reviewer_name(reviewer_id):
-                try:
-                    return bench.workspace.get_principal(reviewer_id).display_name
-                except KeyError:
-                    return "Not recorded"
-            sections = review_sections(
-                run, decisions, criterion_title=criterion.title,
-                criterion_version=version.version_number, instructions=version.instructions,
-                ledger_path=_query_url(f"/matters/{slug}/full-review", criterion=run.criterion_id, run=run_id),
-                reviewer_name=reviewer_name,
-            )
-            with bench.source_store(matter).mutation_guard():
+            with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
+                run = bench.workspace.review_run(
+                    matter.matter_id, context.principal_id, run_id
+                )
+                criterion_id = run.criterion_id
+                if run.state != "succeeded":
+                    raise WorkspaceProblem("Wait for this check to finish successfully before saving it to a Report.")
+                criterion = bench.workspace.review_criterion(matter.matter_id, criterion_id)
+                version = bench.workspace.review_criterion_version(
+                    matter.matter_id, run.criterion_version_id
+                )
+                full_text = FullTextReviewLedger(bench.workspace).enabled(run.run_id)
+                decisions = bench.workspace.iter_review_decisions_for_report(
+                    matter.matter_id, context.principal_id, run.run_id
+                )
+                def verified_decisions():
+                    for decision in decisions:
+                        if full_text:
+                            # Validate the complete frozen population, including
+                            # uncited decisions and details beyond the Report cap.
+                            bench._resolve_full_text_report_support(matter, run, decision, citations=())
+                        yield decision
+                def reviewer_name(reviewer_id):
+                    try:
+                        return bench.workspace.get_principal(reviewer_id).display_name
+                    except KeyError:
+                        return "Not recorded"
+                def citation_resolver(decision, selected_locators):
+                    return bench._resolve_full_text_report_support(matter, run, decision, citations=selected_locators)
+                sections = review_sections(
+                    run, verified_decisions(), criterion_title=criterion.title,
+                    criterion_version=version.version_number, instructions=version.instructions,
+                    ledger_path=_query_url(f"/matters/{matter.slug}/full-review", criterion=run.criterion_id, run=run_id),
+                    reviewer_name=reviewer_name,
+                    review_mode="full_text" if full_text else "selected_passages",
+                    citation_resolver=citation_resolver if full_text else None,
+                )
                 bench._assert_current_report_section_citations(matter, sections)
                 report = bench.workspace.create_report_from_sections(
                     matter.matter_id,
@@ -14280,6 +14392,15 @@ def create_workbench_app(
                         artifact=research_artifact,
                     )
             for index, review_run in enumerate(review_runs, 1):
+                if FullTextReviewLedger(bench.workspace).enabled(review_run.run_id):
+                    text_body = bytearray()
+                    for fragment in iter_text_export(bench.workspace, matter.matter_id, read_actor_id, review_run.run_id,
+                            administrator_override=administrator_override):
+                        if additional_work_product_bytes + len(text_body) + len(fragment) > MAX_BUNDLE_UNCOMPRESSED_BYTES:
+                            raise ExportProblem("No complete bundle was created. Download the full-text ledger separately before closing this matter.")
+                        text_body.extend(fragment)
+                    add_work_product(kind="full_text_review", path=f"source-checks/{index:03d}-full-text-ledger.json",
+                        artifact=ExportArtifact(body=bytes(text_body), media_type="application/json", filename="full-text-ledger.json"))
                 criterion = bench.workspace.review_criterion(
                     matter.matter_id, review_run.criterion_id
                 )

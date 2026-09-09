@@ -521,3 +521,72 @@ def test_shutdown_after_cancel_records_terminal_message_and_time(tmp_path):
     assert terminal.state == "cancelled" and terminal.message == "Compilation cancelled."
     assert terminal.finished_at is not None
     store.close()
+
+
+@pytest.mark.parametrize('expire', [False, True])
+def test_busy_heartbeat_retries_until_renewal_or_actual_lease_expiry(tmp_path, monkeypatch, expire):
+    store, matter = setup_store(tmp_path / 'synthetic-contention.sqlite')
+    jobs = ReportCompilationJobs(store, policy=CompilationJobPolicy(lease_seconds=1.2))
+    queued = queue(jobs, matter)
+    processing = threading.Event()
+    release = threading.Event()
+    busy = threading.Event()
+    renewed = threading.Event()
+    cancellation_seen = threading.Event()
+    observed = {}
+    original = jobs.heartbeat
+    def heartbeat(job):
+        try:
+            result = original(job)
+        except sqlite3.OperationalError:
+            busy.set()
+            raise
+        if busy.is_set() and result:
+            renewed.set()
+        return result
+    monkeypatch.setattr(jobs, 'heartbeat', heartbeat)
+    def process(job, cancelled):
+        jobs.record_input_fingerprint(job, FINGERPRINT)
+        observed['deadline'] = job.lease_expires_at
+        processing.set()
+        if expire:
+            while not cancelled():
+                time.sleep(0.01)
+            observed['cancelled_at'] = time.time()
+            cancellation_seen.set()
+            assert release.wait(5)
+            raise CompilationLeaseLost('Synthetic expired lease.')
+        assert release.wait(5)
+        assert not cancelled()
+        return 'synthetic-draft'
+    def finish(job, draft):
+        return jobs.complete(job, lambda: build_report(store, matter), fingerprint=FINGERPRINT)
+    coordinator = ReportCompilationCoordinator(jobs, process=process, finish=finish)
+    writer = sqlite3.connect(store.path, timeout=1)
+    try:
+        assert processing.wait(5)
+        writer.execute('BEGIN IMMEDIATE')
+        assert busy.wait(3)  # Real independent SQLite writer outlasts busy_timeout.
+        if expire:
+            assert cancellation_seen.wait(3)
+            assert observed['cancelled_at'] >= observed['deadline']
+            assert not renewed.is_set()
+            coordinator._stop.set()
+            writer.rollback()
+            release.set()
+        else:
+            assert time.time() < observed['deadline']
+            writer.rollback()
+            assert renewed.wait(3)
+            release.set()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and jobs.get(matter.matter_id, ACTOR, queued.job_id).state == 'running':
+                time.sleep(0.01)
+            assert jobs.get(matter.matter_id, ACTOR, queued.job_id).state == 'succeeded'
+            assert store.connection.execute('SELECT count(*) FROM workbench_report').fetchone()[0] == 1
+    finally:
+        writer.rollback()
+        writer.close()
+        release.set()
+        coordinator.close()
+        store.close()

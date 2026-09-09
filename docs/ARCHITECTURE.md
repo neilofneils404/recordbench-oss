@@ -182,3 +182,16 @@ or granting the web application write access to its secrets mount. The optional
 file into a dedicated owner-only writable directory. People uses the same
 repository with fresh administrator authorization and stale-edit protection
 inside its writer lock; no second account store is created.
+
+
+## Full extracted-text review
+
+[Full-text review](FULL_TEXT_REVIEW.md) freezes source/extraction identity and
+resource admission in SQLite before queueing work. Unit streaming creates
+canonical range checkpoints with compact locators, bounded model packets and
+frozen output-token limits. Durable per-actor/matter/instance reservations,
+pre-dispatch call charges, UTF-8 ledger accounting and bounded coverage counters
+keep large and interrupted runs explicit. Source decisions remain compatible with
+selected-passage review; detailed ledgers feed later synthesis consumers. Missing
+extraction, empty/zero-unit sources, failed ranges and unfinished inventories
+remain coverage gaps, independent of relevance-recognition quality.

@@ -648,3 +648,48 @@ def test_restore_revalidates_account_contents_beyond_snapshot_checksums(node_fac
     with pytest.raises(backup.BackupError, match="local account snapshot"):
         node.restore()
     assert not (node.root / "restored/RESTORE_DRILL_VERIFIED.json").exists()
+
+def test_full_text_ledger_and_budget_survive_normal_backup_restore(node_factory):
+    from case_intelligence.full_text_review import FullTextReviewLedger
+    from case_intelligence.pilot_uploads import PilotUnit
+    from case_intelligence.workspace_store import WorkspaceStore
+
+    node = node_factory(wal=True)
+    owner = 'synthetic-text-owner'
+    store = WorkspaceStore(node.control)
+    try:
+        store.upsert_principal('test', owner, 'Synthetic Reviewer', owner, preferred_principal_id=owner)
+        matter = store.create_matter('Synthetic full-text backup', '', owner)
+        store.upsert_source_catalog(matter.matter_id, [dict(
+            document_id='a'*32,version_id='c'*32,action_token='d'*32,
+            display_name='Synthetic source',relative_path='synthetic.txt',media_type='text/plain',kind='TXT',
+            source_state='ready',tone='ready',state_label='Searchable',count_label='2 units',processing_stage='',
+            completed_units=2,total_units=2,page_count=0,duration_ms=0,byte_size=20,origin='upload',retryable=False,
+            removable=True,has_video=False,content_basis_digest='b'*64)])
+        _,version=store.create_review_criterion(matter.matter_id,owner,title='Synthetic rule',instructions='Find the amber bicycle.')
+        store.queue_review_run(matter.matter_id,owner,version.criterion_version_id,run_kind='full',review_mode='full_text')
+        run=store.claim_review_run('synthetic-backup-worker')
+        decision=store.next_review_decision(run.run_id)
+        ledger=FullTextReviewLedger(store)
+        ledger.inventory(run,decision,[PilotUnit(1,'Synthetic completed text'),PilotUnit(2,'Synthetic pending text')],current_source=lambda:True)
+        ledger.charge_call(run)
+        chunk=ledger.unit_chunks(run.run_id,decision.document_id,1)[0]
+        ledger.record(run,decision,chunk,state='processed',label='exclude',current_source=lambda:True)
+        store.fail_review_run(run.run_id,'Synthetic checkpoint for backup')
+        before=ledger.coverage(matter.matter_id,owner,run.run_id)
+    finally:
+        store.close()
+    assert node.backup()==0
+    assert node.restore()==0
+    restored=WorkspaceStore(node.root/'restored/payload/runtime/workbench.sqlite')
+    try:
+        ledger=FullTextReviewLedger(restored)
+        assert ledger.coverage(matter.matter_id,owner,run.run_id)==before
+        assert restored.connection.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
+        assert restored.connection.execute('PRAGMA foreign_key_check').fetchall()==[]
+        ledger.delete(matter.matter_id,owner,run.run_id)
+        assert restored.connection.execute('SELECT count(*) FROM workbench_text_review_budget').fetchone()[0]==0
+        assert restored.connection.execute('SELECT count(*) FROM workbench_text_review_counter').fetchone()[0]==0
+        assert restored.connection.execute('PRAGMA foreign_key_check').fetchall()==[]
+    finally:
+        restored.close()

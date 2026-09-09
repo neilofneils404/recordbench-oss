@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Callable, Iterable, Mapping
 
-from .workspace_store import ResearchJobRecord, ReviewDecisionRecord, ReviewRunRecord, WorkspaceProblem
+from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, ResearchJobRecord, ReviewDecisionRecord, ReviewRunRecord, WorkspaceProblem
 
 MAX_DETAIL_DECISIONS = 50
 MAX_DETAIL_CITATIONS = 100
@@ -152,7 +152,11 @@ def review_sections(
     ledger_path: str,
     reviewer_names: Mapping[str, str] | None = None,
     reviewer_name: Callable[[str], str] | None = None,
+    review_mode: str = "selected_passages",
+    citation_resolver: Callable[[ReviewDecisionRecord, tuple], Iterable[Mapping]] | None = None,
 ) -> tuple[dict[str, object], ...]:
+    if review_mode not in {"selected_passages", "full_text"}:
+        raise WorkspaceProblem("The saved source-check mode is unsupported.")
     def disagrees(item: ReviewDecisionRecord) -> bool:
         return (item.machine_decision, item.human_decision) in {("included", "exclude"), ("excluded", "include")}
 
@@ -178,8 +182,10 @@ def review_sections(
             f"{criterion_title}\nCriterion version {criterion_version}: {instructions}\n\n"
             f"Run: {run.run_id}\nCriterion revision: {run.criterion_version_id}\n"
             f"Frozen population: {run.snapshot_count:,} sources\n"
-            f"Recorded run state: {run.state}\n"
-            "Each source was screened using selected passages. This is not an all-page read."),
+            f"Recorded run state: {run.state}\n" +
+            ("This run screened extracted text in recorded ranges. Unavailable text, failed ranges, and partial coverage remain recorded in the original full-text ledger. This Report copies bounded summaries, not the complete range ledger."
+             if review_mode == "full_text" else
+             "Each source was screened using selected passages. This is not an all-page read.")),
         _section("Machine screening results",
             f"Included: {machine['included']:,}\nNot identified: {machine['excluded']:,}\n"
             f"Needs attention: {machine['needs_attention']:,}\nPending: {machine['pending']:,}\n\n"
@@ -196,7 +202,20 @@ def review_sections(
     citation_count = 0
     for item in selected:
         available = max(0, MAX_DETAIL_CITATIONS - citation_count)
-        citations = tuple(report_citation(value) for value in item.citations[:available])
+        selected_citations = tuple(item.citations[:available])
+        if citation_resolver is not None:
+            resolved = tuple(citation_resolver(item, selected_citations))
+            if len(resolved) != len(selected_citations):
+                raise WorkspaceProblem("The saved review citation resolver did not preserve every selected passage.")
+            if any(not isinstance(value, Mapping) or not isinstance(value.get("excerpt"), str) or not value["excerpt"].strip() for value in resolved):
+                raise WorkspaceProblem("A resolved full-text citation needs its complete source passage.")
+            if any(len(value["excerpt"]) > MAX_REPORT_CITATION_EXCERPT_CHARS for value in resolved):
+                raise WorkspaceProblem("A selected source passage exceeds the 6,000-character report limit. Export the original full-text ledger or select smaller supported work.")
+        else:
+            if review_mode == "full_text" and selected_citations:
+                raise WorkspaceProblem("This saved full-text check needs its source resolver before it can be copied into a Report.")
+            resolved = selected_citations
+        citations = tuple(report_citation(value) for value in resolved)
         citation_count += len(citations)
         detail = (
             f"Source: {item.source_name}\nSource version: {item.source_version_id}\n"

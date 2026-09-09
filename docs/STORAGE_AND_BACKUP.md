@@ -148,6 +148,18 @@ password; the clean restore drill must still verify synthetic sign-in and
 administrator recovery. The suite covers a clean account restore, corrupted
 frozen copies, invalid modes, missing administrators and malformed hashes.
 
+
+## Full-text review ledgers
+
+Include additive full-text tables, resource receipts and counters in the control
+SQLite backup. Online backup/clean-restore regression coverage checks saved
+partial outcomes and foreign keys. Logical ledger charges are independent of the
+SQLite/WAL file size, protected disk reserve and backup-retention policy. Stop
+workers before upgrading older full-text writers; legacy ledgers are retained
+and charged but require a newly admitted run to resume analysis. Export before
+creator-only terminal deletion if findings or human decisions must be preserved.
+See [Full-text review](FULL_TEXT_REVIEW.md) for limits and rollback boundaries.
+
 ## Report workflow migration and recovery
 
 Queued and running report compilations appear in content-free health counts and
@@ -173,7 +185,7 @@ working copy, then restores the snapshot to a clean target and reads it with tha
 original baseline code. It checks report content and SQLite integrity in both
 states. Run with the contributor Python environment and optional
 `--baseline-ref <pre-workflow-commit>`. The default baseline is
-`3f8a768d358643cf27476fc6c4e1af86ba9f076d`. It uses temporary synthetic data and
+`1fed77a2c50686b073e4c3255421d77aa16fefe5`. It uses temporary synthetic data and
 does not inspect an installed node. This complements the focused queue and
 provenance backup/clean-restore tests; it does not establish an operator's own
 backup or replacement-host readiness.

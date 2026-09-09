@@ -1034,7 +1034,9 @@ class WorkspaceStore:
             "migrations/sqlite/0025_intake_receipts.sql",
             "migrations/sqlite/0026_source_byte_matches.sql",
             "migrations/sqlite/0027_report_compilation.sql",
+            "migrations/sqlite/0028_full_text_review.sql",
             "migrations/sqlite/0029_report_compilation_basis.sql",
+            "migrations/sqlite/0030_full_text_review_limits.sql",
         ):
             migration = resources.files("case_intelligence").joinpath(name).read_text(encoding="utf-8")
             self.connection.executescript(migration)
@@ -1047,6 +1049,8 @@ class WorkspaceStore:
                 self.connection.execute(
                     "ALTER TABLE workbench_report_section ADD COLUMN compilation_basis TEXT NOT NULL DEFAULT ''"
                 )
+        from .full_text_review_budget import backfill_legacy_ledgers
+        backfill_legacy_ledgers(self)
         session_columns = {
             str(row[1])
             for row in self.connection.execute("PRAGMA table_info(workbench_session)")
@@ -10122,9 +10126,12 @@ class WorkspaceStore:
 
     def queue_review_run(
         self, matter_id: str, actor_id: str, criterion_version_id: str, *,
-        run_kind: str, source_set_id: str | None = None,
+        run_kind: str, source_set_id: str | None = None, review_mode: str = "selected_passages",
+        text_policy=None,
     ) -> ReviewRunRecord:
         actor = self.membership(matter_id, actor_id).principal_id
+        if review_mode not in {"selected_passages", "full_text"} or (review_mode == "full_text" and run_kind != "full"):
+            raise WorkspaceProblem("Choose selected passages or all extracted text for the full population.")
         if run_kind not in {"sample", "full"}:
             raise WorkspaceProblem("Choose a sample or every-source run.")
         version = self.review_criterion_version(matter_id, criterion_version_id)
@@ -10133,8 +10140,23 @@ class WorkspaceStore:
             raise WorkspaceProblem("That source set is empty or no longer available.")
         run_id = f"review-run-{uuid.uuid4().hex}"
         now = self._now()
+        from .full_text_review import DEFAULT_TEXT_POLICY, TextReviewPolicy
+        policy = text_policy or DEFAULT_TEXT_POLICY
+        if not isinstance(policy, TextReviewPolicy):
+            raise ValueError("Invalid full-text policy")
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             self.membership(matter_id, actor)
+            scope_clause = (
+                " AND EXISTS (SELECT 1 FROM workbench_source_set_item si WHERE "
+                "si.matter_id=c.matter_id AND si.document_id=c.document_id AND si.source_set_id=?)"
+                if scope_id is not None else ""
+            )
+            if review_mode == "full_text":
+                from .full_text_review_budget import admit_locked, source_count_locked
+                admit_locked(self.connection, matter_id, actor, policy)
+                source_count_locked(self.connection, matter_id, policy, scope_clause=scope_clause,
+                                    scope_parameters=(scope_id,) if scope_id else ())
             self.connection.execute(
                 "INSERT INTO workbench_review_run(run_id,matter_id,actor_id,criterion_id,"
                 "criterion_version_id,source_set_id,run_kind,state,stage,message,created_at,updated_at) "
@@ -10175,6 +10197,17 @@ class WorkspaceStore:
                 "WHERE c.matter_id=? AND c.source_state='ready'" + scope_clause + limit_clause,
                 (parameters[0], 1 if run_kind == "sample" else 0, *parameters[1:]),
             )
+            if review_mode == "full_text":
+                from .full_text_review import FullTextReviewLedger
+                try:
+                    FullTextReviewLedger(self).enable_locked(run_id, policy=policy, scope_clause=scope_clause,
+                        scope_parameters=(scope_id,) if scope_id else ())
+                except sqlite3.IntegrityError as exc:
+                    from .full_text_review_budget import sql_limit
+                    limit = sql_limit(exc)
+                    if limit:
+                        raise limit from exc
+                    raise
             snapshot_count = int(
                 self.connection.execute(
                     "SELECT COUNT(*) FROM workbench_review_decision WHERE run_id=?", (run_id,)
@@ -10306,6 +10339,7 @@ class WorkspaceStore:
     def recover_running_review_runs(self) -> int:
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             rows = self.connection.execute(
                 "SELECT run_id,cancellation_requested,reviewed_count,snapshot_count "
                 "FROM workbench_review_run WHERE state='running' ORDER BY created_at,run_id"
@@ -10318,10 +10352,18 @@ class WorkspaceStore:
                     "Cancelled during restart recovery." if cancelled
                     else "Queued again after restart. Saved source decisions will be resumed."
                 )
+                if not cancelled:
+                    from .full_text_review_budget import charge_control_locked, TextReviewLimit
+                    try:
+                        charge_control_locked(self.connection, row["run_id"])
+                    except TextReviewLimit as exc:
+                        state = stage = "failed"
+                        message = str(exc)
+                        self.connection.execute("UPDATE workbench_text_review_budget SET limit_reason=? WHERE run_id=?", (message,row["run_id"]))
                 self.connection.execute(
                     "UPDATE workbench_review_run SET state=?,stage=?,message=?,worker_id=NULL,"
                     "started_at=NULL,finished_at=?,updated_at=? WHERE run_id=? AND state='running'",
-                    (state, stage, message, now if cancelled else None, now, row["run_id"]),
+                    (state, stage, message, now if state in {"cancelled", "failed"} else None, now, row["run_id"]),
                 )
                 self._append_review_event_locked(
                     row["run_id"], state=state, stage=stage, message=message,
@@ -10395,6 +10437,7 @@ class WorkspaceStore:
     def record_review_decision(
         self, run_id: str, document_id: str, *, decision: str, rationale: str,
         citations: Sequence[Mapping[str, object]] = (), error_message: str = "",
+        expected_attempt: int | None = None,
     ) -> ReviewRunRecord:
         if decision not in {"included", "excluded", "needs_attention"}:
             raise ValueError("invalid review decision")
@@ -10412,7 +10455,7 @@ class WorkspaceStore:
             self.connection.execute("BEGIN IMMEDIATE")
             frozen = self.connection.execute(
                 "SELECT item.matter_id,item.source_version_id,item.source_basis_digest,item.updated_at,"
-                "run.actor_id,run.state,catalog.version_id AS current_version,"
+                "run.actor_id,run.state,run.attempts,run.cancellation_requested,catalog.version_id AS current_version,"
                 "catalog.content_basis_digest AS current_basis,catalog.source_state "
                 "FROM workbench_review_decision item "
                 "JOIN workbench_review_run run ON run.run_id=item.run_id "
@@ -10424,6 +10467,8 @@ class WorkspaceStore:
             ).fetchone()
             if frozen is None:
                 raise KeyError(document_id)
+            if expected_attempt is not None and (frozen["attempts"] != expected_attempt or frozen["state"] != "running" or frozen["cancellation_requested"]):
+                raise WorkspaceProblem("This review attempt is no longer active.")
             now = self._review_decision_time(frozen["updated_at"])
             if frozen["state"] == "running":
                 authorized = self.connection.execute(
@@ -10516,7 +10561,7 @@ class WorkspaceStore:
                 )
         return self._review_run(updated)
 
-    def finish_review_run(self, run_id: str) -> ReviewRunRecord:
+    def finish_review_run(self, run_id: str, *, expected_attempt: int | None = None) -> ReviewRunRecord:
         now = self._now()
         with self._lock, self.connection:
             row = self.connection.execute(
@@ -10524,6 +10569,8 @@ class WorkspaceStore:
             ).fetchone()
             if row is None:
                 raise KeyError(run_id)
+            if expected_attempt is not None and row["attempts"] != expected_attempt:
+                raise WorkspaceProblem("This review attempt is no longer active.")
             if row["state"] == "succeeded":
                 return self._review_run(row)
             if row["state"] != "running":
@@ -10642,7 +10689,7 @@ class WorkspaceStore:
             ).fetchone()
         return self._review_run(updated)
 
-    def fail_review_run(self, run_id: str, message: str) -> ReviewRunRecord:
+    def fail_review_run(self, run_id: str, message: str, *, expected_attempt: int | None = None) -> ReviewRunRecord:
         value = self._safe_text(message, label="Review status", maximum=240, required=False)
         now = self._now()
         with self._lock, self.connection:
@@ -10651,6 +10698,8 @@ class WorkspaceStore:
             ).fetchone()
             if row is None:
                 raise KeyError(run_id)
+            if expected_attempt is not None and row["attempts"] != expected_attempt:
+                return self._review_run(row)
             if row["state"] != "running":
                 return self._review_run(row)
             cancelled = bool(row["cancellation_requested"]) or value == "Review cancelled."
@@ -10709,6 +10758,15 @@ class WorkspaceStore:
             raise WorkspaceProblem("This completed review does not need to be retried.")
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            run = self.review_run(matter_id, actor_id, run_id)
+            if run.state in {"queued", "running"}:
+                return run
+            if run.state not in {"failed", "cancelled"}:
+                raise WorkspaceProblem("This completed review does not need to be retried.")
+            from .full_text_review_budget import policy_for, reacquire_locked
+            if self.connection.execute("SELECT 1 FROM workbench_text_review WHERE run_id=?", (run_id,)).fetchone():
+                reacquire_locked(self.connection, run, policy_for(self.connection, run_id))
             self.connection.execute(
                 "UPDATE workbench_review_run SET state='queued',stage='reviewing',"
                 "message='Review queued to resume saved decisions.',worker_id=NULL,"
