@@ -1,10 +1,13 @@
 # Portable RecordBench product slices
 
-Status: proposed, not implemented. Findings checked September 8, 2026 against
+Status: implementation briefs with the first changes in review. Findings checked September 8, 2026 against
 upstream `main` at `26f5ece14871ba9312c9aeaf87d42b47edff3022`. The upstream hash
 was read from the remote and matched the locally available remote-tracking ref.
-The working checkout contains separate unfinished platform work; none of that
-work is the implementation baseline for these slices.
+
+Implementation targets portable product contracts and supported deployment
+profiles. A contributor workstation is a development host, not a resource ceiling
+or evidence of production scale. Local checks, Linux CI, PostgreSQL execution,
+clean installation, and larger-corpus acceptance remain distinct evidence.
 
 The product needs two connected improvements: a person must be able to install
 and administer it, and a reviewer must be able to move from reliable search to
@@ -19,6 +22,20 @@ they must not become the only place where product behavior is implemented.
 ## Buildable queue
 
 IDs identify work, not an obligation to execute everything in numeric order.
+
+Current implementation PRs (unmerged):
+
+* [Exact grammar and synthetic foundation #36](https://github.com/neilofneils404/recordbench-oss/pull/36)
+  implements 00/07 reference semantics. Browser result integration follows in 08.
+* [Report review basis #38](https://github.com/neilofneils404/recordbench-oss/pull/38)
+  implements 14 conversion, editing/export retention, and atomic creation.
+* [CI candidate isolation #37](https://github.com/neilofneils404/recordbench-oss/pull/37)
+  lets candidate checks inspect the complete intended ancestry independently of
+  unrelated fetched branches. This is a validation dependency, not a product slice.
+
+Installer prerequisites (01), exact result browsing (08), and investigation
+budget visibility (10) are being implemented on separate branches. Review and
+CI completion must be read from each PR; inclusion here does not mark it accepted.
 
 | ID | Slice | Depends on |
 | --- | --- | --- |
