@@ -169,3 +169,19 @@ def test_cancelled_checkpoint_crash_recovery_persists_terminal_budget_reason(tmp
     assert recovered.review_budget["counts"] == budget["counts"]
     assert "Stop reason: cancelled." in recovered.review_budget_description
     reopened.close()
+
+
+def test_ollama_generation_request_applies_the_shared_output_budget(monkeypatch):
+    from case_intelligence import generation
+
+    requests = []
+
+    def request(url, payload, **kwargs):
+        requests.append(payload)
+        return {"message": {"content": json.dumps({"answerable": False, "claims": [], "limitation": None, "missing_information": "Synthetic unsupported question."})}}
+
+    monkeypatch.setattr(generation, "_bounded_json_request", request)
+    client = generation.OllamaGenerator("http://127.0.0.1:11434", "synthetic-generator")
+    client.generate(question="What does the generated record say?", evidence=(generation.EvidenceItem("S1", "Generated source.txt", "Line 1", "Generated device entered ready state."),))
+    assert len(requests) == 1
+    assert requests[0]["options"]["num_predict"] == ReviewBudget().output_tokens == 1_200
