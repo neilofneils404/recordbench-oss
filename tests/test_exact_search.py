@@ -148,3 +148,10 @@ def test_normalization_preserves_meaning_at_grammar_boundaries(value):
     for terms in itertools.product((False, True), repeat=4):
         text = "neutral " + " ".join(word for word, present in zip(("red", "blue", "bicycle", "truck"), terms) if present)
         assert original.matches_units([text]) == reparsed.matches_units([text])
+
+
+def test_casefold_expansion_obeys_the_canonical_character_limit():
+    query = parse_query("ß" * (MAX_QUERY_CHARS // 2))
+    assert parse_query(query.normalized).expression == query.expression
+    with pytest.raises(QuerySyntaxError, match="normalized query"):
+        parse_query("ß" * MAX_QUERY_CHARS)
