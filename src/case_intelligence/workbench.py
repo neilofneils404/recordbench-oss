@@ -3565,6 +3565,35 @@ class CaseIntelligenceWorkbench:
             message = str(exc) if isinstance(exc, WorkflowFailure) else "The frozen full-text source is unavailable or changed. Reopen the original check."
             raise WorkspaceProblem(message) from exc
 
+    def _hydrate_full_text_export_decisions(self, matter, run, decisions):
+        """Copy exact portable support without replacing compact persisted locators."""
+        if not FullTextReviewLedger(self.workspace).enabled(run.run_id):
+            return decisions
+        from .full_text_review import resolve_text_export_citations
+        from .work_product_exports import MAX_WORKFLOW_EXPORT_BYTES
+        remaining, hydrated = MAX_WORKFLOW_EXPORT_BYTES, []
+        with self.source_store(matter).mutation_guard():
+            for decision in decisions:
+                if not decision.citations:
+                    hydrated.append(decision)
+                    continue
+                try:
+                    if (run.matter_id != matter.matter_id or decision.matter_id != matter.matter_id
+                            or decision.run_id != run.run_id):
+                        raise WorkflowFailure('The source check crossed a matter boundary.')
+                    document = self.source_store(matter).get(decision.document_id)
+                    if document.display_name != decision.source_name:
+                        raise WorkflowFailure('The frozen source identity changed; no portable export was created.')
+                    citations = resolve_text_export_citations(self, matter, decision.citations,
+                        maximum_bytes=remaining,
+                        source_basis_digests={decision.document_id: decision.source_basis_digest},
+                        source_versions={decision.document_id: decision.source_version_id})
+                    remaining -= sum(len(value['excerpt'].encode('utf-8')) for value in citations)
+                    hydrated.append(replace(decision, citations=citations))
+                except (WorkflowFailure, WorkspaceProblem, KeyError, OSError, ValueError, RuntimeError) as exc:
+                    raise ExportProblem('The full-text source support is unavailable, changed, or exceeds the portable export limit. No partial export was created.') from exc
+        return tuple(hydrated)
+
     def _assert_current_report_section_citations(self, matter, sections) -> None:
         """Validate exact copied passages with one stream per cited source."""
         store = self.source_store(matter)
@@ -9670,9 +9699,11 @@ def create_workbench_app(
                 run.run_id,
                 administrator_override=administrator_override,
             )
-            artifact = export_full_review(
-                matter, criterion, version, run, decisions, metrics, format_name
-            )
+            with bench.source_store(matter).mutation_guard():
+                decisions = bench._hydrate_full_text_export_decisions(matter, run, decisions)
+                artifact = export_full_review(
+                    matter, criterion, version, run, decisions, metrics, format_name
+                )
         except KeyError as exc:
             raise HTTPException(404, "Review run not found") from exc
         except ExportProblem as exc:
@@ -14441,6 +14472,7 @@ def create_workbench_app(
                     review_run.run_id,
                     administrator_override=administrator_override,
                 )
+                decisions = bench._hydrate_full_text_export_decisions(matter, review_run, decisions)
                 for format_name in ("csv", "json"):
                     review_artifact = export_full_review(
                         matter,

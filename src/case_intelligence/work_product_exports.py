@@ -187,13 +187,10 @@ def _validate_review_export_scope(
             chunk_id = _plain(citation.get("chunk_id"))
             unit_number = citation.get("unit_number")
             evidence_kind = _plain(citation.get("evidence_kind"))
-            compact = (citation.get("locator_kind") == "text_unit"
-                and type(citation.get("unit_ordinal")) is int and citation["unit_ordinal"] > 0
-                and bool(re.fullmatch(r"[0-9a-f]{64}", _plain(citation.get("unit_digest")))))
             if (
                 not source_name
                 or not location
-                or (not excerpt and not compact)
+                or not excerpt
                 or not re.fullmatch(r"[0-9a-f]{40}", support_token)
                 or not re.fullmatch(r"[0-9a-f]{64}", excerpt_digest)
                 or not chunk_id

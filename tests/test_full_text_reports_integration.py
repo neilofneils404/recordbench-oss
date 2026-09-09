@@ -151,3 +151,88 @@ def test_direct_summary_validates_uncited_source_omitted_by_fifty_detail_cap(wor
     report, error = make_report(client, bench, matter, run, "direct")
     assert report is None and "changed" in error
     assert not bench.workspace.reports(matter.matter_id, ACTOR)
+
+
+@pytest.mark.parametrize('format_name', ['csv', 'json', 'markdown', 'docx'])
+def test_full_text_source_check_exports_include_exact_passages(workspace, format_name):
+    client, bench, matter = workspace
+    text = 'The amber bicycle arrived. Synthetic exact support remains portable.'
+    run, _ = completed_text_run(bench, matter, [text])
+    response = client.get(f'/matters/{matter.slug}/full-review/{run.run_id}/export', params={'format': format_name})
+    assert response.status_code == 200, response.text
+    if format_name == 'json':
+        assert response.json()['decisions'][0]['citations'][0]['excerpt'] == text
+    elif format_name == 'docx':
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert text in archive.read('word/document.xml').decode()
+    else:
+        assert text in response.text
+
+
+def test_complete_bundle_hydrates_full_text_source_check_citations(workspace):
+    client, bench, matter = workspace
+    text = 'The amber bicycle arrived. Synthetic bundle citation detail.'
+    completed_text_run(bench, matter, [text])
+    response = client.get(f'/matters/{matter.slug}/export')
+    assert response.status_code == 200, response.text
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        paths = [name for name in archive.namelist() if 'source-checks/' in name and not name.endswith('full-text-ledger.json')]
+        assert any(name.endswith('.csv') for name in paths)
+        assert any(name.endswith('.json') for name in paths)
+        assert all(text in archive.read(name).decode() for name in paths)
+
+
+def test_corrupt_full_text_before_admission_never_reaches_classifier(workspace):
+    from case_intelligence.generation import VerifiedReviewDecision
+    client, bench, matter = workspace
+    bench.full_review.close()
+    store = bench.source_store(matter)
+    document, _ = store.store_stream('synthetic-corrupt.txt', 'text/plain', io.BytesIO(b'Original synthetic text.'))
+    path = store.derived / document.units_file
+    payload = json.loads(path.read_text())
+    payload['units'][0]['text'] = 'The amber bicycle was introduced by corruption.'
+    path.write_text(json.dumps(payload))
+    bench._sync_source_catalog(matter, [document])
+    _, version = bench.workspace.create_review_criterion(matter.matter_id, ACTOR,
+        title='Synthetic corruption refusal', instructions='Find the amber bicycle.')
+    bench.workspace.queue_review_run(matter.matter_id, ACTOR, version.criterion_version_id,
+        run_kind='full', review_mode='full_text')
+    run = bench.workspace.claim_review_run('synthetic-corruption-worker')
+    decision = bench.workspace.next_review_decision(run.run_id)
+    calls = []
+    bench.generator = type('SyntheticClassifier', (), {'classify_source': lambda self, **kw:
+        calls.append(kw) or VerifiedReviewDecision('include', 'Synthetic support.', ('S1',), True, 1)})()
+    outcome = bench._process_review_decision(run, decision, lambda: False)
+    assert not calls
+    assert outcome.decision == 'needs_attention' and not outcome.citations
+    assert FullTextReviewLedger(bench.workspace).coverage(matter.matter_id, ACTOR, run.run_id)['sources'] == {'invalidated': 1}
+
+
+def test_full_text_portable_export_keeps_a_long_cited_unit(workspace):
+    client, bench, matter = workspace
+    text = ('The amber bicycle arrived. ' + 'Synthetic surrounding context. ' * 250).rstrip()
+    assert len(text) > 6000
+    run, _ = completed_text_run(bench, matter, [text])
+    response = client.get(f'/matters/{matter.slug}/full-review/{run.run_id}/export?format=json')
+    assert response.status_code == 200, response.text
+    assert response.json()['decisions'][0]['citations'][0]['excerpt'] == text
+    decision = bench.workspace.review_decisions_for_export(matter.matter_id, ACTOR, run.run_id)[0]
+    assert 'excerpt' not in decision.citations[0]
+
+
+@pytest.mark.parametrize('failure', ['changed-text', 'changed-version', 'byte-limit'])
+def test_full_text_portable_export_refuses_unresolved_or_oversized_support(workspace, monkeypatch, failure):
+    from case_intelligence import work_product_exports
+    client, bench, matter = workspace
+    run, documents = completed_text_run(bench, matter, ['The amber bicycle arrived. Original exact source support.'])
+    if failure == 'byte-limit':
+        monkeypatch.setattr(work_product_exports, 'MAX_WORKFLOW_EXPORT_BYTES', 8)
+    elif failure == 'changed-version':
+        documents[0].version_id = 'f' * 32
+    else:
+        path = bench.source_store(matter).derived / documents[0].units_file
+        value = json.loads(path.read_text()); value['units'][0]['text'] = 'Synthetic altered source.'; path.write_text(json.dumps(value))
+    response = client.get(f'/matters/{matter.slug}/full-review/{run.run_id}/export?format=json')
+    assert response.status_code == 409
+    assert 'No partial export' in response.text
+    assert bench._active_matter_response_count(matter.matter_id) == 0

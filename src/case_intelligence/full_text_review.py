@@ -397,6 +397,10 @@ def _iter_text_export(workspace, matter_id, actor_id, run_id, format_name, *, ad
         db.close()
 
 
+class _TextDigestMismatch(ValueError):
+    pass
+
+
 def _process_text_source(bench, run, decision, cancelled):
     """Process every frozen unit in order, resuming only unrecorded ranges."""
     from .generation import EvidenceItem, GenerationRejected
@@ -446,6 +450,8 @@ def _process_text_source(bench, run, decision, cancelled):
     def inventory_units():
         for unit in document.iter_parsed_units():
             safe_point()
+            if hashlib.sha256(unit.text.encode('utf-8')).hexdigest() != unit.excerpt_digest:
+                raise _TextDigestMismatch('Extracted source text has a stale digest; repair extraction before review.')
             yield unit
 
     from .full_text_review_budget import policy_for
@@ -453,8 +459,7 @@ def _process_text_source(bench, run, decision, cancelled):
         policy = policy_for(bench.workspace.connection, run.run_id)
     ledger.inventory(run, decision, inventory_units(), current_source=current_source, citation_for=citation_for)
     version = bench.workspace.review_criterion_version(run.matter_id, run.criterion_version_id)
-    for ordinal, unit in enumerate(document.iter_parsed_units(), 1):
-        safe_point()
+    for ordinal, unit in enumerate(inventory_units(), 1):
         chunks = ledger.unit_chunks(run.run_id, decision.document_id, ordinal)
         if chunks and (chunks[0]['unit_digest'] != hashlib.sha256(unit.text.encode()).hexdigest() or not current_source()):
             ledger.invalidate(run, decision.document_id)
@@ -505,6 +510,10 @@ def process_text_source(bench, run, decision, cancelled):
     from .unit_stream import UnitRecordLimit
     try:
         return _process_text_source(bench, run, decision, cancelled)
+    except _TextDigestMismatch as exc:
+        from .workflow_jobs import ReviewDecisionResult
+        FullTextReviewLedger(bench.workspace).invalidate(run, decision.document_id)
+        return ReviewDecisionResult('needs_attention', str(exc), (), 'Repair extraction and start a new review.')
     except (TextReviewLimit, UnitRecordLimit) as exc:
         with bench.workspace._lock, bench.workspace.connection:
             bench.workspace.connection.execute("UPDATE workbench_text_review_budget SET limit_reason=? WHERE run_id=? AND EXISTS "
@@ -535,9 +544,11 @@ def read_locator(raw):
     return value
 
 
-def _resolve_text_citations(bench, matter, values, *, hydrate, source_basis_digests=None, source_versions=None):
+def _resolve_text_citations(bench, matter, values, *, hydrate, source_basis_digests=None, source_versions=None, export_bytes_remaining=None):
     """Bound selected support while validating whole frozen sources in one pass."""
     from .workflow_jobs import WorkflowFailure
+    if export_bytes_remaining is not None and (type(export_bytes_remaining) is not int or not 0 <= export_bytes_remaining <= 100 * 1024 * 1024):
+        raise WorkflowFailure('Full-text portable export exceeds its citation budget.')
     grouped, order = {}, []
     for value in values:
         if len(order) >= 100:
@@ -580,8 +591,14 @@ def _resolve_text_citations(bench, matter, values, *, hydrate, source_basis_dige
                 current = compact_locator(canonical, ordinal, unit.text)
                 if current != expected.pop(ordinal):
                     raise WorkflowFailure('The cited source unit changed before its outcome could be saved.')
-                if hydrate and len(unit.text) > 6_000:
-                    raise WorkflowFailure('This full-text unit exceeds the 6,000-character Report citation limit. Use the original ledger for its complete support.')
+                if hydrate:
+                    if export_bytes_remaining is None:
+                        if len(unit.text) > 6_000:
+                            raise WorkflowFailure('This full-text unit exceeds the 6,000-character Report citation limit. Use the original ledger for its complete support.')
+                    else:
+                        export_bytes_remaining -= len(unit.text.encode('utf-8'))
+                        if export_bytes_remaining < 0:
+                            raise WorkflowFailure('Full-text portable export exceeds its citation budget; no partial export was created.')
                 resolved[(document_id, ordinal)] = canonical if hydrate else current
             basis.update(b']}')
             if expected:
@@ -606,3 +623,10 @@ def resolve_text_report_citations(bench, matter, values, *, source_basis_digests
     """
     return _resolve_text_citations(bench, matter, values, hydrate=True,
         source_basis_digests=source_basis_digests, source_versions=source_versions)
+
+
+def resolve_text_export_citations(bench, matter, values, *, maximum_bytes, source_basis_digests, source_versions):
+    """Hydrate complete source-check excerpts within the caller's remaining byte budget."""
+    return _resolve_text_citations(bench, matter, values, hydrate=True,
+        source_basis_digests=source_basis_digests, source_versions=source_versions,
+        export_bytes_remaining=maximum_bytes)
