@@ -2669,3 +2669,25 @@ def test_resume_refuses_inconsistent_application_account_paths_before_commands(t
     with pytest.raises(RuntimeError, match='saved local.account.*configuration'):
         installer._resume_node(installer.Console(color=False, quiet=True), args, root)
     assert {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()} == before
+
+
+@pytest.mark.parametrize("entry", [".local-accounts.json.lock", ".local-accounts.json-" + "a" * 32 + ".tmp"])
+@pytest.mark.parametrize("fault", ["mode", "owner"])
+def test_retained_account_auxiliary_metadata_rejected(tmp_path, request, monkeypatch, entry, fault):
+    root, args, account_file = synthetic_saved_account_preflight(tmp_path, request, monkeypatch)
+    auxiliary = account_file.with_name(entry)
+    auxiliary.touch(mode=0o600)
+    if fault == "mode":
+        auxiliary.chmod(0o644)
+    else:
+        original = os.fstat
+        target = auxiliary.stat().st_ino
+        def metadata(*a, **k):
+            value = original(*a, **k)
+            if value.st_ino == target:
+                fields = list(value)
+                fields[4] = 12345
+                return os.stat_result(fields)
+            return value
+        monkeypatch.setattr(os, "fstat", metadata)
+    assert installer._saved_account_status(account_file, managed=True) == "invalid"

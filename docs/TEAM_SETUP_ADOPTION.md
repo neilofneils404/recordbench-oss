@@ -85,3 +85,10 @@ See [local account lifecycle](LOCAL_ACCOUNT_LIFECYCLE.md),
 [storage, backup and recovery](STORAGE_AND_BACKUP.md) for the corresponding
 operator contracts. Adoption notes should travel with the tested candidate;
 upstream merges do not replace an operator's promotion decision.
+
+The People setup page directs operators to the recovery documents bundled with
+the reviewed release currently running on their node. Retained account lock and
+temporary files must have service ownership and mode 0600, like the canonical
+account file; saved-node preflight refuses mismatched restore metadata. The
+synthetic People browser runner discards inherited RecordBench deployment
+settings before importing the application, retaining only its QA browser options.

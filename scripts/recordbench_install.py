@@ -454,9 +454,17 @@ def _saved_account_status(path: Path, *, managed: bool) -> str:
                 directory = child
         if managed:
             allowed = re.compile(r"^(?:local-accounts\.json|\.local-accounts\.json\.lock|\.local-accounts\.json-[0-9a-f]{32}\.tmp)$")
-            if any(not allowed.fullmatch(name) or not stat.S_ISREG(os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode)
-                   for name in os.listdir(directory)):
-                return "invalid"
+            for name in os.listdir(directory):
+                if not allowed.fullmatch(name):
+                    return "invalid"
+                entry = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                try:
+                    metadata = os.fstat(entry)
+                    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid()
+                            or stat.S_IMODE(metadata.st_mode) != 0o600):
+                        return "invalid"
+                finally:
+                    os.close(entry)
         try:
             descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         except FileNotFoundError:

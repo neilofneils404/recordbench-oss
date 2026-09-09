@@ -22,6 +22,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 
+def _isolate_environment() -> None:
+    """Discard inherited deployment configuration before importing the runtime."""
+    for name in tuple(os.environ):
+        if name.startswith(("CASE_INTELLIGENCE_", "CASE_REVIEW_")) or (
+                name.startswith("RECORDBENCH_") and not name.startswith("RECORDBENCH_QA_")):
+            del os.environ[name]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", type=Path, help="optional screenshot directory outside the checkout")
@@ -31,6 +39,7 @@ def main() -> int:
             parser.error(f"{command} is required for browser acceptance")
     if args.artifacts is not None and args.artifacts.resolve().is_relative_to(ROOT):
         parser.error("keep generated screenshots outside the source checkout")
+    _isolate_environment()
     from case_intelligence.generation import UnavailableGenerator
     from case_intelligence.identity import LocalAccountSettings
     from case_intelligence.local_accounts import LocalAccountRepository

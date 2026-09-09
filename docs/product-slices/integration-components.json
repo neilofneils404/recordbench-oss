@@ -54,7 +54,7 @@
     {
       "baseRefName": "main",
       "headRefName": "codex/team-setup-cleanup-20260909",
-      "headRefOid": "5ba0547e9a03098f9bad608e040a3f622a520933",
+      "headRefOid": "a63cb163eff979e133d85a76e9ae7f636071f7d7",
       "number": 57,
       "title": "Guide resumable installation and local team administration",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/57"
