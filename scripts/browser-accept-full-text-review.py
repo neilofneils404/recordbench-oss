@@ -88,6 +88,8 @@ def main():
             for width, label in ((1440, 'desktop'), (390, 'mobile')):
                 driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', {'width': width, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
                 wait.until(lambda d: d.execute_script('return document.documentElement.scrollWidth <= window.innerWidth'))
+                if width < 901:
+                    wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
                 driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", support)
                 driver.save_screenshot(str(args.output / f'full-text-inspector-{label}.png'))
             driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride', {})

@@ -9194,6 +9194,17 @@ def create_workbench_app(
         except KeyError:
             return "Case-team member"
 
+    def hydrate_selected_review_decision(matter, run, decision):
+        if decision is None:
+            return decision, ""
+        try:
+            return bench._hydrate_full_text_export_decisions(matter, run, (decision,))[0], ""
+        except ExportProblem:
+            return replace(decision, citations=()), (
+                "Supporting passages are unavailable or changed. "
+                "Open the source and rerun the check before relying on this decision."
+            )
+
     def review_decision_recovery(
         request: Request, slug: str, run_id: str, document_id: str, *,
         error: str, draft: Mapping[str, object], status_code: int = 409,
@@ -9207,12 +9218,14 @@ def create_workbench_app(
             run, decision = None, None
             error = "This source review is no longer available. Copy your unsaved note before leaving."
         matter = authorized_matter(request, slug)
+        decision, citation_error = hydrate_selected_review_decision(matter, run, decision)
         return templates.TemplateResponse(
             request=request, name="workbench_review_decision_recovery.html",
             context={
                 **base_context(request, matter), "matter": matter, "active_run": run,
                 "selected_decision": decision, "draft": draft, "error": error,
                 "reviewer_name": decision_reviewer_name(decision),
+                "citation_error": citation_error,
                 "expected_updated_at": decision.updated_at if decision else "",
                 "can_save": decision is not None and decision.machine_decision != "pending",
             }, status_code=status_code, headers={"Cache-Control": "no-store"},
@@ -9275,18 +9288,9 @@ def create_workbench_app(
                     matter.matter_id, read_actor, active_run.run_id, source
                 ) if active_run and source else None
             )
-            citation_error = ""
-            if selected_decision is not None:
-                try:
-                    selected_decision = bench._hydrate_full_text_export_decisions(
-                        matter, active_run, (selected_decision,)
-                    )[0]
-                except ExportProblem:
-                    citation_error = (
-                        "Supporting passages are unavailable or changed. "
-                        "Open the source and rerun the check before relying on this decision."
-                    )
-                    selected_decision = replace(selected_decision, citations=())
+            selected_decision, citation_error = hydrate_selected_review_decision(
+                matter, active_run, selected_decision
+            )
             metrics = (
                 bench.workspace.review_validation_metrics(
                     matter.matter_id, read_actor, active_run.run_id

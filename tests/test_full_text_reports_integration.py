@@ -239,7 +239,8 @@ def test_full_text_portable_export_refuses_unresolved_or_oversized_support(works
 
 
 @pytest.mark.parametrize('changed', [False, True])
-def test_full_text_decision_inspector_resolves_exact_support_without_persisting_text(workspace, changed):
+@pytest.mark.parametrize('view', ['inspector', 'recovery'])
+def test_full_text_decision_inspector_resolves_exact_support_without_persisting_text(workspace, changed, view):
     client, bench, matter = workspace
     text = 'The amber bicycle arrived. Synthetic inspector support beyond the rationale.'
     run, documents = completed_text_run(bench, matter, [text])
@@ -251,9 +252,15 @@ def test_full_text_decision_inspector_resolves_exact_support_without_persisting_
         payload = json.loads(path.read_text())
         payload['units'][0]['text'] = 'Synthetic changed inspector passage.'
         path.write_text(json.dumps(payload))
-    response = client.get(f'/matters/{matter.slug}/full-review', params={
-        'criterion': run.criterion_id, 'run': run.run_id, 'source': document.document_id})
-    assert response.status_code == 200
+    if view == 'inspector':
+        response = client.get(f'/matters/{matter.slug}/full-review', params={
+            'criterion': run.criterion_id, 'run': run.run_id, 'source': document.document_id})
+        assert response.status_code == 200
+    else:
+        response = client.post(f'/matters/{matter.slug}/full-review/{run.run_id}/decisions/{document.document_id}', data={
+            'human_decision': 'invalid', 'note': 'Synthetic unsaved validation note.', 'expected_updated_at': saved.updated_at})
+        assert response.status_code == 400
+        assert 'Synthetic unsaved validation note.' in response.text
     if changed:
         assert 'Supporting passages are unavailable or changed' in response.text
         assert text not in response.text and 'Synthetic changed inspector passage.' not in response.text
