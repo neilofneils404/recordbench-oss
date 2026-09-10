@@ -9476,6 +9476,7 @@ def create_workbench_app(
         return templates.TemplateResponse(request=request, name="workbench_text_review.html", context={
             **base_context(request, matter), "matter": matter, "run": run, "coverage": coverage,
             "rows": rows, "sources": sources, "after": after,
+            "can_delete_text_review": not override and run.actor_id == actor,
             "next_cursor": rows[-1]["cursor"] if len(rows) == 100 else None,
         }, headers={"Cache-Control": "no-store"})
 
