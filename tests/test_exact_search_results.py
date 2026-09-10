@@ -630,7 +630,7 @@ def test_phrase_preview_anchors_on_complete_phrase_and_preserves_unicode():
         assert (phrase, True) in preview["pieces"]
 
 
-def test_repeated_pdf_pages_link_to_matching_extracted_unit_position(tmp_path):
+def test_repeated_pdf_pages_do_not_produce_exact_results(tmp_path):
     app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
     with TestClient(app) as client:
         response = client.post("/matters", data={"name": "Synthetic skipped page", "descriptor": ""}, follow_redirects=False)
@@ -643,12 +643,11 @@ def test_repeated_pdf_pages_link_to_matching_extracted_unit_position(tmp_path):
         source.units[1]["number"] = 1
         source.units[2]["number"] = 2
         bench.source_store(matter).documents[source.document_id] = source
-        result = bench.exact_search(matter, "bicycle")
-        assert result.items[0].passages[0].number == 1
-        assert result.items[0].passage_positions == (2,)
+        with pytest.raises(ExactSearchUnavailable, match="No exact total"):
+            bench.exact_search(matter, "bicycle")
         page = client.get(f"/matters/{slug}/exact-search", params={"words": "bicycle"})
-        match = re.search(r'<a class="find-location" href="([^"]+)">', page.text)
-        assert match and match.group(1).endswith("?unit=2")
+        assert 'class="find-location"' not in page.text
+        assert page.status_code == 503
 
 
 def test_advanced_form_keyboard_submission_has_its_own_explicit_mode(tmp_path):
@@ -1119,3 +1118,36 @@ def test_production_txt_rejects_impossible_retained_line_ranges(tmp_path, query,
     path.write_text(json.dumps(payload))
     with pytest.raises(ExactSearchUnavailable, match='No exact total'):
         scan([source], query)
+
+
+@pytest.mark.parametrize('query', ['red', 'NOT missing'])
+@pytest.mark.parametrize('extra_text', ['red', 'synthetic injected red'])
+def test_file_backed_pdf_duplicate_page_invalidates_exact_scan(tmp_path, query, extra_text):
+    import hashlib
+    source, path = _file_backed_source(tmp_path, ['red', 'neutral'])
+    source.media_type, source.page_count = 'application/pdf', 2
+    assert scan([source], query).total == 1
+    payload = json.loads(path.read_text())
+    payload['units'].append({'number': 1, 'text': extra_text, 'excerpt_digest': hashlib.sha256(extra_text.encode()).hexdigest()})
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ExactSearchUnavailable, match='No exact total'):
+        scan([source], query)
+
+
+@pytest.mark.parametrize('media_type', ['audio/wav', 'video/mp4', 'application/pdf'])
+def test_many_matching_passages_use_media_specific_overflow_guidance(tmp_path, media_type):
+    app = create_workbench_app(tmp_path / 'runtime', auth_mode='test')
+    with TestClient(app) as client:
+        response = client.post('/matters', data={'name': 'Synthetic overflow guidance'}, follow_redirects=False)
+        slug = response.headers['location'].split('/')[2]
+        bench = app.state.workbench
+        matter = bench.matter(slug, 'development-taylor-morgan')
+        source = document(1, *['red bicycle'] * 4)
+        source.media_type, source.page_count = media_type, 4
+        source.version_id = 'a' * 32
+        bench.source_store(matter).documents[source.document_id] = source
+        bench._sync_source_catalog(matter, [source])
+        page = client.get(f'/matters/{slug}/exact-search', params={'words': 'red'})
+        assert page.status_code == 200
+        expected = 'transcript passage' if media_type != 'application/pdf' else 'page or section'
+        assert 'Open the source to review every matching ' + expected + '.' in page.text

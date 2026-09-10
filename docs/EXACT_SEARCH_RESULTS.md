@@ -220,3 +220,8 @@ TXT line ranges must also match the extractor's 20-line block boundaries, stay
 within the original line count, and advance without overlap. Aligned gaps from
 omitted whitespace-only blocks remain valid. Missing, impossible or shortened
 ranges invalidate the scan before any positive or negated exact total is shown.
+
+PDF projections must not repeat a page record. Duplicate pages invalidate the
+scan even when the distinct page numbers cover the entire source; they cannot
+inflate matching-passage counts or contribute extra evidence. Recording overflow
+guidance consistently describes matching transcript passages.

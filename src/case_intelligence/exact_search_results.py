@@ -337,6 +337,8 @@ def search_documents(
                 digest.update(json.dumps([unit.number, unit.text, unit.location,
                     unit.start_ms, unit.end_ms], ensure_ascii=True).encode())
                 has_text = has_text or bool(tokenize_text(unit.text, budget_check=check_budget))
+            if document.media_type == "application/pdf" and len({unit.number for unit in units}) != len(units):
+                raise ValueError('Duplicate derived PDF page')
             if section_backed and len(units) != document.page_count:
                 raise ValueError('Incomplete derived section coverage')
             if document.media_type == "text/plain" and (document.units_file or document.page_count or document.total_units or document.completed_units):
