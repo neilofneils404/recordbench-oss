@@ -122,7 +122,9 @@ ledger downloads under their authenticated identity with an explicit read
 override. Deactivating the owner or revoking the owner's membership does not
 turn an authorized administrator read into an owner-impersonation failure.
 Administrator reads remain attributed to that administrator, and the read
-override does not grant creator-only ledger deletion.
+override does not grant creator-only ledger deletion. The deletion panel is shown
+only to the creator while they retain matter membership; other members and
+administrators can read and export the ledger without an unusable delete action.
 
 The Reports workflow uses `resolve_text_report_citations()` for full-text saved
 work. It streams frozen sources, including sources with no citations and decisions

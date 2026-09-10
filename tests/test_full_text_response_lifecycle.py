@@ -215,3 +215,39 @@ def test_nonmember_admin_reads_ledger_as_self_after_owner_loses_access(tmp_path,
         assert client.get("/auth/login", headers=_headers(OTHER), follow_redirects=False).status_code == 303
         assert client.get(base + "/text", headers=_headers(OTHER)).status_code == 404
         assert client.get(base + "/text/export", headers=_headers(OTHER)).status_code == 404
+
+
+@pytest.mark.parametrize("viewer,is_member,can_delete", [
+    (OWNER, True, True),
+    (OTHER, True, False),
+    (ADMIN, True, False),
+    (ADMIN, False, False),
+])
+def test_terminal_ledger_only_offers_delete_to_member_creator(
+    tmp_path, monkeypatch, viewer, is_member, can_delete
+):
+    monkeypatch.setenv("CASE_INTELLIGENCE_STORAGE_RESERVE_GIB", "0")
+    with TestClient(_app(tmp_path), base_url="https://recordbench.example.test") as client:
+        assert client.get("/auth/login", headers=_headers(OWNER), follow_redirects=False).status_code == 303
+        owner_id = _principal_id(client, OWNER)
+        bench = client.app.state.workbench
+        matter = bench.workspace.create_matter("Synthetic shared text ledger", "Synthetic", owner_id)
+        import tests.test_full_text_reports_integration as fixtures
+        monkeypatch.setattr(fixtures, "ACTOR", owner_id)
+        run, _ = completed_text_run(bench, matter, ["The amber bicycle arrived."])
+        client.cookies.clear()
+        assert client.get("/auth/login", headers=_headers(viewer), follow_redirects=False).status_code == 303
+        viewer_id = _principal_id(client, viewer)
+        if is_member and viewer != OWNER:
+            bench.workspace.add_member(matter.matter_id, viewer_id, owner_id)
+        base = f"/matters/{matter.slug}/full-review/{run.run_id}/text"
+        page = client.get(base, headers=_headers(viewer))
+        assert page.status_code == 200
+        assert (f'action="{base}/delete"' in page.text) is can_delete
+        assert ("Delete saved review" in page.text) is can_delete
+        assert "Download complete JSON" in page.text
+        if can_delete:
+            response = client.post(base + "/delete", headers=_headers(viewer),
+                data={"csrf_token": _csrf(page.text)}, follow_redirects=False)
+            assert response.status_code == 303
+            assert not FullTextReviewLedger(bench.workspace).enabled(run.run_id)
