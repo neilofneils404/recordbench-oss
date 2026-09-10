@@ -4316,10 +4316,10 @@ class WorkspaceStore:
         actor_id: str, inspection_id: str, *, retry: bool, request_id: str,
         session_id: str | None = None
     ) -> MediaJobRecord:
-        """One version-bound review decision, atomic against duplicate requests."""
-        self.membership(matter_id, actor_id)
+        """Bind a version-bound review decision to its currently authorized actor."""
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             job = self.validate_media_preflight_decision(
                 matter_id, document_id, source_version_id, actor_id, inspection_id, retry=retry
             )
@@ -4330,10 +4330,10 @@ class WorkspaceStore:
             )
             changed = self.connection.execute(
                 "UPDATE workbench_media_job SET state='queued',stage=?,message='',"
-                "progress=0,quality_json=?,started_at=NULL,finished_at=NULL,updated_at=? "
+                "progress=0,quality_json=?,requested_by=?,started_at=NULL,finished_at=NULL,updated_at=? "
                 "WHERE media_job_id=? AND state='cancelled'",
                 ("Checking recording" if retry else "Queued for transcription",
-                 encoded, now, job.media_job_id),
+                 encoded, actor_id, now, job.media_job_id),
             ).rowcount
             row = self.connection.execute(
                 "SELECT * FROM workbench_media_job WHERE media_job_id=?", (job.media_job_id,)
@@ -4430,15 +4430,16 @@ class WorkspaceStore:
     def retry_media_job(
         self, matter_id: str, document_id: str, actor_id: str
     ) -> MediaJobRecord:
-        self.membership(matter_id, actor_id)
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            self.membership(matter_id, actor_id)
             changed = self.connection.execute(
                 "UPDATE workbench_media_job SET state='queued',stage='Queued',progress=0,"
                 "external_job_id=NULL,worker_id=NULL,degraded=0,message='',warnings_json='[]',"
-                "quality_json='{}',provenance_json='{}',started_at=NULL,finished_at=NULL,updated_at=? "
+                "quality_json='{}',provenance_json='{}',requested_by=?,started_at=NULL,finished_at=NULL,updated_at=? "
                 "WHERE matter_id=? AND document_id=? AND state='failed'",
-                (now, matter_id, document_id),
+                (actor_id, now, matter_id, document_id),
             ).rowcount
             row = self.connection.execute(
                 "SELECT * FROM workbench_media_job WHERE matter_id=? AND document_id=?",

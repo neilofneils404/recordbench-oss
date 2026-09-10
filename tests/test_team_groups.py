@@ -300,3 +300,53 @@ def test_disabled_person_direct_grant_can_be_removed_before_reenable(tmp_path):
         with pytest.raises(KeyError):
             store.membership(matter.matter_id, person.principal_id)
         reviewer.close()
+
+
+@pytest.mark.parametrize('decision', ['failed_retry', 'preflight_retry', 'preflight_continue'])
+def test_current_member_can_recover_media_after_original_requester_revocation(tmp_path, decision):
+    from case_intelligence.media_evidence import MediaCoordinator, MediaProcessorError
+    store, matter, _, group, _ = seed(tmp_path / 'control.sqlite')
+    original = store.queue_media_job(matter.matter_id, 'a' * 32, 'b' * 32,
+        'principal-reviewer', source_sha256='c' * 64, byte_size=128,
+        media_type='audio/wav', duration_ms=1000)
+    store.claim_media_job('synthetic-worker')
+    if decision == 'failed_retry':
+        held = store.fail_media_job(original.media_job_id, 'Synthetic interruption')
+    else:
+        held = store.save_media_preflight(original.media_job_id,
+            {'outcome': 'uncertain'}, hold=True, message='Synthetic recording needs review')
+    store.set_matter_group_grant(matter.matter_id, group, 'principal-owner', present=False)
+
+    def recover(actor):
+        if decision == 'failed_retry':
+            return store.retry_media_job(matter.matter_id, original.document_id, actor)
+        return store.decide_media_preflight(matter.matter_id, original.document_id,
+            original.source_version_id, actor, held.preflight['inspection_id'],
+            retry=decision == 'preflight_retry', request_id='synthetic-recovery')
+
+    with pytest.raises(KeyError):
+        recover('principal-reviewer')
+    unchanged = store.media_job(matter.matter_id, original.document_id)
+    assert unchanged.state == held.state
+    assert unchanged.requested_by == 'principal-reviewer'
+    recovered = recover('principal-owner')
+    assert recovered.state == 'queued'
+    assert recovered.requested_by == 'principal-owner'
+    for field in ('media_job_id', 'document_id', 'source_version_id', 'source_sha256',
+                  'byte_size', 'media_type', 'duration_ms'):
+        assert getattr(recovered, field) == getattr(original, field)
+    coordinator = object.__new__(MediaCoordinator)
+    coordinator.workspace = store
+    with pytest.raises(MediaProcessorError, match='Matter access was removed'):
+        coordinator._require_job_access(original)
+    claimed = store.claim_media_job('synthetic-recovery-worker')
+    coordinator._require_job_access(claimed)
+    transcript = store.import_media_transcript(claimed.media_job_id,
+        segments=[{'external_segment_id': 'synthetic-segment', 'start_ms': 0,
+                   'end_ms': 1000, 'model_text': 'Synthetic recovery words.'}],
+        warnings=[], quality={}, provenance={})
+    assert transcript.imported_by == 'principal-owner'
+    assert transcript.source_version_id == original.source_version_id
+    with pytest.raises(KeyError):
+        store.membership(matter.matter_id, 'principal-reviewer')
+    store.close()

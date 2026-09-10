@@ -290,7 +290,7 @@
             <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Try again</button></form>
             {% endif %}
             {% if source.removable %}
-            <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/remove"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="remove-action" type="submit">Remove direct grant</button></form>
+            <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/remove"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="remove-action" type="submit">Remove</button></form>
             {% endif %}
           </span>
         </div>

@@ -58,3 +58,20 @@ browser. `PLAYWRIGHT_MODULE` can select the installed module and
 `RECORDBENCH_QA_BROWSER_CHANNEL=chrome` can select Chrome. It starts a temporary
 loopback HTTPS application with synthetic accounts and disposes of it afterward.
 Generated captures stay outside the repository. No existing deployment is used.
+
+## Review follow-up
+
+The source-removal form again says **Remove**; **Remove direct grant** remains
+specific to case-team membership. A rendered HTTP-page regression exercises both
+forms with a synthetic failed source and direct member.
+
+Transcription failed-job Retry, recording-check Retry and Continue now atomically
+bind the queued attempt to the currently authorized acting member. Three
+synthetic regressions revoke the original requester, reject their recovery
+attempt, then verify owner recovery through worker authorization and transcript
+import without changing the source version or restoring the old grant.
+
+The expanded native run passed **100 tests** and failed **52 media tests**; every
+failed-test identity is present in the exact-main comparison above. Linux media
+integration remains a hosted check. Publication inspection covered the candidate
+tree and complete current-head ancestry before committing the follow-up.

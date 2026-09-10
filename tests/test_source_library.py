@@ -770,3 +770,35 @@ def test_detected_resumable_upload_is_terminal_after_quarantine_move(tmp_path):
         bench = client.app.state.workbench
         matter = bench.matter(slug, ACTOR)
         assert bench.source_store(matter).malware_scan_status()["quarantined"] == 1
+
+
+def test_source_removal_and_direct_grant_removal_have_distinct_labels(tmp_path):
+    app = create_workbench_app(
+        tmp_path / 'runtime', generator=UnavailableGenerator(), auth_mode='test'
+    )
+    with TestClient(app) as client:
+        slug = _matter(client)
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        source_store = bench.source_store(matter)
+        source_store.register_linked_sources(source_location_id='synthetic-share', sources=(
+            SimpleNamespace(relative_path='synthetic.txt', display_name='synthetic.txt',
+                media_type='text/plain', byte_size=64, stable_device=1, stable_inode=1,
+                stable_mtime_ns=1_700_000_000_000_000_000),
+        ))
+        document = next(iter(source_store.documents.values()))
+        source_store.mark_failed(document.document_id, "Synthetic preparation failure")
+        workspace = app.state.workbench.workspace
+        person = workspace.upsert_principal('test', 'synthetic-teammate', 'Synthetic Teammate', 'synthetic-teammate')
+        workspace.add_member(matter.matter_id, person.principal_id, ACTOR)
+        response = client.get(f'/matters/{slug}/setup?view=list')
+        assert response.status_code == 200
+        forms = dict(re.findall(r'<form[^>]*action="([^"]+)"[^>]*>(.*?)</form>',
+                                response.text, flags=re.S))
+        source_forms = [body for action, body in forms.items()
+                        if '/sources/' in action and action.endswith('/remove')]
+        assert len(source_forms) == 1
+        assert re.search(r'<button[^>]*>Remove</button>', source_forms[0])
+        assert 'Remove direct grant' not in source_forms[0]
+        member_form = forms[f'/matters/{slug}/members/{person.principal_id}/remove']
+        assert re.search(r'<button[^>]*>Remove direct grant</button>', member_form)

@@ -42,7 +42,10 @@ before dispatch, polling and transcript import. Existing source preparation and
 automatic transcript overviews remain matter-owned processing of admitted
 sources, rather than a grant to the original uploader. Revocation does not delete
 sources, citations, human decisions or previously saved work. Retrying user work
-requires current matter access.
+requires current matter access. Transcription Retry and Continue bind the new
+attempt to the acting member, so an owner can recover work after the original
+requester loses access. Subsequent worker and import checks use that member;
+the existing source identity and upload provenance remain unchanged.
 
 ## Migration and recovery
 
