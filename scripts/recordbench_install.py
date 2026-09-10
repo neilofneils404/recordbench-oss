@@ -1413,6 +1413,22 @@ def _storage_roots_compatible(node: Path, storage: Path) -> bool:
         return False
 
 
+def _service_home_ready() -> bool:
+    """Inspect the HOME used by Compose without creating client state."""
+    try:
+        value = os.environ.get("HOME", "")
+        if not value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            return False
+        home = Path(value)
+        metadata = home.lstat()
+        return (home.is_absolute() and stat.S_ISDIR(metadata.st_mode)
+                and metadata.st_uid == os.geteuid()
+                and stat.S_IMODE(metadata.st_mode) == 0o700
+                and os.access(home, os.R_OK | os.W_OK | os.X_OK))
+    except (OSError, ValueError):
+        return False
+
+
 def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                        model_args: argparse.Namespace | None = None,
                        needs_model_staging: bool = True,
@@ -1434,12 +1450,17 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
         "Non-root account and primary group" if os.geteuid() != 0 and os.getegid() != 0 else "Root account or primary group",
         "Own application state without running containers as root",
         "Run as a dedicated non-root service account with a non-root primary group. Have an administrator assign only the dedicated node and storage directories to it.")
+    home_ready = _service_home_ready()
+    add("service-home", home_ready,
+        "Owner-only HOME is accessible" if home_ready else "HOME is missing, unsafe, or inaccessible",
+        "Let Compose and build tools create service-account client state",
+        "Have an administrator create /var/lib/recordbench-home owned by the service account with mode 0700, set its account home, and start a new service-account session with that HOME. See docs/INSTALL.md#service-account-home.")
     docker = shutil.which("docker") is not None
     add("docker", docker, "Docker CLI available" if docker else "Docker CLI missing",
         "Build and run application containers", "Install Docker Engine and the Compose v2 plugin using the Docker Linux installation instructions in docs/INSTALL.md.")
     for name, command, capability, remedy in (
         ("docker-access", ["docker", "info", "--format", "{{.ServerVersion}}"], "Access the container engine",
-         "Start Docker and arrange approved engine access for the service account. Do not make the Docker socket world-writable; engine access is privileged."),
+         "Start Docker and arrange approved engine access for the service account. Without systemd PID 1, have the host administrator manage dockerd directly; see docs/INSTALL.md#atypical-docker-hosts. Do not make the Docker socket world-writable; engine access is privileged."),
         ("compose", ["docker", "compose", "version", "--short"], "Run the application service definition",
          "Install the Docker Compose v2 plugin, then rerun this command as the service account."),
     ):
@@ -1451,6 +1472,17 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
         except (OSError, subprocess.TimeoutExpired):
             passed = False
         add(name, passed, "Available" if passed else "Unavailable or diagnostic timed out", capability, remedy)
+    if docker:
+        try:
+            driver_probe = _probe(["docker", "info", "--format", "{{.Driver}}"])
+            driver = driver_probe.stdout.strip() if driver_probe.returncode == 0 else ""
+        except (OSError, subprocess.TimeoutExpired):
+            driver = ""
+        add("docker-storage-driver", bool(driver) and driver != "vfs",
+            "VFS copies image layers" if driver == "vfs" else
+            ("Non-VFS driver reported" if driver else "Storage driver unavailable"),
+            "Preserve disk headroom during image builds",
+            "Inspect docker info on the engine host. On nested hosts prefer fuse-overlayfs over vfs when supported; budget build space above the 100 GiB runtime reserve. See docs/INSTALL.md#atypical-docker-hosts.", blocking=False)
     openssl = shutil.which("openssl") is not None
     add("openssl", openssl, "OpenSSL available" if openssl else "OpenSSL missing",
         "Prepare HTTPS", "Install the distribution OpenSSL package; retain HTTPS and secure cookies.")
@@ -2531,7 +2563,10 @@ def _provision(
     runtime_compose = _compose(root, active, local_accounts=args.enable_account_management)
     if not args.dry_run:
         _install_phase(root, "running", "checking")
-    _run(console, [*runtime_compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
+    try:
+        _run(console, [*runtime_compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError("Service startup failed. " + _STARTUP_REMEDY) from exc
     if not args.dry_run:
         _wait_health(console, root)
     console.ok("RecordBench node is online")
@@ -2551,6 +2586,13 @@ def _selected_capabilities_ready(payload: Mapping[str, object], models: str) -> 
     ).startswith("local WhisperX"):
         return False
     return True
+
+
+_STARTUP_REMEDY = (
+    "Inspect clamav-updater logs and fresh daily.* signatures, current free space on node/matter "
+    "filesystems (builds can erode the 100 GiB reserve), and Docker bridge connectivity. "
+    "See docs/INSTALL.md#startup-troubleshooting; correct the cause before resume or doctor."
+)
 
 
 def _wait_health(console: Console, root: Path) -> None:
@@ -2598,13 +2640,17 @@ def _wait_health(console: Console, root: Path) -> None:
                     console.warn("Basic review is available; an unselected optional capability remains unavailable")
                 return
             last = "selected capabilities are incomplete" if base_ready else "basic review needs attention"
+            if isinstance(storage, dict) and storage.get("reserve_satisfied") is False:
+                last += "; storage reserve is unsatisfied: restore free space above the configured reserve; image builds may have consumed it"
+            if isinstance(capabilities, dict) and capabilities.get("malware_scan") not in {"ready", "not required"}:
+                last += "; malware scanning is unavailable: inspect clamav-updater logs and fresh daily.* signatures"
             if not login_ready:
                 last += "; sign-in endpoint is not reachable"
         if time.monotonic() >= next_report:
             console.note(f"health consensus pending :: {last}")
             next_report = time.monotonic() + 15
         time.sleep(3)
-    raise RuntimeError(f"node did not reach health before timeout ({last})")
+    raise RuntimeError(f"node did not reach health before timeout ({last}). {_STARTUP_REMEDY}")
 
 
 def _doctor(console: Console, args: argparse.Namespace, root: Path) -> None:

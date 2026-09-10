@@ -546,6 +546,9 @@ def test_partial_local_resume_requires_explicit_bootstrap_identity(tmp_path, mon
 
 @pytest.fixture
 def ready_host(monkeypatch, tmp_path):
+    home = tmp_path / "compose-client-home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(home))
     actual_uid = os.geteuid()
     original_stat = Path.stat
     original_fstat = os.fstat
@@ -2691,3 +2694,107 @@ def test_retained_account_auxiliary_metadata_rejected(tmp_path, request, monkeyp
             return value
         monkeypatch.setattr(os, "fstat", metadata)
     assert installer._saved_account_status(account_file, managed=True) == "invalid"
+
+
+@pytest.mark.parametrize("problem", ["missing", "unset", "relative", "file", "symlink", "shared", "foreign", "inaccessible"])
+def test_preflight_blocks_unusable_compose_home_without_writes(tmp_path, ready_host, monkeypatch, problem):
+    home = Path(os.environ["HOME"])
+    if problem == "missing":
+        home.rmdir()
+    elif problem == "unset":
+        monkeypatch.delenv("HOME")
+    elif problem == "relative":
+        monkeypatch.setenv("HOME", "relative-home")
+    elif problem == "file":
+        home.rmdir()
+        home.write_text("synthetic")
+    elif problem == "symlink":
+        link = tmp_path / "home-link"
+        link.symlink_to(home, target_is_directory=True)
+        monkeypatch.setenv("HOME", str(link))
+    elif problem == "shared":
+        home.chmod(0o750)
+    elif problem == "foreign":
+        original = Path.lstat
+        def foreign(path):
+            result = original(path)
+            if path == home:
+                fields = list(result)
+                fields[4] = 2000
+                return os.stat_result(fields)
+            return result
+        monkeypatch.setattr(Path, "lstat", foreign)
+    elif problem == "inaccessible":
+        monkeypatch.setattr(os, "access", lambda *a: False)
+    args = preflight_args(tmp_path)
+    check = next(row for row in installer._collect_preflight("none", args).checks if row.name == "service-home")
+    assert check.state == "fail" and check.blocking
+    assert "0700" in check.remedy and "/var/lib/recordbench-home" in check.remedy
+    assert not args.root.exists()
+    assert not (home / ".docker").exists()
+
+
+def test_preflight_accepts_owner_only_home_without_creating_client_state(tmp_path, ready_host):
+    result = installer._collect_preflight("none", preflight_args(tmp_path))
+    assert next(row for row in result.checks if row.name == "service-home").state == "pass"
+    assert list(Path(os.environ["HOME"]).iterdir()) == []
+
+
+@pytest.mark.parametrize("driver,exit_code,state", [("vfs", 0, "fail"), ("fuse-overlayfs", 0, "pass"), ("overlay2", 0, "pass"), ("", 1, "fail")])
+def test_preflight_storage_driver_note_does_not_block_cpu(tmp_path, ready_host, monkeypatch, driver, exit_code, state):
+    original = installer._probe
+    monkeypatch.setattr(installer, "_probe", lambda command: subprocess.CompletedProcess(command, exit_code, driver, "") if "{{.Driver}}" in command else original(command))
+    result = installer._collect_preflight("none", preflight_args(tmp_path))
+    check = next(row for row in result.checks if row.name == "docker-storage-driver")
+    assert check.state == state and not check.blocking
+    assert result.ready
+
+
+@pytest.mark.parametrize("cause", ["reserve", "clamav", "unreachable"])
+def test_health_timeout_has_actionable_host_remedy(tmp_path, monkeypatch, cause):
+    import io
+    from tests.test_first_run_handoff import configured_node
+    root, _, _ = configured_node(tmp_path.resolve())
+    payload = {"product": "RecordBench", "status": "degraded",
+        "storage": {"status": "ready"},
+        "capabilities": {"source_review": "ready", "malware_scan": "ready"}}
+    if cause == "reserve":
+        payload["storage"] = {"status": "blocked", "reserve_satisfied": False}
+    elif cause == "clamav":
+        payload["capabilities"]["malware_scan"] = "unavailable"
+    def probe(*a, **kw):
+        if cause == "unreachable":
+            raise OSError("synthetic transport failure")
+        return io.BytesIO(json.dumps(payload).encode())
+    clock = [0]
+    monkeypatch.setattr(installer.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(installer.time, "sleep", lambda seconds: clock.__setitem__(0, 901))
+    monkeypatch.setattr(installer.urllib.request, "urlopen", probe)
+    monkeypatch.setattr(installer, "_login_reachable", lambda root: True)
+    with pytest.raises(RuntimeError) as error:
+        installer._wait_health(installer.Console(color=False, quiet=True), root)
+    message = str(error.value)
+    assert "startup-troubleshooting" in message and "Docker bridge" in message
+    assert "clamav-updater" in message and "100 GiB" in message
+    if cause == "reserve":
+        assert "storage reserve is unsatisfied" in message
+    elif cause == "clamav":
+        assert "malware scanning is unavailable" in message
+    assert installer._install_progress(root)["phases"]["selected_capabilities"] != "complete"
+
+
+def test_compose_startup_failure_reports_remedy_before_http_health(tmp_path, monkeypatch):
+    from tests.test_first_run_handoff import configured_node
+    root, args, paths = configured_node(tmp_path.resolve())
+    args.prepare_only = False
+    # Provisioning commands are simulated; the account initializer is not exercised.
+    (paths["accounts"] / "local-accounts.json").write_text("{}")
+    def run(console, command, **kwargs):
+        if "up" in command:
+            raise subprocess.CalledProcessError(1, command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+    monkeypatch.setattr(installer, "_run", run)
+    monkeypatch.setattr(installer, "_wait_health", lambda *a: pytest.fail("startup failure reached HTTP health"))
+    with pytest.raises(RuntimeError, match="Service startup failed.*clamav-updater.*startup-troubleshooting"):
+        installer._provision(installer.Console(color=False, quiet=True), args, root, "local", "none", None, None, password_input=[])
+    assert installer._install_progress(root)["phases"]["running"] == "checking"

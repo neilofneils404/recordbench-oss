@@ -51,6 +51,24 @@ The bundled method uses encrypted restic storage with the recovery password
 copied to a separate protected location. The repository and recovery credential
 must not live inside the node or inside each other. Scheduling is opt-in.
 
+Install `restic` on the host first; the bundled tool invokes it from the service
+account's PATH. Use the distribution package when available. If its mirror fails,
+the supported alternative is the upstream precompiled binary from
+[official restic releases](https://github.com/restic/restic/releases), following
+[upstream installation and verification](https://restic.readthedocs.io/en/stable/020_installation.html).
+Choose an explicit version and the host OS/architecture asset, verify its
+compressed-file SHA-256 against that release's signed `SHA256SUMS` (verify the
+signature with the upstream signing key), then decompress and have the
+administrator install the executable in `/usr/local/bin` with mode 0755.
+Record the version and verify `restic version` in a fresh service-account session.
+Do not substitute an unsigned mirror or pipe a download into a shell. Scheduling
+also needs a PATH containing that binary. This fallback does not install systemd
+or enable scheduling on a host without a working service manager.
+
+Have an administrator precreate dedicated service-owned repository/recovery
+parents when their mount or `/srv` parent is root-owned. Keep the recovery key
+separate from the repository; the existing local-backup opt-in still applies.
+
 Initialize and run a backup with:
 
 ```bash
@@ -83,12 +101,21 @@ not rotate automatically. Use `restic check --read-data` with your configured
 repository/credential for a full data read when required by your verification
 policy.
 
-Check status and perform the actual recovery test:
+Precreate the restore-drill **parent** as administrator; the service account
+cannot create new top-level directories in root-owned `/srv`:
+
+```bash
+sudo install -d -m 0700 -o recordbench -g recordbench /srv/recordbench-drills
+```
+
+Keep that parent outside the live node, matter storage and backup repository.
+Leave each child target absent: restore deliberately refuses existing targets.
+As the service account, check status and perform the actual recovery test:
 
 ```bash
 ./install backup --root /srv/recordbench
 ./install restore --root /srv/recordbench \
-  --restore-target /srv/recordbench-restore-drill-001
+  --restore-target /srv/recordbench-drills/restore-drill-001
 ```
 
 Restore refuses an existing target and never connects drill data to the live

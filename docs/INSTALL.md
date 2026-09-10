@@ -109,7 +109,8 @@ For missing prerequisites:
   [Compose plugin](https://docs.docker.com/compose/install/linux/) for the host
   distribution. Arrange approved service-account engine access; Docker access is
   privileged. Never make its socket world-writable to pass a check.
-- Have an administrator create only the dedicated node and matter-storage paths
+- Prepare a real owner-only service-account HOME as described below before forge.
+  Have an administrator create only the dedicated node and matter-storage paths
   and assign them to the non-root service account. The account's primary group
   must also be non-root. Do not use a home directory, symlink, or shared export
   root. Existing selected directories must belong to that account. A first-install
@@ -174,6 +175,128 @@ ACLs, quotas, read-only mounts and later capacity changes can still prevent
 installation. A passing preflight is permission to attempt installation, not a
 successful install or confidential-workload acceptance. The `doctor` and
 synthetic acceptance steps below remain necessary.
+
+## Service account HOME
+
+Compose/build tools need a writable HOME even when application data lives under
+`/srv`. A system account created with `/nonexistent` can pass storage checks and
+then fail forge with `mkdir /nonexistent: permission denied`. Preflight now blocks
+an unset, relative, missing, non-directory, symlink, foreign-owned, non-0700 or
+inaccessible HOME without writing client state. This checks the launch environment;
+set the account database home too so future login sessions retain the correction.
+
+For a new account, an administrator can run this Debian-style example (adapt
+account creation to the distribution; do not recreate an existing account):
+
+```bash
+sudo groupadd --system recordbench
+sudo useradd --system --gid recordbench --home-dir /var/lib/recordbench-home \
+  --shell /bin/bash recordbench
+sudo install -d -m 0700 -o recordbench -g recordbench /var/lib/recordbench-home
+sudo install -d -m 0700 -o recordbench -g recordbench /srv/recordbench
+```
+
+For an existing system account, use `sudo usermod --home /var/lib/recordbench-home
+recordbench`, then create that dedicated home with the `install -d` command above.
+Use a usable shell for the operator-driven installation session. Keep HOME
+separate from node/matter storage. Arrange approved Docker access, then start a
+fresh login session (for example `sudo -iu recordbench`) so HOME and supplementary
+groups take effect. Run `docker info` and `docker compose version` as that account
+before preflight. Membership in `docker`, where used, grants privileged engine
+access; never loosen socket permissions. HOME preflight checks metadata/access,
+not quotas or a successful client write.
+
+## Atypical Docker hosts
+
+A dedicated Linux host with its distribution-supported Docker service is the
+normal starting point. Containerized evaluation hosts may need administrator
+setup before RecordBench preflight:
+
+- **No systemd PID 1:** `systemctl` cannot start Docker. Follow Docker's
+  [manual daemon instructions](https://docs.docker.com/engine/daemon/start/)
+  (`sudo dockerd` in a supervised administrator session). The host administrator
+  owns daemon supervision and restart persistence. A failed `docker-access` BLOCK
+  now points here; absence of systemd alone does not block a usable engine.
+- **Nested overlay fails:** inspect `docker info` and daemon logs. Prefer
+  `fuse-overlayfs` over `vfs` where the outer host, FUSE access and installed
+  engine support it. The administrator must install/configure the compatible
+  driver before building. Preflight emits a nonblocking storage-driver NOTE for
+  `vfs` or an unavailable driver probe. Docker's
+  [VFS documentation](https://docs.docker.com/engine/storage/drivers/vfs-driver/)
+  explains its full layer copies and extra disk consumption. Driver changes need
+  planned downtime and preservation of existing images/volumes; do not switch a
+  shared daemon or delete its data directory as an install retry.
+- **Bridge connectivity fails:** if gateway cannot reach `app:8786`, ask the host
+  administrator to inspect forwarding and bridge/firewall policy in the relevant
+  network namespace. Some nested hosts need `net.ipv4.ip_forward=1` and
+  `net.bridge.bridge-nf-call-iptables=0` (and, when applicable,
+  `net.bridge.bridge-nf-call-ip6tables=0`). These are host-specific remedies, not
+  universal defaults: disabling bridge netfilter changes firewall processing.
+  The administrator must reconcile them with the outer host policy, verify
+  inter-container connectivity, and persist only the approved settings.
+
+RecordBench does not install Docker, change drivers/sysctls, or certify nested
+host networking. Successful engine access is not a container-connectivity test.
+Keep the gateway on loopback HTTPS and companion services private.
+
+## Startup troubleshooting
+
+A passing preflight is a point-in-time check. A completed CPU clean-host receipt
+on `ccba441` passed install/resume, doctor, synthetic team setup and encrypted
+backup/isolated restore after operator host corrections. It exposed these setup
+frictions; it does not establish GPU, transcription, supported-release or full
+browser-suite acceptance.
+
+Use the installed node's Compose coordinates, not an unrelated checkout's default
+project. The release path is recorded in `installation.json`; for diagnostics:
+
+```bash
+release_path=$(python3 -c 'import json; print(json.load(open("/srv/recordbench/installation.json"))["release_path"])')
+docker compose --env-file /srv/recordbench/compose.env \
+  -f "$release_path/compose.yaml" ps -a
+docker compose --env-file /srv/recordbench/compose.env \
+  -f "$release_path/compose.yaml" logs --tail 100 clamav-updater clamav app gateway
+```
+
+Keep logs private; report only content-free symptoms. Use the node's additional
+Compose overlays/profiles when changing service state. The diagnostic commands
+above only read the base services.
+
+**ClamAV signatures:** the updater healthcheck requires a `daily.*` file larger than one byte
+in its shared `/var/lib/clamav` volume modified within 4,320 minutes (72 hours).
+Missing/stale daily signatures block scanner startup and can block app/gateway
+before the HTTP health loop is reachable. Startup-command failures and health
+timeouts now point to these checks. Inspect updater logs for DNS, TLS, timeouts,
+403/429, permissions and signature validation errors; also confirm clamd loads
+its databases. Do not touch file timestamps or disable scanning to pass health.
+
+FreshClam sends its ClamAV User-Agent. A generic curl/wget download is not an
+equivalent test; changing only the UA does not establish a supported updater.
+Datacenter/shared egress may encounter CDN blocks or rate limits. Follow the
+[FreshClam error guidance](https://docs.clamav.net/faq/faq-freshclam.html): check
+engine support, DNS/TLS and proxy behavior, honor cooldowns, and avoid tight retry
+loops. For managed mirroring use the upstream
+[FreshClam/CVDUpdate mirror procedure](https://docs.clamav.net/appendix/CvdPrivateMirror.html).
+Proxy/mirror configuration and persistent updater access remain operator work
+outside the portable tree; keep scanner/model networks private. Confirm a real
+signature refresh and healthy scanner before retrying acceptance.
+
+**Build erodes reserve:** 112 GiB free can pass the 100 GiB check but fall below
+reserve during image construction, especially with `vfs`. The CPU 150 GiB target
+is advisory, not a guarantee. Budget peak image layers/build cache in addition to
+models, data and the protected reserve on both the engine and node/matter
+filesystems. Check `df -h /srv/recordbench` and the selected matter path after
+build; inspect `docker system df` and the engine host's Docker Root Dir filesystem.
+A remote engine's disk is not measured by local `df`. Runtime
+`storage.reserve_satisfied=false` means restore capacity above the configured
+reserve; repeated rebuilds can worsen it. Add capacity or have the administrator
+remove only identified disposable data/cache, preserving rollback images and
+volumes. Do not lower the reserve or run indiscriminate prune commands to pass.
+
+After correcting the cause, run `./install doctor --root /srv/recordbench` if
+services are already running, or the printed `./install install --root
+/srv/recordbench --resume` command for interrupted startup, then doctor and the
+synthetic acceptance steps. Health diagnoses do not repair host configuration.
 
 ## Interactive installation
 
