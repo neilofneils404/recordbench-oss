@@ -83,6 +83,11 @@ The intake journey uses nonblocking Chrome navigation. Explicit reloads wait
 for the old document to detach and the replacement document to finish loading
 before checking receipt rows or reselecting an interrupted upload. A stalled
 reload fails within the existing browser wait deadline.
+Both the standard stale-element response and ChromeDriver's specific
+detached-node inspector response count as old-document detachment; other
+driver errors still fail the run. The Report journey logs completed checks as
+they happen and caps page-load and script commands at 30 seconds, so a stalled
+command can report its failure before the overall journey deadline.
 
 The runner copies only an explicit allowlist of generated receipts, screenshots,
 failure HTML and browser-error JSON, plus the last 256 KiB of each child log.

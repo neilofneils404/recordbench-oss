@@ -35,18 +35,32 @@ def intake_script():
     return module
 
 
-def test_refresh_waits_for_replacement_document_and_complete_load(intake_script):
-    from selenium.common.exceptions import StaleElementReferenceException
+@pytest.mark.parametrize('detachment', ['stale', 'inspector'])
+def test_refresh_waits_for_replacement_document_and_complete_load(intake_script, detachment):
+    from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
     from selenium.webdriver.support.ui import WebDriverWait
 
     driver = Mock()
     previous = driver.find_element.return_value
-    previous.is_enabled.side_effect = [True, StaleElementReferenceException()]
+    error = (StaleElementReferenceException() if detachment == 'stale' else
+             WebDriverException('Node with given id does not belong to the document'))
+    previous.is_enabled.side_effect = [True, error]
     driver.execute_script.side_effect = ['loading', 'complete']
     intake_script.refresh_page(driver, WebDriverWait(driver, 1, poll_frequency=.001))
     driver.refresh.assert_called_once_with()
     assert previous.is_enabled.call_count == 2
     assert driver.execute_script.call_count == 2
+
+
+def test_refresh_preserves_unexpected_driver_failures(intake_script):
+    from selenium.common.exceptions import WebDriverException
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    driver = Mock()
+    driver.find_element.return_value.is_enabled.side_effect = WebDriverException('Unexpected inspector failure')
+    with pytest.raises(WebDriverException, match='Unexpected inspector failure'):
+        intake_script.refresh_page(driver, WebDriverWait(driver, 1, poll_frequency=.001))
+    driver.execute_script.assert_not_called()
 
 
 @pytest.mark.parametrize('stalled_document', ['old', 'new'])

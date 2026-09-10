@@ -41,6 +41,9 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     checks = []
+    def record_check(message):
+        checks.append(message)
+        print(message, flush=True)
 
     with tempfile.TemporaryDirectory(prefix="recordbench-reports-browser-") as temporary:
         root = Path(temporary)
@@ -69,6 +72,8 @@ def main():
         driver = None
         try:
             driver = webdriver.Chrome(service=Service(str(args.chromedriver)), options=options)
+            driver.set_page_load_timeout(30)
+            driver.set_script_timeout(30)
             driver.implicitly_wait(3)
             wait = WebDriverWait(driver, 20)
             wait.until(lambda _: server.started)
@@ -130,7 +135,7 @@ def main():
             assert "the blue vehicle arrived at noon" in driver.find_element(By.ID, "support-pane").text
             click(".support-save-button")
             wait.until(lambda d: "/notebook" in d.current_url)
-            checks.append("Upload, exact source passage, and save to case notes")
+            record_check("Upload, exact source passage, and save to case notes")
 
             go(prefix + "/reports")
             click(".report-create-card summary")
@@ -158,13 +163,13 @@ def main():
             assert driver.find_elements(By.CSS_SELECTOR, ".report-section-card input[name=heading]")[0].get_attribute("value") == "Human conclusion"
             Select(driver.find_element(By.CSS_SELECTOR, ".report-settings select")).select_by_value("final")
             click(".report-settings form:first-child button")
-            checks.append("Create, edit, reorder by keyboard, and finalize Report")
+            record_check("Create, edit, reorder by keyboard, and finalize Report")
 
             individual_md = download(".report-export-actions a[href$='markdown']", ".md").read_text()
             individual_docx = download(".report-export-actions a[href$='docx']", ".docx").read_bytes()
             click(".report-reading-sources a")
             assert "the blue vehicle arrived at noon" in driver.find_element(By.ID, "support-pane").text
-            checks.append("Individual Markdown/Word download and Report citation opens exact source")
+            record_check("Individual Markdown/Word download and Report citation opens exact source")
 
             source_support_expected = True
             def check_bundle(path):
@@ -190,7 +195,7 @@ def main():
             go(prefix + "/settings")
             bundle = download(f"a[href='{prefix}/export']", ".zip")
             check_bundle(bundle)
-            checks.append("Ordinary complete bundle inventory and reopened Markdown/Word match individual Report")
+            record_check("Ordinary complete bundle inventory and reopened Markdown/Word match individual Report")
             go(prefix + "/reports")
             driver.save_screenshot(str(args.output / "reports-desktop.png"))
             driver.set_window_size(390, 844)
@@ -203,7 +208,7 @@ def main():
             driver.save_screenshot(str(args.output / "reports-mobile.png"))
             # Exercise the same reachable download at a narrow viewport.
             assert download(".report-export-actions a[href$='markdown']", ".md").read_text()
-            checks.append("Mobile Report download")
+            record_check("Mobile Report download")
 
             # A bad saved citation must show recovery and produce no new ZIP.
             original_support = bench._assert_current_report_section_citations
@@ -217,7 +222,7 @@ def main():
             assert "Open the Report" in driver.find_element(By.TAG_NAME, "body").text
             assert set(downloads.glob("*.zip")) == before
             bench._assert_current_report_section_citations = original_support
-            checks.append("Visible source failure with no misleading complete download")
+            record_check("Visible source failure with no misleading complete download")
 
             if args.verify_readiness:
                 driver.set_window_size(1440, 1000)
@@ -236,7 +241,7 @@ def main():
                         wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
                     assert driver.execute_script("return document.documentElement.scrollWidth <= innerWidth + 2")
                     driver.save_screenshot(str(args.output / f"export-ready-{width}.png"))
-                checks.append("Deliberate export check shows its inspection time at desktop and narrow widths without a download or Report edit")
+                record_check("Deliberate export check shows its inspection time at desktop and narrow widths without a download or Report edit")
                 driver.set_window_size(1440, 1000)
 
                 go(prefix + "/setup?view=list")
@@ -269,14 +274,14 @@ def main():
                 source_support_expected = False
                 individual_md = download(".report-export-actions a[href$='markdown']", ".md").read_text()
                 individual_docx = download(".report-export-actions a[href$='docx']", ".docx").read_bytes()
-                checks.append("A newly removed source blocks readiness and the repair link opens the affected Report; deliberate section removal preserves the human conclusion")
+                record_check("A newly removed source blocks readiness and the repair link opens the affected Report; deliberate section removal preserves the human conclusion")
 
                 go(prefix + "/work-product")
                 click(f'a[href="{prefix}/export-readiness"]')
                 assert "Ready to download" in driver.find_element(By.TAG_NAME, "body").text
                 checked_bundle = download(f'a[href="{prefix}/export"]', ".zip")
                 check_bundle(checked_bundle)
-                checks.append("Rechecking after repair passes and the actual download contains the current final Report")
+                record_check("Rechecking after repair passes and the actual download contains the current final Report")
 
                 other = "generated-export-foreign-owner"
                 bench.workspace.upsert_principal("test", other, "Generated foreign owner", other, preferred_principal_id=other)
@@ -285,7 +290,7 @@ def main():
                 go(f"/matters/{foreign.slug}/export-readiness")
                 assert "Foreign preview Report canary" not in driver.find_element(By.TAG_NAME, "body").text
                 assert "Matter not found" in driver.find_element(By.TAG_NAME, "body").text
-                checks.append("A foreign owner's export preview remains inaccessible")
+                record_check("A foreign owner's export preview remains inaccessible")
 
                 # Generated recovery fixture: valid cited work, then an injected
                 # unavailable derived-store condition during ordinary UI closure.
@@ -331,7 +336,7 @@ def main():
                 click("input[name=acknowledge]")
                 click(".close-matter-form button[type=submit]")
                 wait.until(lambda _: bench.workspace.matter_lifecycle(recovery.matter_id).state == "deleted")
-                checks.append("Failed-close readiness retains Report details without unavailable edit links; Close matter recovery opens and deliberate retry completes")
+                record_check("Failed-close readiness retains Report details without unavailable edit links; Close matter recovery opens and deliberate retry completes")
 
             go(prefix + "/close")
             final_bundle = download(f"a[href='{prefix}/export']", ".zip")
@@ -344,7 +349,7 @@ def main():
             assert original.read_bytes() == original_bytes
             with zipfile.ZipFile(io.BytesIO(individual_docx)) as word:
                 assert "Edited conclusion retained" in word.read("word/document.xml").decode()
-            checks.append("Close-offer final bundle, deliberate deletion, retained downloads, unchanged external original")
+            record_check("Close-offer final bundle, deliberate deletion, retained downloads, unchanged external original")
             (args.output / "receipt.json").write_text(json.dumps({
                 "synthetic_only": True, "passed": True, "checks": checks,
             }, indent=2) + "\n")
