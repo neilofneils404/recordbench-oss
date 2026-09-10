@@ -101,6 +101,11 @@ def _app(tmp_path):
 
 
 def _seed_completed_owner_exports(bench, matter, owner_id):
+    # These synthetic jobs are claimed and completed by the fixture itself.
+    if bench.research is not None:
+        bench.research.close()
+    if bench.full_review is not None:
+        bench.full_review.close()
     document, _created = bench.source_store(matter).store_stream(
         "generated-authority-source.txt",
         "text/plain",
@@ -243,6 +248,7 @@ def _seed_cited_research(bench, matter, owner_id):
 
 
 def _seed_empty_research(bench, matter, owner_id, suffix: str):
+    bench.research.close()
     research, _created = bench.workspace.queue_research_job(
         matter.matter_id,
         owner_id,

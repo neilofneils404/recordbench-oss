@@ -108,6 +108,12 @@ stop and join that job's coordinator before queueing it; retain live workers in
 tests that exercise automatic processing. A passing rerun alone does not fix a
 fixture race.
 
+The frozen Review acceptance pack pins test nodes and their complete files,
+including helpers. Changes to those files require reviewed node/file digests
+and an updated aggregate content fingerprint, even when case selection and
+expected outcomes stay the same. Run `tests/test_review_acceptance_pack.py`
+alongside the affected workflow tests when updating these fixtures.
+
 RecordBench OSS is the upstream source for portable product behavior. Work from
 a focused branch or worktree, keep one reviewable concern per change, and merge
 only after its synthetic regression and relevant operator documentation pass.
