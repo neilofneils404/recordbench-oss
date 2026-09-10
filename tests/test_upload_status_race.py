@@ -144,3 +144,60 @@ def test_foreign_status_cannot_reconcile_another_matter(workspace, monkeypatch):
     for slug in (own_other.slug, foreign.slug):
         response = client.get(session['status_url'].replace(matter.slug, slug))
         assert response.status_code == 404
+
+
+@pytest.mark.parametrize('transition', ['none', 'cancelled', 'queued'])
+@pytest.mark.parametrize('inspection', ['valid', 'missing', 'unsafe'])
+def test_slow_inspection_allows_unrelated_work_and_preserves_terminal_commits(
+    workspace, monkeypatch, transition, inspection,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    from case_intelligence.pilot_uploads import UploadProblem
+
+    client, bench, matter, body, receipt, session, item = prepared(workspace)
+    put(client, item, body)
+    store = bench.source_store(matter)
+    record = bench.workspace.upload_session(matter.matter_id, ACTOR, session['upload_session_id'])[1][0]
+    # Finalization persists the source before committing its ledger transition.
+    document = store.finalize_resumable_upload(record.upload_item_id,
+        display_name=record.display_name, relative_path=record.relative_path,
+        content_type=record.media_type, expected_size=record.expected_size)
+    entered = threading.Event()
+    release = threading.Event()
+    original = store.resumable_size
+
+    def slow_inspection(*args, **kwargs):
+        entered.set()
+        assert release.wait(5), 'Synthetic filesystem inspection was not released'
+        if inspection == 'unsafe':
+            raise UploadProblem('Synthetic unsafe staging file', 409)
+        return 0 if inspection == 'missing' else original(*args, **kwargs)
+
+    def unrelated_work_and_transition():
+        other = bench.create_matter('Synthetic unrelated concurrent matter', '', ACTOR)
+        assert bench.workspace.membership(other.matter_id, ACTOR)
+        if transition == 'cancelled':
+            bench.workspace.cancel_upload_session(matter.matter_id, ACTOR, session['upload_session_id'])
+        elif transition == 'queued':
+            bench.workspace.finish_upload_item(matter.matter_id, ACTOR,
+                session['upload_session_id'], record.upload_item_id, document.document_id,
+                queue_ingestion=False, source_version_id=document.version_id)
+
+    monkeypatch.setattr(store, 'resumable_size', slow_inspection)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        status = pool.submit(client.get, session['status_url'])
+        try:
+            assert entered.wait(5), 'Status did not reach generated staging inspection'
+            # This must finish while the filesystem remains blocked.
+            pool.submit(unrelated_work_and_transition).result(timeout=2)
+        finally:
+            release.set()
+        response = status.result(timeout=5)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    expected = transition if transition != 'none' else ('uploaded' if inspection == 'valid' else 'failed')
+    assert result['items'][0]['state'] == expected
+    if transition != 'none':
+        assert result['state'] == ('cancelled' if transition == 'cancelled' else 'complete')
+    assert result['items'][0]['received_size'] == len(body)

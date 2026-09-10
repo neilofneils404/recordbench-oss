@@ -58,13 +58,18 @@ media job remains; actual active work still blocks search and closure.
 
 ## Status during concurrent uploads
 
-Full status and resume reconciliation refresh the session while holding the
-same source lock used for chunk admission, then the workspace lock. A status read
-that began before a chunk, finalization or cancellation reports the current
-ledger state instead of applying its old offset or diagnosing removed staging
-bytes from a terminal item. A competing offset/state commit is reread through
-the existing matter and actor authorization checks; unchanged-ledger errors
-still propagate. Compare-and-set chunk admission remains unchanged.
+Full status and resume reconciliation inspect staging under the same matter's
+source lock used for chunk admission. Filesystem I/O does not hold the global
+workspace lock, so slow staging storage does not block database work in unrelated
+matters. Only an item needing recovery takes the workspace lock to refresh its
+current authorized ledger state and apply the update atomically. A finalization
+or cancellation committed during inspection is preserved, including when the
+inspection reports missing or unsafe staging. Normal scans read the item list
+once rather than querying the whole session for each file.
+
+A competing offset/state commit is reread through the existing matter and actor
+authorization checks; unchanged-ledger errors still propagate. Compare-and-set
+chunk admission remains unchanged.
 
 Bytes saved before an interrupted ledger commit still advance the recorded
 offset. Missing bytes or unsafe staging files still fail an active item and
@@ -74,7 +79,9 @@ change receipt bindings, or derive retry identity from a path or digest.
 The deterministic HTTP regressions in `tests/test_upload_status_race.py` cover
 competing chunk, finalization and cancellation requests, stale compare-and-set
 recovery, unchanged-ledger failures, missing/oversized staging, uncommitted
-bytes, exact source/receipt support and foreign-matter denial. Run them with:
+bytes, exact source/receipt support and foreign-matter denial. Threaded tests
+pause filesystem inspection and require unrelated matter work and terminal
+ledger commits to finish before inspection resumes. Run them with:
 
 ```console
 python -m pytest -q tests/test_upload_status_race.py

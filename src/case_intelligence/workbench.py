@@ -8328,49 +8328,56 @@ def create_workbench_app(
             matter.matter_id, actor_id, session_id
         )
         store = bench.source_store(matter)
-        # Match chunk admission's source -> workspace lock order. Refresh the
-        # session after taking both locks so bytes and terminal states belong to
-        # the same reconciliation window. Read the item list once, avoiding a
-        # full session query for every item in a large folder selection.
-        with store._lock, bench.workspace._lock:
+        # Serialize staging inspection with this matter's chunk writes. Never
+        # hold the process-wide workspace lock while touching the filesystem.
+        with store._lock:
             session, items = bench.workspace.upload_session(
                 matter.matter_id, actor_id, session_id
             )
             for item in items:
                 if item.state not in {"pending", "uploading", "uploaded"}:
                     continue
+                problem: str | None = None
                 try:
                     actual = store.resumable_size(
                         item.upload_item_id, expected_size=item.expected_size
                     )
                 except UploadProblem as exc:
-                    bench.workspace.fail_upload_item(
-                        matter.matter_id, actor_id, session_id,
-                        item.upload_item_id, str(exc),
-                    )
+                    problem = str(exc)
+                if problem is None and actual == item.received_size:
                     continue
-                if actual < item.received_size:
-                    bench.workspace.fail_upload_item(
-                        matter.matter_id, actor_id, session_id,
-                        item.upload_item_id,
-                        "The saved upload is incomplete. Select this source in a new upload collection.",
+                # Terminal ledger transitions can commit during inspection.
+                # Refresh only items needing recovery, and keep that read and
+                # mutation atomic; ordinary scans need no per-item ledger query.
+                with bench.workspace._lock:
+                    item = bench.workspace.upload_item(
+                        matter.matter_id, actor_id, session_id, item.upload_item_id
                     )
-                elif actual > item.received_size:
-                    try:
-                        bench.workspace.set_upload_item_offset(
+                    if item.state not in {"pending", "uploading", "uploaded"}:
+                        continue
+                    if problem is not None or actual < item.received_size:
+                        bench.workspace.fail_upload_item(
                             matter.matter_id, actor_id, session_id,
-                            item.upload_item_id, item.received_size, actual,
+                            item.upload_item_id,
+                            problem if problem is not None else
+                            "The saved upload is incomplete. Select this source in a new upload collection.",
                         )
-                    except WorkspaceProblem:
-                        current = bench.workspace.upload_item(
-                            matter.matter_id, actor_id, session_id, item.upload_item_id
-                        )
-                        if (current.received_size, current.state) == (
-                            item.received_size, item.state
-                        ):
-                            raise
-                        # Another writer won the compare-and-set. Do not retry
-                        # an observation of bytes against a newer ledger state.
+                    elif actual > item.received_size:
+                        try:
+                            bench.workspace.set_upload_item_offset(
+                                matter.matter_id, actor_id, session_id,
+                                item.upload_item_id, item.received_size, actual,
+                            )
+                        except WorkspaceProblem:
+                            current = bench.workspace.upload_item(
+                                matter.matter_id, actor_id, session_id, item.upload_item_id
+                            )
+                            if (current.received_size, current.state) == (
+                                item.received_size, item.state
+                            ):
+                                raise
+                            # Another writer won the compare-and-set. Do not
+                            # retry stale bytes against a newer ledger state.
             return bench.workspace.upload_session(matter.matter_id, actor_id, session_id)
 
     @app.get("/matters/{slug}/close", response_class=HTMLResponse)
