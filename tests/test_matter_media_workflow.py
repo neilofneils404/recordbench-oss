@@ -1757,11 +1757,16 @@ def test_failed_optional_overview_explains_cause_retries_and_independence(tmp_pa
         assert "Synchronized transcript" in review.text
         assert "The red bicycle was logged" in review.text
 
-        with bench.workspace.connection:
-            bench.workspace.connection.execute(
-                "UPDATE workbench_media_summary SET attempts=3 WHERE transcript_id=?",
-                (failed.transcript_id,),
+        # Reach the retry boundary through the same durable transitions as a
+        # reviewer. Direct SQL here races with the live worker connection.
+        for attempt in (2, 3):
+            retry = client.post(
+                f"/matters/{slug}/sources/{token}/summary",
+                follow_redirects=False,
             )
+            assert retry.status_code == 303
+            failed = _wait_for_summary(bench, matter, document, "failed")
+            assert failed.attempts == attempt
         bounded = client.get(f"/matters/{slug}/sources/{token}")
         assert bounded.status_code == 200
         assert "Automatic recovery limit reached" in bounded.text

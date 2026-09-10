@@ -192,6 +192,9 @@ def _seed_completed_owner_exports(bench, matter, owner_id):
 
 
 def _seed_cited_research(bench, matter, owner_id):
+    # This export fixture claims and completes its own job. Join the automatic
+    # worker before queueing so it cannot claim the fixture's job first.
+    bench.research.close()
     document, _created = bench.source_store(matter).store_stream(
         "generated-frozen-source.txt",
         "text/plain",

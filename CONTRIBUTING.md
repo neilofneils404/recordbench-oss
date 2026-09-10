@@ -101,6 +101,13 @@ workflow actions are pinned to reviewed commit SHAs.
 
 ## Development model
 
+Tests that start background workers must respect their job ownership and the
+workspace transaction lock. Prefer public workflow transitions over direct SQL
+to establish retry states. If a fixture manually claims and completes a job,
+stop and join that job's coordinator before queueing it; retain live workers in
+tests that exercise automatic processing. A passing rerun alone does not fix a
+fixture race.
+
 RecordBench OSS is the upstream source for portable product behavior. Work from
 a focused branch or worktree, keep one reviewable concern per change, and merge
 only after its synthetic regression and relevant operator documentation pass.
