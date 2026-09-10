@@ -28,6 +28,7 @@ from .workspace_store import (
     ReviewCriterionVersionRecord,
     ReviewDecisionRecord,
     ReviewRunRecord,
+    SourceCatalogRecord,
 )
 
 DOCX_MEDIA_TYPE = (
@@ -159,6 +160,7 @@ def _validate_review_export_scope(
     version: ReviewCriterionVersionRecord,
     run: ReviewRunRecord,
     decisions: Sequence[ReviewDecisionRecord],
+    *, frozen_text_sources: Sequence[SourceCatalogRecord] | None = None,
 ) -> None:
     if (
         criterion.matter_id != matter.matter_id
@@ -169,6 +171,11 @@ def _validate_review_export_scope(
         or run.criterion_version_id != version.criterion_version_id
     ):
         raise ExportProblem("The source check crossed a matter boundary.")
+    frozen = {}
+    for source in frozen_text_sources or ():
+        if source.matter_id != matter.matter_id or source.document_id in frozen:
+            raise ExportProblem("The frozen text-review source catalog could not be resolved.")
+        frozen[source.document_id] = source
     for item in decisions:
         if item.matter_id != matter.matter_id or item.run_id != run.run_id:
             raise ExportProblem("The source check crossed a matter boundary.")
@@ -190,7 +197,7 @@ def _validate_review_export_scope(
             if (
                 not source_name
                 or not location
-                or not excerpt
+                or (not excerpt and frozen_text_sources is None)
                 or not re.fullmatch(r"[0-9a-f]{40}", support_token)
                 or not re.fullmatch(r"[0-9a-f]{64}", excerpt_digest)
                 or not chunk_id
@@ -202,6 +209,18 @@ def _validate_review_export_scope(
                 raise ExportProblem(
                     "A source-check citation does not have an exact location."
                 )
+            if frozen_text_sources is not None:
+                source = frozen.get(item.document_id)
+                if (source is None or source.source_state != "ready"
+                        or source.version_id != item.source_version_id
+                        or source.display_name != item.source_name
+                        or source.content_basis_digest != item.source_basis_digest
+                        or citation.get("locator_kind") != "text_unit"
+                        or type(citation.get("unit_ordinal")) is not int
+                        or citation["unit_ordinal"] < 1
+                        or not re.fullmatch(r"[0-9a-f]{64}", _plain(citation.get("unit_digest")))
+                        or excerpt or not item.error_message):
+                    raise ExportProblem("A saved text-review location does not match the frozen source catalog.")
             if (
                 _plain(citation.get("matter_id")) != matter.matter_id
                 or _plain(citation.get("document_id")) != item.document_id
@@ -1258,11 +1277,13 @@ def export_full_review(
     format_name: str,
     *,
     exported_at: str | None = None,
+    frozen_text_sources: Sequence[SourceCatalogRecord] | None = None,
 ) -> ExportArtifact:
     """Export a frozen every-source check without portable internal identifiers."""
 
     created = exported_at or _now()
-    _validate_review_export_scope(matter, criterion, version, run, decisions)
+    _validate_review_export_scope(matter, criterion, version, run, decisions,
+        frozen_text_sources=frozen_text_sources)
     stem = safe_file_stem(f"{matter.display_name}-{criterion.title}-source-check")
     if format_name == "csv":
         output = io.StringIO(newline="")

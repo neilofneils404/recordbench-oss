@@ -14315,7 +14315,17 @@ def create_workbench_app(
                         review_run.run_id,
                         administrator_override=administrator_override, _snapshot=snapshot,
                     )
-                    decisions = bench._hydrate_full_text_export_decisions(matter, review_run, decisions)
+                    if frozen_source_catalog is None:
+                        decisions = bench._hydrate_full_text_export_decisions(matter, review_run, decisions)
+                    elif FullTextReviewLedger(bench.workspace).enabled(review_run.run_id):
+                        # Failed-close recovery must not reopen quarantined source state.
+                        # Preserve saved locators and labels without claiming live support.
+                        decisions = tuple(replace(item,
+                            citations=tuple({**value, "excerpt": ""} for value in item.citations),
+                            error_message=" ".join(filter(None, (item.error_message,
+                                "Supporting text is unavailable because sources are quarantined after a failed close. "
+                                "Saved locations remain in this export and the complete full-text ledger."))))
+                            if item.citations else item for item in decisions)
                     for format_name in ("csv", "json"):
                         review_artifact = export_full_review(
                             matter,
@@ -14325,6 +14335,7 @@ def create_workbench_app(
                             decisions,
                             metrics,
                             format_name,
+                            frozen_text_sources=frozen_source_catalog if FullTextReviewLedger(bench.workspace).enabled(review_run.run_id) else None,
                         )
                         add_work_product(
                             kind="source_check",
