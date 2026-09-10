@@ -396,3 +396,75 @@ def test_bundle_ledger_and_source_check_share_concurrent_adjudication_snapshot(w
             if 'source-checks/' in name:
                 assert changed[0].human_note not in archive.read(name).decode()
     assert bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, document.document_id).human_note == changed[0].human_note
+
+
+@pytest.mark.parametrize("cited,corruption", [
+    (False, None), (True, None), (True, "matter_id"),
+    (True, "source_version_id"), (True, "basis"), (True, "unit_ordinal"),
+])
+def test_failed_close_full_text_bundle_never_reopens_quarantined_sources(workspace, monkeypatch, cited, corruption):
+    client, bench, matter = workspace
+    run, documents = completed_text_run(bench, matter,
+        ["The amber bicycle arrived." if cited else "Synthetic unrelated text."])
+    before = bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, documents[0].document_id)
+    assert bool(before.citations) is cited
+    if corruption:
+        with bench.workspace.connection:
+            if corruption == "basis":
+                bench.workspace.connection.execute(
+                    "UPDATE workbench_review_decision SET source_basis_digest=? WHERE run_id=?",
+                    ("f" * 64, run.run_id))
+            else:
+                citations = [dict(value) for value in before.citations]
+                citations[0][corruption] = 0 if corruption == "unit_ordinal" else "synthetic-wrong-identity"
+                bench.workspace.connection.execute(
+                    "UPDATE workbench_review_decision SET citations_json=? WHERE run_id=?",
+                    (json.dumps(citations), run.run_id))
+        before = bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, documents[0].document_id)
+    bench._postgres_projection_configured = True
+    bench.postgres_connection = None
+    bench.postgres_ready = False
+    closed = client.post(f"/matters/{matter.slug}/close", data={
+        "confirmed_name": matter.display_name, "acknowledge": "yes"}, follow_redirects=False)
+    assert closed.status_code == 303
+    lifecycle = bench.workspace.matter_lifecycle(matter.matter_id)
+    assert lifecycle.state == "purge_failed" and lifecycle.error_code == "projection"
+    source_root = bench.storage.matters / matter.matter_id / "sources"
+    quarantine = bench.storage.purging / lifecycle.purge_id
+    assert not source_root.exists() and quarantine.is_dir()
+    assert matter.matter_id not in bench._stores
+    def no_source_open(*args, **kwargs):
+        raise AssertionError("Failed-close bundle reopened quarantined source storage")
+    monkeypatch.setattr(bench, "source_store", no_source_open)
+    readiness = client.get(f"/matters/{matter.slug}/export-readiness", headers={"accept": "application/json"})
+    if corruption:
+        assert readiness.status_code == 200 and readiness.json()["ready"] is False
+        assert client.get(f"/matters/{matter.slug}/export").status_code == 409
+        assert not source_root.exists() and quarantine.is_dir()
+        assert matter.matter_id not in bench._stores
+        assert bench.matter_active_work_counts(matter.matter_id)["exports"] == 0
+        assert not bench.workspace._text_review_export_leases
+        return
+    assert readiness.status_code == 200 and readiness.json()["ready"] is True, readiness.text
+    bundle = client.get(f"/matters/{matter.slug}/export")
+    assert bundle.status_code == 200, bundle.text
+    with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+        ledgers = [name for name in archive.namelist() if name.endswith("full-text-ledger.json")]
+        assert len(ledgers) == 1
+        records = json.loads(archive.read(ledgers[0]))["records"]
+        assert any(row["record_type"] == "range" for row in records)
+        summaries = [name for name in archive.namelist() if name.startswith("source-checks/")
+            and name.endswith(".json") and name not in ledgers]
+        assert len(summaries) == 1
+        decision = json.loads(archive.read(summaries[0]))["decisions"][0]
+        assert decision["rationale"] == before.rationale
+        assert bool(decision["citations"]) is cited
+        if cited:
+            assert decision["citations"][0]["location"] == before.citations[0]["location"]
+            assert decision["citations"][0]["excerpt"] == ""
+            assert "quarantined" in decision["attention_note"]
+    assert bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, documents[0].document_id) == before
+    assert not source_root.exists() and quarantine.is_dir()
+    assert matter.matter_id not in bench._stores
+    assert bench.matter_active_work_counts(matter.matter_id)["exports"] == 0
+    assert not bench.workspace._text_review_export_leases

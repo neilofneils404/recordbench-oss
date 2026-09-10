@@ -99,6 +99,12 @@ matter bundle includes the JSON ledger and retains its existing bundle byte
 limits. Final synthesis consumers should bind a terminal run and revision; an
 active forward cursor is not a completion watermark.
 
+After a failed matter close, export readiness and the final bundle use the
+frozen source catalog without reopening quarantined source storage. Full-text
+ledgers and saved decisions remain exportable; adjacent source-check summaries
+retain recorded locations but leave supporting excerpts empty with an explicit
+quarantine notice. Saved review records are unchanged.
+
 Standalone JSON/CSV downloads acquire the same matter response lease as other
 source-bearing exports. Matter closure and purge wait until the admitted stream
 finishes. A ledger-specific response cleanup closes its read-only SQLite snapshot
