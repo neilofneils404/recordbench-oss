@@ -100,7 +100,9 @@ def test_additional_budget_backup_restore_and_duplicate_submission(chain, tmp_pa
     url = f'/matters/{matter.slug}/research/{job.job_id}/retry'
     assert client.post(url, data={'additional_passes': '2', 'expected_passes': '1'}, follow_redirects=False).status_code == 303
     assert client.post(url, data={'additional_passes': '2', 'expected_passes': '1'}, follow_redirects=False).status_code == 303
-    queued = bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id)
+    queued = bench.workspace.research_jobs(matter.matter_id, matter.owner_id)[0]
+    assert queued.job_id != job.job_id
+    assert bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id) == saved
     assert queued.plan['budget']['effective']['passes'] == 3
     assert queued.result['passes'] == saved.result['passes']
     destination = tmp_path / 'restored.sqlite'
@@ -108,7 +110,7 @@ def test_additional_budget_backup_restore_and_duplicate_submission(chain, tmp_pa
     bench.workspace.connection.backup(connection)
     connection.close()
     restored = WorkspaceStore(destination)
-    recovered = restored.research_job(matter.matter_id, matter.owner_id, job.job_id)
+    recovered = restored.research_job(matter.matter_id, matter.owner_id, queued.job_id)
     assert recovered.result == queued.result and recovered.plan == queued.plan
     assert restored.connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
     original_workspace = bench.workspace
@@ -282,3 +284,75 @@ def test_empty_followup_has_durable_outcome_and_visible_plan_row(chain, monkeypa
     assert exported['hit_count'] == hit_count
     assert exported['selected_passages'] == 0
     assert exported['retrieval_outcome'] == outcome
+
+
+def test_availability_only_change_hides_saved_findings(chain):
+    bench, client, matter, job, _, _ = chain
+    claimed = bench.workspace.claim_research_job('synthetic-worker')
+    saved = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    assert client.post(f'/matters/{matter.slug}/uploads', files=[('files', ('unselected.txt', b'Synthetic additional available source.', 'text/plain'))]).status_code == 200
+    assert all(bench._current_workflow_citation(matter, bench._workflow_citation(value)) is not None for value in saved.result['evidence'])
+    page = client.get(f'/matters/{matter.slug}/research?job={job.job_id}')
+    assert 'Saved findings and search proposals are no longer current' in page.text
+    assert 'AX-104' not in page.text
+
+
+@pytest.mark.parametrize('blocked', ['evidence', 'time'])
+def test_extension_requires_room_for_another_search(chain, blocked):
+    bench, _, matter, job, _, _ = chain
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(passes=1, unique_evidence=1 if blocked == 'evidence' else 72).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, 3)
+    result = bench._process_research_job(claimed, lambda: False)
+    if blocked == 'time':
+        result['search_elapsed_seconds'] = 1080
+    saved = bench._finish_research_job(claimed, result)
+    with pytest.raises(WorkspaceProblem, match='evidence budget is full|search time is already exhausted'):
+        bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id, additional_passes=1, expected_passes=1)
+    assert bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id) == saved
+    assert len(bench.workspace.research_jobs(matter.matter_id, matter.owner_id)) == 1
+
+
+def test_continuation_preserves_each_conversation_result_target(chain):
+    bench, client, matter, job, _, _ = chain
+    conversation = bench.workspace.create_conversation(matter.matter_id, actor_id=matter.owner_id)
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_research_job SET conversation_id=? WHERE job_id=?', (conversation.conversation_id, job.job_id))
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(passes=1).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, 3)
+    original = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    continuation = bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id, additional_passes=2, expected_passes=1)
+    assert continuation.job_id != job.job_id
+    claimed = bench.workspace.claim_research_job('synthetic-continuation')
+    completed = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    messages = bench.workspace.messages(matter.matter_id, conversation.conversation_id)
+    assert [message.payload['research_job_id'] for message in messages] == [original.job_id, completed.job_id]
+    assert bench.workspace.research_job(matter.matter_id, matter.owner_id, original.job_id) == original
+    assert len(original.result['passes']) == 1 and len(completed.result['passes']) == 3
+    assert bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id, additional_passes=2, expected_passes=1) == completed
+    for target in (original, completed):
+        assert client.get(f'/matters/{matter.slug}/research?job={target.job_id}').status_code == 200
+
+
+def test_source_set_membership_only_change_hides_checkpoint(chain):
+    bench, client, matter, job, _, citations = chain
+    source_set = bench.workspace.create_source_set(matter.matter_id, 'Synthetic scope',
+        tuple(value.document_id for value in citations.values()), matter.owner_id)
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_research_job SET source_set_id=? WHERE job_id=?', (source_set.source_set_id, job.job_id))
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(passes=1).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, 3)
+    saved = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    url = f'/matters/{matter.slug}/research?job={job.job_id}'
+    assert 'Continue from checkpoint' in client.get(url).text
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('DELETE FROM workbench_source_set_item WHERE source_set_id=? AND document_id=?', (source_set.source_set_id, citations['third'].document_id))
+    assert bench._current_workflow_citation(matter, bench._workflow_citation(saved.result['evidence'][0])) is not None
+    page = client.get(url)
+    assert 'Saved findings and search proposals are no longer current' in page.text
+    assert 'Continue from checkpoint' not in page.text

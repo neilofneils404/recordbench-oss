@@ -103,3 +103,18 @@ explanations appear beside each search in the details plan and in JSON exports.
 Synthetic regressions assert checkpoint persistence, final persistence, visible
 plan rows, and exports for all three cases. This does not qualify million-chunk
 Prompt-1 ledgers or expand synthesis beyond the slice-13 boundary.
+
+### Review corrections
+
+Details revalidate the saved availability fingerprint, including source-set
+membership, as well as each selected citation. Availability-only changes hide
+saved findings and pending proposals until the checkpoint is revalidated.
+Extensions must leave room for another search within both the evidence and
+elapsed-time limits; rejected requests leave the saved run unchanged.
+Continuing a completed investigation creates a separate run seeded from its
+checkpoint. Each conversation result retains its original details and export
+target. Repeated submissions for a completed parent return the same continuation
+without spending its budget again. Failed or cancelled runs resume in place.
+Synthetic tests cover availability-only and scope-membership changes, exhausted
+extension budgets, both conversation result targets, duplicate submissions, and
+SQLite backup followed by clean restore and continued execution.

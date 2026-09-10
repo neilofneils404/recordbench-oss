@@ -410,7 +410,9 @@ def test_investigation_refreshes_coverage_after_upload_between_live_passes(tmp_p
         notice = EMAIL_COVERAGE_NOTICE if late_kind == "email" else "changed after the search started"
         assert notice in coverage["notice"]
         page = client.get(f"/matters/{slug}/research", params={"job": job_id})
-        assert notice in page.text
+        # The ledger spans an availability change, so details must hide its
+        # findings even though the retained export records partial coverage.
+        assert "Saved findings and search proposals are no longer current" in page.text
         for format_name in ("markdown", "json", "docx"):
             exported = client.get(f"/matters/{slug}/research/{job_id}/export", params={"format": format_name})
             assert exported.status_code == 200

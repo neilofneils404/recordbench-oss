@@ -10094,6 +10094,15 @@ class WorkspaceStore:
                 raise WorkspaceProblem(
                     "This completed research run does not need to be retried."
                 )
+            # Completed results remain immutable targets for conversation links.
+            continuation_key = "continuation-" + job_id
+            if current["state"] == "succeeded" and additional_passes:
+                existing = self.connection.execute(
+                    "SELECT * FROM workbench_research_job WHERE matter_id=? AND actor_id=? AND idempotency_key=?",
+                    (matter_id, actor_id, continuation_key),
+                ).fetchone()
+                if existing is not None:
+                    return self._research_job(existing)
             conversation_id = current["conversation_id"]
             if conversation_id is not None:
                 active_answer = self.connection.execute(
@@ -10129,6 +10138,10 @@ class WorkspaceStore:
                         budget = ReviewBudget(**limits)
                     except ValueError as exc:
                         raise WorkspaceProblem("An investigation can use at most 15 passes and 45 search minutes. Start a new investigation.") from exc
+                    if len(result.get("evidence", [])) >= budget.unique_evidence:
+                        raise WorkspaceProblem("The evidence budget is full. Start a new investigation.")
+                    if float(result.get("search_elapsed_seconds", 0)) >= budget.search_seconds:
+                        raise WorkspaceProblem("The added search time is already exhausted. Choose a larger extension or start a new investigation.")
                     plan["budget"] = budget.metadata()
                     plan.setdefault("extensions", []).append({"additional_passes": additional_passes,
                         "additional_seconds": additional_passes * 180, "requested_at": now})
@@ -10137,12 +10150,23 @@ class WorkspaceStore:
                 result.pop("stop_reason", None)
                 completed = len(result.get("passes", [])) + int(result.get("discarded_passes", 0))
                 total = plan["budget"]["effective"]["passes"] + 2
-                # A completed synthesis is retained in its conversation message;
-                # the resumed run must save a new message after verification.
+                # The continuation synthesizes a new result; completed parent
+                # rows and their conversation message targets remain unchanged.
                 for key in ("summary", "answer", "coverage", "gaps"):
                     result.pop(key, None)
             else:
                 plan, result, completed, total = {}, {}, 0, 0
+            if current["state"] == "succeeded":
+                parent_job_id = job_id
+                job_id = f"research-job-{uuid.uuid4().hex}"
+                plan["continued_from_job_id"] = parent_job_id
+                self.connection.execute(
+                    "INSERT INTO workbench_research_job(job_id,matter_id,actor_id,idempotency_key,"
+                    "question,title,source_set_id,conversation_id,state,stage,message,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,'queued','queued','Investigation continued from checkpoint.',?,?)",
+                    (job_id, matter_id, actor_id, continuation_key, current["question"], current["title"],
+                     current["source_set_id"], conversation_id, now, now),
+                )
             self.connection.execute(
                 "UPDATE workbench_research_job SET state='queued',stage='queued',"
                 "message='Investigation queued from checkpoint.',worker_id=NULL,cancellation_requested=0,"

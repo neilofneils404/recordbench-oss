@@ -9045,6 +9045,10 @@ def create_workbench_app(
         research_stale = False
         if active and active.plan.get("planner_version") == PLANNER_VERSION:
             try:
+                if active.result.get("passes"):
+                    research_stale = active.result.get("retrieval_source_fingerprint") != bench.workspace.source_availability_fingerprint(
+                        matter.matter_id, active.source_set_id
+                    )
                 for value in active.result.get("evidence", []):
                     if bench._current_workflow_citation(matter, bench._workflow_citation(value)) is None:
                         research_stale = True
