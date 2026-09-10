@@ -763,11 +763,18 @@ class MediaCoordinator:
             pass
         return failed
 
+    def _require_job_access(self, job: MediaJobRecord) -> None:
+        try:
+            self.workspace.membership(job.matter_id, job.requested_by)
+        except KeyError as exc:
+            raise MediaProcessorError("Matter access was removed; transcription stopped.") from exc
+
     def _process(self, claimed: MediaJobRecord) -> None:
         job = claimed
         owner = processor_owner(job.media_job_id)
         external_id = job.external_job_id
         try:
+            self._require_job_access(job)
             known_hold = (
                 job.preflight.get("outcome") in {"no_audio", "no_speech", "uncertain", "failed"}
                 and job.preflight.get("continued") is False
@@ -814,6 +821,7 @@ class MediaCoordinator:
                     provenance=transcript.provenance,
                 )
                 return
+            self._require_job_access(job)
             source = store.source_path(job.document_id, verify_digest=True)
             if not external_id:
                 preflight = job.preflight
@@ -860,6 +868,7 @@ class MediaCoordinator:
                 raise MediaProcessorError(
                     "The local transcription service is not ready. Choose Try again shortly."
                 )
+            self._require_job_access(job)
             source = store.source_path(job.document_id)
             store.mark_media_processing(job.document_id, stage="Preparing transcription")
             if not external_id:
@@ -890,6 +899,7 @@ class MediaCoordinator:
                     raise MediaProcessorError(
                         "Transcription cancelled because the matter is closing."
                     )
+                self._require_job_access(job)
                 view = self.processor.job(owner, external_id)
                 status = str(view.get("status") or "")
                 stage_view = view.get("stage")
@@ -936,6 +946,7 @@ class MediaCoordinator:
                         job.media_job_id, stage="Importing transcript", progress=0.98
                     )
                     with store.mutation_guard():
+                        self._require_job_access(job)
                         transcript = self.workspace.import_media_transcript(
                             job.media_job_id,
                             segments=normalized,

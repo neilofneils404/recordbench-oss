@@ -1,0 +1,31 @@
+{% extends "workbench_base.html" %}
+{% block title %}Team groups · {{ product_name }}{% endblock %}
+{% block body_class %}administrator-page people-page{% endblock %}
+{% block content %}
+<main class="administrator-main people-main">
+<section class="page-heading"><p class="eyebrow">Administration</p><h1>Team groups</h1>
+<p>Reusable groups of people managed in RecordBench. These are separate from sign-in provider groups. A group has matter access only when explicitly granted on that matter’s Case team page.</p>
+<p>Adding or removing a person changes their access to every matter granted to that group. Separate direct grants and other groups remain effective.</p></section>
+<section class="administrator-panel"><h2>Create a group</h2>
+<form method="post" action="/admin/groups" class="people-form">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label for="group-name">Group name</label><input id="group-name" name="name" maxlength="100" required>
+<button class="button button-primary" type="submit">Create group</button></form></section>
+{% for group in team_groups %}
+<section class="administrator-panel" aria-labelledby="heading-{{ group.group_id }}">
+<h2 id="heading-{{ group.group_id }}">{{ group.name }}</h2>
+<ul>{% for member in group_members[group.group_id] %}<li>
+<strong>{{ member.display_name }}</strong>{% if member.principal_id not in enabled_principals %} (access disabled){% endif %}
+<form method="post" action="/admin/groups/{{ group.group_id }}/members/{{ member.principal_id }}/remove">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<button class="button button-secondary" type="submit">Remove {{ member.display_name }}</button></form>
+</li>{% else %}<li>No members yet.</li>{% endfor %}</ul>
+<form method="post" action="/admin/groups/{{ group.group_id }}/members" class="people-form">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label for="person-{{ group.group_id }}">Add person to {{ group.name }}</label>
+<select id="person-{{ group.group_id }}" name="principal_id" required>
+{% for person in group_candidates %}<option value="{{ person.principal_id }}">{{ person.display_name }}</option>{% endfor %}</select>
+<button class="button button-secondary" type="submit">Add to {{ group.name }}</button></form>
+</section>{% else %}<p>No reusable groups yet.</p>{% endfor %}
+</main>
+{% endblock %}

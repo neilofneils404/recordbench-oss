@@ -22,6 +22,9 @@ they must not become the only place where product behavior is implemented.
 ## Buildable queue
 
 IDs identify work, not an obligation to execute everything in numeric order.
+[Exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) is the binding execution order:
+slice **06** is next. The briefs remain the implementation specifications;
+the cruise document takes precedence over historical sequencing below.
 
 Implementation PR inventory recorded September 8 (historical status; see
 [the September 9 selection](../SELECTED_ACCEPTANCE_2026-09-09.md) and live PR state):
@@ -77,7 +80,7 @@ does not claim to implement the persistent entity workspace or identity resoluti
 | [17](17-entity-extraction.md) | Extract and reconcile more than title-based names | 16 |
 | [18](18-evidence-backed-relationships.md) | Connect entities, events, and conflicting accounts | 13, 17 |
 
-Recommended starting batch: 00, 01, 07, 10, and 14. These establish known
+Historical starting batch (superseded by the cruise order): 00, 01, 07, 10, and 14. These establish known
 results, reduce install confusion, define exact-search semantics, expose real
 review limits, and stop losing useful context when making Reports. Next finish
 02-05 and 08, then deepen review through 11-13. Entity work follows that review

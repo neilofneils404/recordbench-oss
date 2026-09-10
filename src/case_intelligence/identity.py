@@ -744,6 +744,19 @@ class OidcLoginStart:
     state: str
 
 
+def local_principal_enabled(settings: LocalAccountSettings | None, provider: str, subject: str) -> bool:
+    """Fail closed on missing/disabled local identities, including worker startup."""
+    if provider != LocalAccountSettings.provider_key:
+        return True
+    if settings is None:
+        return False
+    try:
+        account = settings.accounts.get(subject)
+        return account is not None and account.enabled
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 class IdentityService:
     """Owns provider mapping, organization sign-in, opaque sessions, and CSRF."""
 
@@ -814,6 +827,7 @@ class IdentityService:
             raise RuntimeError("Kerberos configuration is only valid in Kerberos mode")
         if self.auth_mode in {"preview", "test"}:
             self._seed_preview_identities()
+        self.store.principal_enabled = self.principal_enabled
 
     def _now(self) -> datetime:
         value = self._clock()
@@ -883,7 +897,11 @@ class IdentityService:
                 result.append(principal)
         return tuple(result)
 
-    def membership_candidates(self) -> tuple[PrincipalRecord, ...]:
+    def principal_enabled(self, provider: str, subject: str) -> bool:
+        """Live local eligibility; provider admission keeps its authentication lifetime."""
+        return local_principal_enabled(self.local_settings, provider, subject)
+
+    def membership_candidates(self, *, include_disabled: bool = False) -> tuple[PrincipalRecord, ...]:
         if self.auth_mode in {"preview", "test"}:
             provider = "preview"
         elif self.auth_mode == "local":
@@ -899,7 +917,7 @@ class IdentityService:
         return tuple(
             principal
             for principal in self.store.active_principals()
-            if principal.provider == provider
+            if principal.provider == provider and (include_disabled or self.principal_enabled(provider, principal.provider_subject))
         )
 
     @staticmethod

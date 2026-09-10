@@ -59,6 +59,7 @@ from .identity import (
     KerberosSettings,
     LocalAccountSettings,
     LocalAuthenticationError,
+    local_principal_enabled,
     OidcAuthenticationError,
     OidcProviderClient,
     OidcSettings,
@@ -787,6 +788,7 @@ class CaseIntelligenceWorkbench:
         malware_scanner: MalwareScanner | None = None,
         malware_scan_mode: str | None = None,
         exact_search_backend: ExactSearchBackend | None = None,
+        principal_enabled: Callable[[str, str], bool] | None = None,
     ) -> None:
         self.runtime_dir = Path(runtime_dir).absolute()
         self.exact_search_backend = exact_search_backend or ReferenceExactSearchBackend()
@@ -813,7 +815,7 @@ class CaseIntelligenceWorkbench:
                 policy=self.storage_policy,
                 require_marker=True,
             )
-        self.workspace = WorkspaceStore(self.runtime_dir / "workbench.sqlite")
+        self.workspace = WorkspaceStore(self.runtime_dir / "workbench.sqlite", principal_enabled=principal_enabled)
         self.workspace.recover_interrupted_matter_purges()
         self.workspace.recover_running_analysis_runs()
         self._stores: dict[str, PilotStore] = {}
@@ -5465,6 +5467,11 @@ def create_workbench_app(
             answer_workers = int(os.getenv("CASE_INTELLIGENCE_ANSWER_WORKERS", "2"))
         except ValueError:
             answer_workers = 2
+    # Recovery coordinators start in the workbench constructor. Install the
+    # live account boundary before they can inspect any restored local jobs.
+    selected_auth_mode = (auth_mode or os.getenv("CASE_INTELLIGENCE_AUTH_MODE", "preview")).strip().lower()
+    if selected_auth_mode == "local":
+        local_settings = local_settings or LocalAccountSettings.from_env()
     bench = CaseIntelligenceWorkbench(
         runtime_dir or DEFAULT_RUNTIME,
         generator=generator,
@@ -5482,6 +5489,7 @@ def create_workbench_app(
         storage_policy=storage_policy,
         malware_scanner=malware_scanner,
         malware_scan_mode=malware_scan_mode,
+        principal_enabled=lambda provider, subject: local_principal_enabled(local_settings, provider, subject),
     )
 
     recording_decision_limit = 2
@@ -7479,6 +7487,12 @@ def create_workbench_app(
         app, identity=identity, bench=bench, templates=templates,
         auth_context=auth_context, base_context=base_context, audit=audit,
     )
+    from .team_groups import register_team_group_routes
+    register_team_group_routes(
+        app, identity=identity, bench=bench, templates=templates,
+        auth_context=auth_context, base_context=base_context,
+        require_csrf=require_csrf, authorized_matter=authorized_matter, audit=audit,
+    )
     from .onboarding import register_onboarding_routes
     register_onboarding_routes(
         app, identity=identity, bench=bench, templates=templates,
@@ -7543,7 +7557,7 @@ def create_workbench_app(
                 administrator_override=True,
             )
         )
-        principals = identity.membership_candidates()
+        principals = identity.membership_candidates(include_disabled=True)
         storage_capacity = bench.storage_capacity_projection(include_managed_usage=True)
         abandoned_uploads = bench.workspace.abandoned_upload_sessions(
             maximum_age_hours=24
@@ -8255,6 +8269,22 @@ def create_workbench_app(
             values.update(changes)
             return _query_url(f"/matters/{matter.slug}/setup", **values)
 
+        with bench.workspace._lock:
+            team_members = bench.workspace.members(matter.matter_id)
+            team_reasons = {
+                member.principal_id: bench.workspace.access_reasons(matter.matter_id, member.principal_id)
+                for member in team_members
+            }
+            matter_groups = bench.workspace.matter_group_grants(matter.matter_id)
+            available_groups = bench.workspace.team_groups()
+            inactive_direct_grants = tuple(
+                member for member in bench.workspace.direct_members(matter.matter_id)
+                if member.principal_id not in team_reasons
+            )
+        direct_principals = {
+            principal_id for principal_id, reasons in team_reasons.items()
+            if "Owner" in reasons or "Direct member" in reasons
+        }
         return templates.TemplateResponse(
             request=request,
             name="workbench_setup.html",
@@ -8311,12 +8341,16 @@ def create_workbench_app(
                 "plan_items_omitted": max(len(plan_items) - 200, 0),
                 "notice": notice,
                 "error": error,
-                "members": bench.workspace.members(matter.matter_id),
+                "members": team_members,
+                "access_reasons": team_reasons,
+                "inactive_direct_grants": inactive_direct_grants,
+                "matter_groups": matter_groups,
+                "available_groups": available_groups,
                 "available_principals": tuple(
                     principal
                     for principal in identity.membership_candidates()
                     if principal.principal_id
-                    not in {member.principal_id for member in bench.workspace.members(matter.matter_id)}
+                    not in direct_principals
                 ),
             },
         )
@@ -8633,7 +8667,7 @@ def create_workbench_app(
         )
         context = auth_context(request)
         try:
-            target = bench.workspace.membership(matter.matter_id, principal_id)
+            target = bench.workspace.get_principal(principal_id)
             bench.workspace.revoke_member(
                 matter.matter_id,
                 principal_id,
@@ -8661,12 +8695,12 @@ def create_workbench_app(
             matter=matter,
             object_type="principal",
             object_id=principal_id,
-            details={"role": target.role},
+            details={"role": "member"},
         )
         return RedirectResponse(
             _query_url(
                 f"/matters/{slug}/setup",
-                notice=f"{target.display_name} removed from the case team",
+                notice=f"Direct grant removed for {target.display_name}; any group grants still apply",
             ),
             status_code=303,
         )

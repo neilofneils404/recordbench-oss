@@ -97,7 +97,7 @@ def test_setup_preserves_explicit_destination_and_refuses_unjoined_matter(tmp_pa
         }, follow_redirects=False)
         assert response.headers["location"] == "/admin"
         workspace = app.state.workbench.workspace
-        other = workspace.upsert_principal("local", "other.owner", "Other owner", "other.owner")
+        other = workspace.upsert_principal("test", "other.owner", "Other owner", "other.owner")
         foreign = workspace.create_matter("Separate synthetic matter", "", other.principal_id)
         response = admin.get("/admin/setup", params={"matter": foreign.slug})
         assert response.status_code == 404

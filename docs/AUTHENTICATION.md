@@ -69,3 +69,8 @@ boundary and never prints its contents.
 
 Never expose the app or Kerberos proxy directly. Only the HTTPS gateway should
 publish a host port.
+
+## Application team groups
+
+[Reusable team groups](TEAM_GROUPS.md) documents explicit matter grants, live
+revocation, provider boundaries, migration 0031 and backup/rollback constraints.

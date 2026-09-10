@@ -89,7 +89,7 @@ class ReportCompilationJobs:
     @staticmethod
     def _authorized(connection, matter_id, actor_id) -> bool:
         return connection.execute(
-            "SELECT 1 FROM workbench_matter_membership m JOIN workbench_principal p "
+            "SELECT 1 FROM workbench_effective_membership m JOIN workbench_principal p "
             "ON p.principal_id=m.principal_id JOIN workbench_matter_lifecycle l "
             "ON l.matter_id=m.matter_id WHERE m.matter_id=? AND m.principal_id=? "
             "AND m.state='active' AND p.active=1 AND l.state='active'", (matter_id, actor_id)
@@ -166,7 +166,7 @@ class ReportCompilationJobs:
     def _recover(self, connection, now):
         expired = connection.execute("UPDATE workbench_report_compilation_job SET state=CASE WHEN cancellation_requested=1 THEN 'cancelled' WHEN attempts>=? THEN 'failed' ELSE 'queued' END, message=CASE WHEN cancellation_requested=1 THEN 'Compilation cancelled.' WHEN attempts>=? THEN 'Compilation stopped after repeated worker interruptions. Retry when the service is ready.' ELSE 'Interrupted compilation queued for retry.' END,worker_id=NULL,lease_token=NULL,lease_expires_at=NULL,input_fingerprint='',updated_at=?,finished_at=CASE WHEN cancellation_requested=1 OR attempts>=? THEN ? ELSE NULL END WHERE state='running' AND lease_expires_at<=? RETURNING job_id,matter_id,actor_id,state",
                            (self.policy.maximum_attempts, self.policy.maximum_attempts, now, self.policy.maximum_attempts, now, now)).fetchall()
-        revoked = connection.execute("UPDATE workbench_report_compilation_job SET state='failed',message='Matter access is no longer active.',lease_token=NULL,worker_id=NULL,lease_expires_at=NULL,updated_at=?,finished_at=? WHERE state IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM workbench_matter_membership m JOIN workbench_principal p ON p.principal_id=m.principal_id JOIN workbench_matter_lifecycle l ON l.matter_id=m.matter_id WHERE m.matter_id=workbench_report_compilation_job.matter_id AND m.principal_id=workbench_report_compilation_job.actor_id AND m.state='active' AND p.active=1 AND l.state='active') RETURNING job_id,matter_id,actor_id,state", (now, now)).fetchall()
+        revoked = connection.execute("UPDATE workbench_report_compilation_job SET state='failed',message='Matter access is no longer active.',lease_token=NULL,worker_id=NULL,lease_expires_at=NULL,updated_at=?,finished_at=? WHERE state IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM workbench_effective_membership m JOIN workbench_principal p ON p.principal_id=m.principal_id JOIN workbench_matter_lifecycle l ON l.matter_id=m.matter_id WHERE m.matter_id=workbench_report_compilation_job.matter_id AND m.principal_id=workbench_report_compilation_job.actor_id AND m.state='active' AND p.active=1 AND l.state='active') RETURNING job_id,matter_id,actor_id,state", (now, now)).fetchall()
         # RETURNING captures only transitions made by this recovery transaction.
         # Terminal rows cannot be selected again on a later scan. A job that was
         # requeued and then lost access contributes only its terminal transition.
@@ -210,6 +210,8 @@ class ReportCompilationJobs:
         # mode=rw avoids creating a replacement database after removal.
         with closing(sqlite3.connect(self.workspace.path.resolve().as_uri() + "?mode=rw", uri=True,
                                      timeout=min(5.0, self.policy.lease_seconds / 3))) as connection, connection:
+            connection.create_function("recordbench_principal_enabled", 2,
+                                       lambda provider, subject: int(self.workspace.principal_enabled(provider, subject)))
             connection.row_factory = sqlite3.Row
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -226,6 +228,8 @@ class ReportCompilationJobs:
         """Read the durable lease independently while a WAL writer is busy."""
         with closing(sqlite3.connect(self.workspace.path.resolve().as_uri() + "?mode=ro", uri=True,
                                      timeout=min(0.25, self.policy.lease_seconds / 12))) as connection:
+            connection.create_function("recordbench_principal_enabled", 2,
+                                       lambda provider, subject: int(self.workspace.principal_enabled(provider, subject)))
             connection.row_factory = sqlite3.Row
             try:
                 row = self._owned(connection, job)

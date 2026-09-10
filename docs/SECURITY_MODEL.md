@@ -131,3 +131,8 @@ capacity. Attempt fences and streamed source/citation revalidation protect late
 worker saves. Constant-size counters expose unresolved extraction and zero-unit
 gaps without polling the full range ledger. Legacy unbudgeted runs remain readable
 but cannot resume; malformed locators remain in exports and cannot become links.
+
+## Application team groups
+
+[Reusable team groups](TEAM_GROUPS.md) documents explicit matter grants, live
+revocation, provider boundaries, migration 0031 and backup/rollback constraints.

@@ -290,7 +290,7 @@
             <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Try again</button></form>
             {% endif %}
             {% if source.removable %}
-            <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/remove"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="remove-action" type="submit">Remove</button></form>
+            <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/remove"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="remove-action" type="submit">Remove direct grant</button></form>
             {% endif %}
           </span>
         </div>
@@ -316,20 +316,42 @@
         </div>
         <span>{{ members|length }} member{% if members|length != 1 %}s{% endif %}</span>
       </div>
+      <p>Access comes from ownership, a direct grant, or a named group. Removing one grant preserves any other valid grants.</p>
+      {% if is_administrator %}<p><a href="/admin/groups">Manage reusable team groups</a></p>{% endif %}
+      <h3>Group grants</h3>
+      {% for group in matter_groups %}<div><strong>{{ group.name }}</strong>
+      {% if can_manage_members %}<form method="post" action="/matters/{{ matter.slug }}/groups/{{ group.group_id }}/remove">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="button button-secondary" type="submit">Remove {{ group.name }} grant</button></form>{% endif %}</div>
+      {% else %}<p>No group grants.</p>{% endfor %}
+      {% if can_manage_members and available_groups %}
+      <form method="post" action="/matters/{{ matter.slug }}/groups" class="add-member-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="matter-group">Grant a group access to this matter</label><select id="matter-group" name="group_id" required>
+      {% for group in available_groups %}<option value="{{ group.group_id }}">{{ group.name }}</option>{% endfor %}</select>
+      <button class="button button-secondary" type="submit">Grant group access</button></form>{% endif %}
       <div class="case-team-list">
         {% for member in members %}
         <div class="case-team-member">
           <span class="identity-avatar" aria-hidden="true">{{ member.display_name.split()[0][0] }}{{ member.display_name.split()[-1][0] }}</span>
-          <span><strong>{{ member.display_name }}</strong><small>{{ 'Matter owner' if member.role == 'owner' else 'Case team member' }}</small></span>
-          {% if can_manage_members and member.role != 'owner' %}
+          <span><strong>{{ member.display_name }}</strong><small>{{ access_reasons[member.principal_id]|join('; ') }}</small></span>
+          {% if can_manage_members and 'Direct member' in access_reasons[member.principal_id] %}
           <form method="post" action="/matters/{{ matter.slug }}/members/{{ member.principal_id }}/remove">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button class="remove-action" type="submit">Remove</button>
+            <button class="remove-action" type="submit">Remove direct grant</button>
           </form>
           {% endif %}
         </div>
         {% endfor %}
       </div>
+      {% if can_manage_members and inactive_direct_grants %}
+      <h3>Retained grants without active access</h3>
+      <p>These people cannot currently access the matter. Remove a direct grant here to prevent it restoring access if the account is enabled again.</p>
+      {% for member in inactive_direct_grants %}<div class="case-team-member">
+      <span><strong>{{ member.display_name }}</strong><small>{{ 'Owner' if member.role == 'owner' else 'Direct member' }} · access disabled</small></span>
+      {% if member.role != 'owner' %}<form method="post" action="/matters/{{ matter.slug }}/members/{{ member.principal_id }}/remove">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="remove-action" type="submit">Remove retained direct grant</button></form>{% endif %}
+      </div>{% endfor %}{% endif %}
       {% if can_manage_members and available_principals %}
       <form class="add-member-form" method="post" action="/matters/{{ matter.slug }}/members">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

@@ -228,3 +228,8 @@ session invalidation before restoring the v1 file, without database initializati
 migration. Preserve the original recovery artifact; require fresh sign-in and
 administrator recovery after restart. Never overwrite the invalidated session database with
 an earlier snapshot before opening access.
+
+## Application team groups
+
+[Reusable team groups](TEAM_GROUPS.md) documents explicit matter grants, live
+revocation, provider boundaries, migration 0031 and backup/rollback constraints.

@@ -985,6 +985,7 @@ class WorkspaceStore:
         path: Path,
         *,
         clock: Callable[[], datetime] | None = None,
+        principal_enabled: Callable[[str, str], bool] | None = None,
     ) -> None:
         self.path = Path(path)
         if self.path.exists() and (self.path.is_symlink() or not self.path.is_file()):
@@ -1003,6 +1004,11 @@ class WorkspaceStore:
             self.path,
             check_same_thread=False,
             isolation_level="IMMEDIATE",
+        )
+        self.principal_enabled = principal_enabled or (lambda provider, subject: provider != "local")
+        self.connection.create_function(
+            "recordbench_principal_enabled", 2,
+            lambda provider, subject: int(self.principal_enabled(provider, subject)),
         )
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA journal_mode = WAL")
@@ -1039,6 +1045,7 @@ class WorkspaceStore:
             "migrations/sqlite/0028_full_text_review.sql",
             "migrations/sqlite/0029_report_compilation_basis.sql",
             "migrations/sqlite/0030_full_text_review_limits.sql",
+            "migrations/sqlite/0031_team_groups.sql",
         ):
             migration = resources.files("case_intelligence").joinpath(name).read_text(encoding="utf-8")
             self.connection.executescript(migration)
@@ -1894,12 +1901,143 @@ class WorkspaceStore:
             ).rowcount
         return row["next_path"] if changed == 1 else None
 
+    def team_groups(self) -> tuple[dict, ...]:
+        with self._lock:
+            return tuple(dict(row) for row in self.connection.execute(
+                "SELECT g.*,count(m.principal_id) AS member_count "
+                "FROM workbench_team_group g LEFT JOIN workbench_team_group_member m "
+                "ON m.group_id=g.group_id GROUP BY g.group_id ORDER BY g.name,g.group_id"
+            ).fetchall())
+
+    def team_group_members(self, group_id: str) -> tuple[PrincipalRecord, ...]:
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT p.* FROM workbench_principal p JOIN workbench_team_group_member m "
+                "ON m.principal_id=p.principal_id WHERE m.group_id=? ORDER BY p.display_name,p.principal_id",
+                (group_id,),
+            ).fetchall()
+        return tuple(self._principal(row) for row in rows)
+
+    def matter_group_grants(self, matter_id: str) -> tuple[dict, ...]:
+        with self._lock:
+            return tuple(dict(row) for row in self.connection.execute(
+                "SELECT g.group_id,g.name,mg.granted_by,mg.created_at "
+                "FROM workbench_matter_group_grant mg JOIN workbench_team_group g "
+                "ON g.group_id=mg.group_id WHERE mg.matter_id=? ORDER BY g.name,g.group_id",
+                (matter_id,),
+            ).fetchall())
+
+    def access_reasons(self, matter_id: str, principal_id: str) -> tuple[str, ...]:
+        with self._lock:
+            self.membership(matter_id, principal_id)
+            direct = self.connection.execute(
+                "SELECT role FROM workbench_matter_membership WHERE matter_id=? "
+                "AND principal_id=? AND state='active'", (matter_id, principal_id),
+            ).fetchone()
+            groups = self.connection.execute(
+                "SELECT g.name FROM workbench_team_group g "
+                "JOIN workbench_matter_group_grant mg ON mg.group_id=g.group_id "
+                "JOIN workbench_team_group_member gm ON gm.group_id=g.group_id "
+                "WHERE mg.matter_id=? AND gm.principal_id=? ORDER BY g.name,g.group_id",
+                (matter_id, principal_id),
+            ).fetchall()
+            return (("Owner" if direct["role"] == "owner" else "Direct member",) if direct else ()) + tuple(
+                f"Group: {row['name']}" for row in groups
+            )
+
+    def _team_actor(self, actor_id: str, administrator_override: bool) -> None:
+        # The authenticated service supplies administrator authority, just as
+        # for direct grants. A system role itself grants no matter membership.
+        actor = self.get_principal(actor_id)
+        if not (administrator_override and actor.active and
+                self.principal_enabled(actor.provider, actor.provider_subject)):
+            raise WorkspaceProblem("Administrator access is required to manage reusable groups.")
+
+    def create_team_group(self, name: str, actor_id: str, *, administrator_override: bool = False,
+                          session_id: str | None = None, request_id: str = "team-group") -> str:
+        name = self._safe_text(name, label="Group name", maximum=100)
+        group_id = f"group-{uuid.uuid4().hex}"
+        with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            self._team_actor(actor_id, administrator_override)
+            try:
+                self.connection.execute(
+                    "INSERT INTO workbench_team_group VALUES (?,?,?,?)",
+                    (group_id, name, actor_id, self._now()),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise WorkspaceProblem("Choose a unique group name.") from exc
+            self._append_audit_event_locked(
+                actor_principal_id=actor_id, session_id=session_id, matter_id=None,
+                request_id=request_id, action="team_group.create", outcome="success",
+                object_type="team_group", object_id=group_id,
+            )
+        return group_id
+
+    def set_team_group_member(self, group_id: str, principal_id: str, actor_id: str, *,
+                              present: bool, administrator_override: bool = False,
+                              session_id: str | None = None, request_id: str = "team-group") -> None:
+        with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            self._team_actor(actor_id, administrator_override)
+            if self.connection.execute("SELECT 1 FROM workbench_team_group WHERE group_id=?", (group_id,)).fetchone() is None:
+                raise KeyError(group_id)
+            target = self.get_principal(principal_id)
+            if present:
+                if not target.active or not self.principal_enabled(target.provider, target.provider_subject):
+                    raise WorkspaceProblem("That identity is not active.")
+                changed = self.connection.execute(
+                    "INSERT OR IGNORE INTO workbench_team_group_member VALUES (?,?,?,?)",
+                    (group_id, principal_id, actor_id, self._now()),
+                ).rowcount
+            else:
+                changed = self.connection.execute(
+                    "DELETE FROM workbench_team_group_member WHERE group_id=? AND principal_id=?",
+                    (group_id, principal_id),
+                ).rowcount
+            if changed:
+                self._append_audit_event_locked(
+                    actor_principal_id=actor_id, session_id=session_id, matter_id=None,
+                    request_id=request_id, action="team_group.member_add" if present else "team_group.member_remove",
+                    outcome="success", object_type="team_group", object_id=group_id,
+                    details={"principal_id": principal_id},
+                )
+
+    def set_matter_group_grant(self, matter_id: str, group_id: str, actor_id: str, *,
+                               present: bool, administrator_override: bool = False,
+                               session_id: str | None = None, request_id: str = "team-group") -> None:
+        with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            if administrator_override:
+                self._team_actor(actor_id, True)
+            elif self.membership(matter_id, actor_id).role != "owner":
+                raise WorkspaceProblem("Only a matter owner can change the case team.")
+            if self.connection.execute("SELECT 1 FROM workbench_matter_lifecycle WHERE matter_id=? AND state='active'", (matter_id,)).fetchone() is None:
+                raise KeyError(matter_id)
+            if self.connection.execute("SELECT 1 FROM workbench_team_group WHERE group_id=?", (group_id,)).fetchone() is None:
+                raise KeyError(group_id)
+            if present:
+                changed = self.connection.execute(
+                    "INSERT OR IGNORE INTO workbench_matter_group_grant VALUES (?,?,?,?)",
+                    (matter_id, group_id, actor_id, self._now()),
+                ).rowcount
+            else:
+                changed = self.connection.execute(
+                    "DELETE FROM workbench_matter_group_grant WHERE matter_id=? AND group_id=?", (matter_id, group_id),
+                ).rowcount
+            if changed:
+                self._append_audit_event_locked(
+                    actor_principal_id=actor_id, session_id=session_id, matter_id=matter_id,
+                    request_id=request_id, action="membership.group_add" if present else "membership.group_remove",
+                    outcome="success", object_type="team_group", object_id=group_id,
+                )
+
     def membership(self, matter_id: str, principal_id: str) -> MatterMembershipRecord:
         with self._lock:
             row = self.connection.execute(
                 "SELECT mm.matter_id,mm.principal_id,mm.role,mm.state,mm.granted_by,"
                 "mm.created_at,mm.updated_at,mm.revoked_at,p.display_name,p.login_name "
-                "FROM workbench_matter_membership mm JOIN workbench_principal p "
+                "FROM workbench_effective_membership mm JOIN workbench_principal p "
                 "ON p.principal_id=mm.principal_id "
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=mm.matter_id "
                 "WHERE mm.matter_id=? AND mm.principal_id=? AND mm.state='active' "
@@ -1935,7 +2073,8 @@ class WorkspaceStore:
                         "JOIN workbench_principal principal "
                         "ON principal.principal_id=matter.owner_id "
                         "WHERE matter.matter_id=? AND matter.owner_id=? "
-                        "AND principal.active=1 AND lifecycle.state='purge_failed'",
+                        "AND principal.active=1 AND recordbench_principal_enabled(principal.provider,principal.provider_subject)=1 "
+                        "AND lifecycle.state='purge_failed'",
                         (matter_id, actor),
                     ).fetchone()
                 if row is None:
@@ -1943,7 +2082,7 @@ class WorkspaceStore:
                 return
         actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
         principal = self.get_principal(actor)
-        if not principal.active:
+        if not principal.active or not self.principal_enabled(principal.provider, principal.provider_subject):
             raise KeyError(matter_id)
         with self._lock:
             row = self.connection.execute(
@@ -1991,13 +2130,25 @@ class WorkspaceStore:
             rows = self.connection.execute(
                 "SELECT mm.matter_id,mm.principal_id,mm.role,mm.state,mm.granted_by,"
                 "mm.created_at,mm.updated_at,mm.revoked_at,p.display_name,p.login_name "
-                "FROM workbench_matter_membership mm JOIN workbench_principal p "
+                "FROM workbench_effective_membership mm JOIN workbench_principal p "
                 "ON p.principal_id=mm.principal_id "
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=mm.matter_id "
                 "WHERE mm.matter_id=? AND mm.state='active' AND p.active=1 "
                 "AND ml.state='active' "
                 "ORDER BY CASE mm.role WHEN 'owner' THEN 0 ELSE 1 END,p.display_name,p.principal_id",
                 (matter_id,),
+            ).fetchall()
+        return tuple(self._membership(row) for row in rows)
+
+    def direct_members(self, matter_id: str) -> tuple[MatterMembershipRecord, ...]:
+        """Retained direct grants, including disabled people, for grant management."""
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT mm.matter_id,mm.principal_id,mm.role,mm.state,mm.granted_by,"
+                "mm.created_at,mm.updated_at,mm.revoked_at,p.display_name,p.login_name "
+                "FROM workbench_matter_membership mm JOIN workbench_principal p "
+                "ON p.principal_id=mm.principal_id WHERE mm.matter_id=? AND mm.state='active' "
+                "ORDER BY p.display_name,p.principal_id", (matter_id,),
             ).fetchall()
         return tuple(self._membership(row) for row in rows)
 
@@ -2009,19 +2160,20 @@ class WorkspaceStore:
         *,
         administrator_override: bool = False,
     ) -> MatterMembershipRecord:
-        if administrator_override:
-            grantor_principal = self.get_principal(granted_by)
-            if not grantor_principal.active:
-                raise WorkspaceProblem("The administrator identity is not active.")
-        else:
-            grantor = self.membership(matter_id, granted_by)
-            if grantor.role != "owner":
-                raise WorkspaceProblem("Only a matter owner can change the case team.")
-        target = self.get_principal(target_principal_id)
-        if not target.active:
-            raise WorkspaceProblem("That identity is not active.")
-        now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            if administrator_override:
+                grantor_principal = self.get_principal(granted_by)
+                if not grantor_principal.active:
+                    raise WorkspaceProblem("The administrator identity is not active.")
+            else:
+                grantor = self.membership(matter_id, granted_by)
+                if grantor.role != "owner":
+                    raise WorkspaceProblem("Only a matter owner can change the case team.")
+            target = self.get_principal(target_principal_id)
+            if not target.active or not self.principal_enabled(target.provider, target.provider_subject):
+                raise WorkspaceProblem("That identity is not active.")
+            now = self._now()
             existing = self.connection.execute(
                 "SELECT role FROM workbench_matter_membership "
                 "WHERE matter_id=? AND principal_id=?",
@@ -2038,7 +2190,7 @@ class WorkspaceStore:
                 "updated_at=excluded.updated_at,revoked_at=NULL",
                 (matter_id, target_principal_id, granted_by, now, now),
             )
-        return self.membership(matter_id, target_principal_id)
+            return self.membership(matter_id, target_principal_id)
 
     def revoke_member(
         self,
@@ -2048,26 +2200,32 @@ class WorkspaceStore:
         *,
         administrator_override: bool = False,
     ) -> None:
-        if administrator_override:
-            grantor_principal = self.get_principal(revoked_by)
-            if not grantor_principal.active:
-                raise WorkspaceProblem("The administrator identity is not active.")
-        else:
-            grantor = self.membership(matter_id, revoked_by)
-            if grantor.role != "owner":
-                raise WorkspaceProblem("Only a matter owner can change the case team.")
-        target = self.membership(matter_id, target_principal_id)
-        if target.role == "owner":
-            raise WorkspaceProblem("The matter owner cannot be removed.")
-        now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            if administrator_override:
+                grantor_principal = self.get_principal(revoked_by)
+                if not grantor_principal.active:
+                    raise WorkspaceProblem("The administrator identity is not active.")
+            else:
+                grantor = self.membership(matter_id, revoked_by)
+                if grantor.role != "owner":
+                    raise WorkspaceProblem("Only a matter owner can change the case team.")
+            target = self.connection.execute(
+                "SELECT role FROM workbench_matter_membership WHERE matter_id=? AND principal_id=? AND state='active'",
+                (matter_id, target_principal_id),
+            ).fetchone()
+            if target is None:
+                raise KeyError(target_principal_id)
+            if target["role"] == "owner":
+                raise WorkspaceProblem("The matter owner cannot be removed.")
+            now = self._now()
             changed = self.connection.execute(
                 "UPDATE workbench_matter_membership SET state='revoked',updated_at=?,revoked_at=? "
                 "WHERE matter_id=? AND principal_id=? AND state='active' AND role='member'",
                 (now, now, matter_id, target_principal_id),
             ).rowcount
-        if changed != 1:
-            raise KeyError(target_principal_id)
+            if changed != 1:
+                raise KeyError(target_principal_id)
 
     @staticmethod
     def _audit_details(details: Mapping[str, object] | None) -> str:
@@ -2088,6 +2246,9 @@ class WorkspaceStore:
             elif key == "type":
                 if value not in {"notebook", "finding", "media_clip", "answer", "manual"}:
                     raise ValueError("invalid audit material type")
+            elif key == "principal_id":
+                if not isinstance(value, str) or not _PRINCIPAL_ID.fullmatch(value):
+                    raise ValueError("invalid audit principal")
             elif key == "role":
                 if value not in {"owner", "member", "administrator"}:
                     raise ValueError("invalid audit role")
@@ -2304,7 +2465,7 @@ class WorkspaceStore:
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=m.matter_id "
                 "JOIN workbench_principal p ON p.principal_id=? AND p.active=1 "
                 "WHERE m.slug=? AND ml.state='active' AND (?=1 OR (m.owner_id=? "
-                "AND EXISTS (SELECT 1 FROM workbench_matter_membership mm "
+                "AND EXISTS (SELECT 1 FROM workbench_effective_membership mm "
                 "WHERE mm.matter_id=m.matter_id AND mm.principal_id=p.principal_id "
                 "AND mm.role='owner' AND mm.state='active')))",
                 (actor_id, slug, int(administrator_override), actor_id),
@@ -2338,7 +2499,7 @@ class WorkspaceStore:
             rows = self.connection.execute(
                 "SELECT m.matter_id,m.slug,m.display_name,m.descriptor,m.owner_id,"
                 "m.created_at,m.updated_at FROM workbench_matter m "
-                "JOIN workbench_matter_membership mm ON mm.matter_id=m.matter_id "
+                "JOIN workbench_effective_membership mm ON mm.matter_id=m.matter_id "
                 "JOIN workbench_principal p ON p.principal_id=mm.principal_id "
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=m.matter_id "
                 "WHERE mm.principal_id=? AND mm.state='active' AND p.active=1 "
@@ -2391,7 +2552,7 @@ class WorkspaceStore:
             row = self.connection.execute(
                 "SELECT m.matter_id,m.slug,m.display_name,m.descriptor,m.owner_id,"
                 "m.created_at,m.updated_at FROM workbench_matter m "
-                "JOIN workbench_matter_membership mm ON mm.matter_id=m.matter_id "
+                "JOIN workbench_effective_membership mm ON mm.matter_id=m.matter_id "
                 "JOIN workbench_principal p ON p.principal_id=mm.principal_id "
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=m.matter_id "
                 "WHERE m.slug=? AND mm.principal_id=? AND mm.state='active' AND p.active=1 "
@@ -2433,7 +2594,7 @@ class WorkspaceStore:
                 row = self.connection.execute(
                     "SELECT m.matter_id,m.slug,m.display_name,m.descriptor,m.owner_id,"
                     "m.created_at,m.updated_at FROM workbench_matter m "
-                    "JOIN workbench_matter_membership mm ON mm.matter_id=m.matter_id "
+                    "JOIN workbench_effective_membership mm ON mm.matter_id=m.matter_id "
                     "JOIN workbench_principal p ON p.principal_id=mm.principal_id "
                     "JOIN workbench_matter_lifecycle ml ON ml.matter_id=m.matter_id "
                     "WHERE m.matter_id=? AND mm.principal_id=? "
@@ -2985,6 +3146,9 @@ class WorkspaceStore:
             )
             self.connection.execute(
                 "DELETE FROM workbench_matter_activity WHERE matter_id=?", (matter_id,)
+            )
+            self.connection.execute(
+                "DELETE FROM workbench_matter_group_grant WHERE matter_id=?", (matter_id,)
             )
             self.connection.execute(
                 "DELETE FROM workbench_matter_membership WHERE matter_id=?", (matter_id,)
@@ -4350,6 +4514,7 @@ class WorkspaceStore:
         if job_row is None:
             raise KeyError(media_job_id)
         job = self._media_job(job_row)
+        self.membership(job.matter_id, job.requested_by)
         existing = self.media_transcript(
             job.matter_id, job.document_id, job.source_version_id
         )
@@ -4440,6 +4605,8 @@ class WorkspaceStore:
         now = self._now()
         transcript_id = f"transcript-{uuid.uuid4().hex}"
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            self.membership(job.matter_id, job.requested_by)
             self.connection.execute(
                 "INSERT INTO workbench_media_transcript("
                 "transcript_id,matter_id,document_id,source_version_id,media_job_id,"
@@ -8657,7 +8824,7 @@ class WorkspaceStore:
                 "FROM workbench_conversation c "
                 "JOIN workbench_conversation_organization organization "
                 "ON organization.conversation_id=c.conversation_id "
-                "JOIN workbench_matter_membership mm ON mm.matter_id=c.matter_id "
+                "JOIN workbench_effective_membership mm ON mm.matter_id=c.matter_id "
                 "JOIN workbench_principal p ON p.principal_id=mm.principal_id "
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=c.matter_id "
                 "WHERE c.conversation_id=? AND c.matter_id=? AND mm.principal_id=? "
@@ -8846,7 +9013,7 @@ class WorkspaceStore:
         with self._lock:
             rows = self.connection.execute(
                 "SELECT j.* FROM workbench_answer_job j "
-                "JOIN workbench_matter_membership mm ON mm.matter_id=j.matter_id "
+                "JOIN workbench_effective_membership mm ON mm.matter_id=j.matter_id "
                 "AND mm.principal_id=? AND mm.state='active' "
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=j.matter_id "
                 "AND ml.state='active' "
@@ -9038,7 +9205,7 @@ class WorkspaceStore:
                 )
                 return None
             authorized = self.connection.execute(
-                "SELECT 1 FROM workbench_matter_membership membership "
+                "SELECT 1 FROM workbench_effective_membership membership "
                 "JOIN workbench_principal principal "
                 "ON principal.principal_id=membership.principal_id "
                 "JOIN workbench_matter_lifecycle lifecycle "
@@ -9336,7 +9503,7 @@ class WorkspaceStore:
                     "FROM workbench_conversation c "
                     "JOIN workbench_conversation_organization organization "
                     "ON organization.conversation_id=c.conversation_id "
-                    "JOIN workbench_matter_membership mm ON mm.matter_id=c.matter_id "
+                    "JOIN workbench_effective_membership mm ON mm.matter_id=c.matter_id "
                     "JOIN workbench_principal p ON p.principal_id=mm.principal_id "
                     "JOIN workbench_matter_lifecycle ml ON ml.matter_id=c.matter_id "
                     "WHERE c.conversation_id=? AND c.matter_id=? AND mm.principal_id=? "
@@ -9519,7 +9686,7 @@ class WorkspaceStore:
         with self._lock:
             rows = self.connection.execute(
                 "SELECT j.* FROM workbench_research_job j "
-                "JOIN workbench_matter_membership mm ON mm.matter_id=j.matter_id "
+                "JOIN workbench_effective_membership mm ON mm.matter_id=j.matter_id "
                 "AND mm.principal_id=? AND mm.state='active' "
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=j.matter_id "
                 "AND ml.state='active' "
@@ -9736,7 +9903,7 @@ class WorkspaceStore:
             if int(row["cancellation_requested"]):
                 return self.fail_research_job(job_id, "Research cancelled.")
             authorized = self.connection.execute(
-                "SELECT 1 FROM workbench_matter_membership membership "
+                "SELECT 1 FROM workbench_effective_membership membership "
                 "JOIN workbench_principal principal "
                 "ON principal.principal_id=membership.principal_id "
                 "JOIN workbench_matter_lifecycle lifecycle "
@@ -10330,7 +10497,7 @@ class WorkspaceStore:
         with self._lock:
             rows = self.connection.execute(
                 "SELECT j.* FROM workbench_review_run j "
-                "JOIN workbench_matter_membership mm ON mm.matter_id=j.matter_id "
+                "JOIN workbench_effective_membership mm ON mm.matter_id=j.matter_id "
                 "AND mm.principal_id=? AND mm.state='active' "
                 "JOIN workbench_matter_lifecycle ml ON ml.matter_id=j.matter_id "
                 "AND ml.state='active' "
@@ -10475,7 +10642,7 @@ class WorkspaceStore:
             now = self._review_decision_time(frozen["updated_at"])
             if frozen["state"] == "running":
                 authorized = self.connection.execute(
-                    "SELECT 1 FROM workbench_matter_membership membership "
+                    "SELECT 1 FROM workbench_effective_membership membership "
                     "JOIN workbench_principal principal "
                     "ON principal.principal_id=membership.principal_id "
                     "JOIN workbench_matter_lifecycle lifecycle "
@@ -10589,7 +10756,7 @@ class WorkspaceStore:
             if int(row["cancellation_requested"]):
                 return self.fail_review_run(run_id, "Review cancelled.")
             authorized = self.connection.execute(
-                "SELECT 1 FROM workbench_matter_membership membership "
+                "SELECT 1 FROM workbench_effective_membership membership "
                 "JOIN workbench_principal principal "
                 "ON principal.principal_id=membership.principal_id "
                 "JOIN workbench_matter_lifecycle lifecycle "

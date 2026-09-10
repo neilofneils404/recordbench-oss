@@ -44,6 +44,8 @@ def test_team_access_evidence_must_be_later_than_current_grant(tmp_path):
     store = WorkspaceStore(tmp_path / "workbench.sqlite", clock=lambda: now[0])
     _seed(store)
     person = store.upsert_principal("local", "synthetic.reviewer", "Synthetic reviewer", "synthetic.reviewer")
+    # This store-only fixture supplies its synthetic account eligibility.
+    store.principal_enabled = lambda provider, subject: True
     matter = store.create_matter("Synthetic setup evidence", "", "dev-taylor")
     membership = store.add_member(matter.matter_id, person.principal_id, "dev-taylor")
 
