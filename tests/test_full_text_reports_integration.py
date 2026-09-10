@@ -344,3 +344,55 @@ def test_older_selected_full_text_run_keeps_its_mode_and_ledger_link(workspace):
     assert page.status_code == 200
     assert '<h2>Review all extracted text</h2>' in page.text
     assert f'/full-review/{run.run_id}/text' in page.text
+
+
+def test_bundle_ledger_and_source_check_share_concurrent_adjudication_snapshot(workspace, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import closing
+    from case_intelligence.workspace_store import WorkspaceStore
+    import case_intelligence.workbench as module
+    client, bench, matter = workspace
+    run, documents = completed_text_run(bench, matter, ['The amber bicycle arrived.'])
+    document = documents[0]
+    current = bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, document.document_id)
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_review_decision SET validation_sample=1 WHERE run_id=?', (run.run_id,))
+    before = bench.workspace.adjudicate_review_decision(matter.matter_id, ACTOR, run.run_id,
+        document.document_id, human_decision='agree', expected_updated_at=current.updated_at,
+        note='Synthetic validation before bundle snapshot.')
+    before_metrics = bench.workspace.review_validation_metrics(matter.matter_id, ACTOR, run.run_id)
+    assert before_metrics['true_positive'] == 1
+    original = module.iter_text_export
+    changed = []
+    def adjudicate_from_another_connection():
+        other = WorkspaceStore(bench.workspace.path)
+        try:
+            current = other.review_decision(matter.matter_id, ACTOR, run.run_id, document.document_id)
+            return other.adjudicate_review_decision(matter.matter_id, ACTOR, run.run_id,
+                document.document_id, human_decision='exclude', expected_updated_at=current.updated_at,
+                note='Synthetic validation after ledger export.')
+        finally:
+            other.close()
+    def interleaved(*args, **kwargs):
+        with closing(original(*args, **kwargs)) as stream:
+            yield from stream
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            changed.append(pool.submit(adjudicate_from_another_connection).result(timeout=5))
+    monkeypatch.setattr(module, 'iter_text_export', interleaved)
+    response = client.get(f'/matters/{matter.slug}/export')
+    assert response.status_code == 200, response.text
+    assert len(changed) == 1 and changed[0].human_decision == 'exclude'
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        ledger_path = next(name for name in archive.namelist() if name.endswith('full-text-ledger.json'))
+        check_path = next(name for name in archive.namelist() if 'source-checks/' in name and name.endswith('.json') and name != ledger_path)
+        ledger = next(row for row in json.loads(archive.read(ledger_path))['records'] if row['record_type'] == 'decision')
+        exported = json.loads(archive.read(check_path))
+        assert exported['validation_metrics'] == {key: before_metrics[key] for key in exported['validation_metrics']}
+        check = exported['decisions'][0]
+        assert ledger['human_note'] == check['staff_note'] == before.human_note
+        assert ledger['human_decision'] == 'agree'
+        assert ledger['reviewed_at'] == check['reviewed_at'] == before.reviewed_at
+        for name in archive.namelist():
+            if 'source-checks/' in name:
+                assert changed[0].human_note not in archive.read(name).decode()
+    assert bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, document.document_id).human_note == changed[0].human_note

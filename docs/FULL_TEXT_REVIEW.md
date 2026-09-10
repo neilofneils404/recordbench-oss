@@ -196,3 +196,9 @@ Migrated legacy text ledgers remain readable but cannot resume; the review page
 directs the user to start a new run. Opening an older full-text run by its saved
 link retains the full-text label and ledger access even when newer checks fill
 the recent-run list.
+
+Each bundled source check and its full-text ledger share one read-only database
+snapshot, including the run, rule version, human validations, notes and validation
+metrics. A teammate may adjudicate while the bundle is built without mixing the
+old ledger with newer adjacent exports. The run's deletion lease lasts through
+all of its bundled review artifacts and is released on success or failure.

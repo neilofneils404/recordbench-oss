@@ -62,7 +62,7 @@
     {
       "baseRefName": "codex/report-workflow-cleanup-20260909",
       "headRefName": "codex/full-text-cleanup-20260909",
-      "headRefOid": "0394d48f124332cd40a32f27382d7dd1656aadfd",
+      "headRefOid": "87db40adc12200d746501f4bb9b1b7ae590623b6",
       "number": 58,
       "title": "Review extracted text with durable limits and report support",
       "url": "https://github.com/neilofneils404/recordbench-oss/pull/58"

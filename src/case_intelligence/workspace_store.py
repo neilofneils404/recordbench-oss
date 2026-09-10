@@ -10072,11 +10072,11 @@ class WorkspaceStore:
             ).fetchall()
         return tuple(self._review_criterion(row) for row in rows)
 
-    def review_criterion(self, matter_id: str, criterion_id: str) -> ReviewCriterionRecord:
+    def review_criterion(self, matter_id: str, criterion_id: str, *, _snapshot: sqlite3.Connection | None = None) -> ReviewCriterionRecord:
         if not _REVIEW_CRITERION.fullmatch(criterion_id or ""):
             raise KeyError(criterion_id)
         with self._lock:
-            row = self.connection.execute(
+            row = (_snapshot if _snapshot is not None else self.connection).execute(
                 self._criterion_select() + "WHERE c.matter_id=? AND c.criterion_id=? "
                 "GROUP BY c.criterion_id", (matter_id, criterion_id)
             ).fetchone()
@@ -10085,12 +10085,12 @@ class WorkspaceStore:
         return self._review_criterion(row)
 
     def review_criterion_version(
-        self, matter_id: str, criterion_version_id: str
+        self, matter_id: str, criterion_version_id: str, *, _snapshot: sqlite3.Connection | None = None
     ) -> ReviewCriterionVersionRecord:
         if not _REVIEW_CRITERION_VERSION.fullmatch(criterion_version_id or ""):
             raise KeyError(criterion_version_id)
         with self._lock:
-            row = self.connection.execute(
+            row = (_snapshot if _snapshot is not None else self.connection).execute(
                 "SELECT * FROM workbench_review_criterion_version WHERE matter_id=? "
                 "AND criterion_version_id=?", (matter_id, criterion_version_id)
             ).fetchone()
@@ -10255,6 +10255,7 @@ class WorkspaceStore:
         run_id: str,
         *,
         administrator_override: bool = False,
+        _snapshot: sqlite3.Connection | None = None,
     ) -> ReviewRunRecord:
         self._authorize_export_read(
             matter_id,
@@ -10264,7 +10265,7 @@ class WorkspaceStore:
         if not _REVIEW_RUN.fullmatch(run_id or ""):
             raise KeyError(run_id)
         with self._lock:
-            row = self.connection.execute(
+            row = (_snapshot if _snapshot is not None else self.connection).execute(
                 "SELECT * FROM workbench_review_run WHERE matter_id=? AND run_id=?",
                 (matter_id, run_id),
             ).fetchone()
@@ -10854,6 +10855,7 @@ class WorkspaceStore:
         limit: int = 100_000,
         after_ordinal: int = 0,
         administrator_override: bool = False,
+        _snapshot: sqlite3.Connection | None = None,
     ) -> tuple[ReviewDecisionRecord, ...]:
         self._authorize_export_read(
             matter_id,
@@ -10865,13 +10867,13 @@ class WorkspaceStore:
         bounded = min(max(int(limit), 1), 100_000)
         cursor = max(int(after_ordinal), 0)
         with self._lock:
-            run = self.connection.execute(
+            run = (_snapshot if _snapshot is not None else self.connection).execute(
                 "SELECT 1 FROM workbench_review_run WHERE matter_id=? AND run_id=?",
                 (matter_id, run_id),
             ).fetchone()
             if run is None:
                 raise KeyError(run_id)
-            rows = self.connection.execute(
+            rows = (_snapshot if _snapshot is not None else self.connection).execute(
                 "SELECT * FROM workbench_review_decision WHERE run_id=? AND ordinal>? "
                 "ORDER BY ordinal LIMIT ?", (run_id, cursor, bounded)
             ).fetchall()
@@ -10940,6 +10942,7 @@ class WorkspaceStore:
         run_id: str,
         *,
         administrator_override: bool = False,
+        _snapshot: sqlite3.Connection | None = None,
     ) -> Mapping[str, object]:
         self._authorize_export_read(
             matter_id,
@@ -10949,19 +10952,19 @@ class WorkspaceStore:
         if not _REVIEW_RUN.fullmatch(run_id or ""):
             raise KeyError(run_id)
         with self._lock:
-            run = self.connection.execute(
+            run = (_snapshot if _snapshot is not None else self.connection).execute(
                 "SELECT 1 FROM workbench_review_run WHERE matter_id=? AND run_id=?",
                 (matter_id, run_id),
             ).fetchone()
             if run is None:
                 raise KeyError(run_id)
-            rows = self.connection.execute(
+            rows = (_snapshot if _snapshot is not None else self.connection).execute(
                 "SELECT machine_decision,human_decision FROM workbench_review_decision "
                 "WHERE run_id=? AND validation_sample=1 AND human_decision<>''",
                 (run_id,),
             ).fetchall()
             sample_total = int(
-                self.connection.execute(
+                (_snapshot if _snapshot is not None else self.connection).execute(
                     "SELECT COUNT(*) FROM workbench_review_decision WHERE run_id=? "
                     "AND validation_sample=1", (run_id,)
                 ).fetchone()[0]
