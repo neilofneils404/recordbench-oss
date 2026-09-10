@@ -273,6 +273,40 @@ class FullTextReviewLedger:
                 (run_id, max(0, int(after)), min(500, max(1, int(limit))))))
 
 
+def _release_text_export_lease(workspace, run_id):
+    with workspace._lock:
+        leases = workspace._text_review_export_leases
+        remaining = leases[run_id] - 1
+        if remaining:
+            leases[run_id] = remaining
+        else:
+            del leases[run_id]
+
+
+@contextmanager
+def review_export_snapshot(workspace, matter_id, actor_id, run_id, *, administrator_override=False):
+    """Keep a bundle's ledger and adjacent review artifacts on one read snapshot."""
+    with workspace._lock:
+        workspace.review_run(matter_id, actor_id, run_id, administrator_override=administrator_override)
+        guarded = FullTextReviewLedger(workspace).enabled(run_id)
+        if guarded:
+            leases = workspace._text_review_export_leases
+            leases[run_id] = leases.get(run_id, 0) + 1
+    db = None
+    try:
+        db = sqlite3.connect(workspace.path.resolve().as_uri() + '?mode=ro', uri=True, check_same_thread=False)
+        db.row_factory = sqlite3.Row
+        db.execute('BEGIN')
+        yield db
+    finally:
+        try:
+            if db is not None:
+                db.close()
+        finally:
+            if guarded:
+                _release_text_export_lease(workspace, run_id)
+
+
 class _LeasedTextExport:
     """Sequential iterator whose eager run lease also covers an unstarted body."""
     def __init__(self, workspace, run_id, iterator):
@@ -301,16 +335,10 @@ class _LeasedTextExport:
         try:
             self.iterator.close()
         finally:
-            with self.workspace._lock:
-                leases = self.workspace._text_review_export_leases
-                remaining = leases[self.run_id] - 1
-                if remaining:
-                    leases[self.run_id] = remaining
-                else:
-                    del leases[self.run_id]
+            _release_text_export_lease(self.workspace, self.run_id)
 
 
-def iter_text_export(workspace, matter_id, actor_id, run_id, format_name='json', *, administrator_override=False):
+def iter_text_export(workspace, matter_id, actor_id, run_id, format_name='json', *, administrator_override=False, _snapshot=None):
     """Admit a run-specific reader now; exhaust or close it on every exit.
 
     Admission and creator deletion share the workspace lock. This is deliberately
@@ -324,24 +352,28 @@ def iter_text_export(workspace, matter_id, actor_id, run_id, format_name='json',
         if not FullTextReviewLedger(workspace).enabled(run_id):
             raise KeyError(run_id)
         stream = _LeasedTextExport(workspace, run_id, _iter_text_export(
-            workspace, matter_id, actor_id, run_id, format_name, administrator_override=administrator_override))
+            workspace, matter_id, actor_id, run_id, format_name, administrator_override=administrator_override, _snapshot=_snapshot))
         leases = workspace._text_review_export_leases
         leases[run_id] = leases.get(run_id, 0) + 1
         return stream
 
 
-def _iter_text_export(workspace, matter_id, actor_id, run_id, format_name, *, administrator_override):
+def _iter_text_export(workspace, matter_id, actor_id, run_id, format_name, *, administrator_override, _snapshot=None):
     """Stream one consistent snapshot, including failures and extraction records."""
     import csv
     import io
     workspace.review_run(matter_id, actor_id, run_id, administrator_override=administrator_override)
     # StreamingResponse awaits each next() serially, but successive calls (and
-    # close()) may run on different workers. This connection belongs solely to
-    # this iterator and is never used concurrently or shared with workspace writes.
-    db = sqlite3.connect(workspace.path.resolve().as_uri() + '?mode=ro', uri=True, check_same_thread=False)
-    db.row_factory = sqlite3.Row
+    # close()) may run on different workers. Standalone iterators own their
+    # connection; bundle artifacts share their caller-owned read snapshot
+    # sequentially. Neither connection is shared with workspace writes.
+    db = _snapshot
+    if db is None:
+        db = sqlite3.connect(workspace.path.resolve().as_uri() + '?mode=ro', uri=True, check_same_thread=False)
+        db.row_factory = sqlite3.Row
     try:
-        db.execute('BEGIN')
+        if _snapshot is None:
+            db.execute('BEGIN')
         run = db.execute("SELECT r.run_id,r.state,r.criterion_version_id,r.source_set_id,r.created_at,r.finished_at,"
             "v.instructions,v.include_guidance,v.exclude_guidance,t.policy_json FROM workbench_review_run r "
             "JOIN workbench_review_criterion_version v ON v.criterion_version_id=r.criterion_version_id "
@@ -395,7 +427,8 @@ def _iter_text_export(workspace, matter_id, actor_id, run_id, format_name, *, ad
         else:
             raise ValueError('Choose JSON or CSV for the full-text ledger.')
     finally:
-        db.close()
+        if _snapshot is None:
+            db.close()
 
 
 class _TextDigestMismatch(ValueError):

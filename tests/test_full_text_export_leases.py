@@ -201,3 +201,37 @@ def test_bundle_byte_limit_releases_ledger_reader(workspace, monkeypatch):
     assert not bench.workspace._text_review_export_leases
     assert bench._active_matter_response_count(matter.matter_id) == 0
     assert FullTextReviewLedger(bench.workspace).delete(matter.matter_id, ACTOR, run.run_id)
+
+
+@pytest.mark.parametrize('abort', [False, True])
+def test_bundle_snapshot_owns_connection_and_holds_lease_after_stream(frozen, abort):
+    import sqlite3
+    from contextlib import nullcontext
+    from case_intelligence.full_text_review import review_export_snapshot
+    store, matter, run, ledger = terminal_inventory(frozen)
+    with pytest.raises(RuntimeError, match='Synthetic adjacent export failure') if abort else nullcontext():
+        with review_export_snapshot(store, matter.matter_id, ACTOR, run.run_id) as snapshot:
+            with closing(iter_text_export(store, matter.matter_id, ACTOR, run.run_id, _snapshot=snapshot)) as stream:
+                assert json.loads(b''.join(stream))['records']
+            assert snapshot.execute('SELECT 1').fetchone()[0] == 1
+            with pytest.raises(WorkspaceProblem, match='download'):
+                ledger.delete(matter.matter_id, ACTOR, run.run_id)
+            if abort:
+                raise RuntimeError('Synthetic adjacent export failure')
+    assert not store._text_review_export_leases
+    with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+        snapshot.execute('SELECT 1')
+    assert ledger.delete(matter.matter_id, ACTOR, run.run_id)
+
+
+def test_bundle_snapshot_open_failure_releases_lease(frozen, monkeypatch):
+    from case_intelligence import full_text_review as module
+    store, matter, run, ledger = terminal_inventory(frozen)
+    def unavailable(*args, **kwargs):
+        raise OSError('Synthetic snapshot unavailable')
+    monkeypatch.setattr(module.sqlite3, 'connect', unavailable)
+    with pytest.raises(OSError, match='Synthetic snapshot'):
+        with module.review_export_snapshot(store, matter.matter_id, ACTOR, run.run_id):
+            pytest.fail('Unavailable snapshot was yielded')
+    assert not store._text_review_export_leases
+    assert ledger.delete(matter.matter_id, ACTOR, run.run_id)

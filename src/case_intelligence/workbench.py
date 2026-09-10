@@ -58,7 +58,7 @@ from .identity import (
     OidcProviderClient,
     OidcSettings,
 )
-from .full_text_review import FullTextReviewLedger, iter_text_export
+from .full_text_review import FullTextReviewLedger, iter_text_export, review_export_snapshot
 from .text_ledger_response import TextLedgerStreamingResponse
 from .generation import (
     EvidenceItem,
@@ -14282,53 +14282,57 @@ def create_workbench_app(
                         artifact=research_artifact,
                     )
             for index, review_run in enumerate(review_runs, 1):
-                if FullTextReviewLedger(bench.workspace).enabled(review_run.run_id):
-                    text_body = bytearray()
-                    with closing(iter_text_export(bench.workspace, matter.matter_id, read_actor_id, review_run.run_id,
-                            administrator_override=administrator_override)) as text_stream:
-                        for fragment in text_stream:
-                            if additional_work_product_bytes + len(text_body) + len(fragment) > MAX_BUNDLE_UNCOMPRESSED_BYTES:
-                                raise ExportProblem("No complete bundle was created. Download the full-text ledger separately before closing this matter.")
-                            text_body.extend(fragment)
-                    add_work_product(kind="full_text_review", path=f"source-checks/{index:03d}-full-text-ledger.json",
-                        artifact=ExportArtifact(body=bytes(text_body), media_type="application/json", filename="full-text-ledger.json"))
-                criterion = bench.workspace.review_criterion(
-                    matter.matter_id, review_run.criterion_id
-                )
-                version = bench.workspace.review_criterion_version(
-                    matter.matter_id, review_run.criterion_version_id
-                )
-                decisions = bench.workspace.review_decisions_for_export(
-                    matter.matter_id,
-                    read_actor_id,
-                    review_run.run_id,
-                    administrator_override=administrator_override,
-                )
-                metrics = bench.workspace.review_validation_metrics(
-                    matter.matter_id,
-                    read_actor_id,
-                    review_run.run_id,
-                    administrator_override=administrator_override,
-                )
-                decisions = bench._hydrate_full_text_export_decisions(matter, review_run, decisions)
-                for format_name in ("csv", "json"):
-                    review_artifact = export_full_review(
-                        matter,
-                        criterion,
-                        version,
-                        review_run,
-                        decisions,
-                        metrics,
-                        format_name,
+                with review_export_snapshot(bench.workspace, matter.matter_id, read_actor_id,
+                        review_run.run_id, administrator_override=administrator_override) as snapshot:
+                    review_run = bench.workspace.review_run(matter.matter_id, read_actor_id,
+                        review_run.run_id, administrator_override=administrator_override, _snapshot=snapshot)
+                    if FullTextReviewLedger(bench.workspace).enabled(review_run.run_id):
+                        text_body = bytearray()
+                        with closing(iter_text_export(bench.workspace, matter.matter_id, read_actor_id, review_run.run_id,
+                                administrator_override=administrator_override, _snapshot=snapshot)) as text_stream:
+                            for fragment in text_stream:
+                                if additional_work_product_bytes + len(text_body) + len(fragment) > MAX_BUNDLE_UNCOMPRESSED_BYTES:
+                                    raise ExportProblem("No complete bundle was created. Download the full-text ledger separately before closing this matter.")
+                                text_body.extend(fragment)
+                        add_work_product(kind="full_text_review", path=f"source-checks/{index:03d}-full-text-ledger.json",
+                            artifact=ExportArtifact(body=bytes(text_body), media_type="application/json", filename="full-text-ledger.json"))
+                    criterion = bench.workspace.review_criterion(
+                        matter.matter_id, review_run.criterion_id, _snapshot=snapshot
                     )
-                    add_work_product(
-                        kind="source_check",
-                        path=(
-                            f"source-checks/{index:03d}-"
-                            f"{review_artifact.filename}"
-                        ),
-                        artifact=review_artifact,
+                    version = bench.workspace.review_criterion_version(
+                        matter.matter_id, review_run.criterion_version_id, _snapshot=snapshot
                     )
+                    decisions = bench.workspace.review_decisions_for_export(
+                        matter.matter_id,
+                        read_actor_id,
+                        review_run.run_id,
+                        administrator_override=administrator_override, _snapshot=snapshot,
+                    )
+                    metrics = bench.workspace.review_validation_metrics(
+                        matter.matter_id,
+                        read_actor_id,
+                        review_run.run_id,
+                        administrator_override=administrator_override, _snapshot=snapshot,
+                    )
+                    decisions = bench._hydrate_full_text_export_decisions(matter, review_run, decisions)
+                    for format_name in ("csv", "json"):
+                        review_artifact = export_full_review(
+                            matter,
+                            criterion,
+                            version,
+                            review_run,
+                            decisions,
+                            metrics,
+                            format_name,
+                        )
+                        add_work_product(
+                            kind="source_check",
+                            path=(
+                                f"source-checks/{index:03d}-"
+                                f"{review_artifact.filename}"
+                            ),
+                            artifact=review_artifact,
+                        )
             for index, receipt in enumerate(IntakeReceipts(bench.workspace).export(
                 matter.matter_id, read_actor_id, administrator_override=administrator_override
             ), 1):
