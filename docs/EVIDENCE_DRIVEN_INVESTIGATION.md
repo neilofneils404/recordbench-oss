@@ -20,7 +20,10 @@ New runs allow at most five searches and 15 minutes of search-step time. The
 cooperative time limit is checked between calls; an in-flight retrieval or model
 call can finish after it. Final synthesis has its separate existing packet and
 output limits. A run also stops when it has 72 unique evidence passages, exhausts
-its proposal queue, or completes two searches without selecting new evidence.
+its proposal queue, or completes two available searches without selecting new evidence.
+Retrieval outages consume a pass and elapsed time but do not advance the
+no-new-evidence streak. Per-pass new-evidence counts include only passages
+admitted to the ledger after applying its remaining capacity.
 Queries are deduplicated without regard to case. Previously selected passages
 are excluded before selection and are not regenerated in another search pass.
 The final synthesis still uses at most 12 passages: this is not whole-matter
@@ -114,7 +117,9 @@ elapsed-time limits; rejected requests leave the saved run unchanged.
 Continuing a completed investigation creates a separate run seeded from its
 checkpoint. Each conversation result retains its original details and export
 target. Repeated submissions for a completed parent return the same continuation
-without spending its budget again. Failed or cancelled runs resume in place.
+only when the requested additional passes and expected parent budget match the
+recorded extension. Conflicting submissions are rejected without changing either
+run or reporting a successful extension. Matching retries do not spend the budget again. Failed or cancelled runs resume in place.
 Synthetic tests cover availability-only and scope-membership changes, exhausted
 extension budgets, both conversation result targets, duplicate submissions, and
 SQLite backup followed by clean restore and continued execution.

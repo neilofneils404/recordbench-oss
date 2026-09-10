@@ -4957,10 +4957,12 @@ class CaseIntelligenceWorkbench:
             new_selected = [item for item in selected if item.support_token not in seen_tokens]
             if adaptive:
                 selected = new_selected[:max(0, budget.unique_evidence - len(citations))]
+            new_selected = []
             for citation in selected:
                 if citation.support_token not in seen_tokens and len(citations) < budget.unique_evidence:
                     citations.append(citation)
                     seen_tokens.add(citation.support_token)
+                    new_selected.append(citation)
             evidence = {f"S{ordinal}": citation for ordinal, citation in enumerate(selected, 1)}
             packet = packet_for(evidence)
             if packet:
@@ -5024,7 +5026,8 @@ class CaseIntelligenceWorkbench:
             passes.append(pass_result)
             if adaptive:
                 pending.extend(propose_searches(selected, [item["query"] for item in passes], pending))
-                no_new_count = no_new_count + 1 if not new_selected else 0
+                if retrieval_available:
+                    no_new_count = no_new_count + 1 if not new_selected else 0
             checkpoint = {
                 "pending_searches": pending,
                 "no_new_count": no_new_count,

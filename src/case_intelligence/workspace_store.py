@@ -10102,6 +10102,15 @@ class WorkspaceStore:
                     (matter_id, actor_id, continuation_key),
                 ).fetchone()
                 if existing is not None:
+                    parent_plan = json.loads(current["plan_json"])
+                    continuation_plan = json.loads(existing["plan_json"])
+                    extension_index = len(parent_plan.get("extensions", []))
+                    extensions = continuation_plan.get("extensions", [])
+                    if (type(expected_passes) is not int
+                            or expected_passes != parent_plan.get("budget", {}).get("effective", {}).get("passes")
+                            or len(extensions) <= extension_index
+                            or extensions[extension_index].get("additional_passes") != additional_passes):
+                        raise WorkspaceProblem("This run already has a continuation with different extension details. Reload before adding more work.")
                     return self._research_job(existing)
             conversation_id = current["conversation_id"]
             if conversation_id is not None:

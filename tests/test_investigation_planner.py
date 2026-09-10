@@ -356,3 +356,75 @@ def test_source_set_membership_only_change_hides_checkpoint(chain):
     page = client.get(url)
     assert 'Saved findings and search proposals are no longer current' in page.text
     assert 'Continue from checkpoint' not in page.text
+
+
+def test_partially_filled_final_pass_counts_only_admitted_evidence(chain, monkeypatch):
+    bench, client, matter, job, calls, citations = chain
+    original_search = bench._answer_search
+    def search(*args, **kwargs):
+        found = original_search(*args, **kwargs)
+        return found if len(calls) == 1 else (citations['second'], citations['third'])
+    monkeypatch.setattr(bench, '_answer_search', search)
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(unique_evidence=2).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, 7)
+    result = bench._process_research_job(claimed, lambda: False)
+    checkpoint = bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id)
+    row = checkpoint.result['passes'][-1]
+    assert row['hit_count'] == 2
+    assert row['new_evidence'] == row['selected_passages'] == 1
+    assert sum(item['new_evidence'] for item in result['passes']) == len(result['evidence']) == 2
+    saved = bench._finish_research_job(claimed, result)
+    assert saved.result['passes'][-1] == row
+    assert result['stop_reason'] == 'evidence_budget'
+    page = client.get(f'/matters/{matter.slug}/research?job={job.job_id}')
+    assert row['reason'] + ' · 1 new passage' in page.text
+
+
+def test_two_retrieval_outages_do_not_stop_remaining_proposals(chain, monkeypatch):
+    from case_intelligence.review_bench import RetrievalUnavailable
+    bench, client, matter, job, calls, citations = chain
+    assert client.post(f'/matters/{matter.slug}/uploads', files=[('files', ('anchors.txt',
+        b'Synthetic dispatch references AX-104, BR-205, and CT-306.', 'text/plain'))]).status_code == 200
+    citations['first'] = next(item for item in bench.search(matter, 'dispatch references') if item.source_name == 'anchors.txt')
+    original_search = bench._answer_search
+    def search(*args, **kwargs):
+        found = original_search(*args, **kwargs)
+        if len(calls) in (2, 3):
+            raise RetrievalUnavailable('Synthetic transient outage')
+        return found
+    monkeypatch.setattr(bench, '_answer_search', search)
+    claimed = bench.workspace.claim_research_job('synthetic-worker')
+    result = bench._process_research_job(claimed, lambda: False)
+    assert [query for query, _ in calls][:4] == [job.question, 'AX-104', 'BR-205', 'CT-306']
+    assert [row['retrieval_outcome'] for row in result['passes'][1:3]] == ['unavailable', 'unavailable']
+    assert result['passes'][3]['new_evidence'] == 1
+    assert result['stop_reason'] != 'no_new_evidence'
+    saved = bench._finish_research_job(claimed, result)
+    assert saved.result['passes'] == result['passes']
+
+
+@pytest.mark.parametrize('additional,expected', [(1, 1), (2, 2), (2, None)])
+def test_conflicting_continuation_submission_is_rejected(chain, additional, expected):
+    bench, client, matter, job, _, _ = chain
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(passes=1).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, 3)
+    saved = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    child = bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id,
+        additional_passes=2, expected_passes=1)
+    with pytest.raises(WorkspaceProblem, match='different extension details'):
+        bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id,
+            additional_passes=additional, expected_passes=expected)
+    data = {'additional_passes': additional}
+    if expected is not None:
+        data['expected_passes'] = expected
+    response = client.post(f'/matters/{matter.slug}/research/{job.job_id}/retry', data=data, follow_redirects=False)
+    assert 'error=' in response.headers['location']
+    assert bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id) == saved
+    assert bench.workspace.research_job(matter.matter_id, matter.owner_id, child.job_id) == child
+    assert len(bench.workspace.research_jobs(matter.matter_id, matter.owner_id)) == 2
+    assert bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id,
+        additional_passes=2, expected_passes=1) == child
