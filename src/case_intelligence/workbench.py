@@ -8328,53 +8328,50 @@ def create_workbench_app(
             matter.matter_id, actor_id, session_id
         )
         store = bench.source_store(matter)
-        refreshed: list[UploadItemRecord] = []
-        for item in items:
-            if item.state not in {"pending", "uploading", "uploaded"}:
-                refreshed.append(item)
-                continue
-            try:
-                actual = store.resumable_size(
-                    item.upload_item_id, expected_size=item.expected_size
-                )
-            except UploadProblem as exc:
-                refreshed.append(
-                    bench.workspace.fail_upload_item(
-                        matter.matter_id,
-                        actor_id,
-                        session_id,
-                        item.upload_item_id,
-                        str(exc),
+        # Match chunk admission's source -> workspace lock order. Refresh the
+        # session after taking both locks so bytes and terminal states belong to
+        # the same reconciliation window. Read the item list once, avoiding a
+        # full session query for every item in a large folder selection.
+        with store._lock, bench.workspace._lock:
+            session, items = bench.workspace.upload_session(
+                matter.matter_id, actor_id, session_id
+            )
+            for item in items:
+                if item.state not in {"pending", "uploading", "uploaded"}:
+                    continue
+                try:
+                    actual = store.resumable_size(
+                        item.upload_item_id, expected_size=item.expected_size
                     )
-                )
-                continue
-            if actual < item.received_size:
-                refreshed.append(
+                except UploadProblem as exc:
                     bench.workspace.fail_upload_item(
-                        matter.matter_id,
-                        actor_id,
-                        session_id,
+                        matter.matter_id, actor_id, session_id,
+                        item.upload_item_id, str(exc),
+                    )
+                    continue
+                if actual < item.received_size:
+                    bench.workspace.fail_upload_item(
+                        matter.matter_id, actor_id, session_id,
                         item.upload_item_id,
                         "The saved upload is incomplete. Select this source in a new upload collection.",
                     )
-                )
-            elif actual > item.received_size:
-                refreshed.append(
-                    bench.workspace.set_upload_item_offset(
-                        matter.matter_id,
-                        actor_id,
-                        session_id,
-                        item.upload_item_id,
-                        item.received_size,
-                        actual,
-                    )
-                )
-            else:
-                refreshed.append(item)
-        session, _ = bench.workspace.upload_session(
-            matter.matter_id, actor_id, session_id
-        )
-        return session, tuple(refreshed)
+                elif actual > item.received_size:
+                    try:
+                        bench.workspace.set_upload_item_offset(
+                            matter.matter_id, actor_id, session_id,
+                            item.upload_item_id, item.received_size, actual,
+                        )
+                    except WorkspaceProblem:
+                        current = bench.workspace.upload_item(
+                            matter.matter_id, actor_id, session_id, item.upload_item_id
+                        )
+                        if (current.received_size, current.state) == (
+                            item.received_size, item.state
+                        ):
+                            raise
+                        # Another writer won the compare-and-set. Do not retry
+                        # an observation of bytes against a newer ledger state.
+            return bench.workspace.upload_session(matter.matter_id, actor_id, session_id)
 
     @app.get("/matters/{slug}/close", response_class=HTMLResponse)
     def close_matter_page(
