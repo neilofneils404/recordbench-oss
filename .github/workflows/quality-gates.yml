@@ -151,3 +151,40 @@ jobs:
               assert all(row["remedy"] for row in payload["checks"] if row["blocking"] and row["state"] != "pass")
               assert not root.exists()
           PYCODE
+
+  synthetic-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out integration candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify integration checkout
+        env:
+          EXPECTED_INTEGRATION_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"
+      - name: Select Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install browser runtime and contributor dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libnss3 libatk-bridge2.0-0 libxkbcommon0 libxcomposite1 \
+            libxdamage1 libxrandr2 libgbm1 libasound2t64 libgtk-3-0 fonts-liberation
+          python -m pip install --disable-pip-version-check -e '.[dev]'
+      - name: Verify browser runner failure contracts
+        run: python -m pytest -q tests/test_browser_acceptance_runner.py
+      - name: Run pinned synthetic intake and Report journeys
+        run: python scripts/run-browser-acceptance.py --output "$RUNNER_TEMP/recordbench-browser-artifacts"
+      - name: Retain bounded synthetic diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: synthetic-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recordbench-browser-artifacts
+          if-no-files-found: warn
+          retention-days: 5

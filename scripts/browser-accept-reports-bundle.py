@@ -97,6 +97,12 @@ def main():
                 element.clear()
                 element.send_keys(value)
 
+            def edit_report():
+                # Report mutations return to the reading view. Enter the
+                # visible editor again before interacting with its controls.
+                click(".report-reading-page a[href*='edit=true']")
+                wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".report-settings")))
+
             def download(selector, suffix):
                 before = set(downloads.iterdir())
                 click(selector)
@@ -127,22 +133,28 @@ def main():
             checks.append("Upload, exact source passage, and save to case notes")
 
             go(prefix + "/reports")
+            click(".report-create-card summary")
             fill(".report-create-card input[name=title]", "Synthetic review memo")
             fill(".report-create-card textarea[name=purpose]", "Preserve edited source-supported work.")
             click(".report-create-card button[type=submit]")
-            wait.until(lambda d: bool(d.find_elements(By.CSS_SELECTOR, ".report-settings")))
+            edit_report()
             click(".report-add-material details:nth-child(2) summary")
             click("form[action*='/from-notebook/'] button")
+            edit_report()
+            click(".report-add-material details:first-child summary")
             fill(".report-add-material input[name=heading]", "Human conclusion")
             fill(".report-add-material textarea[name=body]", "Original draft text.")
             click(".report-add-material details:first-child button")
+            edit_report()
             cards = driver.find_elements(By.CSS_SELECTOR, ".report-section-card")
             assert len(cards) == 2
             fill(f"#{cards[1].get_attribute('id')} textarea[name=body]", "Edited conclusion retained in both exports.")
             click(f"#{cards[1].get_attribute('id')} .report-section-content form:first-child button")
+            edit_report()
             move = driver.find_element(By.CSS_SELECTOR, "button[aria-label='Move Human conclusion up']")
             move.send_keys(Keys.ENTER)
             wait.until(lambda _: detached(move))
+            edit_report()
             assert driver.find_elements(By.CSS_SELECTOR, ".report-section-card input[name=heading]")[0].get_attribute("value") == "Human conclusion"
             Select(driver.find_element(By.CSS_SELECTOR, ".report-settings select")).select_by_value("final")
             click(".report-settings form:first-child button")
@@ -150,7 +162,7 @@ def main():
 
             individual_md = download(".report-export-actions a[href$='markdown']", ".md").read_text()
             individual_docx = download(".report-export-actions a[href$='docx']", ".docx").read_bytes()
-            click(".report-citations a")
+            click(".report-reading-sources a")
             assert "the blue vehicle arrived at noon" in driver.find_element(By.ID, "support-pane").text
             checks.append("Individual Markdown/Word download and Report citation opens exact source")
 
@@ -194,17 +206,17 @@ def main():
             checks.append("Mobile Report download")
 
             # A bad saved citation must show recovery and produce no new ZIP.
-            original_support = bench._find_support
+            original_support = bench._assert_current_report_section_citations
             def unavailable(*_args, **_kwargs):
                 raise KeyError("synthetic-unavailable-source")
-            bench._find_support = unavailable
+            bench._assert_current_report_section_citations = unavailable
             go(prefix + "/settings")
             before = set(downloads.glob("*.zip"))
             click(f"a[href='{prefix}/export']")
             wait.until(lambda d: "no longer resolves" in d.find_element(By.TAG_NAME, "body").text)
             assert "Open the Report" in driver.find_element(By.TAG_NAME, "body").text
             assert set(downloads.glob("*.zip")) == before
-            bench._find_support = original_support
+            bench._assert_current_report_section_citations = original_support
             checks.append("Visible source failure with no misleading complete download")
 
             if args.verify_readiness:
@@ -239,14 +251,17 @@ def main():
                 click(".close-matter-card li a")
                 assert "This Report needs attention before export" in driver.find_element(By.TAG_NAME, "body").text
                 assert report.report_id in driver.current_url
+                edit_report()
                 Select(driver.find_element(By.CSS_SELECTOR, ".report-settings select")).select_by_value("draft")
                 click(".report-settings form:first-child button")
+                edit_report()
                 cited_card = driver.find_element(By.CSS_SELECTOR, ".report-citations").find_element(By.XPATH, "ancestor::article")
                 remove = cited_card.find_element(By.CSS_SELECTOR, 'form[action$="/delete"] button')
                 driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", remove)
                 remove.click()
                 wait.until(EC.alert_is_present()).accept()
                 wait.until(lambda _: detached(remove))
+                edit_report()
                 assert len(driver.find_elements(By.CSS_SELECTOR, ".report-section-card")) == 1
                 assert driver.find_element(By.CSS_SELECTOR, ".report-section-card textarea").get_attribute("value") == "Edited conclusion retained in both exports."
                 Select(driver.find_element(By.CSS_SELECTOR, ".report-settings select")).select_by_value("final")

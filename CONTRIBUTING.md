@@ -133,3 +133,11 @@ synthetic evidence, and any security, lifecycle, migration, model, or recovery
 impact. Use the repository pull-request template and keep release tags
 immutable. A correction after a release is a new commit and, when appropriate,
 a new release.
+
+## Standalone browser journeys
+
+The quality workflow also runs the synthetic intake and Report/export-readiness
+journeys with a checksum-pinned browser and driver. See
+[browser acceptance](docs/BROWSER_ACCEPTANCE.md) for local commands, bounded
+artifacts, deliberate browser updates and rollback. These journeys use disposable
+loopback applications and require no model downloads or deployment access.

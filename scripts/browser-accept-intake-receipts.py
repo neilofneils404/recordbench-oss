@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 import uvicorn
 from selenium import webdriver
+from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -101,7 +102,17 @@ def main():
         try:
             driver = webdriver.Chrome(service=Service(str(args.chromedriver)), options=options)
             driver.set_page_load_timeout(30)
-            wait = WebDriverWait(driver, 25)
+            wait = WebDriverWait(driver, 25, ignored_exceptions=(StaleElementReferenceException,))
+            def page_has_text(text):
+                try:
+                    return text in driver.find_element(By.TAG_NAME, 'body').text
+                except WebDriverException as exc:
+                    # Chrome can report this stale-node condition as an
+                    # inspector error while a form submission replaces the page.
+                    if "Node with given id does not belong to the document" not in exc.msg:
+                        raise
+                    return False
+
             original_get = driver.get
             def navigate(url):
                 original_get(url)
@@ -379,7 +390,7 @@ def main():
                 toggle.click()
                 driver.find_element(By.CSS_SELECTOR, '.intake-receipt-discard input[name=confirm]').click()
                 driver.find_element(By.CSS_SELECTOR, '.intake-receipt-discard button').click()
-                wait.until(lambda x: 'Receipt discarded.' in x.find_element(By.TAG_NAME, 'body').text)
+                wait.until(lambda _: page_has_text('Receipt discarded.'))
             discard_from_browser(removable['receipt_id'])
             require(bench.workspace.upload_session_record(full_matter.matter_id, ACTOR,
                 latest_session.upload_session_id).state == 'cancelled', 'Empty upload remained active after owner cleanup')

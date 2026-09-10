@@ -91,8 +91,8 @@ def test_pull_request_jobs_test_the_merge_and_scan_the_exact_head_separately() -
     assert workflow.count(exact_ref) == 1
     assert "path: _publication_head" in workflow
     assert "working-directory: _publication_head" in workflow
-    assert workflow.count("EXPECTED_INTEGRATION_SHA: ${{ github.sha }}") == 3
-    assert workflow.count('test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"') == 3
+    assert workflow.count("EXPECTED_INTEGRATION_SHA: ${{ github.sha }}") == 4
+    assert workflow.count('test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"') == 4
     assert "python scripts/check-publication-candidate.py" in workflow
     assert '--expected-head "$EXPECTED_PUBLICATION_SHA"' in workflow
     assert '--publication-ref "$PUBLICATION_REF"' in workflow
