@@ -20,6 +20,7 @@ from selenium.common.exceptions import StaleElementReferenceException, WebDriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,14 @@ def until(predicate, message, seconds=25):
             return value
         time.sleep(.05)
     raise AssertionError(message)
+
+
+def refresh_page(driver, wait):
+    # page_load_strategy='none' can return while the old document is present.
+    previous_document = driver.find_element(By.TAG_NAME, 'html')
+    driver.refresh()
+    wait.until(EC.staleness_of(previous_document))
+    wait.until(lambda current: current.execute_script('return document.readyState') == 'complete')
 
 
 def main():
@@ -171,7 +180,7 @@ def main():
             record_check('Nested selection and storage-denied lost-response retry preserve every row without duplicate receipts')
             driver.find_element(By.CSS_SELECTOR, '[data-intake-receipt-open]').click()
             wait.until(lambda x: len(x.find_elements(By.CSS_SELECTOR, '[data-intake-row]')) == 7)
-            driver.refresh()
+            refresh_page(driver, wait)
             require(len(driver.find_elements(By.CSS_SELECTOR, '[data-intake-row]')) == 7, 'Reload lost selected rows')
             require('Unsupported/opaque.bin' in driver.find_element(By.TAG_NAME, 'body').text, 'Reload lost skipped path')
             driver.save_screenshot(str(output / 'synthetic-nested-receipt.png'))
@@ -231,7 +240,7 @@ def main():
             wait.until(lambda x: x.execute_script('return window.receiptPartialStored === true'))
             previous = receipts.recent(interrupted.matter_id, ACTOR)[0]
             require(previous['counts']['partial'] == 1, 'Interrupted bytes were not recorded')
-            driver.refresh()
+            refresh_page(driver, wait)
             driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(resume_file))
             wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Upload 1 ready file')
             confirm()

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from unittest.mock import Mock
 
 import pytest
 
@@ -24,6 +25,43 @@ def runner():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def intake_script():
+    spec = importlib.util.spec_from_file_location('browser_intake', ROOT / 'scripts/browser-accept-intake-receipts.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_refresh_waits_for_replacement_document_and_complete_load(intake_script):
+    from selenium.common.exceptions import StaleElementReferenceException
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    driver = Mock()
+    previous = driver.find_element.return_value
+    previous.is_enabled.side_effect = [True, StaleElementReferenceException()]
+    driver.execute_script.side_effect = ['loading', 'complete']
+    intake_script.refresh_page(driver, WebDriverWait(driver, 1, poll_frequency=.001))
+    driver.refresh.assert_called_once_with()
+    assert previous.is_enabled.call_count == 2
+    assert driver.execute_script.call_count == 2
+
+
+@pytest.mark.parametrize('stalled_document', ['old', 'new'])
+def test_refresh_fails_when_navigation_does_not_finish(intake_script, stalled_document):
+    from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    driver = Mock()
+    if stalled_document == 'new':
+        driver.find_element.return_value.is_enabled.side_effect = StaleElementReferenceException()
+    driver.execute_script.return_value = 'loading'
+    with pytest.raises(TimeoutException):
+        intake_script.refresh_page(driver, WebDriverWait(driver, .01, poll_frequency=.001))
+    if stalled_document == 'old':
+        driver.execute_script.assert_not_called()
 
 
 def receipt(path, **values):

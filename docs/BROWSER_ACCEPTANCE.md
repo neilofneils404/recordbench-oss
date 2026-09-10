@@ -79,6 +79,11 @@ To update the browser intentionally:
 
 ## Retained diagnostics
 
+The intake journey uses nonblocking Chrome navigation. Explicit reloads wait
+for the old document to detach and the replacement document to finish loading
+before checking receipt rows or reselecting an interrupted upload. A stalled
+reload fails within the existing browser wait deadline.
+
 The runner copies only an explicit allowlist of generated receipts, screenshots,
 failure HTML and browser-error JSON, plus the last 256 KiB of each child log.
 Receipts and browser-error JSON are limited to 64 KiB each; other allowed files
