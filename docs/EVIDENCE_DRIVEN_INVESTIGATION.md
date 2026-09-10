@@ -24,7 +24,10 @@ its proposal queue, or completes two available searches without selecting new ev
 Retrieval outages consume a pass and elapsed time but do not advance the
 no-new-evidence streak. Per-pass new-evidence counts include only passages
 admitted to the ledger after applying its remaining capacity.
-Queries are deduplicated without regard to case. Previously selected passages
+Queries are deduplicated without regard to case, except that an unavailable
+initial search can retry within the existing pass and time budgets. If the seed
+search remains unavailable when its budget ends, the run stays failed and offers
+an explicit extension; it never records an empty successful investigation. Previously selected passages
 are excluded before selection and are not regenerated in another search pass.
 The final synthesis still uses at most 12 passages: this is not whole-matter
 coverage or hierarchical synthesis.
@@ -38,7 +41,9 @@ another question. The planner does not infer relationships from a name alone.
 
 Cancel safely preserves the last committed checkpoint. Resume investigation
 reuses its completed searches, evidence, pending queue, and consumed search time.
-It does not silently grant more resources. An in-flight call may be discarded
+It does not silently grant more resources. The search-stop decision is saved
+before synthesis. Resuming a failed synthesis honors that decision and retries
+synthesis without running additional searches; an explicit extension clears it. An in-flight call may be discarded
 when cancellation is acknowledged, as with existing investigation accounting.
 A completed run with remaining proposals offers an explicit additional budget
 of one to five passes, adding three search minutes per pass. The lifetime ceiling
@@ -123,3 +128,16 @@ run or reporting a successful extension. Matching retries do not spend the budge
 Synthetic tests cover availability-only and scope-membership changes, exhausted
 extension budgets, both conversation result targets, duplicate submissions, and
 SQLite backup followed by clean restore and continued execution.
+
+Lifetime budget counters retain candidate occurrences, distinct candidate source
+identifiers, analyzed passage occurrences, and truncated characters across stale
+checkpoint replacement. Current coverage and findings use only the replacement
+searches. Stale findings are replaced atomically with the retained counters, so
+interruption between replacement and the next search cannot refund prior work.
+Synthetic regressions cover repeated recovery, initial retrieval outages, and
+synthesis-failure resumption.
+
+The pinned intake browser fixture waits for its intercepted transfer before
+cancelling and models an already-aborted fetch signal. The speaker-review test
+holds the background media worker while asserting the queued-refresh response;
+these fixtures no longer depend on which side of an asynchronous boundary wins.

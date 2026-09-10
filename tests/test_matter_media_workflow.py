@@ -1621,6 +1621,10 @@ def test_speaker_review_save_updates_every_passage_without_navigation(tmp_path):
         slug = _matter(client, "Generated speaker review matter")
         document, token = _upload_and_wait(client, slug)
         bench = client.app.state.workbench
+        # Hold the summary worker so the response deterministically reports
+        # queued refresh work instead of racing its immediate completion.
+        bench.media.close()
+        bench.media = None
         matter = bench.matter(slug, ACTOR)
         speaker = next(
             item

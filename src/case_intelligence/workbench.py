@@ -4830,6 +4830,10 @@ class CaseIntelligenceWorkbench:
             citations.append(citation)
             seen_tokens.add(citation.support_token)
         candidate_count = int(checkpoint.get("candidate_count", 0) or 0)
+        lifetime_candidates = int(checkpoint.get("lifetime_candidate_count", candidate_count))
+        lifetime_documents = set(checkpoint.get("lifetime_candidate_document_ids", checkpoint.get("candidate_document_ids", [])))
+        analyzed_units = int(checkpoint.get("lifetime_analyzed_units", sum(int(item.get("analyzed_units", 0)) for item in passes)))
+        truncated_chars = int((checkpoint.get("budget") or {}).get("counts", {}).get("truncated_chars", 0))
         saved_fingerprint = checkpoint.get("retrieval_source_fingerprint")
         current_fingerprint = retrieval_boundary.get("source_fingerprint") or self.workspace.source_availability_fingerprint(matter.matter_id)
         if passes and saved_fingerprint != current_fingerprint:
@@ -4837,7 +4841,7 @@ class CaseIntelligenceWorkbench:
         if passes and not checkpoint_stale:
             retrieval_boundary["source_fingerprint"] = str(saved_fingerprint)
         if checkpoint_stale:
-            if not self.workspace.restart_research_checkpoint(job.job_id):
+            if not adaptive and not self.workspace.restart_research_checkpoint(job.job_id):
                 raise WorkflowFailure("Research cancelled.")
             # A changed source invalidates both its citation and any saved
             # finding derived from that checkpoint. Restart the bounded search
@@ -4863,11 +4867,10 @@ class CaseIntelligenceWorkbench:
                     searched.add(key)
             pending = deduplicated
         started_search = monotonic()
-        stop_reason = "completed_bounded_plan"
+        stop_reason = checkpoint.get("search_stop_reason") or "completed_bounded_plan"
+        seed_search_pending = bool(checkpoint.get("seed_search_pending", not passes)) if adaptive else False
         no_new_count = int(checkpoint.get("no_new_count", 0)) if not checkpoint_stale else 0
         candidate_documents = set(checkpoint.get("candidate_document_ids", [])) if not checkpoint_stale else set()
-        analyzed_units = sum(int(item.get("analyzed_units", 0)) for item in passes)
-        truncated_chars = int((checkpoint.get("budget") or {}).get("counts", {}).get("truncated_chars", 0)) if not checkpoint_stale else 0
 
         def packet_for(evidence):
             nonlocal truncated_chars
@@ -4882,10 +4885,10 @@ class CaseIntelligenceWorkbench:
 
         def accounting(synthesis_inputs=0, stop_reason="running"):
             value = budget.metadata(completed_passes=len(passes) + discarded_passes,
-                                    discarded_passes=discarded_passes, candidate_occurrences=candidate_count,
+                                    discarded_passes=discarded_passes, candidate_occurrences=lifetime_candidates,
                                     unique_evidence=len(citations), synthesis_inputs=synthesis_inputs,
                                     truncated_chars=truncated_chars,
-                                    candidate_sources=len(candidate_documents), analyzed_unit_occurrences=analyzed_units,
+                                    candidate_sources=len(lifetime_documents), analyzed_unit_occurrences=analyzed_units,
                                     unavailable_sources=max(0, readiness.total_count - readiness.searchable_count))
             value["stop_reason"] = stop_reason
             return value
@@ -4899,11 +4902,17 @@ class CaseIntelligenceWorkbench:
                 "budget": accounting(), "passes": [], "evidence": [],
                 "pending_searches": [], "discarded_passes": discarded_passes,
                 "search_elapsed_seconds": elapsed_before,
+                "lifetime_candidate_count": lifetime_candidates,
+                "lifetime_candidate_document_ids": sorted(lifetime_documents),
+                "lifetime_analyzed_units": analyzed_units,
+                "seed_search_pending": True,
                 "retrieval_source_fingerprint": current_fingerprint,
             }
-            self.workspace.checkpoint_research_job(job.job_id, checkpoint)
+            if not self.workspace.restart_research_checkpoint(job.job_id, checkpoint=checkpoint):
+                raise WorkflowFailure("Research cancelled.")
 
-        while len(passes) + discarded_passes < (budget.passes if adaptive else len(queries)):
+        while (stop_reason == "completed_bounded_plan"
+               and len(passes) + discarded_passes < (budget.passes if adaptive else len(queries))):
             if cancelled():
                 raise WorkflowFailure("Research cancelled.")
             # Recheck membership at every tool boundary; the planner cannot expand scope.
@@ -4914,6 +4923,9 @@ class CaseIntelligenceWorkbench:
             if elapsed_before + monotonic() - started_search >= budget.search_seconds:
                 stop_reason = "time_budget"
                 break
+            if adaptive and no_new_count >= 2:
+                stop_reason = "no_new_evidence"
+                break
             if adaptive and len(citations) >= budget.unique_evidence:
                 stop_reason = "evidence_budget"
                 break
@@ -4922,7 +4934,7 @@ class CaseIntelligenceWorkbench:
             proposal = None
             if not adaptive:
                 query = queries[len(passes)]
-            elif not passes:
+            elif seed_search_pending:
                 query = queries[0]
             elif pending:
                 proposal = pending.pop(0)
@@ -4946,7 +4958,11 @@ class CaseIntelligenceWorkbench:
                 retrieval_available = False
                 found = ()
             candidate_count += len(found)
+            lifetime_candidates += len(found)
             candidate_documents.update(item.document_id for item in found)
+            lifetime_documents.update(item.document_id for item in found)
+            if adaptive and seed_search_pending and retrieval_available:
+                seed_search_pending = False
             selectable = tuple(item for item in found if item.support_token not in seen_tokens) if adaptive else found
             selected = self._answer_evidence_citations(
                 matter,
@@ -5030,6 +5046,10 @@ class CaseIntelligenceWorkbench:
                     no_new_count = no_new_count + 1 if not new_selected else 0
             checkpoint = {
                 "pending_searches": pending,
+                "seed_search_pending": seed_search_pending,
+                "lifetime_candidate_count": lifetime_candidates,
+                "lifetime_candidate_document_ids": sorted(lifetime_documents),
+                "lifetime_analyzed_units": analyzed_units,
                 "no_new_count": no_new_count,
                 "discarded_passes": discarded_passes,
                 "search_elapsed_seconds": elapsed_before + monotonic() - started_search,
@@ -5057,6 +5077,12 @@ class CaseIntelligenceWorkbench:
         if adaptive and stop_reason == "completed_bounded_plan":
             stop_reason = "pass_budget" if len(passes) + discarded_passes >= budget.passes else "queue_exhausted"
 
+        if adaptive and seed_search_pending:
+            raise WorkflowFailure("Initial retrieval remains unavailable. Resume investigation, or add search budget if its passes are exhausted.")
+        if adaptive:
+            checkpoint = {**checkpoint, "search_stop_reason": stop_reason,
+                          "budget": accounting(stop_reason=stop_reason)}
+            self.workspace.checkpoint_research_job(job.job_id, checkpoint)
         if cancelled():
             raise WorkflowFailure("Research cancelled.")
         citations = self._validated_research_citations(matter, citations)
@@ -5078,6 +5104,9 @@ class CaseIntelligenceWorkbench:
             f"S{ordinal}": citation for ordinal, citation in enumerate(final_citations, 1)
         }
         final_packet = packet_for(final_evidence)
+        if adaptive:
+            checkpoint = {**checkpoint, "budget": accounting(len(final_packet), stop_reason)}
+            self.workspace.checkpoint_research_job(job.job_id, checkpoint)
         try:
             final_answer = self.generator.answer(
                 research_synthesis_question(job.question),
@@ -5132,6 +5161,11 @@ class CaseIntelligenceWorkbench:
             "budget": accounting(len(final_packet), stop_reason),
             "stop_reason": stop_reason,
             "pending_searches": pending,
+            "seed_search_pending": seed_search_pending,
+            "search_stop_reason": stop_reason,
+            "lifetime_candidate_count": lifetime_candidates,
+            "lifetime_candidate_document_ids": sorted(lifetime_documents),
+            "lifetime_analyzed_units": analyzed_units,
             "no_new_count": no_new_count,
             "discarded_passes": discarded_passes,
             "search_elapsed_seconds": checkpoint.get("search_elapsed_seconds", elapsed_before),

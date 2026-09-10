@@ -304,12 +304,19 @@ def _validate_research_export_scope(
     if job.plan.get("planner_version") == 1:
         from .investigation_planner import initial_query, validate_proposal
         source_text = {token: str(source["excerpt"]) for token, source in ledger.items()}
-        for index, step in enumerate(result.get("passes", [])):
+        seed_pending = True
+        for step in result.get("passes", []):
             if not isinstance(step, Mapping):
                 raise ExportProblem("The investigation search record is invalid.")
-            if index == 0:
-                if step.get("query") != initial_query(job.question):
+            if seed_pending:
+                if (step.get("query") != initial_query(job.question)
+                        or step.get("reason") != "Initial reviewer question."
+                        or step.get("motivating_support_token") or step.get("anchor")):
                     raise ExportProblem("The initial investigation search does not match its question.")
+                seed_pending = (step.get("retrieval_outcome") == "unavailable"
+                                and step.get("status") == "retrieval_unavailable"
+                                and step.get("hit_count") is None
+                                and step.get("selected_passages") == 0)
             elif validate_proposal({"query": step.get("query"), "anchor": step.get("anchor"),
                                     "reason": step.get("reason"), "support_token": step.get("motivating_support_token")}, source_text) is None:
                 raise ExportProblem("An investigation search has no matching source-backed reason.")

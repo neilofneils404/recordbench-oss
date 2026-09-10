@@ -264,6 +264,11 @@ def main():
                 window.receiptOriginalFetch = window.fetch;
                 window.fetch = (url, options) => {
                     if (options?.method === 'PUT') return new Promise((resolve, reject) => {
+                        window.receiptCancellationPutWaiting = true;
+                        if (options.signal?.aborted) {
+                            reject(new DOMException('Aborted', 'AbortError'));
+                            return;
+                        }
                         options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {once:true});
                     });
                     return window.receiptOriginalFetch(url, options);
@@ -272,6 +277,7 @@ def main():
             driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(resume_file))
             wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Upload 1 ready file')
             confirm()
+            wait.until(lambda x: x.execute_script('return window.receiptCancellationPutWaiting === true'))
             until(lambda: bench.workspace.recent_upload_sessions(cancelled.matter_id, ACTOR), 'Cancellation fixture did not start')
             cancel_button = driver.find_element(By.CSS_SELECTOR, '[data-upload-cancel]')
             driver.execute_script('arguments[0].scrollIntoView({block:"center",behavior:"instant"});', cancel_button)

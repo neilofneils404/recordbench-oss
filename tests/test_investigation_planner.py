@@ -428,3 +428,114 @@ def test_conflicting_continuation_submission_is_rejected(chain, additional, expe
     assert len(bench.workspace.research_jobs(matter.matter_id, matter.owner_id)) == 2
     assert bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id,
         additional_passes=2, expected_passes=1) == child
+
+
+def test_initial_outage_retries_seed_within_budget(chain, monkeypatch):
+    from case_intelligence.review_bench import RetrievalUnavailable
+    bench, _, matter, job, calls, _ = chain
+    original_search = bench._answer_search
+    def search(*args, **kwargs):
+        found = original_search(*args, **kwargs)
+        if len(calls) == 1:
+            raise RetrievalUnavailable('Synthetic initial outage')
+        return found
+    monkeypatch.setattr(bench, '_answer_search', search)
+    claimed = bench.workspace.claim_research_job('synthetic-worker')
+    result = bench._process_research_job(claimed, lambda: False)
+    assert [query for query, _ in calls][:2] == [job.question, job.question]
+    assert result['passes'][0]['retrieval_outcome'] == 'unavailable'
+    assert result['passes'][1]['new_evidence'] == 1
+    saved = bench._finish_research_job(claimed, result)
+    assert saved.state == 'succeeded'
+    assert json.loads(bench.export_research_work_product(matter, saved, 'json').body)
+
+
+def test_exhausted_initial_outages_remain_extendable(chain, monkeypatch):
+    from case_intelligence.review_bench import RetrievalUnavailable
+    bench, client, matter, job, calls, _ = chain
+    original_search = bench._answer_search
+    def search(*args, **kwargs):
+        original_search(*args, **kwargs)
+        raise RetrievalUnavailable('Synthetic initial outage')
+    monkeypatch.setattr(bench, '_answer_search', search)
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(passes=1).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, 3)
+    with pytest.raises(WorkflowFailure, match='Initial retrieval'):
+        bench._process_research_job(claimed, lambda: False)
+    bench.workspace.fail_research_job(job.job_id, 'Synthetic retrieval outage')
+    assert 'Continue from checkpoint' in client.get(f'/matters/{matter.slug}/research?job={job.job_id}').text
+    bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id, additional_passes=1, expected_passes=1)
+    monkeypatch.setattr(bench, '_answer_search', original_search)
+    resumed = bench.workspace.claim_research_job('synthetic-resume')
+    result = bench._process_research_job(resumed, lambda: False)
+    assert len(calls) == 2 and result['passes'][1]['new_evidence'] == 1
+
+
+def test_repeated_stale_recovery_retains_lifetime_resource_counts(chain, monkeypatch):
+    bench, _, matter, job, calls, _ = chain
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(evidence_item_chars=20).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, 7)
+    prior_truncated = 0
+    for boundary in (2, 4):
+        with pytest.raises(WorkflowFailure, match='cancelled'):
+            bench._process_research_job(claimed, lambda: len(calls) == boundary)
+        saved = bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id)
+        assert saved.result['budget']['counts']['candidate_occurrences'] == boundary
+        assert saved.result['budget']['counts']['analyzed_unit_occurrences'] == boundary
+        assert saved.result['budget']['counts']['truncated_chars'] > prior_truncated
+        prior_truncated = saved.result['budget']['counts']['truncated_chars']
+        bench.workspace.fail_research_job(job.job_id, 'Synthetic interruption')
+        bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id)
+        claimed = bench.workspace.claim_research_job('synthetic-resume')
+        original = bench._current_workflow_citation
+        def invalidate_once(*args, original=original):
+            monkeypatch.setattr(bench, '_current_workflow_citation', original)
+            return None
+        monkeypatch.setattr(bench, '_current_workflow_citation', invalidate_once)
+    result = bench._process_research_job(claimed, lambda: False)
+    assert result['discarded_passes'] == 4 and len(result['passes']) == 1
+    assert result['candidate_count'] == 1
+    assert result['budget']['counts']['candidate_occurrences'] == 5
+    assert result['budget']['counts']['analyzed_unit_occurrences'] == 5
+    assert result['budget']['counts']['candidate_sources'] == 2
+    assert result['budget']['counts']['truncated_chars'] > prior_truncated
+
+
+def test_synthesis_failure_resume_honors_durable_search_stop(chain, monkeypatch):
+    from case_intelligence.review_quality import research_synthesis_question
+    bench, client, matter, job, calls, citations = chain
+    assert client.post(f'/matters/{matter.slug}/uploads', files=[('files', ('many-anchors.txt',
+        b'Synthetic dispatch references AX-104, BR-205, CT-306, and DU-407.', 'text/plain'))]).status_code == 200
+    citations['first'] = next(item for item in bench.search(matter, 'dispatch references') if item.source_name == 'many-anchors.txt')
+    original_search = bench._answer_search
+    def search(*args, **kwargs):
+        found = original_search(*args, **kwargs)
+        return found if len(calls) == 1 else ()
+    monkeypatch.setattr(bench, '_answer_search', search)
+    original_answer = bench.generator.answer
+    def answer(question, *args, **kwargs):
+        if question == research_synthesis_question(job.question):
+            raise RuntimeError('Synthetic synthesis outage')
+        return original_answer(question, *args, **kwargs)
+    monkeypatch.setattr(bench.generator, 'answer', answer)
+    claimed = bench.workspace.claim_research_job('synthetic-worker')
+    with pytest.raises(RuntimeError, match='synthesis outage'):
+        bench._process_research_job(claimed, lambda: False)
+    checkpoint = bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id)
+    assert checkpoint.result['search_stop_reason'] == 'no_new_evidence'
+    assert checkpoint.result['pending_searches'] and len(calls) == 3
+    bench.workspace.fail_research_job(job.job_id, 'Synthetic synthesis outage')
+    bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id)
+    monkeypatch.setattr(bench.generator, 'answer', original_answer)
+    resumed = bench.workspace.claim_research_job('synthetic-resume')
+    result = bench._process_research_job(resumed, lambda: False)
+    assert len(calls) == 3 and result['stop_reason'] == 'no_new_evidence'
+    bench._finish_research_job(resumed, result)
+    bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id, additional_passes=1, expected_passes=5)
+    extended = bench.workspace.claim_research_job('synthetic-extended')
+    bench._process_research_job(extended, lambda: False)
+    assert len(calls) > 3

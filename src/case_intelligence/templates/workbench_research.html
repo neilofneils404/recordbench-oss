@@ -103,7 +103,7 @@
           </ul>
         </details>
         {% endif %}
-        {% if pending and active_research.state in ('succeeded', 'failed', 'cancelled') and active_research.review_budget.effective.passes < 15 %}
+        {% if (pending or active_research.result.get('seed_search_pending')) and active_research.state in ('succeeded', 'failed', 'cancelled') and active_research.review_budget.effective.passes < 15 %}
         <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="expected_passes" value="{{ active_research.review_budget.effective.passes }}">

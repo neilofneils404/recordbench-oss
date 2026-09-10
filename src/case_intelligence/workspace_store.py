@@ -9826,18 +9826,21 @@ class WorkspaceStore:
             )
         return True
 
-    def restart_research_checkpoint(self, job_id: str) -> bool:
-        """Discard a stale search checkpoint while preserving the job and plan."""
+    def restart_research_checkpoint(self, job_id: str, *, checkpoint: Mapping[str, object] | None = None) -> bool:
+        """Atomically replace stale findings and reset progress, retaining accounting."""
         if not _RESEARCH_JOB.fullmatch(job_id or ""):
             raise KeyError(job_id)
         now = self._now()
         message = "Source coverage changed or was not recorded. Repeating the evidence searches."
+        encoded = json.dumps(dict(checkpoint or {}), ensure_ascii=False, separators=(",", ":"))
+        if len(encoded) > 2_000_000:
+            raise ValueError("research checkpoint is too large")
         with self._lock, self.connection:
             changed = self.connection.execute(
-                "UPDATE workbench_research_job SET result_json='{}',completed_steps=0,"
+                "UPDATE workbench_research_job SET result_json=?,completed_steps=0,"
                 "candidate_count=0,evidence_count=0,stage='searching',message=?,updated_at=? "
                 "WHERE job_id=? AND state='running' AND cancellation_requested=0",
-                (message, now, job_id),
+                (encoded, message, now, job_id),
             ).rowcount
             if changed != 1:
                 return False
@@ -10136,7 +10139,7 @@ class WorkspaceStore:
                 raise WorkspaceProblem("Start a new investigation to use evidence-driven searches.")
             if adaptive:
                 if additional_passes:
-                    if not result.get("pending_searches"):
+                    if not result.get("pending_searches") and not result.get("seed_search_pending"):
                         raise WorkspaceProblem("No unsearched source-backed proposals remain. Start a new question.")
                     limits = dict(plan["budget"]["effective"])
                     if type(expected_passes) is not int or expected_passes != limits["passes"]:
@@ -10155,6 +10158,7 @@ class WorkspaceStore:
                     plan.setdefault("extensions", []).append({"additional_passes": additional_passes,
                         "additional_seconds": additional_passes * 180, "requested_at": now})
                     result["no_new_count"] = 0
+                    result.pop("search_stop_reason", None)
                     result["budget"] = {**result.get("budget", {}), "effective": limits, "requested": limits, "stop_reason": "running"}
                 result.pop("stop_reason", None)
                 completed = len(result.get("passes", [])) + int(result.get("discarded_passes", 0))
