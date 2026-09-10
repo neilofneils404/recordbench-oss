@@ -5803,22 +5803,35 @@ class WorkspaceStore:
             (folder + '/' if folder else '') + row['name'], row['source_count']) for row in rows), count)
 
     def source_availability_fingerprint(self, matter_id: str, source_set_id: str | None = None) -> str:
-        """Stream only matter-scoped source identity/version/state metadata."""
+        """Stream identity/version/state metadata only for the retrieval scope."""
         if not _IDENTIFIER.fullmatch(matter_id):
             raise KeyError(matter_id)
-        digest = hashlib.sha256(b"source-availability-v3\0" + matter_id.encode("ascii"))
+        digest = hashlib.sha256((b"source-availability-scoped-v4\0" if source_set_id else b"source-availability-v3\0") + matter_id.encode("ascii"))
         with self._lock:
             if self.connection.execute(
                 "SELECT 1 FROM workbench_matter WHERE matter_id=?", (matter_id,),
             ).fetchone() is None:
                 raise KeyError(matter_id)
+            if source_set_id:
+                self.source_set(matter_id, source_set_id)
+            scope_catalog = (
+                " AND EXISTS (SELECT 1 FROM workbench_source_set_item selected "
+                "WHERE selected.matter_id=c.matter_id AND selected.document_id=c.document_id AND selected.source_set_id=?)"
+                if source_set_id else ""
+            )
+            scope_upload = (
+                " AND EXISTS (SELECT 1 FROM workbench_source_set_item selected "
+                "WHERE selected.matter_id=i.matter_id AND selected.document_id=i.document_id AND selected.source_set_id=?)"
+                if source_set_id else ""
+            )
+            parameters = (matter_id, source_set_id) if source_set_id else (matter_id,)
             rows = self.connection.execute(
                 "SELECT c.document_id,c.version_id,c.content_basis_digest,c.source_state,"
                 "c.media_type,c.tone,c.kind,ij.state,mj.state FROM workbench_source_catalog c "
                 "LEFT JOIN workbench_ingest_job ij ON ij.matter_id=c.matter_id AND ij.document_id=c.document_id "
                 "LEFT JOIN workbench_media_job mj ON mj.matter_id=c.matter_id AND mj.document_id=c.document_id "
-                "AND mj.source_version_id=c.version_id WHERE c.matter_id=? ORDER BY c.document_id",
-                (matter_id,),
+                "AND mj.source_version_id=c.version_id WHERE c.matter_id=?" + scope_catalog + " ORDER BY c.document_id",
+                parameters,
             )
             for row in rows:
                 digest.update(json.dumps(tuple(row), ensure_ascii=True, separators=(",", ":")).encode("ascii"))
@@ -5831,7 +5844,7 @@ class WorkspaceStore:
                 "AND s.upload_session_id=i.upload_session_id "
                 "LEFT JOIN workbench_source_catalog c ON c.matter_id=i.matter_id AND c.document_id=i.document_id "
                 "WHERE i.matter_id=? AND s.state<>'cancelled' AND (i.document_id IS NULL OR c.document_id IS NULL) "
-                "ORDER BY i.upload_item_id", (matter_id,),
+                + scope_upload + " ORDER BY i.upload_item_id", parameters,
             )
             for row in rows:
                 digest.update(json.dumps(tuple(row), ensure_ascii=True, separators=(",", ":")).encode("ascii"))
@@ -10093,13 +10106,13 @@ class WorkspaceStore:
                 raise KeyError(job_id)
             if current["state"] in {"queued", "running"}:
                 return self._research_job(current)
-            if current["state"] not in {"failed", "cancelled"} and not (current["state"] == "succeeded" and additional_passes):
+            if current["state"] not in {"failed", "cancelled", "succeeded"}:
                 raise WorkspaceProblem(
                     "This completed research run does not need to be retried."
                 )
             # Completed results remain immutable targets for conversation links.
             continuation_key = "continuation-" + job_id
-            if current["state"] == "succeeded" and additional_passes:
+            if current["state"] == "succeeded":
                 existing = self.connection.execute(
                     "SELECT * FROM workbench_research_job WHERE matter_id=? AND actor_id=? AND idempotency_key=?",
                     (matter_id, actor_id, continuation_key),
@@ -10109,10 +10122,12 @@ class WorkspaceStore:
                     continuation_plan = json.loads(existing["plan_json"])
                     extension_index = len(parent_plan.get("extensions", []))
                     extensions = continuation_plan.get("extensions", [])
+                    recorded_request = continuation_plan.get("continuation_request")
+                    if recorded_request is None and len(extensions) > extension_index:
+                        recorded_request = {"additional_passes": extensions[extension_index].get("additional_passes"),
+                                            "expected_passes": parent_plan.get("budget", {}).get("effective", {}).get("passes")}
                     if (type(expected_passes) is not int
-                            or expected_passes != parent_plan.get("budget", {}).get("effective", {}).get("passes")
-                            or len(extensions) <= extension_index
-                            or extensions[extension_index].get("additional_passes") != additional_passes):
+                            or recorded_request != {"additional_passes": additional_passes, "expected_passes": expected_passes}):
                         raise WorkspaceProblem("This run already has a continuation with different extension details. Reload before adding more work.")
                     return self._research_job(existing)
             conversation_id = current["conversation_id"]
@@ -10135,11 +10150,21 @@ class WorkspaceStore:
             plan = json.loads(current["plan_json"])
             result = json.loads(current["result_json"])
             adaptive = plan.get("planner_version") == 1
+            stale = adaptive and bool(result.get("passes")) and result.get("retrieval_source_fingerprint") != self.source_availability_fingerprint(matter_id, current["source_set_id"])
+            if current["state"] == "succeeded" and not additional_passes:
+                if not stale:
+                    raise WorkspaceProblem("This completed research run does not need to be retried.")
+                limits = plan["budget"]["effective"]
+                if type(expected_passes) is not int or expected_passes != limits["passes"]:
+                    raise WorkspaceProblem("The investigation budget changed. Reload before rebuilding its checkpoint.")
+                spent = len(result.get("passes", [])) + int(result.get("discarded_passes", 0))
+                if spent >= limits["passes"] or float(result.get("search_elapsed_seconds", 0)) >= limits["search_seconds"]:
+                    raise WorkspaceProblem("Rebuilding needs additional search budget. Choose an extension or start a new investigation.")
             if additional_passes and not adaptive:
                 raise WorkspaceProblem("Start a new investigation to use evidence-driven searches.")
             if adaptive:
                 if additional_passes:
-                    if not result.get("pending_searches") and not result.get("seed_search_pending"):
+                    if not stale and not result.get("pending_searches") and not result.get("seed_search_pending"):
                         raise WorkspaceProblem("No unsearched source-backed proposals remain. Start a new question.")
                     limits = dict(plan["budget"]["effective"])
                     if type(expected_passes) is not int or expected_passes != limits["passes"]:
@@ -10150,7 +10175,7 @@ class WorkspaceStore:
                         budget = ReviewBudget(**limits)
                     except ValueError as exc:
                         raise WorkspaceProblem("An investigation can use at most 15 passes and 45 search minutes. Start a new investigation.") from exc
-                    if len(result.get("evidence", [])) >= budget.unique_evidence:
+                    if not stale and len(result.get("evidence", [])) >= budget.unique_evidence:
                         raise WorkspaceProblem("The evidence budget is full. Start a new investigation.")
                     if float(result.get("search_elapsed_seconds", 0)) >= budget.search_seconds:
                         raise WorkspaceProblem("The added search time is already exhausted. Choose a larger extension or start a new investigation.")
@@ -10173,6 +10198,7 @@ class WorkspaceStore:
                 parent_job_id = job_id
                 job_id = f"research-job-{uuid.uuid4().hex}"
                 plan["continued_from_job_id"] = parent_job_id
+                plan["continuation_request"] = {"additional_passes": additional_passes, "expected_passes": expected_passes}
                 self.connection.execute(
                     "INSERT INTO workbench_research_job(job_id,matter_id,actor_id,idempotency_key,"
                     "question,title,source_set_id,conversation_id,state,stage,message,created_at,updated_at) "

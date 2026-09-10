@@ -305,9 +305,38 @@ def _validate_research_export_scope(
         from .investigation_planner import initial_query, validate_proposal
         source_text = {token: str(source["excerpt"]) for token, source in ledger.items()}
         seed_pending = True
+        admitted_passages = 0
         for step in result.get("passes", []):
             if not isinstance(step, Mapping):
                 raise ExportProblem("The investigation search record is invalid.")
+            outcome = step.get("retrieval_outcome")
+            hits = step.get("hit_count")
+            selected = step.get("selected_passages")
+            new_evidence = step.get("new_evidence")
+            candidates = step.get("candidate_passages")
+            candidate_sources = step.get("candidate_sources")
+            analyzed = step.get("analyzed_units")
+            counts = (selected, new_evidence, candidates, candidate_sources, analyzed)
+            valid = all(type(value) is int and value >= 0 for value in counts)
+            if (not valid or not isinstance(outcome, str) or not isinstance(step.get("status"), str)
+                    or selected != new_evidence or analyzed > selected or candidate_sources > candidates):
+                raise ExportProblem("The investigation search outcome counters are invalid.")
+            if outcome == "unavailable":
+                valid = (hits is None and candidates == selected == candidate_sources == 0
+                         and step.get("status") == "retrieval_unavailable" and "answer" not in step)
+            elif type(hits) is int and hits >= 0 and candidates == hits and selected <= hits:
+                valid = (
+                    (outcome == "zero_hits" and hits == selected == 0 and step.get("status") == "gap" and "answer" not in step)
+                    or (outcome == "no_new_evidence" and hits > 0 and selected == 0 and step.get("status") == "duplicate" and "answer" not in step)
+                    or (outcome == "new_evidence" and hits >= selected > 0
+                        and step.get("status") in {"supported", "gap", "needs_review"})
+                )
+                valid = valid and (candidate_sources > 0 if hits else candidate_sources == 0)
+            else:
+                valid = False
+            if not valid:
+                raise ExportProblem("The investigation search outcome counters are invalid.")
+            admitted_passages += new_evidence
             if seed_pending:
                 if (step.get("query") != initial_query(job.question)
                         or step.get("reason") != "Initial reviewer question."
@@ -320,6 +349,8 @@ def _validate_research_export_scope(
             elif validate_proposal({"query": step.get("query"), "anchor": step.get("anchor"),
                                     "reason": step.get("reason"), "support_token": step.get("motivating_support_token")}, source_text) is None:
                 raise ExportProblem("An investigation search has no matching source-backed reason.")
+        if admitted_passages != len(ledger):
+            raise ExportProblem("The investigation search counts do not match its evidence ledger.")
         for proposal in result.get("pending_searches", []):
             if validate_proposal(proposal, source_text) is None:
                 raise ExportProblem("An investigation proposal has no matching source-backed reason.")

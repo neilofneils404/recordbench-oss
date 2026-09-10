@@ -539,3 +539,86 @@ def test_synthesis_failure_resume_honors_durable_search_stop(chain, monkeypatch)
     extended = bench.workspace.claim_research_job('synthetic-extended')
     bench._process_research_job(extended, lambda: False)
     assert len(calls) > 3
+
+
+def test_unrelated_sources_do_not_invalidate_scoped_findings(chain):
+    bench, client, matter, job, _, citations = chain
+    source_set = bench.workspace.create_source_set(matter.matter_id, 'Synthetic selected scope',
+        (citations['first'].document_id,), matter.owner_id)
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_research_job SET source_set_id=? WHERE job_id=?',
+            (source_set.source_set_id, job.job_id))
+    claimed = bench.workspace.claim_research_job('synthetic-worker')
+    saved = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    before = saved.result['retrieval_source_fingerprint']
+    assert client.post(f'/matters/{matter.slug}/uploads', files=[('files', ('outside.txt',
+        b'Synthetic unrelated source outside the selected set.', 'text/plain'))]).status_code == 200
+    assert bench.workspace.source_availability_fingerprint(matter.matter_id, source_set.source_set_id) == before
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_source_catalog SET source_state=? WHERE matter_id=? AND document_id=?',
+            ('failed', matter.matter_id, citations['third'].document_id))
+    assert bench.workspace.source_availability_fingerprint(matter.matter_id, source_set.source_set_id) == before
+    page = client.get(f'/matters/{matter.slug}/research?job={job.job_id}')
+    assert 'Saved findings and search proposals are no longer current' not in page.text
+    assert 'Search plan and checkpoint' in page.text
+
+
+@pytest.mark.parametrize('passes,additional', [(5, 0), (1, 1)])
+def test_stale_completed_run_can_rebuild_without_overwriting_parent(chain, passes, additional):
+    from urllib.parse import parse_qs, urlsplit
+    bench, client, matter, job, calls, citations = chain
+    source_set = bench.workspace.create_source_set(matter.matter_id, 'Synthetic rebuild scope',
+        (citations['first'].document_id,), matter.owner_id)
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_research_job SET source_set_id=? WHERE job_id=?',
+            (source_set.source_set_id, job.job_id))
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(passes=passes).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, passes + 2)
+    saved = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    with pytest.raises(WorkspaceProblem, match='does not need'):
+        bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id, expected_passes=passes)
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('INSERT INTO workbench_source_set_item(source_set_id,matter_id,document_id,added_by,added_at) VALUES (?,?,?,?,?)',
+            (source_set.source_set_id, matter.matter_id, citations['second'].document_id, matter.owner_id, saved.updated_at))
+    url = f'/matters/{matter.slug}/research?job={job.job_id}'
+    page = client.get(url)
+    assert 'Rebuild checkpoint' in page.text and 'AX-104' not in page.text
+    assert ('Use remaining budget' in page.text) == (additional == 0)
+    response = client.post(f'/matters/{matter.slug}/research/{job.job_id}/retry',
+        data={'additional_passes': additional, 'expected_passes': passes}, follow_redirects=False)
+    child_id = parse_qs(urlsplit(response.headers['location']).query)['job'][0]
+    assert child_id != job.job_id
+    child = bench.workspace.research_job(matter.matter_id, matter.owner_id, child_id)
+    assert child.plan['budget']['effective']['passes'] == passes + additional
+    assert bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id,
+        additional_passes=additional, expected_passes=passes) == child
+    completed_before = len(calls)
+    claimed = bench.workspace.claim_research_job('synthetic-rebuild')
+    result = bench._process_research_job(claimed, lambda: False)
+    rebuilt = bench._finish_research_job(claimed, result)
+    assert calls[completed_before][0] == job.question
+    assert rebuilt.result['discarded_passes'] == len(saved.result['passes'])
+    assert len(calls) <= passes + additional
+    assert bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id) == saved
+
+
+@pytest.mark.parametrize('changes', [
+    {'retrieval_outcome': 'zero_hits'}, {'selected_passages': '1'},
+    {'selected_passages': True}, {'hit_count': None}, {'hit_count': -1},
+    {'hit_count': True}, {'retrieval_outcome': 'invented'},
+    {'retrieval_outcome': 'unavailable'}, {'new_evidence': 999},
+    {'candidate_sources': 0.5}, {'analyzed_units': 99},
+    {'hit_count': 2, 'candidate_passages': 2, 'selected_passages': 2, 'new_evidence': 2},
+])
+def test_export_rejects_contradictory_search_outcome_metadata(chain, changes):
+    from dataclasses import replace
+    from case_intelligence.work_product_exports import ExportProblem
+    bench, _, matter, _, _, _ = chain
+    claimed = bench.workspace.claim_research_job('synthetic-worker')
+    saved = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    changed = json.loads(json.dumps(saved.result))
+    changed['passes'][1].update(changes)
+    with pytest.raises(ExportProblem, match='search outcome counters|search counts'):
+        bench.export_research_work_product(matter, replace(saved, result=changed), 'json')

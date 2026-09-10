@@ -1569,7 +1569,11 @@ def test_existing_transcript_overview_is_backfilled_automatically_on_restart(tmp
 
         # Simulate a transcript created before migration 0013. Schema migration
         # still does not call the model; coordinator startup owns the backfill.
-        with bench.workspace.connection:
+        # Stop the coordinator before modifying its database to model an offline
+        # legacy snapshot without racing a background SQLite transaction.
+        bench.media.close()
+        bench.media = None
+        with bench.workspace._lock, bench.workspace.connection:
             bench.workspace.connection.execute(
                 "DELETE FROM workbench_media_summary WHERE transcript_id=?",
                 (transcript.transcript_id,),

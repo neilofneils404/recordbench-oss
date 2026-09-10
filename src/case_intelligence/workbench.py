@@ -9080,6 +9080,7 @@ def create_workbench_app(
             object_type="research_job", object_id=active.job_id if active else None,
         )
         research_stale = False
+        rebuild_options = []
         if active and active.plan.get("planner_version") == PLANNER_VERSION:
             try:
                 if active.result.get("passes"):
@@ -9093,7 +9094,14 @@ def create_workbench_app(
             except (KeyError, TypeError, ValueError):
                 research_stale = True
             if research_stale:
-                active = replace(active, result={})
+                if active.state == "succeeded":
+                    limits = active.plan["budget"]["effective"]
+                    spent = len(active.result.get("passes", [])) + int(active.result.get("discarded_passes", 0))
+                    elapsed = float(active.result.get("search_elapsed_seconds", 0))
+                    rebuild_options = [count for count in range(6)
+                                       if spent < limits["passes"] + count <= 15
+                                       and elapsed < limits["search_seconds"] + count * 180 <= 2700]
+                active = replace(active, result={"budget": active.review_budget})
         return templates.TemplateResponse(
             request=request,
             name="workbench_research.html",
@@ -9105,6 +9113,7 @@ def create_workbench_app(
                 "research_jobs": jobs,
                 "active_research": active,
                 "research_stale": research_stale,
+                "rebuild_options": rebuild_options,
                 "notice": notice,
                 "error": error,
             },

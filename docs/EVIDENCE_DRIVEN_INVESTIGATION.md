@@ -141,3 +141,14 @@ The pinned intake browser fixture waits for its intercepted transfer before
 cancelling and models an already-aborted fetch signal. The speaker-review test
 holds the background media worker while asserting the queued-refresh response;
 these fixtures no longer depend on which side of an asynchronous boundary wins.
+
+Stale completed runs expose a rebuild action while keeping their old findings
+hidden. Rebuilding creates a separate continuation and preserves the original
+conversation result. It uses remaining passes and search time, or an explicit
+extension if more budget is needed. Selected-set fingerprints include only that
+set's sources and membership; unrelated uploads do not force a rebuild.
+
+Exports validate each adaptive search outcome against exact integer counters,
+retrieval availability, selection and candidate counts, and the current evidence
+ledger. Contradictory or malformed checkpoint metadata is rejected instead of
+being copied into a work product.

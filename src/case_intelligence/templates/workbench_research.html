@@ -60,7 +60,20 @@
         {% endif %}
       </article>
 
-      {% if research_stale %}<p class="workflow-caution">Sources changed. Saved findings and search proposals are no longer current and are hidden. Resume interrupted work to rebuild its checkpoint, or start a new investigation.</p>{% endif %}
+      {% if research_stale %}
+      <p class="workflow-caution">Sources changed. Saved findings and search proposals are no longer current and are hidden. Rebuild the checkpoint with available search budget, or start a new investigation.</p>
+      {% if active_research.state == 'succeeded' and rebuild_options %}
+      <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="expected_passes" value="{{ active_research.review_budget.effective.passes }}">
+        <label for="rebuild-budget">Search budget for rebuild</label>
+        <select id="rebuild-budget" name="additional_passes">
+          {% for count in rebuild_options %}<option value="{{ count }}">{% if count == 0 %}Use remaining budget{% else %}Add {{ count }} pass{{ '' if count == 1 else 'es' }} · {{ count * 3 }} search minutes{% endif %}</option>{% endfor %}
+        </select>
+        <button class="button button-primary" type="submit">Rebuild checkpoint</button>
+      </form>
+      {% endif %}
+      {% endif %}
       {% if active_research.plan.get('planner_version') == 1 and not research_stale %}
       <section class="workflow-run-card">
         <h3>Search plan and checkpoint</h3>

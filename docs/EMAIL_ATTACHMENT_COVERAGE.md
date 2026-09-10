@@ -74,10 +74,11 @@ searched. The first retrieval fingerprints the matter-scoped catalog
 IDs, versions, content-basis digests, states, media types, processing jobs and
 pending uploads not yet bound to a catalog source. An investigation retains this
 first boundary through every pass, so a later search cannot erase a change that
-earlier queries missed. A selected source set adds its identity and membership
-to the fingerprint, captured under the control lock with the frozen search
-membership before retrieval begins. Edits to other sets do not change that scope
-boundary; foreign sets are refused. This streams metadata
+earlier queries missed. A selected source set restricts the metadata stream to
+its member documents and adds its identity and membership to the fingerprint,
+captured under the control lock before retrieval begins. Unrelated sources and
+unbound uploads outside that set do not invalidate its findings. Edits to other
+sets do not change that scope boundary; foreign sets are refused. This streams metadata
 without reading source bytes or materializing a second source list. If that boundary
 changes during retrieval or generation, saved coverage is partial and explains that
 newly available material may be absent and the question should be run again.

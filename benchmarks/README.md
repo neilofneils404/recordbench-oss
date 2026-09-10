@@ -96,3 +96,12 @@ cannot be a background transcript overview. The corresponding test-node, helper
 file and aggregate content digests were refreshed together. Case definitions,
 case fingerprint and fixture bytes are unchanged; results from different content
 fingerprints must remain distinguishable.
+
+September 10, 2026 asynchronous fixture corrections: speaker-review response
+assertions hold the media coordinator so an immediate overview cannot finish
+before the queued-refresh readback. The legacy-overview restart fixture stops
+the coordinator and takes the workspace lock before constructing its offline
+snapshot. The speaker test-node, media helper-file, and aggregate content digests
+were refreshed together. Case definitions, case fingerprint, expected speaker
+behavior, and fixture bytes are unchanged. Receipts remain distinguishable by
+content fingerprint; the integrity checks still reject undeclared changes.
