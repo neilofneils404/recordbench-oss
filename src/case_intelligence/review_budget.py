@@ -6,6 +6,7 @@ from typing import Mapping, Sequence
 @dataclass(frozen=True)
 class ReviewBudget:
     passes: int = 5
+    search_seconds: int = 900
     primary_candidates: int = 20
     supplemental_candidates_per_kind: int = 12
     selected_per_pass: int = 12
@@ -16,7 +17,7 @@ class ReviewBudget:
     output_tokens: int = 1_200
 
     def __post_init__(self):
-        ceilings = (5, 20, 12, 12, 72, 12, 6_000, 48_000, 1_200)
+        ceilings = (15, 2700, 20, 12, 12, 72, 12, 6_000, 48_000, 1_200)
         for (name, value), ceiling in zip(asdict(self).items(), ceilings):
             if type(value) is not int or not 1 <= value <= ceiling:
                 raise ValueError(f"Review budget {name} must be between 1 and {ceiling}.")
@@ -33,7 +34,7 @@ class ReviewBudget:
         return tuple(bounded), omitted
 
     def metadata(self, **counts):
-        return {"version": 1, "status": "known", "requested": asdict(self),
+        return {"version": 2, "status": "known", "requested": asdict(self),
                 "effective": asdict(self), "counts": counts, "stop_reason": "running"}
 
 
@@ -52,16 +53,22 @@ def budget_metadata(result: Mapping, plan: Mapping | None = None) -> dict:
     if not isinstance(value, Mapping):
         value = (plan or {}).get("budget")
     raw_reason = result.get("stop_reason", value.get("stop_reason") if isinstance(value, Mapping) else None)
-    reason = raw_reason if raw_reason in {"running", "completed_bounded_plan", "cancelled", "cancelled_before_start", "failed"} else "unknown"
+    reason = raw_reason if raw_reason in {"running", "completed_bounded_plan", "cancelled", "cancelled_before_start", "failed", "pass_budget", "time_budget", "evidence_budget", "no_new_evidence", "queue_exhausted"} else "unknown"
     unknown = {"version": None, "status": "unknown", "requested": None,
                "effective": None, "counts": None, "stop_reason": reason}
-    if not isinstance(value, Mapping) or value.get("version") != 1:
+    if not isinstance(value, Mapping) or value.get("version") not in {1, 2}:
         return unknown
     try:
         requested = asdict(ReviewBudget(**value["requested"]))
         effective = asdict(ReviewBudget(**value["effective"]))
+        if value["version"] == 1:
+            # Historical runs did not record or enforce a search-time budget.
+            requested.pop("search_seconds", None)
+            effective.pop("search_seconds", None)
+        elif "search_seconds" not in value["requested"] or "search_seconds" not in value["effective"]:
+            return unknown
         counts = value.get("counts", {})
-        allowed = ("completed_passes", "candidate_occurrences", "unique_evidence", "synthesis_inputs",
+        allowed = ("completed_passes", "discarded_passes", "candidate_occurrences", "unique_evidence", "synthesis_inputs",
                    "truncated_chars", "candidate_sources", "analyzed_unit_occurrences", "unavailable_sources")
         if not isinstance(counts, Mapping):
             return unknown
@@ -70,7 +77,7 @@ def budget_metadata(result: Mapping, plan: Mapping | None = None) -> dict:
             return unknown
     except (KeyError, TypeError, ValueError):
         return unknown
-    return {"version": 1, "status": "known", "requested": requested, "effective": effective,
+    return {"version": value["version"], "status": "known", "requested": requested, "effective": effective,
             "counts": safe_counts, "stop_reason": reason}
 
 
@@ -79,7 +86,9 @@ def budget_description(value: Mapping) -> str:
         return "Review budget unknown: no complete budget metadata was saved for this run. Stop reason: " + str(value.get("stop_reason", "unknown")) + "."
     limits = value["effective"]
     counts = value.get("counts") or {}
-    text = (f"Review limits: {limits['passes']} passes; {limits['primary_candidates']} primary candidates per pass; "
+    timing = (f"{limits['search_seconds']} seconds for search steps (checked between calls); "
+              if "search_seconds" in limits else "search-time budget not recorded; ")
+    text = (f"Review limits: {limits['passes']} passes; {timing}{limits['primary_candidates']} primary candidates per pass; "
             f"up to {limits['supplemental_candidates_per_kind']} supplemental candidates per missing requested source kind; "
             f"{limits['selected_per_pass']} selected passages per pass; {limits['unique_evidence']} unique evidence passages; "
             f"{limits['synthesis_inputs']} synthesis inputs; {limits['evidence_item_chars']} characters per passage; "
@@ -87,6 +96,7 @@ def budget_description(value: Mapping) -> str:
             + ("Requested limits equal effective limits. " if value["requested"] == limits else "Requested limits differ from effective limits. "))
     if counts:
         text += (f"Completed passes: {counts.get('completed_passes', 0)}; candidate occurrences: {counts.get('candidate_occurrences', 0)}; "
+                 f"passes discarded after source changes: {counts.get('discarded_passes', 0)}; "
                  f"unique selected passages: {counts.get('unique_evidence', 0)}; synthesis inputs: {counts.get('synthesis_inputs', 0)}; "
                  f"candidate sources: {counts.get('candidate_sources', 0)}; analyzed unit occurrences: {counts.get('analyzed_unit_occurrences', 0)}; "
                  f"unavailable sources at start: {counts.get('unavailable_sources', 0)}; characters omitted from generation packets: {counts.get('truncated_chars', 0)}. ")

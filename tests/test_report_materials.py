@@ -334,7 +334,7 @@ def test_research_claims_resolve_against_the_frozen_evidence_ledger():
     bench, _ = bench_for(document)
     frozen = reference(bench, document)
     payload = answer(reference(bench, document, staff=True))
-    job = SimpleNamespace(job_id="research-a", matter_id=MATTER.matter_id, state="succeeded", title="Synthetic investigation", updated_at=REVISION,
+    job = SimpleNamespace(job_id="research-a", matter_id=MATTER.matter_id, state="succeeded", title="Synthetic investigation", updated_at=REVISION, plan={},
         result={"evidence": [frozen], "answer": payload, "summary": "Saved synthetic finding", "passes": [], "gaps": [],
                 "coverage": {"notice": "Selected passages only."}})
     bench.workspace.jobs[job.job_id] = job

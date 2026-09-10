@@ -10071,7 +10071,10 @@ class WorkspaceStore:
             ).fetchone()
         return self._research_job(row)
 
-    def retry_research_job(self, matter_id: str, actor_id: str, job_id: str) -> ResearchJobRecord:
+    def retry_research_job(self, matter_id: str, actor_id: str, job_id: str, *, additional_passes: int = 0, expected_passes: int | None = None) -> ResearchJobRecord:
+        from .review_budget import ReviewBudget
+        if type(additional_passes) is not int or not 0 <= additional_passes <= 5:
+            raise WorkspaceProblem("Choose between one and five additional passes.")
         job = self.research_job(matter_id, actor_id, job_id)
         if job.actor_id != actor_id:
             raise WorkspaceProblem("Only the reviewer who started this run can retry it.")
@@ -10087,7 +10090,7 @@ class WorkspaceStore:
                 raise KeyError(job_id)
             if current["state"] in {"queued", "running"}:
                 return self._research_job(current)
-            if current["state"] not in {"failed", "cancelled"}:
+            if current["state"] not in {"failed", "cancelled"} and not (current["state"] == "succeeded" and additional_passes):
                 raise WorkspaceProblem(
                     "This completed research run does not need to be retried."
                 )
@@ -10108,16 +10111,49 @@ class WorkspaceStore:
                     raise WorkspaceProblem(
                         "This conversation already has review work in progress."
                     )
+            plan = json.loads(current["plan_json"])
+            result = json.loads(current["result_json"])
+            adaptive = plan.get("planner_version") == 1
+            if additional_passes and not adaptive:
+                raise WorkspaceProblem("Start a new investigation to use evidence-driven searches.")
+            if adaptive:
+                if additional_passes:
+                    if not result.get("pending_searches"):
+                        raise WorkspaceProblem("No unsearched source-backed proposals remain. Start a new question.")
+                    limits = dict(plan["budget"]["effective"])
+                    if type(expected_passes) is not int or expected_passes != limits["passes"]:
+                        raise WorkspaceProblem("The investigation budget changed. Reload before adding more work.")
+                    limits["passes"] += additional_passes
+                    limits["search_seconds"] += additional_passes * 180
+                    try:
+                        budget = ReviewBudget(**limits)
+                    except ValueError as exc:
+                        raise WorkspaceProblem("An investigation can use at most 15 passes and 45 search minutes. Start a new investigation.") from exc
+                    plan["budget"] = budget.metadata()
+                    plan.setdefault("extensions", []).append({"additional_passes": additional_passes,
+                        "additional_seconds": additional_passes * 180, "requested_at": now})
+                    result["no_new_count"] = 0
+                    result["budget"] = {**result.get("budget", {}), "effective": limits, "requested": limits, "stop_reason": "running"}
+                result.pop("stop_reason", None)
+                completed = len(result.get("passes", [])) + int(result.get("discarded_passes", 0))
+                total = plan["budget"]["effective"]["passes"] + 2
+                # A completed synthesis is retained in its conversation message;
+                # the resumed run must save a new message after verification.
+                for key in ("summary", "answer", "coverage", "gaps"):
+                    result.pop(key, None)
+            else:
+                plan, result, completed, total = {}, {}, 0, 0
             self.connection.execute(
                 "UPDATE workbench_research_job SET state='queued',stage='queued',"
-                "message='Research queued to try again.',worker_id=NULL,cancellation_requested=0,"
-                "plan_json='{}',result_json='{}',total_steps=0,completed_steps=0,"
-                "candidate_count=0,evidence_count=0,started_at=NULL,finished_at=NULL,updated_at=? "
-                "WHERE job_id=?", (now, job_id)
+                "message='Investigation queued from checkpoint.',worker_id=NULL,cancellation_requested=0,"
+                "plan_json=?,result_json=?,total_steps=?,completed_steps=?,"
+                "candidate_count=?,evidence_count=?,result_message_id=NULL,started_at=NULL,finished_at=NULL,updated_at=? "
+                "WHERE job_id=?", (json.dumps(plan), json.dumps(result), total, completed,
+                                   result.get("candidate_count", 0), len(result.get("evidence", [])), now, job_id)
             )
             self._append_research_event_locked(
-                job_id, state="queued", stage="queued", message="Research queued to try again.",
-                completed_steps=0, total_steps=0, created_at=now,
+                job_id, state="queued", stage="queued", message="Investigation queued from checkpoint.",
+                completed_steps=completed, total_steps=total, created_at=now,
             )
             row = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,)

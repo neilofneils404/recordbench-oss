@@ -301,6 +301,22 @@ def _validate_research_export_scope(
             raise ExportProblem("The investigation evidence ledger is invalid.")
         ledger[token] = item
 
+    if job.plan.get("planner_version") == 1:
+        from .investigation_planner import initial_query, validate_proposal
+        source_text = {token: str(source["excerpt"]) for token, source in ledger.items()}
+        for index, step in enumerate(result.get("passes", [])):
+            if not isinstance(step, Mapping):
+                raise ExportProblem("The investigation search record is invalid.")
+            if index == 0:
+                if step.get("query") != initial_query(job.question):
+                    raise ExportProblem("The initial investigation search does not match its question.")
+            elif validate_proposal({"query": step.get("query"), "anchor": step.get("anchor"),
+                                    "reason": step.get("reason"), "support_token": step.get("motivating_support_token")}, source_text) is None:
+                raise ExportProblem("An investigation search has no matching source-backed reason.")
+        for proposal in result.get("pending_searches", []):
+            if validate_proposal(proposal, source_text) is None:
+                raise ExportProblem("An investigation proposal has no matching source-backed reason.")
+
     def validate_citation(value: object) -> None:
         if not isinstance(value, Mapping):
             raise ExportProblem("An investigation citation is invalid.")
@@ -407,6 +423,8 @@ def _validate_research_export_scope(
         else:
             expected_text = {
                 "gap": "No searchable passage matched this part of the research plan.",
+                "duplicate": "No new passage was selected from this search.",
+                "retrieval_unavailable": "Retrieval was unavailable; this search does not establish zero hits.",
                 "needs_review": (
                     "Potential passages were found, but this research step did not "
                     "produce a source-verified finding."
@@ -1175,10 +1193,19 @@ def export_research(
                 "notice": _plain(coverage.get("notice")),
             }
         findings = []
+        def motivating_source(token):
+            return next((safe_citation(source) for source in mapping_items(result.get("evidence"))
+                         if token and source.get("support_token") == token), None)
+
         for item in mapping_items(result.get("passes")):
             findings.append(
                 {
                     "search": _plain(item.get("query")),
+                    "reason": _plain(item.get("reason")),
+                    "retrieval_outcome": _plain(item.get("retrieval_outcome")),
+                    "hit_count": item.get("hit_count"),
+                    "selected_passages": item.get("selected_passages"),
+                    "motivating_source": motivating_source(item.get("motivating_support_token")),
                     "status": _plain(item.get("status")).replace("_", " ").title(),
                     "finding": _plain(item.get("text")),
                 }
@@ -1205,6 +1232,11 @@ def export_research(
                     "review_budget": job.review_budget,
                     "review_budget_description": job.review_budget_description,
                     "findings": findings,
+                    "unsearched_proposals": [
+                        {"search": _plain(item.get("query")), "reason": _plain(item.get("reason")),
+                         "motivating_source": motivating_source(item.get("support_token"))}
+                        for item in mapping_items(result.get("pending_searches"))
+                    ],
                     "supporting_sources": supporting_sources,
                 },
             },
@@ -1245,7 +1277,24 @@ def export_research(
             if not isinstance(item, Mapping):
                 continue
             blocks.append(ExportBlock(f"{index}. {_plain(item.get('query'))}", "heading1"))
+            if item.get("reason"):
+                blocks.append(ExportBlock(_plain(item["reason"]), "note"))
+            token = item.get("motivating_support_token")
+            for source in result.get("evidence", []):
+                if token and source.get("support_token") == token:
+                    blocks.append(ExportBlock(f"Search motivated by: {_plain(source.get('source_name'))} — {_plain(source.get('location'))}", "citation"))
             blocks.append(ExportBlock(_plain(item.get("text")) or "No supported finding.", "normal"))
+    pending = result.get("pending_searches")
+    if isinstance(pending, list) and pending:
+        blocks.append(ExportBlock("Unsearched proposals", "heading1"))
+        for item in pending:
+            if not isinstance(item, Mapping):
+                continue
+            blocks.append(ExportBlock(_plain(item.get("query")), "heading2"))
+            blocks.append(ExportBlock(_plain(item.get("reason")), "note"))
+            for source in result.get("evidence", []):
+                if source.get("support_token") == item.get("support_token"):
+                    blocks.append(ExportBlock(f"Search motivated by: {_plain(source.get('source_name'))} — {_plain(source.get('location'))}", "citation"))
     evidence = result.get("evidence")
     if isinstance(evidence, list):
         blocks.append(ExportBlock("Supporting sources", "heading1"))
@@ -1260,7 +1309,7 @@ def export_research(
                 blocks.append(ExportBlock(excerpt, "citation"))
     blocks.append(
         ExportBlock(
-            "This investigation used multiple focused searches; it did not check every source. Verify cited passages before relying on it.",
+            "This investigation is limited to selected search passages; it did not check every source. Verify cited passages before relying on it.",
             "footer",
         )
     )

@@ -756,7 +756,9 @@ def test_recovered_final_research_checkpoint_retrieves_new_sources(tmp_path, mon
         with pytest.raises(StoppedAfterPasses):
             bench._process_research_job(claimed, lambda: False)
         stopped = bench.workspace.research_job(matter.matter_id, ACTOR, job.job_id)
-        assert len(stopped.result['passes']) == len(stopped.plan['queries'])
+        assert [step['query'] for step in stopped.result['passes']] == [
+            stopped.plan['queries'][0], 'ParentBodyCanary']
+        assert stopped.result['pending_searches'] == []
         if source_set:
             assert client.post(f'/matters/{slug}/sources/bulk', data={'action': 'add_to_set',
                 'source_set_id': source_set.source_set_id, 'selected': store.action_token(late)},
@@ -778,7 +780,9 @@ def test_recovered_final_research_checkpoint_retrieves_new_sources(tmp_path, mon
         result = bench._process_research_job(resumed, lambda: False)
         finished = bench.workspace.finish_research_job(job.job_id, result)
         assert finished.state == 'succeeded'
-        assert searches == list(stopped.plan['queries'])
+        assert searches == [stopped.plan['queries'][0], 'ParentBodyCanary']
+        assert result['discarded_passes'] == 2
+        assert result['budget']['counts']['completed_passes'] == 4
         assert any(item['source_name'] == 'late.txt' for item in result['evidence'])
         for item in result['evidence']:
             assert bench.support(matter, item['support_token']).source_name == item['source_name']

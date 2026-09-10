@@ -6,14 +6,16 @@ specs. When numeric slice order conflicts with this file, **this file wins**.
 
 **Last updated:** 2026-09-10
 
+Verified tip of `main`: `e44e485ab3eca94b7e5588765df58f7f4b2b4786` (slice 06 merged).
+
 ## Cruise order
 
 | Step | Work | State |
 | ---- | ---- | ----- |
 | 0 | Portable baseline on `main`; alpha blockers #30 / #31 closed | Done |
 | 1 | Prove `main`: green Quality gates (including synthetic-browser); clean-host CPU install acceptance; install friction documented | Done |
-| 2 | Slice **06** — reusable team groups with explicit matter access | **Next** |
-| 3 | Slice **11** — evidence-driven investigation (durable plan, reasons, checkpoints, zero-hit ledger rows) | After 06 |
+| 2 | Slice **06** — reusable team groups with explicit matter access | Done |
+| 3 | Slice **11** — evidence-driven investigation (durable plan, reasons, checkpoints, zero-hit ledger rows) | **Next** |
 | 4 | Slice **12** — deepen full-text coverage as required to feed durable findings | With / after 11 |
 | 5 | Slice **13** — hierarchical synthesis (issue- then matter-level) with citations through intermediates | After 11 / 12 |
 | 6 | Slices **16 → 18** — People / Places / Things workspace, extraction, evidence-backed relationships | After 13 |

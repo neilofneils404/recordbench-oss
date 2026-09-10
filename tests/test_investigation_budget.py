@@ -50,7 +50,7 @@ def test_primary_request_is_validated_before_search_not_silently_capped(availabl
     assert len(retriever.search("synthetic", "generated device", limit=20)) == min(available, 20)
 
 
-@pytest.mark.parametrize("fields", [{"passes": 6}, {"primary_candidates": 30}, {"passes": True}, {"evidence_chars": 0}])
+@pytest.mark.parametrize("fields", [{"passes": 16}, {"primary_candidates": 30}, {"passes": True}, {"evidence_chars": 0}])
 def test_invalid_budget_rejected(fields):
     with pytest.raises(ValueError, match="Review budget"):
         ReviewBudget(**fields)
@@ -78,13 +78,13 @@ def test_repeated_passages_budget_agrees_with_ui_and_exports(tmp_path, monkeypat
         job = bench._finish_research_job(claimed, result)
         budget = job.review_budget
         assert budget["requested"] == budget["effective"]
-        assert budget["counts"]["completed_passes"] == 5
-        assert budget["counts"]["candidate_occurrences"] == 5
+        assert budget["counts"]["completed_passes"] == 3
+        assert budget["counts"]["candidate_occurrences"] == 3
         assert budget["counts"]["unique_evidence"] == 1
         assert budget["counts"]["candidate_sources"] == 1
-        assert budget["counts"]["analyzed_unit_occurrences"] == 5
+        assert budget["counts"]["analyzed_unit_occurrences"] == 1
         assert budget["counts"]["synthesis_inputs"] == 1
-        assert budget["stop_reason"] == "completed_bounded_plan"
+        assert budget["stop_reason"] == "no_new_evidence"
         page = client.get(f"/matters/{slug}/research?job={job.job_id}")
         assert html.escape(job.review_budget_description) in page.text
         status = client.get(f"/matters/{slug}/research/{job.job_id}/status").json()
@@ -192,3 +192,15 @@ def test_ollama_generation_request_applies_the_shared_output_budget(monkeypatch)
     client.generate(question="What does the generated record say?", evidence=(generation.EvidenceItem("S1", "Generated source.txt", "Line 1", "Generated device entered ready state."),))
     assert len(requests) == 1
     assert requests[0]["options"]["num_predict"] == ReviewBudget().output_tokens == 1_200
+
+
+def test_legacy_budget_does_not_invent_a_historical_time_limit():
+    from case_intelligence.review_budget import budget_description
+    value = ReviewBudget().metadata(completed_passes=2)
+    value['version'] = 1
+    value['requested'].pop('search_seconds')
+    value['effective'].pop('search_seconds')
+    saved = budget_metadata({'budget': value})
+    assert saved['version'] == 1
+    assert 'search_seconds' not in saved['effective']
+    assert 'search-time budget not recorded' in budget_description(saved)

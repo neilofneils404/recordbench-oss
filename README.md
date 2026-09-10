@@ -127,6 +127,10 @@ does not establish that every page was read or every relevant fact was found.
 | **Check every source** | Apply the same criterion to every source in a frozen collection and validate the results. This is a specialized source-screening task, not another chat type. |
 | **Review Sources** | Browse up to 100 sources immediately, navigate exact folder subtrees, filter by type or collection, open filenames directly, upload separately, and review media with one-click Playback, Summary, Export, and Clips tabs beside an independently usable transcript. |
 
+Broader investigations now follow source-backed names, dates, phrases, and identifiers,
+show their search reasons, and support checkpoint continuation with explicit
+additional budgets. See [evidence-driven investigation](docs/EVIDENCE_DRIVEN_INVESTIGATION.md).
+
 Focused answers and broader investigations share conversational continuity;
 the processing strategy stays behind task language. Checking every source stays
 separate because it freezes a population and produces one decision per source.

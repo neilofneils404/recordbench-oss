@@ -60,7 +60,61 @@
         {% endif %}
       </article>
 
-      {% if active_research.state == 'succeeded' %}
+      {% if research_stale %}<p class="workflow-caution">Sources changed. Saved findings and search proposals are no longer current and are hidden. Resume interrupted work to rebuild its checkpoint, or start a new investigation.</p>{% endif %}
+      {% if active_research.plan.get('planner_version') == 1 and not research_stale %}
+      <section class="workflow-run-card">
+        <h3>Search plan and checkpoint</h3>
+        <p>Follow-ups use names, dates, identifiers, and phrases from selected passages. They can surface corroborating or competing accounts; they do not establish those accounts as facts.</p>
+        <details>
+          {% set completed_searches = active_research.result.get('passes', [])|length %}
+          <summary>{{ completed_searches }} completed search{{ '' if completed_searches == 1 else 'es' }}</summary>
+          <ol>
+            {% for step in active_research.result.get('passes', []) %}
+            <li>
+              <strong>{{ step.query }}</strong>
+              <p>{{ step.reason }} · {{ step.get('new_evidence', 0) }} new passage{{ '' if step.get('new_evidence', 0) == 1 else 's' }}</p>
+              {% if step.get('retrieval_outcome') %}
+              <p>
+                {% if step.retrieval_outcome == 'unavailable' %}<strong>Retrieval unavailable</strong> · hit count unknown.
+                {% else %}<strong>{{ 'No hits' if step.retrieval_outcome == 'zero_hits' else 'No new evidence' if step.retrieval_outcome == 'no_new_evidence' else 'New evidence' }}</strong> · {{ step.hit_count }} returned passages · {{ step.selected_passages }} selected passages.{% endif %}
+                {% if step.retrieval_outcome != 'new_evidence' %}{{ step.text }}{% endif %}
+              </p>
+              {% endif %}
+              {% for evidence in active_research.result.get('evidence', []) if evidence.support_token == step.get('motivating_support_token') %}
+              <a href="{{ citation_href(evidence, matter.slug) }}">{{ evidence.source_name }} · {{ evidence.location }}</a>
+              {% endfor %}
+            </li>
+            {% endfor %}
+          </ol>
+        </details>
+        {% set pending = active_research.result.get('pending_searches', []) %}
+        {% if pending %}
+        <details>
+          <summary>{{ pending|length }} unsearched proposal{{ '' if pending|length == 1 else 's' }}</summary>
+          <ul>
+            {% for step in pending %}
+            <li>
+              <strong>{{ step.query }}</strong> — {{ step.reason }}
+              {% for evidence in active_research.result.get('evidence', []) if evidence.support_token == step.support_token %}
+              <p><a href="{{ citation_href(evidence, matter.slug) }}">{{ evidence.source_name }} · {{ evidence.location }}</a></p>
+              {% endfor %}
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+        {% if pending and active_research.state in ('succeeded', 'failed', 'cancelled') and active_research.review_budget.effective.passes < 15 %}
+        <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="expected_passes" value="{{ active_research.review_budget.effective.passes }}">
+          <label for="additional-passes">Additional search budget</label>
+          <select id="additional-passes" name="additional_passes">{% for count in range(1, 6) if active_research.review_budget.effective.passes + count <= 15 %}<option value="{{ count }}">{{ count }} pass{{ '' if count == 1 else 'es' }} · {{ count * 3 }} search minutes</option>{% endfor %}</select>
+          <button class="button button-primary" type="submit">Continue from checkpoint</button>
+        </form>
+        {% endif %}
+      </section>
+      {% endif %}
+      {% if active_research.state == 'succeeded' and not research_stale %}
       <section class="research-result">
         <header class="workflow-section-heading"><div><p class="eyebrow">Verified synthesis</p><h2>Investigation brief</h2></div></header>
         <nav class="workflow-completion-bar" aria-label="Completed investigation actions">

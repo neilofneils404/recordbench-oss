@@ -1,7 +1,9 @@
 """Milestone A staff workbench: matters, uploads, retrieval, generation, support."""
 from __future__ import annotations
 
-from .review_budget import DEFAULT_REVIEW_BUDGET, validate_primary_limit
+from .review_budget import DEFAULT_REVIEW_BUDGET, ReviewBudget, validate_primary_limit
+from .investigation_planner import PLANNER_VERSION, initial_query, propose_searches, query_key, validate_proposal
+from time import monotonic
 
 import argparse
 import hashlib
@@ -274,8 +276,8 @@ ANSWER_STAGE_MESSAGES = {
 
 
 RESEARCH_COVERAGE_NOTICE = (
-    "This investigation used multiple focused retrieval passes. It is broader than one answer, "
-    "but it did not check every source. Use Check every source for a document-by-document task."
+    "This investigation is limited to selected search passages; it did not check every source. "
+    "Use Check every source for a document-by-document task."
 )
 
 
@@ -4756,26 +4758,12 @@ class CaseIntelligenceWorkbench:
         """Create a bounded, explainable search plan without inventing case facts."""
 
         base = " ".join(question.split())
-        variants = (
-            base,
-            f"{base} chronology dates sequence events",
-            f"{base} corroboration supporting records independent accounts",
-            f"{base} conflicts inconsistencies competing accounts",
-            f"{base} missing information gaps unresolved questions",
-        )
-        queries: list[str] = []
-        seen: set[str] = set()
-        for variant in variants:
-            bounded = variant[:MAX_SEARCH_CHARS].strip()
-            key = bounded.casefold()
-            if bounded and key not in seen:
-                queries.append(bounded)
-                seen.add(key)
         return {
             "title": title,
             "objective": base,
-            "queries": queries[:5],
-            "method": "Iterative hybrid retrieval, source diversification, grounded synthesis, and independent claim verification.",
+            "queries": [initial_query(question)],
+            "planner_version": PLANNER_VERSION,
+            "method": "Source-backed identifier, date, name, and phrase follow-ups; bounded retrieval and verified synthesis.",
         }
 
     def _process_research_job(
@@ -4807,16 +4795,19 @@ class CaseIntelligenceWorkbench:
         if not queries:
             plan = self._research_plan(job.question, job.title)
             queries = tuple(str(item) for item in plan["queries"])
-        budget = DEFAULT_REVIEW_BUDGET
+        adaptive = plan.get("planner_version") == PLANNER_VERSION
+        budget = ReviewBudget(**plan["budget"]["effective"]) if adaptive and "budget" in plan else DEFAULT_REVIEW_BUDGET
         if len(queries) > budget.passes:
-            raise WorkflowFailure("This investigation exceeds the five-pass review budget. Start a new investigation.")
+            raise WorkflowFailure("This investigation exceeds its approved review budget. Start a new investigation.")
         plan["budget"] = budget.metadata()
-        total_steps = len(queries) + 2
+        total_steps = budget.passes + 2 if adaptive else len(queries) + 2
         if not job.plan or job.total_steps != total_steps or "budget" not in job.plan:
             self.workspace.set_research_plan(job.job_id, plan, total_steps)
 
         checkpoint = dict(job.result) if job.result else {}
         passes = [dict(item) for item in checkpoint.get("passes", []) if isinstance(item, dict)]
+        discarded_passes = int(checkpoint.get("discarded_passes", 0)) if adaptive else 0
+        elapsed_before = float(checkpoint.get("search_elapsed_seconds", 0))
         evidence_values = [
             dict(item) for item in checkpoint.get("evidence", []) if isinstance(item, dict)
         ]
@@ -4851,10 +4842,29 @@ class CaseIntelligenceWorkbench:
             # A changed source invalidates both its citation and any saved
             # finding derived from that checkpoint. Restart the bounded search
             # plan rather than synthesizing or displaying stale source text.
+            if adaptive:
+                discarded_passes += len(passes)
             passes = []
             citations = []
             seen_tokens = set()
             candidate_count = 0
+        if checkpoint_stale and adaptive:
+            checkpoint = {}
+        pending = list(checkpoint.get("pending_searches", [])) if adaptive else []
+        if adaptive:
+            source_text = {item.support_token: item.excerpt for item in citations}
+            pending = [proposal for item in pending[:40] if (proposal := validate_proposal(item, source_text))]
+            searched = {query_key(str(item.get("query", ""))) for item in passes}
+            deduplicated = []
+            for proposal in pending:
+                key = query_key(proposal["query"])
+                if key not in searched:
+                    deduplicated.append(proposal)
+                    searched.add(key)
+            pending = deduplicated
+        started_search = monotonic()
+        stop_reason = "completed_bounded_plan"
+        no_new_count = int(checkpoint.get("no_new_count", 0)) if not checkpoint_stale else 0
         candidate_documents = set(checkpoint.get("candidate_document_ids", [])) if not checkpoint_stale else set()
         analyzed_units = sum(int(item.get("analyzed_units", 0)) for item in passes)
         truncated_chars = int((checkpoint.get("budget") or {}).get("counts", {}).get("truncated_chars", 0)) if not checkpoint_stale else 0
@@ -4871,7 +4881,8 @@ class CaseIntelligenceWorkbench:
             )
 
         def accounting(synthesis_inputs=0, stop_reason="running"):
-            value = budget.metadata(completed_passes=len(passes), candidate_occurrences=candidate_count,
+            value = budget.metadata(completed_passes=len(passes) + discarded_passes,
+                                    discarded_passes=discarded_passes, candidate_occurrences=candidate_count,
                                     unique_evidence=len(citations), synthesis_inputs=synthesis_inputs,
                                     truncated_chars=truncated_chars,
                                     candidate_sources=len(candidate_documents), analyzed_unit_occurrences=analyzed_units,
@@ -4881,9 +4892,46 @@ class CaseIntelligenceWorkbench:
 
         intent = classify_question(job.question)
 
-        for index, query in enumerate(queries[len(passes):], len(passes) + 1):
+        if checkpoint_stale and adaptive:
+            # Losing stale findings must not refund the resources already spent,
+            # even if recovery is interrupted before its next search completes.
+            checkpoint = {
+                "budget": accounting(), "passes": [], "evidence": [],
+                "pending_searches": [], "discarded_passes": discarded_passes,
+                "search_elapsed_seconds": elapsed_before,
+                "retrieval_source_fingerprint": current_fingerprint,
+            }
+            self.workspace.checkpoint_research_job(job.job_id, checkpoint)
+
+        while len(passes) + discarded_passes < (budget.passes if adaptive else len(queries)):
             if cancelled():
                 raise WorkflowFailure("Research cancelled.")
+            # Recheck membership at every tool boundary; the planner cannot expand scope.
+            try:
+                self.workspace.membership(job.matter_id, job.actor_id)
+            except KeyError as exc:
+                raise WorkflowFailure("Access to this matter was removed during research.") from exc
+            if elapsed_before + monotonic() - started_search >= budget.search_seconds:
+                stop_reason = "time_budget"
+                break
+            if adaptive and len(citations) >= budget.unique_evidence:
+                stop_reason = "evidence_budget"
+                break
+            if adaptive:
+                citations = self._validated_research_citations(matter, citations)
+            proposal = None
+            if not adaptive:
+                query = queries[len(passes)]
+            elif not passes:
+                query = queries[0]
+            elif pending:
+                proposal = pending.pop(0)
+                query = proposal["query"]
+            else:
+                stop_reason = "queue_exhausted"
+                break
+            index = len(passes) + 1
+            retrieval_available = True
             try:
                 found = self._answer_search(
                     matter,
@@ -4895,15 +4943,20 @@ class CaseIntelligenceWorkbench:
                     retrieval_boundary=retrieval_boundary,
                 )
             except RetrievalUnavailable:
+                retrieval_available = False
                 found = ()
             candidate_count += len(found)
             candidate_documents.update(item.document_id for item in found)
+            selectable = tuple(item for item in found if item.support_token not in seen_tokens) if adaptive else found
             selected = self._answer_evidence_citations(
                 matter,
-                found,
+                selectable,
                 maximum=budget.selected_per_pass,
                 required_kinds=intent.required_evidence_kinds,
             )
+            new_selected = [item for item in selected if item.support_token not in seen_tokens]
+            if adaptive:
+                selected = new_selected[:max(0, budget.unique_evidence - len(citations))]
             for citation in selected:
                 if citation.support_token not in seen_tokens and len(citations) < budget.unique_evidence:
                     citations.append(citation)
@@ -4945,16 +4998,38 @@ class CaseIntelligenceWorkbench:
             else:
                 pass_result = {
                     "query": query,
-                    "status": "gap",
-                    "text": "No searchable passage matched this part of the research plan.",
-                    "candidate_passages": 0,
-                    "candidate_sources": 0,
+                    "status": "duplicate" if found else "gap",
+                    "text": "No new passage was selected from this search." if found else "No searchable passage matched this part of the research plan.",
+                    "candidate_passages": len(found),
+                    "candidate_sources": len({item.document_id for item in found}),
                 }
+                if not retrieval_available:
+                    pass_result.update(
+                        status="retrieval_unavailable",
+                        text="Retrieval was unavailable; this search does not establish zero hits.",
+                    )
             analyzed_units += len(packet)
+            pass_result["hit_count"] = len(found) if retrieval_available else None
+            pass_result["retrieval_outcome"] = (
+                "unavailable" if not retrieval_available else
+                "zero_hits" if not found else
+                "no_new_evidence" if not new_selected else "new_evidence"
+            )
             pass_result["selected_passages"] = len(selected)
             pass_result["analyzed_units"] = len(packet)
+            pass_result["reason"] = proposal["reason"] if proposal else "Initial reviewer question."
+            pass_result["motivating_support_token"] = proposal["support_token"] if proposal else ""
+            pass_result["anchor"] = proposal["anchor"] if proposal else ""
+            pass_result["new_evidence"] = len(new_selected)
             passes.append(pass_result)
+            if adaptive:
+                pending.extend(propose_searches(selected, [item["query"] for item in passes], pending))
+                no_new_count = no_new_count + 1 if not new_selected else 0
             checkpoint = {
+                "pending_searches": pending,
+                "no_new_count": no_new_count,
+                "discarded_passes": discarded_passes,
+                "search_elapsed_seconds": elapsed_before + monotonic() - started_search,
                 "candidate_document_ids": sorted(candidate_documents),
                 "budget": accounting(),
                 "passes": passes,
@@ -4966,12 +5041,18 @@ class CaseIntelligenceWorkbench:
             if not self.workspace.update_research_progress(
                 job.job_id,
                 stage="searching",
-                message=f"Completed evidence pass {index:,} of {len(queries):,}; {candidate_count:,} candidate occurrences, {len(citations):,} unique selected passages.",
-                completed_steps=index,
+                message=f"Completed evidence pass {index:,} of {budget.passes if adaptive else len(queries):,}; {candidate_count:,} candidate occurrences, {len(citations):,} unique selected passages.",
+                completed_steps=index + discarded_passes,
                 candidate_count=candidate_count,
                 evidence_count=len(citations),
             ):
                 raise WorkflowFailure("Research cancelled.")
+
+            if adaptive and no_new_count >= 2:
+                stop_reason = "no_new_evidence"
+                break
+        if adaptive and stop_reason == "completed_bounded_plan":
+            stop_reason = "pass_budget" if len(passes) + discarded_passes >= budget.passes else "queue_exhausted"
 
         if cancelled():
             raise WorkflowFailure("Research cancelled.")
@@ -4986,7 +5067,7 @@ class CaseIntelligenceWorkbench:
             job.job_id,
             stage="synthesizing",
             message="Synthesizing findings from the cross-source evidence ledger.",
-            completed_steps=len(queries) + 1,
+            completed_steps=total_steps - 1,
             candidate_count=candidate_count,
             evidence_count=len(citations),
         )
@@ -5045,8 +5126,15 @@ class CaseIntelligenceWorkbench:
         ) if part)
         return {
             "_retrieval_source_fingerprint": retrieval_boundary.get("source_fingerprint", ""),
-            "budget": accounting(len(final_packet), "completed_bounded_plan"),
-            "stop_reason": "completed_bounded_plan",
+            "budget": accounting(len(final_packet), stop_reason),
+            "stop_reason": stop_reason,
+            "pending_searches": pending,
+            "no_new_count": no_new_count,
+            "discarded_passes": discarded_passes,
+            "search_elapsed_seconds": checkpoint.get("search_elapsed_seconds", elapsed_before),
+            "candidate_count": candidate_count,
+            "candidate_document_ids": sorted(candidate_documents),
+            "retrieval_source_fingerprint": retrieval_boundary.get("source_fingerprint", ""),
             "summary": final_answer.text,
             "answer": final_answer_payload,
             "passes": passes,
@@ -5054,7 +5142,7 @@ class CaseIntelligenceWorkbench:
             "gaps": gaps,
             "coverage": {
                 **coverage,
-                "search_pass_count": len(queries),
+                "search_pass_count": len(passes),
                 "candidate_passage_count": candidate_count,
                 "evidence_passage_count": len(citations),
                 "evidence_source_count": len({item.document_id for item in citations}),
@@ -8954,6 +9042,17 @@ def create_workbench_app(
             request, "research.open", "success", context=context, matter=matter,
             object_type="research_job", object_id=active.job_id if active else None,
         )
+        research_stale = False
+        if active and active.plan.get("planner_version") == PLANNER_VERSION:
+            try:
+                for value in active.result.get("evidence", []):
+                    if bench._current_workflow_citation(matter, bench._workflow_citation(value)) is None:
+                        research_stale = True
+                        break
+            except (KeyError, TypeError, ValueError):
+                research_stale = True
+            if research_stale:
+                active = replace(active, result={})
         return templates.TemplateResponse(
             request=request,
             name="workbench_research.html",
@@ -8964,6 +9063,7 @@ def create_workbench_app(
                 "review_mode": "research",
                 "research_jobs": jobs,
                 "active_research": active,
+                "research_stale": research_stale,
                 "notice": notice,
                 "error": error,
             },
@@ -9081,14 +9181,14 @@ def create_workbench_app(
         "/matters/{slug}/research/{job_id}/retry",
         dependencies=[Depends(require_csrf)],
     )
-    def retry_research(request: Request, slug: str, job_id: str):
+    def retry_research(request: Request, slug: str, job_id: str, additional_passes: int = Form(0), expected_passes: int | None = Form(None)):
         context = auth_context(request)
         try:
             matter = authorized_matter(request, slug)
             if not bench.workspace.matter_readiness(matter.matter_id).can_query:
                 raise WorkspaceProblem("No source is searchable for this research run yet.")
             job = bench.workspace.retry_research_job(
-                matter.matter_id, context.principal_id, job_id
+                matter.matter_id, context.principal_id, job_id, additional_passes=additional_passes, expected_passes=expected_passes
             )
         except KeyError as exc:
             raise HTTPException(404, "Research run not found") from exc
@@ -9102,7 +9202,7 @@ def create_workbench_app(
         audit(
             request, "research.retry", "success", context=context, matter=matter,
             object_type="research_job", object_id=job.job_id,
-            details={"state": job.state},
+            details={"state": job.state, "count": additional_passes},
         )
         return RedirectResponse(
             _query_url(f"/matters/{slug}/research", job=job.job_id), status_code=303
