@@ -55,14 +55,14 @@
         <div class="run-counts"><span><strong data-workflow-candidates>{{ active_research.candidate_count }}</strong> Passages considered</span><span><strong data-workflow-evidence>{{ active_research.evidence_count }}</strong> Supporting passages</span></div>
         {% if active_research.state in ('queued','running') %}
         <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Cancel safely</button></form>
-        {% elif active_research.state in ('failed','cancelled') %}
+        {% elif active_research.state in ('failed','cancelled') and not research_stale %}
         <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">Resume investigation</button></form>
         {% endif %}
       </article>
 
       {% if research_stale %}
       <p class="workflow-caution">Sources changed. Saved findings and search proposals are no longer current and are hidden. Rebuild the checkpoint with available search budget, or start a new investigation.</p>
-      {% if active_research.state == 'succeeded' and rebuild_options %}
+      {% if active_research.state in ('succeeded','failed','cancelled') and rebuild_options %}
       <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="expected_passes" value="{{ active_research.review_budget.effective.passes }}">

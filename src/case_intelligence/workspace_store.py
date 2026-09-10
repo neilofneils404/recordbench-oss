@@ -10087,7 +10087,8 @@ class WorkspaceStore:
             ).fetchone()
         return self._research_job(row)
 
-    def retry_research_job(self, matter_id: str, actor_id: str, job_id: str, *, additional_passes: int = 0, expected_passes: int | None = None) -> ResearchJobRecord:
+    def retry_research_job(self, matter_id: str, actor_id: str, job_id: str, *, additional_passes: int = 0, expected_passes: int | None = None, checkpoint_is_stale: Callable[[ResearchJobRecord], bool] | None = None) -> ResearchJobRecord:
+        """Retry with an optional source-frozen locator validator for current data."""
         from .review_budget import ReviewBudget
         if type(additional_passes) is not int or not 0 <= additional_passes <= 5:
             raise WorkspaceProblem("Choose between one and five additional passes.")
@@ -10105,6 +10106,11 @@ class WorkspaceStore:
             if current is None:
                 raise KeyError(job_id)
             if current["state"] in {"queued", "running"}:
+                if additional_passes:
+                    queued_plan = json.loads(current["plan_json"])
+                    if (type(expected_passes) is not int or queued_plan.get("retry_request") !=
+                            {"additional_passes": additional_passes, "expected_passes": expected_passes}):
+                        raise WorkspaceProblem("This investigation is already active with different extension details. Reload before adding more work.")
                 return self._research_job(current)
             if current["state"] not in {"failed", "cancelled", "succeeded"}:
                 raise WorkspaceProblem(
@@ -10130,6 +10136,13 @@ class WorkspaceStore:
                             or recorded_request != {"additional_passes": additional_passes, "expected_passes": expected_passes}):
                         raise WorkspaceProblem("This run already has a continuation with different extension details. Reload before adding more work.")
                     return self._research_job(existing)
+            if current["source_set_id"] is not None:
+                try:
+                    scope = self.source_set_document_ids(matter_id, current["source_set_id"])
+                except KeyError as exc:
+                    raise WorkspaceProblem("This source set is no longer available. Start a new investigation with an available scope.") from exc
+                if not scope:
+                    raise WorkspaceProblem("This source set is empty. Add sources before rebuilding or extending the investigation.")
             conversation_id = current["conversation_id"]
             if conversation_id is not None:
                 active_answer = self.connection.execute(
@@ -10150,7 +10163,10 @@ class WorkspaceStore:
             plan = json.loads(current["plan_json"])
             result = json.loads(current["result_json"])
             adaptive = plan.get("planner_version") == 1
-            stale = adaptive and bool(result.get("passes")) and result.get("retrieval_source_fingerprint") != self.source_availability_fingerprint(matter_id, current["source_set_id"])
+            stale = adaptive and (
+                checkpoint_is_stale(self._research_job(current)) if checkpoint_is_stale is not None else
+                bool(result.get("passes")) and result.get("retrieval_source_fingerprint") != self.source_availability_fingerprint(matter_id, current["source_set_id"])
+            )
             if current["state"] == "succeeded" and not additional_passes:
                 if not stale:
                     raise WorkspaceProblem("This completed research run does not need to be retried.")
@@ -10163,6 +10179,7 @@ class WorkspaceStore:
             if additional_passes and not adaptive:
                 raise WorkspaceProblem("Start a new investigation to use evidence-driven searches.")
             if adaptive:
+                plan["retry_request"] = {"additional_passes": additional_passes, "expected_passes": expected_passes}
                 if additional_passes:
                     if not stale and not result.get("pending_searches") and not result.get("seed_search_pending"):
                         raise WorkspaceProblem("No unsearched source-backed proposals remain. Start a new question.")

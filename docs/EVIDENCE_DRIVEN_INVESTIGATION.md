@@ -152,3 +152,11 @@ Exports validate each adaptive search outcome against exact integer counters,
 retrieval availability, selection and candidate counts, and the current evidence
 ledger. Contradictory or malformed checkpoint metadata is rejected instead of
 being copied into a work product.
+
+Failed and cancelled stale runs expose the same rebuild-budget choices as stale
+completed runs. An exhausted run offers an explicit extension rather than a
+zero-budget resume that cannot search. Display and retry admission share the
+same fingerprint-and-locator staleness predicate; admission validates the fresh
+checkpoint while holding the source and workspace boundaries. Empty or removed
+source sets cannot receive rebuild budget. Duplicate extension requests against
+an already queued or running retry must match its recorded request.

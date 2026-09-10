@@ -622,3 +622,108 @@ def test_export_rejects_contradictory_search_outcome_metadata(chain, changes):
     changed['passes'][1].update(changes)
     with pytest.raises(ExportProblem, match='search outcome counters|search counts'):
         bench.export_research_work_product(matter, replace(saved, result=changed), 'json')
+
+
+@pytest.mark.parametrize('state', ['failed', 'cancelled'])
+def test_exhausted_stale_interruption_offers_and_runs_extension(chain, state):
+    bench, client, matter, job, calls, _ = chain
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(passes=1).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, 3)
+    bench._process_research_job(claimed, lambda: False)
+    if state == 'cancelled':
+        bench.workspace.cancel_research_job(matter.matter_id, matter.owner_id, job.job_id)
+    stopped = bench.workspace.fail_research_job(job.job_id, 'Synthetic interruption')
+    assert stopped.state == state
+    assert client.post(f'/matters/{matter.slug}/uploads', files=[('files', ('changed-scope.txt',
+        b'Synthetic source availability change after interruption.', 'text/plain'))]).status_code == 200
+    page = client.get(f'/matters/{matter.slug}/research?job={job.job_id}')
+    assert 'Rebuild checkpoint' in page.text and 'Add 1 pass' in page.text
+    assert 'Use remaining budget' not in page.text
+    assert 'Resume investigation' not in page.text
+    assert 'AX-104' not in page.text
+    response = client.post(f'/matters/{matter.slug}/research/{job.job_id}/retry',
+        data={'additional_passes': 1, 'expected_passes': 1}, follow_redirects=False)
+    assert 'error=' not in response.headers['location']
+    claimed = bench.workspace.claim_research_job('synthetic-rebuild')
+    result = bench._process_research_job(claimed, lambda: False)
+    assert len(calls) == 2 and result['discarded_passes'] == 1
+    assert result['budget']['effective']['passes'] == 2
+    assert bench._finish_research_job(claimed, result).state == 'succeeded'
+
+
+@pytest.mark.parametrize('additional', [0, 1])
+def test_unresolved_locator_uses_same_staleness_for_display_and_rebuild(chain, monkeypatch, additional):
+    from urllib.parse import parse_qs, urlsplit
+    bench, client, matter, job, calls, _ = chain
+    original_search = bench._answer_search
+    def search(*args, **kwargs):
+        found = original_search(*args, **kwargs)
+        return found if len(calls) == 1 else ()
+    monkeypatch.setattr(bench, '_answer_search', search)
+    claimed = bench.workspace.claim_research_job('synthetic-worker')
+    saved = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    assert not saved.result['pending_searches']
+    changed = json.loads(json.dumps(saved.result))
+    changed['evidence'][0]['chunk_id'] = 'synthetic-unresolved-chunk'
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_research_job SET result_json=? WHERE job_id=?',
+            (json.dumps(changed), job.job_id))
+    assert bench.workspace.source_availability_fingerprint(matter.matter_id) == changed['retrieval_source_fingerprint']
+    page = client.get(f'/matters/{matter.slug}/research?job={job.job_id}')
+    assert 'Rebuild checkpoint' in page.text and 'Use remaining budget' in page.text
+    assert 'AX-104' not in page.text
+    response = client.post(f'/matters/{matter.slug}/research/{job.job_id}/retry',
+        data={'additional_passes': additional, 'expected_passes': 5}, follow_redirects=False)
+    assert 'error=' not in response.headers['location']
+    child_id = parse_qs(urlsplit(response.headers['location']).query)['job'][0]
+    assert child_id != job.job_id
+    monkeypatch.setattr(bench, '_answer_search', original_search)
+    claimed = bench.workspace.claim_research_job('synthetic-rebuild')
+    result = bench._process_research_job(claimed, lambda: False)
+    assert result['discarded_passes'] == 2
+    assert result['evidence'][0]['chunk_id'] != 'synthetic-unresolved-chunk'
+    assert result['budget']['effective']['passes'] == 5 + additional
+    assert bench._finish_research_job(claimed, result).state == 'succeeded'
+    assert bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id).result == changed
+
+
+def test_empty_stale_scope_does_not_offer_or_accept_rebuild_budget(chain):
+    bench, client, matter, job, _, citations = chain
+    source_set = bench.workspace.create_source_set(matter.matter_id, 'Synthetic removed scope',
+        (citations['first'].document_id,), matter.owner_id)
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_research_job SET source_set_id=? WHERE job_id=?',
+            (source_set.source_set_id, job.job_id))
+    claimed = bench.workspace.claim_research_job('synthetic-worker')
+    saved = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
+    with bench.workspace.connection:
+        bench.workspace.connection.execute('DELETE FROM workbench_source_set_item WHERE source_set_id=?', (source_set.source_set_id,))
+    page = client.get(f'/matters/{matter.slug}/research?job={job.job_id}')
+    assert 'Saved findings and search proposals are no longer current' in page.text
+    assert 'Rebuild checkpoint' not in page.text
+    for additional in (0, 1):
+        with pytest.raises(WorkspaceProblem, match='source set is empty'):
+            bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id,
+                additional_passes=additional, expected_passes=5)
+    assert bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id) == saved
+
+
+def test_queued_interruption_extension_requires_identical_duplicate_request(chain):
+    bench, _, matter, job, _, _ = chain
+    bench.workspace.claim_research_job('synthetic-worker')
+    plan = bench._research_plan(job.question, job.title)
+    plan['budget'] = ReviewBudget(passes=1).metadata()
+    claimed = bench.workspace.set_research_plan(job.job_id, plan, 3)
+    bench._process_research_job(claimed, lambda: False)
+    bench.workspace.fail_research_job(job.job_id, 'Synthetic interruption')
+    queued = bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id,
+        additional_passes=2, expected_passes=1)
+    assert bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id,
+        additional_passes=2, expected_passes=1) == queued
+    for additional, expected in ((1, 1), (2, 2), (2, None)):
+        with pytest.raises(WorkspaceProblem, match='already active with different extension details'):
+            bench.workspace.retry_research_job(matter.matter_id, matter.owner_id, job.job_id,
+                additional_passes=additional, expected_passes=expected)
+    assert bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id) == queued

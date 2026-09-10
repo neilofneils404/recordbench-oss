@@ -2509,10 +2509,10 @@ class CaseIntelligenceWorkbench:
             (cls._support_token(candidate), cls._legacy_support_token(candidate))
         )
 
-    def _citation(self, matter: MatterRecord, candidate: Candidate) -> WorkbenchCitation:
+    def _citation(self, matter: MatterRecord, candidate: Candidate, store: PilotStore | None = None) -> WorkbenchCitation:
         evidence_kind = "document"
         try:
-            document = self.source_store(matter).get(candidate.document_id)
+            document = (store if store is not None else self.source_store(matter)).get(candidate.document_id)
         except KeyError:
             document = None
         if document is not None and is_media_type(document.media_type):
@@ -4649,14 +4649,14 @@ class CaseIntelligenceWorkbench:
         )
 
     def _current_workflow_citation(
-        self, matter: MatterRecord, citation: WorkbenchCitation
+        self, matter: MatterRecord, citation: WorkbenchCitation, store: PilotStore | None = None
     ) -> WorkbenchCitation | None:
         """Re-resolve a checkpoint citation against the current source version."""
 
         if citation.matter_id != matter.matter_id:
             return None
         try:
-            document = self.source_store(matter).get(citation.document_id)
+            document = (store if store is not None else self.source_store(matter)).get(citation.document_id)
         except KeyError:
             return None
         if document.state != "ready" or document.version_id != citation.source_version_id:
@@ -4671,7 +4671,7 @@ class CaseIntelligenceWorkbench:
             ):
                 continue
             candidate = self._candidate(matter, document, unit, ordinal)
-            current = self._citation(matter, candidate)
+            current = self._citation(matter, candidate, store)
             if (
                 citation.support_token in self._support_tokens(candidate)
                 and current.chunk_id == citation.chunk_id
@@ -4687,6 +4687,18 @@ class CaseIntelligenceWorkbench:
                     ),
                 )
         return None
+
+    def _research_checkpoint_stale(self, matter: MatterRecord, job: ResearchJobRecord, store: PilotStore | None = None) -> bool:
+        """Use one source and locator predicate for display and recovery admission."""
+        if job.plan.get("planner_version") != PLANNER_VERSION:
+            return False
+        try:
+            if job.result.get("passes") and job.result.get("retrieval_source_fingerprint") != self.workspace.source_availability_fingerprint(matter.matter_id, job.source_set_id):
+                return True
+            return any(self._current_workflow_citation(matter, self._workflow_citation(value), store) is None
+                       for value in job.result.get("evidence", []))
+        except (KeyError, TypeError, ValueError):
+            return True
 
     def _validated_research_citations(
         self,
@@ -9082,19 +9094,13 @@ def create_workbench_app(
         research_stale = False
         rebuild_options = []
         if active and active.plan.get("planner_version") == PLANNER_VERSION:
-            try:
-                if active.result.get("passes"):
-                    research_stale = active.result.get("retrieval_source_fingerprint") != bench.workspace.source_availability_fingerprint(
-                        matter.matter_id, active.source_set_id
-                    )
-                for value in active.result.get("evidence", []):
-                    if bench._current_workflow_citation(matter, bench._workflow_citation(value)) is None:
-                        research_stale = True
-                        break
-            except (KeyError, TypeError, ValueError):
-                research_stale = True
+            research_stale = bench._research_checkpoint_stale(matter, active)
             if research_stale:
-                if active.state == "succeeded":
+                try:
+                    scope_available = active.source_set_id is None or bool(bench.workspace.source_set_document_ids(matter.matter_id, active.source_set_id))
+                except KeyError:
+                    scope_available = False
+                if scope_available and active.state in {"succeeded", "failed", "cancelled"}:
                     limits = active.plan["budget"]["effective"]
                     spent = len(active.result.get("passes", [])) + int(active.result.get("discarded_passes", 0))
                     elapsed = float(active.result.get("search_elapsed_seconds", 0))
@@ -9237,9 +9243,15 @@ def create_workbench_app(
             matter = authorized_matter(request, slug)
             if not bench.workspace.matter_readiness(matter.matter_id).can_query:
                 raise WorkspaceProblem("No source is searchable for this research run yet.")
-            job = bench.workspace.retry_research_job(
-                matter.matter_id, context.principal_id, job_id, additional_passes=additional_passes, expected_passes=expected_passes
-            )
+            # Freeze sources before the store takes its transaction lock, so
+            # locator validation and recovery admission share one boundary.
+            source_store = bench.source_store(matter)
+            with source_store.mutation_guard():
+                job = bench.workspace.retry_research_job(
+                    matter.matter_id, context.principal_id, job_id,
+                    additional_passes=additional_passes, expected_passes=expected_passes,
+                    checkpoint_is_stale=lambda current: bench._research_checkpoint_stale(matter, current, source_store),
+                )
         except KeyError as exc:
             raise HTTPException(404, "Research run not found") from exc
         except WorkspaceProblem as exc:
