@@ -1424,7 +1424,9 @@ def _service_home_ready() -> bool:
         return (home.is_absolute() and stat.S_ISDIR(metadata.st_mode)
                 and metadata.st_uid == os.geteuid()
                 and stat.S_IMODE(metadata.st_mode) == 0o700
-                and os.access(home, os.R_OK | os.W_OK | os.X_OK))
+                and os.access(home, os.R_OK | os.W_OK | os.X_OK)
+                and not any(parent.is_symlink() for parent in home.parents)
+                and _storage_ancestors_safe(home))
     except (OSError, ValueError):
         return False
 
@@ -1454,7 +1456,7 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
     add("service-home", home_ready,
         "Owner-only HOME is accessible" if home_ready else "HOME is missing, unsafe, or inaccessible",
         "Let Compose and build tools create service-account client state",
-        "Have an administrator create /var/lib/recordbench-home owned by the service account with mode 0700, set its account home, and start a new service-account session with that HOME. See docs/INSTALL.md#service-account-home.")
+        "Have an administrator create /var/lib/recordbench-home owned by the service account with mode 0700, keep its parent chain root/service-owned without symlinks or replaceable shared directories, set its account home, and start a new service-account session with that HOME. See docs/INSTALL.md#service-account-home.")
     docker = shutil.which("docker") is not None
     add("docker", docker, "Docker CLI available" if docker else "Docker CLI missing",
         "Build and run application containers", "Install Docker Engine and the Compose v2 plugin using the Docker Linux installation instructions in docs/INSTALL.md.")

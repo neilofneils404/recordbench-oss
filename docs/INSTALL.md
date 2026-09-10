@@ -182,7 +182,9 @@ Compose/build tools need a writable HOME even when application data lives under
 `/srv`. A system account created with `/nonexistent` can pass storage checks and
 then fail forge with `mkdir /nonexistent: permission denied`. Preflight now blocks
 an unset, relative, missing, non-directory, symlink, foreign-owned, non-0700 or
-inaccessible HOME without writing client state. This checks the launch environment;
+inaccessible HOME without writing client state. Parents must also be accessible,
+root/service-owned, free of symlinks and protected from replacement (the existing
+trusted sticky-directory exception applies). This checks the launch environment;
 set the account database home too so future login sessions retain the correction.
 
 For a new account, an administrator can run this Debian-style example (adapt

@@ -2798,3 +2798,32 @@ def test_compose_startup_failure_reports_remedy_before_http_health(tmp_path, mon
     with pytest.raises(RuntimeError, match="Service startup failed.*clamav-updater.*startup-troubleshooting"):
         installer._provision(installer.Console(color=False, quiet=True), args, root, "local", "none", None, None, password_input=[])
     assert installer._install_progress(root)["phases"]["running"] == "checking"
+
+
+@pytest.mark.parametrize("problem", ["symlink", "shared", "foreign"])
+def test_preflight_blocks_replaceable_home_ancestry(tmp_path, ready_host, monkeypatch, problem):
+    parent = tmp_path / "client-parent"
+    parent.mkdir(mode=0o700)
+    home = parent / "home"
+    home.mkdir(mode=0o700)
+    if problem == "symlink":
+        link = tmp_path / "parent-link"
+        link.symlink_to(parent, target_is_directory=True)
+        home = link / "home"
+    elif problem == "shared":
+        parent.chmod(0o777)
+    else:
+        original = Path.stat
+        def foreign(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            if path == parent:
+                fields = list(result)
+                fields[4] = 2000
+                return os.stat_result(fields)
+            return result
+        monkeypatch.setattr(Path, "stat", foreign)
+    monkeypatch.setenv("HOME", str(home))
+    result = installer._collect_preflight("none", preflight_args(tmp_path))
+    assert not result.ready
+    assert checks_by_name(result)["service-home"].state == "fail"
+    assert not (home / ".docker").exists()
