@@ -6,7 +6,7 @@ specs. When numeric slice order conflicts with this file, **this file wins**.
 
 **Last updated:** 2026-09-11
 
-Verified tip of `main`: `8d23ceeefbdf9f89cd4deba760126ea45e2cf188`
+Verified tip of `main`: `03bac88405269c4b3df44a4a0313921d3f953429`
 (slice **11** merged as [#66](https://github.com/neilofneils404/recordbench-oss/pull/66);
 slice **12** already on `main`).
 
