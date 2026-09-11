@@ -6,7 +6,8 @@ specs. When numeric slice order conflicts with this file, **this file wins**.
 
 **Last updated:** 2026-09-10
 
-Verified tip of `main`: `e44e485ab3eca94b7e5588765df58f7f4b2b4786` (slice 06 merged).
+Verified tip of `main`: `a83f43f8240d0db501b5c506eb1a570c32f7fdaa`
+(slice **11** merged as [#66](https://github.com/neilofneils404/recordbench-oss/pull/66)).
 
 ## Cruise order
 
@@ -15,11 +16,21 @@ Verified tip of `main`: `e44e485ab3eca94b7e5588765df58f7f4b2b4786` (slice 06 mer
 | 0 | Portable baseline on `main`; alpha blockers #30 / #31 closed | Done |
 | 1 | Prove `main`: green Quality gates (including synthetic-browser); clean-host CPU install acceptance; install friction documented | Done |
 | 2 | Slice **06** — reusable team groups with explicit matter access | Done |
-| 3 | Slice **11** — evidence-driven investigation (durable plan, reasons, checkpoints, zero-hit ledger rows) | **Next** |
-| 4 | Slice **12** — deepen full-text coverage as required to feed durable findings | With / after 11 |
-| 5 | Slice **13** — hierarchical synthesis (issue- then matter-level) with citations through intermediates | After 11 / 12 |
+| 3 | Slice **11** — evidence-driven investigation (durable plan, reasons, checkpoints, zero-hit ledger rows) | Done |
+| 4 | Slice **12** — deepen full-text coverage as required to feed durable findings | Done |
+| 5 | Slice **13** — hierarchical synthesis (issue- then matter-level) with citations through intermediates | **Next** |
 | 6 | Slices **16 → 18** — People / Places / Things workspace, extraction, evidence-backed relationships | After 13 |
-| ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing; does not block 06 |
+| ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing; does not block 13 |
+
+Slice **12** needed no further product PR. **Review all extracted text** is
+already on `main` from [#59](https://github.com/neilofneils404/recordbench-oss/pull/59)
+(the #47 / #58 family). That work matches
+[12-full-text-review-coverage.md](product-slices/12-full-text-review-coverage.md)
+and is specified in [FULL_TEXT_REVIEW.md](FULL_TEXT_REVIEW.md): every eligible
+extracted unit in a frozen population, durable unit/range outcomes, late-unit
+and failed-unit coverage, source-change invalidation, cancellation/resume, and
+backup/clean-restore. Selected-passage screening remains a separate mode by
+design. Cross-source hierarchical synthesis is **13**, not a 12 gap.
 
 ## Hold
 
@@ -63,5 +74,8 @@ propose queries and draft prose only.
 
 - [product-slices/README.md](product-slices/README.md)
 - [06-team-groups.md](product-slices/06-team-groups.md)
+- [11-evidence-driven-investigation.md](product-slices/11-evidence-driven-investigation.md)
+- [FULL_TEXT_REVIEW.md](FULL_TEXT_REVIEW.md)
+- [13-hierarchical-synthesis.md](product-slices/13-hierarchical-synthesis.md)
 - [RELEASE_READINESS.md](RELEASE_READINESS.md)
 - [CONTRIBUTOR_BACKLOG.md](CONTRIBUTOR_BACKLOG.md)

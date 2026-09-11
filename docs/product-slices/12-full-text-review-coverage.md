@@ -1,6 +1,8 @@
 # 12: Process every extracted unit in a frozen source population
 
-Status: proposed. Depends on 00 and 10.
+Status: implemented on `main` as **Review all extracted text** via
+[#59](https://github.com/neilofneils404/recordbench-oss/pull/59) (the #47 / #58
+family). See [full-text review](../FULL_TEXT_REVIEW.md). Depends on 00 and 10.
 
 ## Finding and outcome
 

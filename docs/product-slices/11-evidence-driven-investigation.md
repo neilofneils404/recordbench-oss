@@ -1,7 +1,9 @@
 # 11: Let investigation follow evidence within a budget
 
-Status: implemented locally; validation described in
-[the implementation guide](../EVIDENCE_DRIVEN_INVESTIGATION.md). Depends on 00 and 10.
+Status: implemented on `main` as
+[#66](https://github.com/neilofneils404/recordbench-oss/pull/66); validation
+described in [the implementation guide](../EVIDENCE_DRIVEN_INVESTIGATION.md).
+Depends on 00 and 10.
 Configured-model quality evaluation remains separate from deterministic acceptance.
 
 ## Finding and outcome

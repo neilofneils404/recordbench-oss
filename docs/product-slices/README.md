@@ -23,7 +23,7 @@ they must not become the only place where product behavior is implemented.
 
 IDs identify work, not an obligation to execute everything in numeric order.
 [Exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) is the binding execution order:
-slice **06** is next. The briefs remain the implementation specifications;
+slice **13** is next. The briefs remain the implementation specifications;
 the cruise document takes precedence over historical sequencing below.
 
 Implementation PR inventory recorded September 8 (historical status; see
@@ -52,10 +52,10 @@ should validate a combined candidate in a separate synthetic checkout and
 installation before deployment-sensitive changes are accepted. No default-branch
 merge is needed for that test.
 
-Installer handoff/onboarding (02/03) and all-extracted-text review (12) are being
-implemented separately. Adaptive investigation (11), hierarchy (13), reusable
-team groups (06), remaining advanced operators, and the entity workspace and
-relationship slices remain proposed. The report's People/Places/Things format
+Installer handoff/onboarding (02/03), reusable team groups (06), adaptive
+investigation (11), and all-extracted-text review (12) are on `main`. Hierarchy
+(13), remaining advanced operators, and the entity workspace and relationship
+slices remain proposed. The report's People/Places/Things format
 does not claim to implement the persistent entity workspace or identity resolution.
 
 | ID | Slice | Depends on |
