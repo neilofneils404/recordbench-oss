@@ -30,14 +30,17 @@ IDs identify work, not an obligation to execute everything in numeric order.
 slice **13** is next. The briefs remain the implementation specifications;
 the cruise document takes precedence over historical sequencing below.
 
-On current `main` (`a83f43f8240d0db501b5c506eb1a570c32f7fdaa`): slices **00–08**,
+On current `main` (`a83f43f8240d0db501b5c506eb1a570c32f7fdaa`): slices **01–07**,
 **10–12**, and **14–15** are implemented, including installer handoff (02),
 first-run team setup (03), reusable team groups (06), adaptive investigation
-(11), and all-extracted-text review (12). Slice **09** has proximity on `main`;
-wildcards and field filters remain. Hierarchy (**13**) and the entity workspace
-slices (**16–18**) remain proposed. Remaining 09 operators are not the cruise
-Next row. The report's People/Places/Things format does not claim to implement
-the persistent entity workspace or identity resolution.
+(11), and all-extracted-text review (12). Slice **00** has the synthetic corpus
+on `main`; PostgreSQL search-job acceptance remains pending. Slice **08** has
+the exact-result service on `main`; real PostgreSQL indexed acceptance remains
+pending. Slice **09** has proximity on `main`; wildcards and field filters
+remain. Hierarchy (**13**) and the entity workspace slices (**16–18**) remain
+proposed. Remaining 00/08 PostgreSQL acceptance and 09 operators are not the
+cruise Next row. The report's People/Places/Things format does not claim to
+implement the persistent entity workspace or identity resolution.
 
 Implementation PR inventory recorded September 8 (historical status; see
 [the September 9 selection](../SELECTED_ACCEPTANCE_2026-09-09.md) and live PR state):
@@ -67,7 +70,7 @@ installation before deployment-sensitive changes are accepted.
 
 | ID | Slice | Depends on |
 | --- | --- | --- |
-| [00](00-synthetic-acceptance-corpus.md) | A small shared corpus with known expected results | None |
+| [00](00-synthetic-acceptance-corpus.md) | A small shared corpus with known expected results | None; PostgreSQL job pending |
 | [01](01-install-prerequisites.md) | Explain and resolve installation prerequisites | None |
 | [02](02-install-handoff-and-recovery.md) | Reach first login and resume interrupted installation | 01 |
 | [03](03-first-run-onboarding.md) | Guide the first administrator through setup | 02 |
@@ -75,7 +78,7 @@ installation before deployment-sensitive changes are accepted.
 | [05](05-browser-account-management.md) | Create and manage local accounts in the browser | 04 |
 | [06](06-team-groups.md) | Reusable groups with explicit matter access | 04, 05 |
 | [07](07-exact-search-grammar.md) | Parse strict Boolean queries consistently | 00 |
-| [08](08-complete-exact-search.md) | Browse every exact match with reproducible scope | 07 |
+| [08](08-complete-exact-search.md) | Browse every exact match with reproducible scope | 07; PostgreSQL adapter pending |
 | [09](09-advanced-search.md) | Add proximity, wildcard, and field operators | 08; proximity on main; wildcards and fields remain |
 | [10](10-review-budget-visibility.md) | Make retrieval and synthesis limits explicit | None |
 | [11](11-evidence-driven-investigation.md) | Follow evidence with useful additional searches | 00, 10 |
@@ -89,10 +92,10 @@ installation before deployment-sensitive changes are accepted.
 
 Historical starting batch (superseded by the cruise order): 00, 01, 07, 10, and 14. These establish known
 results, reduce install confusion, define exact-search semantics, expose real
-review limits, and stop losing useful context when making Reports. Slices 00–08,
+review limits, and stop losing useful context when making Reports. Slices 01–07,
 10–12, and 14–15 are now on `main`. Next is 13. Entity work follows that review
-foundation. Remaining 09 operators (wildcards and field filters) are separate
-from the cruise Next row.
+foundation. Remaining 00/08 PostgreSQL acceptance and 09 operators (wildcards
+and field filters) are separate from the cruise Next row.
 
 ## Evidence and current answers
 
@@ -104,7 +107,8 @@ observations, reproduction examples, and the limits of those checks.
   operator evidence.
 * Exact search is a separate complete-result path with Boolean grammar and
   proximity. The ranked answer retriever is still not that exact set.
-  Wildcards and field filters remain unsupported.
+  PostgreSQL indexed exact-search acceptance remains pending. Wildcards and
+  field filters remain unsupported.
 * Investigations follow evidence within a budget. Final synthesis is still at
   most 12 passages until 13. Selected-passage source checks remain; **Review
   all extracted text** covers every eligible unit in a frozen population.

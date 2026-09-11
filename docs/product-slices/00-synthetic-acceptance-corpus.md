@@ -1,8 +1,9 @@
 # 00: Seed a shared product acceptance corpus
 
-Status: implemented on `main` as
+Status: corpus and reference matcher are on `main` as
 [#36](https://github.com/neilofneils404/recordbench-oss/pull/36). See
-[exact search foundation](../EXACT_SEARCH.md). No dependencies.
+[exact search foundation](../EXACT_SEARCH.md). PostgreSQL search-job
+acceptance remains pending. No dependencies.
 
 ## Finding and outcome
 
