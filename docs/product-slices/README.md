@@ -52,11 +52,12 @@ should validate a combined candidate in a separate synthetic checkout and
 installation before deployment-sensitive changes are accepted. No default-branch
 merge is needed for that test.
 
-Installer handoff/onboarding (02/03), reusable team groups (06), adaptive
-investigation (11), and all-extracted-text review (12) are on `main`. Hierarchy
-(13), remaining advanced operators, and the entity workspace and relationship
-slices remain proposed. The report's People/Places/Things format
-does not claim to implement the persistent entity workspace or identity resolution.
+Reusable team groups (06), adaptive investigation (11), and all-extracted-text
+review (12) are on `main`. Hierarchy (13), remaining advanced operators, and the
+entity workspace and relationship slices remain proposed. The 02 and 03 briefs
+remain proposed until those status lines are updated separately. The report's
+People/Places/Things format does not claim to implement the persistent entity
+workspace or identity resolution.
 
 | ID | Slice | Depends on |
 | --- | --- | --- |
