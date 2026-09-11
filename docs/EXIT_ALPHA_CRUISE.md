@@ -4,10 +4,11 @@ Binding execution order for leaving public contributor alpha.
 Product slice briefs under `docs/product-slices/` remain the implementation
 specs. When numeric slice order conflicts with this file, **this file wins**.
 
-**Last updated:** 2026-09-10
+**Last updated:** 2026-09-11
 
-Verified tip of `main`: `a83f43f8240d0db501b5c506eb1a570c32f7fdaa`
-(slice **11** merged as [#66](https://github.com/neilofneils404/recordbench-oss/pull/66)).
+Verified tip of `main`: `8d23ceeefbdf9f89cd4deba760126ea45e2cf188`
+(slice **11** merged as [#66](https://github.com/neilofneils404/recordbench-oss/pull/66);
+slice **12** already on `main`).
 
 ## Cruise order
 

@@ -1,11 +1,17 @@
 # Findings behind the portable product slices
 
-Checked September 8, 2026 against upstream `main` at
-`26f5ece14871ba9312c9aeaf87d42b47edff3022`. These are code-level findings and
+Checked September 11, 2026 against upstream `main` at
+`8d23ceeefbdf9f89cd4deba760126ea45e2cf188`. These are code-level findings and
 bounded synthetic observations, not a deployed-system audit or a fresh-host
-installation qualification. Source locations below refer to that revision.
-Live implementation status is the [slice index](README.md) and
-[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md), not this dated checkout.
+installation qualification. Source locations below refer to the original
+September 8 checkout at `26f5ece14871ba9312c9aeaf87d42b47edff3022` unless a
+later note says otherwise.
+
+Since that checkout, live implementation status lives in the
+[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) and [slice index](README.md).
+On current `main`, reusable team groups (**06**), evidence-driven investigation
+(**11**), and full-text review (**12**) exist; hierarchical synthesis (**13**)
+is Next.
 
 ## Installation and onboarding
 
@@ -26,7 +32,9 @@ write/refresh/revocation design, not just forms.
 roles are managed by AD security groups without selecting copy by auth mode.
 `templates/workbench_setup.html` is Sources/matter setup, not first-run system
 onboarding. Matter membership UI exists for known principals. Application team
-groups with their own matter grants were not found in the inspected paths.
+groups with their own matter grants were not found in the inspected September 8
+paths. On current `main` they exist as slice **06**; see
+[team groups](../TEAM_GROUPS.md).
 
 Implementation: [01](01-install-prerequisites.md),
 [02](02-install-handoff-and-recovery.md), [03](03-first-run-onboarding.md),
@@ -85,7 +93,12 @@ and the explicit limit contract in [10](10-review-budget-visibility.md).
 
 ## Deep review
 
-| Stage | Current bound or behavior | Source |
+The table records bounds observed at the September 8 checkout. On current
+`main`, slice **11** follows evidence with additional searches inside a budget,
+and slice **12** reviews every eligible extracted unit. Final synthesis is
+still at most 12 passages until **13**.
+
+| Stage | Observed bound or behavior | Source |
 | --- | --- | --- |
 | Default investigation plan | Up to five preset question variants | `workbench.py::_research_plan` |
 | Lexical and dense lanes | At most 100 candidates per lane | `review_bench_v2.py::HybridRetriever` |
@@ -105,13 +118,18 @@ default plan passes should not be described as an absolute total of all internal
 retrieval calls.
 
 The every-source path correctly keeps a no-match source unresolved instead of
-equating zero hits with exclusion. Its unit coverage still depends on selecting
-passages. A completed source population is not a completed all-page read.
+equating zero hits with exclusion. At that checkout, its unit coverage still
+depended on selecting passages, so a completed source population was not a
+completed all-page read. On current `main`, **Review all extracted text**
+covers every eligible unit in a frozen population (slice **12**); selected-passage
+screening remains a separate mode, and cross-source hierarchical synthesis
+remains **13**.
 
 Implementation: [10](10-review-budget-visibility.md),
 [11](11-evidence-driven-investigation.md), [12](12-full-text-review-coverage.md),
-and [13](13-hierarchical-synthesis.md). The solution needs durable unit findings
-and supported synthesis, not an unbounded larger prompt.
+and [13](13-hierarchical-synthesis.md). Slices **11** and **12** exist on
+current `main`; **13** remains Next. The remaining gap is cited hierarchical
+synthesis, not an unbounded larger prompt.
 
 ## Why Reports can feel insubstantial
 
