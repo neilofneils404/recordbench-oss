@@ -1,17 +1,17 @@
 # Findings behind the portable product slices
 
-Checked September 11, 2026 against upstream `main` at
-`8d23ceeefbdf9f89cd4deba760126ea45e2cf188`. These are code-level findings and
-bounded synthetic observations, not a deployed-system audit or a fresh-host
-installation qualification. Source locations below refer to the original
-September 8 checkout at `26f5ece14871ba9312c9aeaf87d42b47edff3022` unless a
-later note says otherwise.
+Checked September 8, 2026 against upstream `main` at
+`26f5ece14871ba9312c9aeaf87d42b47edff3022`. These are code-level findings and
+bounded synthetic observations from that checkout, not a deployed-system audit
+or a fresh-host installation qualification. Source locations and the validation
+section below refer to that revision unless a later note says otherwise.
 
-Since that checkout, live implementation status lives in the
-[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) and [slice index](README.md).
-On current `main`, reusable team groups (**06**), evidence-driven investigation
-(**11**), and full-text review (**12**) exist; hierarchical synthesis (**13**)
-is Next.
+Live implementation status as of September 11, 2026 against `main` at
+`8d23ceeefbdf9f89cd4deba760126ea45e2cf188` lives in the
+[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) and [slice index](README.md); it is
+not a re-run of the September 8 inspection. Since that checkout, reusable team
+groups (**06**), evidence-driven investigation (**11**), and full-text review
+(**12**) exist; hierarchical synthesis (**13**) is Next.
 
 ## Installation and onboarding
 
@@ -25,13 +25,17 @@ operator acceptance. That is substantial work for an unfamiliar person.
 Account management is described as a tools-container CLI operation in
 `docs/AUTHENTICATION.md`. `admin_cli.py` implements init/add/password/list.
 `LocalAccountSettings` loads the file into memory, and `compose.yaml` mounts
-secrets read-only in the application. New account UI therefore needs a real
-write/refresh/revocation design, not just forms.
+secrets read-only in the application. At that checkout, new account UI therefore
+needed a real write/refresh/revocation design, not just forms. On current `main`,
+slices **04** and **05** provide that lifecycle and browser People administration;
+see [local account lifecycle](../LOCAL_ACCOUNT_LIFECYCLE.md) and
+[browser account management](../LOCAL_ACCOUNT_BROWSER.md).
 
 `templates/workbench_admin.html` labels principals as domain users and says
 roles are managed by AD security groups without selecting copy by auth mode.
 `templates/workbench_setup.html` is Sources/matter setup, not first-run system
-onboarding. Matter membership UI exists for known principals. Application team
+onboarding. On current `main`, slice **03** adds first-administrator team setup.
+Matter membership UI exists for known principals. Application team
 groups with their own matter grants were not found in the inspected September 8
 paths. On current `main` they exist as slice **06**; see
 [team groups](../TEAM_GROUPS.md).
@@ -133,12 +137,17 @@ synthesis, not an unbounded larger prompt.
 
 ## Why Reports can feel insubstantial
 
-Reports currently assemble text and cited material. They do not automatically
-turn a purpose into a well-developed analysis. `research_to_report` stores the
-final summary and citations in one section. It does not turn the saved gaps,
-passes, and coverage into report sections. `full_review_to_report` mainly stores
-the criterion, counts, validation count, and citations from machine-included
-decisions. Its cited-detail list stops at 100 entries.
+At the September 8 checkout, reports assembled text and cited material and did
+not automatically turn a purpose into a well-developed analysis.
+`research_to_report` stored the final summary and citations in one section. It
+did not turn the saved gaps, passes, and coverage into report sections.
+`full_review_to_report` mainly stored the criterion, counts, validation count,
+and citations from machine-included decisions. Its cited-detail list stopped at
+100 entries. On current `main`, slices **14** and **15** preserve review basis
+and compile saved work into drafts; see
+[report review basis](../REPORT_REVIEW_BASIS.md) and
+[report compilation](../REPORT_COMPILATION.md). Hierarchical cited synthesis
+remains **13**.
 
 The report's evidentiary appendix can therefore be longer than its reasoning,
 while the actual answer remains constrained by the final 12-passage packet and
@@ -153,8 +162,9 @@ and analytical usefulness are separate work.
 
 At inspection, open [PR #32](https://github.com/neilofneils404/recordbench-oss/pull/32)
 covered final-export readiness and links to Reports needing repair. Recheck its
-state and avoid overlapping that work. These slices address content and review
-basis: [14](14-report-review-basis.md) and [15](15-purposeful-report-outlines.md).
+state and avoid overlapping that work. Slices [14](14-report-review-basis.md)
+and [15](15-purposeful-report-outlines.md) are on current `main`; hierarchical
+cited synthesis remains [13](13-hierarchical-synthesis.md).
 
 ## People, Places, and Things
 
@@ -196,7 +206,10 @@ system description or attached document is copied into this repository.
 
 ## Validation performed and remaining limits
 
-* Inspected current upstream installer/authentication, retrieval/orchestration,
+The checks below are the September 8 inspection at
+`26f5ece14871ba9312c9aeaf87d42b47edff3022`, not a revalidation of current `main`.
+
+* Inspected that checkout's installer/authentication, retrieval/orchestration,
   generation, report conversion/export, notebook/analysis, and source UI paths.
 * Ran the bounded search probes described above.
 * Ran six existing focused suites: retrieval v2, research/full review, Report
