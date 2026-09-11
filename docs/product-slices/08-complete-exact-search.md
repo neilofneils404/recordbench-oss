@@ -1,6 +1,10 @@
 # 08: Return a complete, scoped exact-search result set
 
-Status: proposed. Depends on 07.
+Status: implemented on `main` via
+[#59](https://github.com/neilofneils404/recordbench-oss/pull/59)
+([#42](https://github.com/neilofneils404/recordbench-oss/pull/42) /
+[#53](https://github.com/neilofneils404/recordbench-oss/pull/53)). See
+[exact search results](../EXACT_SEARCH_RESULTS.md). Depends on 07.
 
 ## Finding and outcome
 

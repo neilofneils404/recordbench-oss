@@ -4,7 +4,8 @@ Checked September 8, 2026 against upstream `main` at
 `26f5ece14871ba9312c9aeaf87d42b47edff3022`. These are code-level findings and
 bounded synthetic observations, not a deployed-system audit or a fresh-host
 installation qualification. Source locations below refer to that revision.
-Use the [slice index](README.md) to pick up implementation work.
+Live implementation status is the [slice index](README.md) and
+[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md), not this dated checkout.
 
 ## Installation and onboarding
 

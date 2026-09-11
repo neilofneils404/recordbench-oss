@@ -1,6 +1,11 @@
 # 04: Provide a shared local-account lifecycle service
 
-Status: proposed. No dependencies. This precedes browser account editing.
+Status: implemented on `main` via
+[#59](https://github.com/neilofneils404/recordbench-oss/pull/59)
+([#41](https://github.com/neilofneils404/recordbench-oss/pull/41) /
+[#55](https://github.com/neilofneils404/recordbench-oss/pull/55)). See
+[local account lifecycle](../LOCAL_ACCOUNT_LIFECYCLE.md). No dependencies.
+This precedes browser account editing.
 
 ## Finding and outcome
 

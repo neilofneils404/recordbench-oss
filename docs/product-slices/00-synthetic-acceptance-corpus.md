@@ -1,6 +1,8 @@
 # 00: Seed a shared product acceptance corpus
 
-Status: proposed. No dependencies.
+Status: implemented on `main` as
+[#36](https://github.com/neilofneils404/recordbench-oss/pull/36). See
+[exact search foundation](../EXACT_SEARCH.md). No dependencies.
 
 ## Finding and outcome
 

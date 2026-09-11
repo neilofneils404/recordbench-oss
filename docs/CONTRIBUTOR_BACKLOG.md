@@ -3,8 +3,9 @@
 For scoped product work, start with the [portable product slices](product-slices/README.md).
 They record code-backed findings, dependencies, implementation boundaries, and
 synthetic acceptance criteria for installation, onboarding, accounts/groups,
-exact search, deep review, Reports, and People/Places/Things. The briefs are
-proposals; refresh upstream and coordinate an individual slice before coding.
+exact search, deep review, Reports, and People/Places/Things. Check each
+brief's Status line and the [exit-alpha cruise](EXIT_ALPHA_CRUISE.md) before
+coding; slice **13** is next. Refresh upstream and coordinate remaining work.
 
 These are candidate contributions, not assignments. Open a short issue with a
 synthetic reproduction or proposed acceptance path; check existing PRs before

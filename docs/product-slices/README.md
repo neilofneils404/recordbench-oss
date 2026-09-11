@@ -1,8 +1,12 @@
 # Portable RecordBench product slices
 
-Status: implementation briefs with the first changes in review. Findings checked September 8, 2026 against
-upstream `main` at `26f5ece14871ba9312c9aeaf87d42b47edff3022`. The upstream hash
-was read from the remote and matched the locally available remote-tracking ref.
+Status: implementation briefs. Binding execution order is the
+[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md); slice **13** is next.
+Findings checked September 8, 2026 against upstream `main` at
+`26f5ece14871ba9312c9aeaf87d42b47edff3022` are a dated checkout note.
+Live slice status is the cruise file and each brief's Status line. The
+upstream hash was read from the remote and matched the locally available
+remote-tracking ref.
 
 Implementation targets portable product contracts and supported deployment
 profiles. A contributor workstation is a development host, not a resource ceiling
@@ -26,6 +30,15 @@ IDs identify work, not an obligation to execute everything in numeric order.
 slice **13** is next. The briefs remain the implementation specifications;
 the cruise document takes precedence over historical sequencing below.
 
+On current `main` (`a83f43f8240d0db501b5c506eb1a570c32f7fdaa`): slices **00–08**,
+**10–12**, and **14–15** are implemented, including installer handoff (02),
+first-run team setup (03), reusable team groups (06), adaptive investigation
+(11), and all-extracted-text review (12). Slice **09** has proximity on `main`;
+wildcards and field filters remain. Hierarchy (**13**) and the entity workspace
+slices (**16–18**) remain proposed. Remaining 09 operators are not the cruise
+Next row. The report's People/Places/Things format does not claim to implement
+the persistent entity workspace or identity resolution.
+
 Implementation PR inventory recorded September 8 (historical status; see
 [the September 9 selection](../SELECTED_ACCEPTANCE_2026-09-09.md) and live PR state):
 
@@ -45,32 +58,25 @@ Implementation PR inventory recorded September 8 (historical status; see
 is a validation dependency, not a product slice. It inspects intended ancestry
 and actual branch metadata independently of unrelated fetched branches.
 
-Review and CI completion must be read from each PR; this index does not mark a
-change accepted or deployed. Stacked PRs include their prerequisites on the
-branch and remain testable before merging. The intended Linux deployment host
-should validate a combined candidate in a separate synthetic checkout and
-installation before deployment-sensitive changes are accepted. No default-branch
-merge is needed for that test.
-
-Reusable team groups (06), adaptive investigation (11), and all-extracted-text
-review (12) are on `main`. Hierarchy (13), remaining advanced operators, and the
-entity workspace and relationship slices remain proposed. The 02 and 03 briefs
-remain proposed until those status lines are updated separately. The report's
-People/Places/Things format does not claim to implement the persistent entity
-workspace or identity resolution.
+The September 8 PR inventory is historical. Live OSS status is the cruise file
+and each brief's Status line. A completed slice is not evidence that a
+downstream deployment has adopted it. Stacked PRs include their prerequisites
+on the branch and remain testable before merging. The intended Linux deployment
+host should validate a combined candidate in a separate synthetic checkout and
+installation before deployment-sensitive changes are accepted.
 
 | ID | Slice | Depends on |
 | --- | --- | --- |
 | [00](00-synthetic-acceptance-corpus.md) | A small shared corpus with known expected results | None |
 | [01](01-install-prerequisites.md) | Explain and resolve installation prerequisites | None |
 | [02](02-install-handoff-and-recovery.md) | Reach first login and resume interrupted installation | 01 |
-| [03](03-first-run-onboarding.md) | Guide the first administrator through setup | 02; integrates 05 and 06 later |
+| [03](03-first-run-onboarding.md) | Guide the first administrator through setup | 02 |
 | [04](04-local-account-lifecycle.md) | A shared account write and revocation service | None |
 | [05](05-browser-account-management.md) | Create and manage local accounts in the browser | 04 |
 | [06](06-team-groups.md) | Reusable groups with explicit matter access | 04, 05 |
 | [07](07-exact-search-grammar.md) | Parse strict Boolean queries consistently | 00 |
 | [08](08-complete-exact-search.md) | Browse every exact match with reproducible scope | 07 |
-| [09](09-advanced-search.md) | Add proximity, wildcard, and field operators | 08; three small follow-ups |
+| [09](09-advanced-search.md) | Add proximity, wildcard, and field operators | 08; proximity on main; wildcards and fields remain |
 | [10](10-review-budget-visibility.md) | Make retrieval and synthesis limits explicit | None |
 | [11](11-evidence-driven-investigation.md) | Follow evidence with useful additional searches | 00, 10 |
 | [12](12-full-text-review-coverage.md) | Process every extracted unit in a frozen population | 00, 10 |
@@ -83,32 +89,29 @@ workspace or identity resolution.
 
 Historical starting batch (superseded by the cruise order): 00, 01, 07, 10, and 14. These establish known
 results, reduce install confusion, define exact-search semantics, expose real
-review limits, and stop losing useful context when making Reports. Next finish
-02-05 and 08, then deepen review through 11-13. Entity work follows that review
-foundation, as requested. Group and advanced-search work can proceed once their
-own prerequisites are ready.
+review limits, and stop losing useful context when making Reports. Slices 00–08,
+10–12, and 14–15 are now on `main`. Next is 13. Entity work follows that review
+foundation. Remaining 09 operators (wildcards and field filters) are separate
+from the cruise Next row.
 
 ## Evidence and current answers
 
-See [findings and validation](FINDINGS.md) for observed behavior, reproduction
-examples, source pointers, and the limits of the checks performed.
+See [findings and validation](FINDINGS.md) for the September 8 checkout
+observations, reproduction examples, and the limits of those checks.
 
-* Installation already has a CLI and initial local administrator creation. It
-  still expects substantial operator knowledge and lacks a complete team setup
-  journey.
-* The browser can add existing principals to a matter. Creating local accounts
-  is a separate CLI workflow; reusable application-managed team groups were not
-  found in the inspected identity and membership paths.
-* Investigation uses five default query variants and a final packet of at most
-  12 passages. Every-source checks select passages from each source, not every
-  page. These are distinct coverage problems.
-* The current hybrid search is not a strict Boolean result set. CPU fallback
-  and PostgreSQL lexical semantics differ, and semantic candidates can enter
-  the combined results without satisfying a lexical exclusion.
-* Reports can preserve edited work and export it. Their usefulness is limited
-  by shallow upstream synthesis and minimal conversions, not simply formatting.
-* People/place/date candidates exist, but title-based patterns, bounded scans,
-  note deduplication, and note-oriented navigation constrain their usefulness.
+* Installation has preflight, resumable handoff, and first-administrator team
+  setup. People and team groups are on `main`. Clean-host adoption remains
+  operator evidence.
+* Exact search is a separate complete-result path with Boolean grammar and
+  proximity. The ranked answer retriever is still not that exact set.
+  Wildcards and field filters remain unsupported.
+* Investigations follow evidence within a budget. Final synthesis is still at
+  most 12 passages until 13. Selected-passage source checks remain; **Review
+  all extracted text** covers every eligible unit in a frozen population.
+* Reports preserve review basis and can compile saved work into drafts.
+  Hierarchical cited synthesis is 13.
+* People/place/date candidates exist, but the persistent entity workspace
+  (16–18) is still proposed.
 
 ## Definition of done for every slice
 

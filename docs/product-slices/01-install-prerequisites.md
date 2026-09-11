@@ -1,6 +1,10 @@
 # 01: Make installation prerequisites actionable
 
-Status: proposed. No dependencies.
+Status: implemented on `main` via
+[#59](https://github.com/neilofneils404/recordbench-oss/pull/59)
+([#39](https://github.com/neilofneils404/recordbench-oss/pull/39) /
+[#54](https://github.com/neilofneils404/recordbench-oss/pull/54)). See
+[INSTALL.md](../INSTALL.md) preflight. No dependencies.
 
 ## Finding and outcome
 

@@ -1,6 +1,9 @@
 # 14: Preserve review scope, gaps, and decisions in Reports
 
-Status: proposed. No dependencies. This can ship before deeper review.
+Status: implemented on `main` as
+[#38](https://github.com/neilofneils404/recordbench-oss/pull/38). See
+[report review basis](../REPORT_REVIEW_BASIS.md). No dependencies.
+Deeper hierarchical synthesis remains 13.
 
 ## Finding and outcome
 

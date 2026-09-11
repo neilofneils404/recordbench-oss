@@ -1,6 +1,8 @@
 # 10: Make review budgets and coverage visible
 
-Status: proposed. No dependencies.
+Status: implemented on `main` as
+[#40](https://github.com/neilofneils404/recordbench-oss/pull/40). See
+[investigation budgets](../INVESTIGATION_BUDGETS.md). No dependencies.
 
 ## Finding and outcome
 

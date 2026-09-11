@@ -1,6 +1,12 @@
 # 09: Extend exact search with review-critical operators
 
-Status: proposed. Depends on 08. Deliver as three small follow-up changes.
+Status: proximity is on `main` via
+[#59](https://github.com/neilofneils404/recordbench-oss/pull/59)
+([#45](https://github.com/neilofneils404/recordbench-oss/pull/45) /
+[#53](https://github.com/neilofneils404/recordbench-oss/pull/53)); see
+[word proximity](../EXACT_SEARCH_PROXIMITY.md). Bounded trailing wildcards
+and stored-field filters remain; they are still rejected as unsupported.
+Depends on 08. Deliver the remainder as two small follow-up changes.
 
 ## Finding and outcome
 

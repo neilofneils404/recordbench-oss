@@ -1,6 +1,10 @@
 # 05: Manage local accounts in the browser
 
-Status: proposed. Depends on 04.
+Status: implemented on `main` via
+[#59](https://github.com/neilofneils404/recordbench-oss/pull/59)
+([#43](https://github.com/neilofneils404/recordbench-oss/pull/43) /
+[#57](https://github.com/neilofneils404/recordbench-oss/pull/57)). See
+[browser account management](../LOCAL_ACCOUNT_BROWSER.md). Depends on 04.
 
 ## Finding and outcome
 
