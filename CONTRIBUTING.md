@@ -154,3 +154,30 @@ journeys with a checksum-pinned browser and driver. See
 [browser acceptance](docs/BROWSER_ACCEPTANCE.md) for local commands, bounded
 artifacts, deliberate browser updates and rollback. These journeys use disposable
 loopback applications and require no model downloads or deployment access.
+
+## PostgreSQL integration CI
+
+The `postgres-integration` Quality gates job starts a disposable, loopback-only
+PostgreSQL 17/pgvector service from an immutable image digest and installs the
+existing PostgreSQL test dependencies. It runs the seven existing database
+acceptance tests for migration/reopen, page citations, media projection,
+matter isolation, deletion and rebuild. The report check fails on missing,
+empty, incomplete, skipped or unsuccessful results. Additional database tests
+in the same module are included automatically.
+
+To reproduce against an isolated disposable database, set
+`CASE_REVIEW_POSTGRES_TEST_DSN`, install `.[dev,postgres]`, then run:
+
+```console
+python -m pytest -q tests/test_review_bench_v2_postgres.py \
+  --deselect tests/test_review_bench_v2_postgres.py::test_live_learned_dense_only_paraphrase_and_unsupported_abstention \
+  --junitxml=/tmp/recordbench-postgres-results.xml
+python scripts/check-postgres-test-report.py /tmp/recordbench-postgres-results.xml
+```
+
+The tests mutate the database; use synthetic disposable data only. The service
+and data are discarded with the hosted job. No deployment credentials, models,
+or external model worker are used. Learned-model acceptance is explicitly
+excluded and remains separate. This job exercises the existing hybrid backend;
+it does not add a PostgreSQL exact-search adapter or complete the shared-corpus
+PostgreSQL acceptance required by slices 00/08.

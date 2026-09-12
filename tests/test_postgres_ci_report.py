@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check-postgres-test-report.py"
+spec = importlib.util.spec_from_file_location("postgres_ci_report", SCRIPT)
+report = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(report)
+
+
+def write_report(tmp_path, count=7, outcome=""):
+    path = tmp_path / "results.xml"
+    path.write_text("<testsuites><testsuite>" + "".join(
+        f'<testcase name="synthetic_{i}">{outcome if i == 0 else ""}</testcase>'
+        for i in range(count)
+    ) + "</testsuite></testsuites>")
+    return path
+
+
+@pytest.mark.parametrize("count", [7, 8])
+def test_accepts_complete_passing_suite(tmp_path, count):
+    assert report.check_report(write_report(tmp_path, count)) == count
+
+
+@pytest.mark.parametrize("outcome", ["<skipped/>", "<failure/>", "<error/>"])
+def test_rejects_nonpassing_case(tmp_path, outcome):
+    with pytest.raises(ValueError, match="without skips"):
+        report.check_report(write_report(tmp_path, outcome=outcome))
+
+
+@pytest.mark.parametrize("count", [0, 6])
+def test_rejects_empty_or_incomplete_suite(tmp_path, count):
+    with pytest.raises(ValueError, match="at least seven"):
+        report.check_report(write_report(tmp_path, count))
+
+
+@pytest.mark.parametrize("content", [None, "not XML"])
+def test_cli_fails_for_missing_or_malformed_report(tmp_path, content):
+    path = tmp_path / "results.xml"
+    if content is not None:
+        path.write_text(content)
+    result = subprocess.run([sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "acceptance blocked" in result.stderr

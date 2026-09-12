@@ -8,6 +8,10 @@ Status: exact-result service is on `main` via
 acceptance remains pending; no PostgreSQL exact adapter is claimed.
 Depends on 07.
 
+The `postgres-integration` Quality gates job exercises the existing hybrid
+backend's database tests without skips. It does not implement an exact-search
+adapter or satisfy this slice's shared-corpus PostgreSQL acceptance.
+
 ## Finding and outcome
 
 `HybridRetriever` merges lexical and dense candidates and returns at most 20

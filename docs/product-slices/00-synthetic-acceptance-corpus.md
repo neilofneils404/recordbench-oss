@@ -5,6 +5,10 @@ Status: corpus and reference matcher are on `main` as
 [exact search foundation](../EXACT_SEARCH.md). PostgreSQL search-job
 acceptance remains pending. No dependencies.
 
+The `postgres-integration` Quality gates job exercises the existing hybrid
+backend's database tests without skips. It does not implement an exact-search
+adapter or satisfy this slice's shared-corpus PostgreSQL acceptance.
+
 ## Finding and outcome
 
 Existing tests cover many boundaries, but the observed Boolean behavior and
