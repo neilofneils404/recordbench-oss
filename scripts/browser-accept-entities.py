@@ -126,6 +126,9 @@ def main():
                 assert 'Selected original passage' in body()
                 click('form:has(input[value="attach"]) button')
                 assert 'Original-source mentions' in body()
+                driver.find_element(By.LINK_TEXT, 'Return to source review').click()
+                assert 'mode=search' in driver.current_url and 'q=' + term in driver.current_url
+                go(entity_path)
             assert 'Original-source mentions (2)' in body()
             detail = bench.entity_service(matter).detail(matter.matter_id, ACTOR, entity_path.split('/')[-1])
             assert len(detail[1]) == 2

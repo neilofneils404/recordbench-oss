@@ -2,6 +2,9 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 import json
+import html
+import re
+from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 import sqlite3
 import threading
@@ -160,6 +163,12 @@ def test_web_journey_original_passages_context_same_name_and_edit_recovery(tmp_p
         store = bench.source_store(matter)
         tokens = [bench._citation(matter, bench._candidate(matter, document, document.parsed_units()[0], 1)).support_token for document in store.documents.values()]
         assert len(tokens) == 2
+        search_path = f'/matters/{slug}?mode=search&q=synthetic'
+        search = client.get(search_path)
+        support_href = html.unescape(re.search(r'class="open-support-link" href="([^"]+)"', search.text).group(1))
+        support_page = client.get(support_href)
+        entity_href = html.unescape(re.search(r'href="([^"]+/entities\?support=[^"]+)"', support_page.text).group(1))
+        assert parse_qs(urlparse(entity_href).query)['return_to'] == [search_path + '#search-results']
         context = f'/matters/{slug}?mode=search&q=Alex&page=2#support-pane'
         response = client.post(path + '/actions', data=dict(action='create', display_name='Alex Example', aliases='A. Example', support=tokens[0], return_to=context), follow_redirects=False)
         assert response.status_code == 303
@@ -214,6 +223,8 @@ def test_actual_sources_survive_stopped_backup_clean_restore_and_bundle(tmp_path
     restored = tmp_path / 'restored-runtime'
     shutil.copytree(runtime, backup)
     shutil.copytree(backup, restored)
+    shutil.move(runtime, tmp_path / 'original-runtime-offline')
+    shutil.move(backup, tmp_path / 'backup-offline')
     with TestClient(create_workbench_app(restored, auth_mode='test')) as client:
         bench = client.app.state.workbench
         matter = bench.matter(slug, WEB_ACTOR)
@@ -221,6 +232,10 @@ def test_actual_sources_survive_stopped_backup_clean_restore_and_bundle(tmp_path
         assert actual == expected and actual[1][0]['available']
         response = client.get(f'/matters/{slug}?support={token}')
         assert response.status_code == 200 and 'visited a synthetic depot' in response.text
+        restored_store = bench.source_store(matter)
+        restored_document = next(iter(restored_store.documents.values()))
+        original_content = client.get(f'/matters/{slug}/sources/{restored_store.action_token(restored_document)}/content')
+        assert original_content.status_code == 200 and b'visited a synthetic depot' in original_content.content
         prepared, lifecycle = bench.workspace.begin_matter_purge(slug, WEB_ACTOR, matter.display_name, source_count=1)
         bench.workspace.complete_matter_purge(matter.matter_id, lifecycle.purge_id)
         for table in ('entity', 'entity_mention', 'entity_history'):
@@ -240,6 +255,7 @@ def test_entity_validation_and_full_pagination_without_identity_collapse(tmp_pat
     assert len({item['entity_id'] for item in first + second}) == 53
     assert entities.list(matter.matter_id, ACTOR, query='%')[1] == 53
     assert entities.list(matter.matter_id, ACTOR, query='_')[1] == 0
+    assert entities.list(matter.matter_id, ACTOR, query='[')[1] == 0
     store.close()
 
 

@@ -47,7 +47,7 @@ class EntityRepository:
     def list(self, matter_id, query='', page=1):
         # Escape wildcard characters: name/alias search never changes identities.
         like = '%' + query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
-        where = "matter_id=? AND (display_name LIKE ? ESCAPE '\\' OR aliases_json LIKE ? ESCAPE '\\')"
+        where = "matter_id=? AND (display_name LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(aliases_json) WHERE value LIKE ? ESCAPE '\\'))"
         params = (matter_id, like, like)
         total = self.connection.execute('SELECT COUNT(*) FROM workbench_entity WHERE ' + where, params).fetchone()[0]
         rows = self.connection.execute(

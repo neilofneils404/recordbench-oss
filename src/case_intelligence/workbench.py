@@ -5594,7 +5594,7 @@ def _query_url(path: str, **values: str) -> str:
 
 
 def _workspace_citation_href(
-    citation: object, matter_slug: str, conversation_id: str = ""
+    citation: object, matter_slug: str, conversation_id: str = "", *, entity_return_to: str = ""
 ) -> str:
     """Normalize current and historical citations into the in-workspace evidence pane."""
 
@@ -5617,6 +5617,7 @@ def _workspace_citation_href(
             support=token,
             conversation=conversation_id,
             play="1" if citation_value("evidence_kind") == "transcript" else "",
+            entity_return_to=entity_return_to,
         ) + "#support-pane"
     if raw_href.startswith(f"/matters/{matter_slug}"):
         return raw_href

@@ -45,7 +45,7 @@
     "integrity": "ok",
     "scope": "SQLite control store only; original-source restoration is exercised separately."
   },
-  "complete_runtime_restore": "Stopped synthetic app, copied backup into absent clean target, resolved original passage through restored app, checked entity bundle and purge in HTTP regression.",
+  "complete_runtime_restore": "Stopped synthetic app, copied backup into absent clean target, moved original runtime and backup offline, resolved the restored mention and raw original bytes, checked entity bundle and purge in HTTP regression.",
   "compilation": "passed",
   "compose": "standard, Kerberos and dedicated local-account graphs passed",
   "limitations": [
@@ -57,5 +57,9 @@
   ],
   "transcription": {
     "passed": 194
+  },
+  "search_context_followup": {
+    "passed": 18,
+    "browser": "Repeated complete Chrome journey; return links verified against both actual originating searches."
   }
 }
