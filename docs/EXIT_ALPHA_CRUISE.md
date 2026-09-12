@@ -7,19 +7,24 @@ specs. When numeric slice order conflicts with this file, **this file wins**.
 **Last updated:** 2026-09-12
 
 Verified `main` snapshot before this receipt update:
-`bb7d41896a1cc5519d2386208b6ceb21482aeb6e`
-(receipt and completed-bootstrap cleanup landed as
-[#72](https://github.com/neilofneils404/recordbench-oss/pull/72);
-PostgreSQL/pgvector CI landed as
-[#70](https://github.com/neilofneils404/recordbench-oss/pull/70), after the
+`c1ada89bf15ea8f61906de3c62202da4d98e279f`
+(hierarchical synthesis landed as
+[#73](https://github.com/neilofneils404/recordbench-oss/pull/73), after
+PostgreSQL/pgvector CI in
+[#70](https://github.com/neilofneils404/recordbench-oss/pull/70) and the
 maintainer security-quota policy in
 [#71](https://github.com/neilofneils404/recordbench-oss/pull/71)). This receipt
 records a verified landed commit, not the self-referential SHA of the commit
-carrying the receipt. Slices **11** and **12** remain Done; **13** remains Next.
+carrying the receipt. Slices **11**, **12** and **13** are Done;
+**16 → 18** are Next. No work on those slices is included in this receipt.
 The `postgres-integration` job passed on the landed #70 `main` commit
 `4dea52ce42eeb01ac1cab188a99f7fc44b571ab9` with seven
 tests passing and zero skipped
 ([main CI receipt](https://github.com/neilofneils404/recordbench-oss/actions/runs/34695365785/job/103557849336)).
+
+It also passed on the landed slice-13 `main` commit recorded above: seven passed,
+zero skipped
+([slice-13 main CI receipt](https://github.com/neilofneils404/recordbench-oss/actions/runs/34699188264/job/103567811020)).
 
 ## Cruise order
 
@@ -30,8 +35,8 @@ tests passing and zero skipped
 | 2 | Slice **06** — reusable team groups with explicit matter access | Done |
 | 3 | Slice **11** — evidence-driven investigation (durable plan, reasons, checkpoints, zero-hit ledger rows) | Done |
 | 4 | Slice **12** — deepen full-text coverage as required to feed durable findings | Done |
-| 5 | Slice **13** — hierarchical synthesis (issue- then matter-level) with citations through intermediates | **Next** |
-| 6 | Slices **16 → 18** — People / Places / Things workspace, extraction, evidence-backed relationships | After 13 |
+| 5 | Slice **13** — hierarchical synthesis (issue- then matter-level) with citations through intermediates | Done |
+| 6 | Slices **16 → 18** — People / Places / Things workspace, extraction, evidence-backed relationships | **Next** |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing; does not block 13 |
 
 Slice **12** needed no further product PR. **Review all extracted text** is
@@ -43,6 +48,18 @@ extracted unit in a frozen population, durable unit/range outcomes, late-unit
 and failed-unit coverage, source-change invalidation, cancellation/resume, and
 backup/clean-restore. Selected-passage screening remains a separate mode by
 design. Cross-source hierarchical synthesis is **13**, not a 12 gap.
+
+Slice **13** consumes persisted investigation findings through issue groups and
+cross-group matter sections, retaining original source/version/location support.
+Versioned checkpoints preserve budgets across interruption; partial results,
+unsupported findings and omitted groups remain explicit in pages and exports.
+Synthetic acceptance covers 24 units, support and contradiction, restart and
+backup/clean restore. The documented local-model evaluation retained both decisive
+accounts and all 24 citations under its stated evaluation settings. See
+[HIERARCHICAL_SYNTHESIS.md](HIERARCHICAL_SYNTHESIS.md) for the receipt and limits.
+The final PR application suite passed 2,723 tests (nine skipped), with hosted code
+review, a verified maintainer security-quota exception, acceptance and protected
+fast-forward of the exact no-reply head.
 
 ## Hold
 

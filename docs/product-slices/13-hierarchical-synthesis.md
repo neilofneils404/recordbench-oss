@@ -1,14 +1,15 @@
 # 13: Synthesize a substantial review without losing source support
 
-Status: implementation in progress; not landed. Depends on 11 or 12 and their persistent findings.
+Status: Done — landed in [#73](https://github.com/neilofneils404/recordbench-oss/pull/73)
+at `c1ada89bf15ea8f61906de3c62202da4d98e279f`. Depends on 11 or 12 and their persistent findings.
 
 The initial input adapter and versioned checkpoint contract are described in
 [HIERARCHICAL_SYNTHESIS.md](../HIERARCHICAL_SYNTHESIS.md).
 
 ## Finding and outcome
 
-The current final research answer uses a newly selected packet of at most 12
-passages. It does not consume the saved pass findings as a structured body of
+Before this slice, the final research answer used a newly selected packet of at most 12
+passages. It did not consume the saved pass findings as a structured body of
 work. More searches alone can therefore leave the final answer shallow.
 
 ## Small implementation
