@@ -244,9 +244,9 @@ def test_web_discovery_full_source_restore_export_and_purge(tmp_path, monkeypatc
 
 def test_labelled_multilingual_alias_and_explicit_timezone_without_identity_inference():
     extractor = DeterministicEntityExtractor()
-    text = 'person: 张伟\nperson: ليلى حسن\nalias: J. Sample\nname: jean dupont\norganization: 株式会社サンプル\non 2026-09-12T10:30+02:00'
+    text = 'person: 张伟\nperson: ليلى حسن\nalias: J. Sample\nname: jean dupont\norganization: 株式会社サンプル\nobject: amber bicycle\non 2026-09-12T10:30+02:00'
     rows = extractor.extract(text)
-    assert [row.label for row in rows] == ['张伟', 'ليلى حسن', 'J. Sample', 'jean dupont', '株式会社サンプル', '2026-09-12T10:30+02:00']
+    assert [row.label for row in rows] == ['张伟', 'ليلى حسن', 'J. Sample', 'jean dupont', '株式会社サンプル', 'amber bicycle', '2026-09-12T10:30+02:00']
     assert rows[-1].date['timezone'] == '+02:00' and rows[-1].date['normalized'] is None
     assert all(text[row.start:row.end] == row.label for row in rows)
     assert extractor.extract('the synthetic bicycle is blue. no named people are stated here.') == []
@@ -301,3 +301,12 @@ def test_unsupported_extractor_result_fails_whole_unit_without_receipts(frozen):
     assert discovery.step(matter.matter_id, ACTOR, run.run_id)['counts']['failed'] == 1
     assert discovery.service.list(matter.matter_id, ACTOR)[1] == 0
     assert store.entity_repository().discovery_export(matter.matter_id)['occurrence_tombstones'] == []
+
+
+def test_sealed_units_are_pending_before_first_discovery_request(frozen):
+    discovery = discovery_fixture(frozen, ['Alex Example arrived.', 'Jordan Sample left.'])
+    store, matter, run, _ = frozen
+    coverage = discovery.coverage(matter.matter_id, ACTOR, run.run_id)
+    assert coverage['counts'] == dict(pending=2, processed=0, failed=0, invalidated=0)
+    assert store.entity_repository().discovery_export(matter.matter_id)['coverage'] == []
+    assert discovery.step(matter.matter_id, ACTOR, run.run_id, limit=1)['counts']['pending'] == 1

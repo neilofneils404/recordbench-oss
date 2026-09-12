@@ -55,7 +55,7 @@ class EntityDiscovery:
                         if (not 0 <= occurrence.start < occurrence.end <= len(text)
                                 or text[occurrence.start:occurrence.end] != occurrence.label
                                 or len(occurrence.label) > 160
-                                or occurrence.kind not in ('person', 'organization', 'identifier', 'date')):
+                                or occurrence.kind not in ('person', 'organization', 'identifier', 'thing', 'date')):
                             raise ValueError('unsupported occurrence')
                         service.fields(display_name=occurrence.label, entity_type=occurrence.kind, status='suggested')
                         if len(json.dumps(occurrence.date)) > 1000:

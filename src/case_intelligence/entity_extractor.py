@@ -28,8 +28,8 @@ class DeterministicEntityExtractor:
     # Unicode letters with uppercase initials; retain accents, apostrophes and
     # OCR digits. Sentence-start prose can still produce false positives.
     word = r"[^\W\d_][\w’'\-]*"
-    labelled = re.compile(r'\b(person|name|witness|alias|organization|company)\s*:\s*([^;\n]{1,160})', re.I)
-    identifiers = re.compile(r'\b(?:ID|VIN|serial|badge|plate|account|object|identifier)\s*[:#]\s*([\w-]{2,80})', re.I)
+    labelled = re.compile(r'\b(person|name|witness|alias|organization|company|object)\s*:\s*([^;\n]{1,160})', re.I)
+    identifiers = re.compile(r'\b(?:ID|VIN|serial|badge|plate|account|identifier)\s*[:#]\s*([\w-]{2,80})', re.I)
     dates = re.compile(r'\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?\b')
     organization_ends = {'inc', 'llc', 'ltd', 'corp', 'company', 'association', 'university', 'cooperative', 'foundation', 'bank'}
 
@@ -59,7 +59,8 @@ class DeterministicEntityExtractor:
                 start, end = match.start(2), match.start(2) + len(label)
                 found = [item for item in found if not (start <= item.start and item.end <= end)]
                 found.append(EntityOccurrence(start, end, label,
-                    'organization' if match.group(1).casefold() in ('organization', 'company') else 'person'))
+                    ('organization' if match.group(1).casefold() in ('organization', 'company')
+                     else 'thing' if match.group(1).casefold() == 'object' else 'person')))
         for match in self.identifiers.finditer(text):
             found.append(EntityOccurrence(match.start(1), match.end(1), match.group(1), 'identifier'))
         for match in self.dates.finditer(text):

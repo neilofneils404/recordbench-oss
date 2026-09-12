@@ -220,6 +220,17 @@ class EntityRepository:
             'ORDER BY document_id,unit_ordinal', (matter_id, run_id, version))]
         sources = [dict(row) for row in self.connection.execute(
             'SELECT document_id,source_name,state,inventory_sealed,unit_count FROM workbench_text_review_source WHERE run_id=?', (run_id,))]
+        indexed = {(row['document_id'], row['unit_ordinal']) for row in units}
+        # A sealed slice-12 unit is pending discovery even before the reviewer
+        # first queues it, or when its inventory arrived after the last batch.
+        for row in self.connection.execute(
+                'SELECT s.document_id,s.source_version_id,u.unit_ordinal,u.unit_digest FROM workbench_text_review_source s '
+                'JOIN workbench_text_review_unit u ON u.run_id=s.run_id AND u.document_id=s.document_id '
+                'WHERE s.run_id=? AND s.inventory_sealed=1', (run_id,)):
+            if (row['document_id'], row['unit_ordinal']) not in indexed:
+                units.append(dict(row, matter_id=matter_id, run_id=run_id, extractor_version=version,
+                    state='pending', note='Not yet queued for discovery.'))
+        units.sort(key=lambda row: (row['document_id'], row['unit_ordinal']))
         current_sources = {row[0] for row in self.connection.execute(
             "SELECT s.document_id FROM workbench_text_review_source s JOIN workbench_source_catalog c "
             "ON c.document_id=s.document_id AND c.matter_id=? WHERE s.run_id=? AND s.state!='invalidated' "

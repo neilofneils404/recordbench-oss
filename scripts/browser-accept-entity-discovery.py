@@ -18,7 +18,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
@@ -221,6 +221,21 @@ def main():
             driver.execute_script("arguments[0].scrollIntoView({block:'start',behavior:'instant'})", heading)
             driver.save_screenshot(str(args.output / 'reconciliation-mobile.png'))
             record('Discovery and reconciliation reflow at 390 pixels with native labeled controls')
+            driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride', {})
+            driver.set_window_size(1440, 1000)
+            go(prefix + '/entities')
+            fill('input[name=display_name]', 'Unrelated synthetic identity')
+            click('.notebook-item-form button')
+            target = next(row for row in rows if not row['extractor_version'] and row['display_name'] == 'Alex Example')
+            target = bench.entity_service(matter).detail(matter.matter_id, ACTOR, target['entity_id'])[0]
+            driver.find_element(By.CSS_SELECTOR, 'details:has(select[name=mention_id]) summary').click()
+            fill('input[name=target_id]', target['entity_id'])
+            fill('input[name=target_revision]', str(target['revision']))
+            Select(driver.find_element(By.CSS_SELECTOR, 'select[name=action]')).select_by_value('alias')
+            click('form:has(select[name=action]) button')
+            assert 'Undo alias' in body() and 'Original-source mentions (0)' in body()
+            click('form:has(input[value="undo"]) button')
+            record('Dissimilar empty manual identities can confirm and undo an alias without selecting a split mention')
             receipt = dict(synthetic=True, success=True, checks=checks, browser=driver.capabilities.get('browserVersion'))
             (args.output / 'receipt.json').write_text(json.dumps(receipt, indent=2))
         except Exception as exc:

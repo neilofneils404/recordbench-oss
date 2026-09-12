@@ -26,8 +26,9 @@
       "automatic_false_merges": 0
     },
     "labelled_unicode_alias_timezone_cases": {
-      "expected": 6,
-      "recognized": 6
+      "expected": 7,
+      "recognized": 7,
+      "includes_explicit_object": true
     },
     "limits": "Synthetic positive fixtures and one negative prose fixture; not general NER recall or real-case accuracy. Unlabeled scripts without capitalization, single-token names, contextual aliases and unlisted organizations remain limited."
   },
@@ -83,5 +84,29 @@
     "Undo refuses later shared edits; this is guarded single-operation undo.",
     "Original passage excerpts retain the 6000-character limit; occurrence offsets refer to the full original unit.",
     "No relationship/event extraction, matter memory, capacity expansion, held Mac work or deployment."
-  ]
+  ],
+  "review_preparation_followup": {
+    "pending_coverage": "Sealed units appear pending before their first discovery request, including later inventories.",
+    "manual_reconciliation": "Only split requires a selected mention; alias and merge remain usable for empty identities.",
+    "explicit_objects": "Labeled object descriptions retain their full supported text as thing mentions.",
+    "entity_tests_passed": 25,
+    "browser": {
+      "synthetic": true,
+      "success": true,
+      "checks": [
+        "Two synthetic originals uploaded and searchable without a model",
+        "Visible empty state and keyboard creation of a person with an alias",
+        "Two exact source passages attached to one identity and both reopened from its detail page",
+        "Another same-name person remains distinct, with no automatic alias merge",
+        "Shared-edit conflict preserves the submitted name and aliases alongside the current saved identity",
+        "390-pixel reflow without horizontal page overflow",
+        "Return link retains the source-review search context",
+        "Discovery processes an inventoried unit without a model and shows remaining uninventoried sources honestly",
+        "Reviewer confirms a candidate merge and undoes it without losing the extracted mention",
+        "Discovery and reconciliation reflow at 390 pixels with native labeled controls",
+        "Dissimilar empty manual identities can confirm and undo an alias without selecting a split mention"
+      ],
+      "browser": "152.0.7977.83"
+    }
+  }
 }

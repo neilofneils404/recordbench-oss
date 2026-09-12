@@ -51,7 +51,7 @@
         <form method="post" action="/matters/{{ matter.slug }}/entities/actions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entity_id" value="{{ entity.entity_id }}"><input type="hidden" name="expected_revision" value="{{ entity.revision }}"><input type="hidden" name="return_to" value="{{ return_to }}"><input type="hidden" name="q" value="{{ q }}">
           <label>Decision<select name="action"><option value="split">Split selected mention</option><option value="merge">Merge all mentions</option><option value="alias">Confirm alias link</option><option value="reject">Keep identities distinct</option></select></label>
           <label>Destination identity ID<input name="target_id" required maxlength="80"></label><label>Destination revision<input type="number" name="target_revision" required min="1"></label>
-          <label>Mention to split<select name="mention_id" required>{% for mention in mentions %}<option value="{{ mention.mention_id }}">{{ mention.surface_text or mention.source_name }} · {{ mention.location }} · {{ mention.mention_id }}</option>{% endfor %}</select></label>
+          <label>Mention to split<select name="mention_id"><option value="">Select a mention for split only</option>{% for mention in mentions %}<option value="{{ mention.mention_id }}">{{ mention.surface_text or mention.source_name }} · {{ mention.location }} · {{ mention.mention_id }}</option>{% endfor %}</select></label>
           <button class="button button-secondary">Save reviewer decision</button>
         </form>
       </details>

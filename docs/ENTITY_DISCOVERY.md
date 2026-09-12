@@ -19,7 +19,7 @@ it recognized every name or that OCR/transcription was complete.
 `deterministic-entities-v1` is a replaceable local rule implementation. It finds
 bounded capitalized name runs without requiring titles, organizations with a
 listed suffix, explicit `ID:`, `VIN:`, `serial:`, `badge:`, `plate:`, `account:`,
-`object:` or `identifier:` values, and numeric dates. Explicit `person:`, `name:`,
+`identifier:` values and labeled `object:` descriptions, and numeric dates. Explicit `person:`, `name:`,
 `witness:`, `alias:`, `organization:` and `company:` lines preserve Unicode names
 including scripts without capitalization. No learned model, weights or remote
 service are introduced.
