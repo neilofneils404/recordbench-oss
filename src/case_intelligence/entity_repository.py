@@ -153,6 +153,9 @@ class EntityRepository:
         self.connection.execute('UPDATE workbench_matter SET updated_at=? WHERE matter_id=?', (self.now(), matter_id))
 
     def delete(self, matter_id, entity_id):
+        self.connection.execute("DELETE FROM workbench_entity_reconciliation WHERE matter_id=? AND "
+            "(json_extract(before_json,'$.source.entity_id')=? OR json_extract(before_json,'$.target.entity_id')=?)",
+            (matter_id, entity_id, entity_id))
         self.connection.execute('DELETE FROM workbench_entity WHERE matter_id=? AND entity_id=?', (matter_id, entity_id))
         self.connection.execute('UPDATE workbench_matter SET updated_at=? WHERE matter_id=?', (self.now(), matter_id))
 
@@ -162,4 +165,156 @@ class EntityRepository:
             entity_id = row[0]
             yield dict(format='recordbench-entity-v1', entity=self.get(matter_id, entity_id),
                        mentions=self.mentions(matter_id, entity_id), history=self.history(matter_id, entity_id),
+                       reconciliations=self.reconciliations(matter_id, entity_id),
                        source_support='Retained original-source support; availability is not revalidated in this bundle.')
+
+    def discovery_runs(self, matter_id):
+        return [dict(row) for row in self.connection.execute(
+            'SELECT r.run_id,r.state,r.created_at FROM workbench_review_run r '
+            'JOIN workbench_text_review t ON t.run_id=r.run_id WHERE r.matter_id=? ORDER BY r.created_at DESC', (matter_id,))]
+
+    def discovery_inventory(self, matter_id, run_id, version):
+        if not self.connection.execute('SELECT 1 FROM workbench_review_run r JOIN workbench_text_review t '
+                'ON t.run_id=r.run_id WHERE r.matter_id=? AND r.run_id=?', (matter_id, run_id)).fetchone():
+            raise KeyError(run_id)
+        self.connection.execute(
+            "INSERT OR IGNORE INTO workbench_entity_discovery_unit "
+            "(matter_id,run_id,document_id,source_version_id,unit_ordinal,unit_digest,extractor_version,state) "
+            "SELECT ?,s.run_id,s.document_id,s.source_version_id,u.unit_ordinal,u.unit_digest,?,"
+            "CASE WHEN s.state='invalidated' OR u.state='invalidated' THEN 'invalidated' ELSE 'pending' END "
+            "FROM workbench_text_review_source s JOIN workbench_text_review_unit u "
+            "ON u.run_id=s.run_id AND u.document_id=s.document_id WHERE s.run_id=? AND s.inventory_sealed=1",
+            (matter_id, version, run_id))
+
+    def discovery_pending(self, matter_id, run_id, version, limit, retry):
+        return [dict(row) for row in self.connection.execute(
+            "SELECT * FROM workbench_entity_discovery_unit WHERE matter_id=? AND run_id=? AND extractor_version=? "
+            "AND (state='pending' OR (? AND state='failed')) ORDER BY document_id,unit_ordinal LIMIT ?",
+            (matter_id, run_id, version, retry, limit))]
+
+    def discovery_source_current(self, matter_id, unit):
+        return self.connection.execute(
+            "SELECT 1 FROM workbench_text_review_source s JOIN workbench_source_catalog c "
+            "ON c.document_id=s.document_id AND c.matter_id=? WHERE s.run_id=? AND s.document_id=? "
+            "AND s.state!='invalidated' AND s.inventory_sealed=1 AND c.source_state='ready' "
+            "AND c.version_id=s.source_version_id AND c.content_basis_digest=s.source_basis_digest",
+            (matter_id, unit['run_id'], unit['document_id'])).fetchone() is not None
+
+    def discovery_claimable(self, matter_id, unit, retry):
+        row = self.connection.execute(
+            'SELECT state FROM workbench_entity_discovery_unit WHERE matter_id=? AND run_id=? AND document_id=? '
+            'AND unit_ordinal=? AND extractor_version=?',
+            (matter_id, unit['run_id'], unit['document_id'], unit['unit_ordinal'], unit['extractor_version'])).fetchone()
+        return row is not None and (row[0] == 'pending' or (retry and row[0] == 'failed'))
+
+    def discovery_state(self, unit, state, note):
+        self.connection.execute('UPDATE workbench_entity_discovery_unit SET state=?,note=? WHERE matter_id=? '
+            'AND run_id=? AND document_id=? AND unit_ordinal=? AND extractor_version=?',
+            (state, note, unit['matter_id'], unit['run_id'], unit['document_id'], unit['unit_ordinal'], unit['extractor_version']))
+
+    def discovery_coverage(self, matter_id, run_id, version):
+        if not any(row['run_id'] == run_id for row in self.discovery_runs(matter_id)):
+            raise KeyError(run_id)
+        units = [dict(row) for row in self.connection.execute(
+            'SELECT * FROM workbench_entity_discovery_unit WHERE matter_id=? AND run_id=? AND extractor_version=? '
+            'ORDER BY document_id,unit_ordinal', (matter_id, run_id, version))]
+        sources = [dict(row) for row in self.connection.execute(
+            'SELECT document_id,source_name,state,inventory_sealed,unit_count FROM workbench_text_review_source WHERE run_id=?', (run_id,))]
+        current_sources = {row[0] for row in self.connection.execute(
+            "SELECT s.document_id FROM workbench_text_review_source s JOIN workbench_source_catalog c "
+            "ON c.document_id=s.document_id AND c.matter_id=? WHERE s.run_id=? AND s.state!='invalidated' "
+            "AND c.source_state='ready' AND c.version_id=s.source_version_id AND c.content_basis_digest=s.source_basis_digest",
+            (matter_id, run_id))}
+        for unit in units:
+            if unit['document_id'] not in current_sources:
+                unit['state'] = 'invalidated'
+                unit['note'] = 'Frozen source changed or is unavailable. Retained results are historical.'
+        for source in sources:
+            if source['inventory_sealed'] and source['document_id'] not in current_sources:
+                source['state'] = 'invalidated'
+        return dict(run_id=run_id, extractor_version=version, units=units, sources=sources,
+                    counts={state: sum(row['state'] == state for row in units) for state in ('pending', 'processed', 'failed', 'invalidated')})
+
+    def discovery_seen(self, matter_id, key):
+        cursor = self.connection.execute('INSERT OR IGNORE INTO workbench_entity_discovery_seen VALUES (?,?)', (matter_id, key))
+        return cursor.rowcount == 0
+
+    def mark_extracted(self, matter_id, entity_id, version):
+        self.connection.execute("UPDATE workbench_entity SET origin='extraction',extractor_version=? WHERE matter_id=? AND entity_id=?", (version, matter_id, entity_id))
+
+    def annotate_occurrence(self, matter_id, mention_id, key, version, occurrence):
+        self.connection.execute('UPDATE workbench_entity_mention SET occurrence_key=?,extractor_version=?,surface_text=?,'
+            'start_offset=?,end_offset=?,date_json=?,review_status=? WHERE matter_id=? AND mention_id=?',
+            (key, version, occurrence.label, occurrence.start, occurrence.end,
+             json.dumps(dict(kind=occurrence.kind, date=occurrence.date)), 'suggested', matter_id, mention_id))
+        return dict(self.connection.execute('SELECT * FROM workbench_entity_mention WHERE matter_id=? AND mention_id=?', (matter_id, mention_id)).fetchone())
+
+    def candidates(self, matter_id, entity_id):
+        from difflib import SequenceMatcher
+        entity = self.get(matter_id, entity_id)
+        labels = [entity['display_name'], *entity['aliases']]
+        rejected = set()
+        for row in self.connection.execute(
+                "SELECT before_json FROM workbench_entity_reconciliation WHERE matter_id=? AND action='reject' AND undone=0", (matter_id,)):
+            decision = json.loads(row[0])
+            pair = {decision['source']['entity_id'], decision['target']['entity_id']}
+            if entity_id in pair:
+                rejected.update(pair - {entity_id})
+        result = []
+        for row in self.connection.execute('SELECT * FROM workbench_entity WHERE matter_id=? AND entity_id!=?', (matter_id, entity_id)):
+            other = self.record(row)
+            if other['entity_id'] in rejected:
+                continue
+            score = max(SequenceMatcher(None, a.casefold(), b.casefold()).ratio()
+                        for a in labels for b in [other['display_name'], *other['aliases']])
+            if score >= .72:
+                result.append(dict(other, match_score=score))
+        return sorted(result, key=lambda row: (-row['match_score'], row['entity_id']))[:50]
+
+    def reconciliations(self, matter_id, entity_id):
+        return [dict(row) for row in self.connection.execute(
+            "SELECT * FROM workbench_entity_reconciliation WHERE matter_id=? AND "
+            "(json_extract(before_json,'$.source.entity_id')=? OR json_extract(before_json,'$.target.entity_id')=?) "
+            "ORDER BY created_at DESC,operation_id DESC", (matter_id, entity_id, entity_id))]
+
+    def move_mentions(self, matter_id, source_id, target_id, mention_ids):
+        mentions = {row['mention_id']: row for row in self.mentions(matter_id, source_id)}
+        if not set(mention_ids) <= mentions.keys():
+            raise WorkspaceProblem('A selected mention is no longer on this identity.')
+        for mention_id in mention_ids:
+            self.connection.execute('UPDATE workbench_entity_mention SET entity_id=? WHERE matter_id=? AND entity_id=? AND mention_id=?',
+                (target_id, matter_id, source_id, mention_id))
+        return [mentions[key] for key in mention_ids]
+
+    def save_reconciliation(self, matter_id, actor_id, action, before, after):
+        operation_id = 'reconcile-' + uuid.uuid4().hex
+        self.connection.execute('INSERT INTO workbench_entity_reconciliation '
+            '(operation_id,matter_id,action,before_json,after_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?)',
+            (operation_id, matter_id, action, json.dumps(before), json.dumps(after), actor_id, self.now()))
+        return operation_id
+
+    def get_reconciliation(self, matter_id, operation_id):
+        row = self.connection.execute('SELECT * FROM workbench_entity_reconciliation WHERE matter_id=? AND operation_id=?',
+            (matter_id, operation_id)).fetchone()
+        if row is None:
+            raise KeyError(operation_id)
+        return dict(row)
+
+    def undo_reconciliation(self, matter_id, operation_id):
+        self.connection.execute('UPDATE workbench_entity_reconciliation SET undone=1 WHERE matter_id=? AND operation_id=?',
+            (matter_id, operation_id))
+
+    def discovery_export(self, matter_id):
+        return dict(format='recordbench-entity-discovery-v1',
+            source_support='Retained frozen coverage; current source availability is not revalidated in this bundle.',
+            sources=[dict(row) for row in self.connection.execute(
+                'SELECT s.* FROM workbench_text_review_source s JOIN workbench_review_run r ON r.run_id=s.run_id WHERE r.matter_id=?', (matter_id,))],
+            coverage=[dict(row) for row in self.connection.execute('SELECT * FROM workbench_entity_discovery_unit WHERE matter_id=?', (matter_id,))],
+            occurrence_tombstones=[row[0] for row in self.connection.execute('SELECT occurrence_key FROM workbench_entity_discovery_seen WHERE matter_id=?', (matter_id,))],
+            reconciliations=[dict(row) for row in self.connection.execute('SELECT * FROM workbench_entity_reconciliation WHERE matter_id=?', (matter_id,))])
+
+    def review_mention(self, matter_id, entity_id, mention_id, status):
+        cursor = self.connection.execute('UPDATE workbench_entity_mention SET review_status=? WHERE matter_id=? AND entity_id=? AND mention_id=?',
+            (status, matter_id, entity_id, mention_id))
+        if cursor.rowcount != 1:
+            raise KeyError(mention_id)

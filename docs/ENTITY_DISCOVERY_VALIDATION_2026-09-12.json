@@ -1,0 +1,87 @@
+{
+  "date": "2026-09-12",
+  "synthetic": true,
+  "scope": "Slice 17 contributor validation; no merge, deployment, learned-model or confidential-casework acceptance",
+  "baseline": "3f96b290ca71adbaef37b92e2d9f4d01cf7d226f",
+  "baseline_main_quality": {
+    "run": 34706467703,
+    "conclusion": "success"
+  },
+  "contract_issue": 78,
+  "focused": {
+    "passed": 84,
+    "skipped": 1,
+    "note": "Optional integration prerequisite absent; includes entity, notebook, branding and backup regressions."
+  },
+  "final_entity_followup": {
+    "passed": 24
+  },
+  "recognition": {
+    "extractor": "deterministic-entities-v1",
+    "bounded_positive_corpus": {
+      "units": 96,
+      "expected_mentions": 97,
+      "retained_mentions": 97,
+      "distinct_initial_identities": 97,
+      "automatic_false_merges": 0
+    },
+    "labelled_unicode_alias_timezone_cases": {
+      "expected": 6,
+      "recognized": 6
+    },
+    "limits": "Synthetic positive fixtures and one negative prose fixture; not general NER recall or real-case accuracy. Unlabeled scripts without capitalization, single-token names, contextual aliases and unlisted organizations remain limited."
+  },
+  "transcription": {
+    "passed": 194
+  },
+  "browser": {
+    "synthetic": true,
+    "success": true,
+    "checks": [
+      "Two synthetic originals uploaded and searchable without a model",
+      "Visible empty state and keyboard creation of a person with an alias",
+      "Two exact source passages attached to one identity and both reopened from its detail page",
+      "Another same-name person remains distinct, with no automatic alias merge",
+      "Shared-edit conflict preserves the submitted name and aliases alongside the current saved identity",
+      "390-pixel reflow without horizontal page overflow",
+      "Return link retains the source-review search context",
+      "Discovery processes an inventoried unit without a model and shows remaining uninventoried sources honestly",
+      "Reviewer confirms a candidate merge and undoes it without losing the extracted mention",
+      "Discovery and reconciliation reflow at 390 pixels with native labeled controls"
+    ],
+    "browser": "152.0.7977.83"
+  },
+  "migration": {
+    "synthetic": true,
+    "baseline": "3f96b290ca71adbaef37b92e2d9f4d01cf7d226f",
+    "migration_preserved_entity_mentions_and_history": true,
+    "clean_preupgrade_rollback_verified_by_original_reader": true,
+    "full_source_restore": "Separately exercised by test_web_discovery_full_source_restore_export_and_purge."
+  },
+  "full_source_restore": "Stopped application backup restored into an absent target; original runtime and backup moved offline; restored exact original bytes, source support, extraction coverage, merge history and undo verified; bundle and purge exercised.",
+  "compilation": "passed",
+  "compose": "Standard, Kerberos and dedicated local-account graphs passed",
+  "publication": "Working-tree sanitizer passed; outgoing-history scan required before push",
+  "full_application": {
+    "passed": 2620,
+    "failed": 125,
+    "skipped": 9,
+    "test_storage_reserve_gib": 0,
+    "baseline_replay": {
+      "passed": 2611,
+      "failed": 125,
+      "skipped": 9,
+      "failing_node_sets_equal": true
+    },
+    "acceptance": "Not passed. Exact node equality is diagnostic only; final-head hosted Linux CI is required.",
+    "checkpoint": "Full suite preceded two additional concurrency/provider-output tests and small reconciliation/source-validation follow-ups; final entity follow-up passed 24 tests."
+  },
+  "limitations": [
+    "Extraction consumes sealed slice-12 inventories; uninventoried sources remain visibly unprocessed.",
+    "Up to 10 units per UI action; 1000 proposals per unit is a fail-closed output ceiling.",
+    "No automatic identity merging. Merge retains the emptied original entity for inspection and undo.",
+    "Undo refuses later shared edits; this is guarded single-operation undo.",
+    "Original passage excerpts retain the 6000-character limit; occurrence offsets refer to the full original unit.",
+    "No relationship/event extraction, matter memory, capacity expansion, held Mac work or deployment."
+  ]
+}

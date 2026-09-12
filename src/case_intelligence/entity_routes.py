@@ -10,7 +10,7 @@ from .entity_service import ENTITY_STATUSES, ENTITY_TYPES
 from .workspace_store import WorkspaceProblem
 
 
-def install_entity_routes(app, *, service_for, authorized_matter, auth_context,
+def install_entity_routes(app, *, service_for, discovery_for, authorized_matter, auth_context,
                           require_csrf, templates, base_context, audit,
                           require_response_lease, transfer_response_lease):
     def return_path(slug, value):
@@ -29,10 +29,15 @@ def install_entity_routes(app, *, service_for, authorized_matter, auth_context,
         service = service_for(matter)
         entity = None
         mentions, history, note = [], [], None
+        candidates, reconciliations = [], []
+        discovery = discovery_for(matter)
+        runs = discovery.runs(matter.matter_id, actor) if not entity_id else []
+        coverage = [discovery.coverage(matter.matter_id, actor, row['run_id']) for row in runs]
         try:
             entities, total = service.list(matter.matter_id, actor, query=q, page=page)
             if entity_id:
                 entity, mentions, history, note = service.detail(matter.matter_id, actor, entity_id)
+                candidates, reconciliations = service.reconciliation_detail(matter.matter_id, actor, entity_id)
         except KeyError as exc:
             raise HTTPException(404, 'Entity or matter is no longer available') from exc
         passage = None
@@ -52,6 +57,7 @@ def install_entity_routes(app, *, service_for, authorized_matter, auth_context,
             'mentions': mentions, 'history': [dict(entry, snapshot=json.loads(entry['snapshot_json'])) for entry in history], 'linked_note': note,
             'passage': passage, 'support': support, 'return_to': return_to,
             'entity_url': entity_url, 'entity_types': ENTITY_TYPES, 'entity_statuses': ENTITY_STATUSES,
+            'coverage': coverage, 'candidates': candidates, 'reconciliations': [dict(row, before=json.loads(row['before_json'])) for row in reconciliations],
             'error': error, 'draft': draft, 'show_assistant_dock': False,
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
 
@@ -68,6 +74,8 @@ def install_entity_routes(app, *, service_for, authorized_matter, auth_context,
                       display_name: str = Form('', max_length=160), entity_type: str = Form('person', max_length=24),
                       status: str = Form('needs_review', max_length=24), aliases: str = Form('', max_length=5000),
                       support: str = Form('', max_length=40), item_id: str = Form('', max_length=80),
+                      target_id: str = Form('', max_length=80), target_revision: int = Form(0, ge=0),
+                      operation_id: str = Form('', max_length=80), run_id: str = Form('', max_length=80),
                       mention_id: str = Form('', max_length=80), q: str = Form('', max_length=200),
                       return_to: str = Form('', max_length=4000)):
         matter = authorized_matter(request, slug)
@@ -76,13 +84,24 @@ def install_entity_routes(app, *, service_for, authorized_matter, auth_context,
         fields = dict(display_name=display_name, entity_type=entity_type, status=status, aliases=aliases)
         deleted_entity_id = ''
         try:
-            if action == 'create':
+            if action in ('discover', 'retry_discovery'):
+                discovery_for(matter).step(matter.matter_id, actor, run_id, retry=action == 'retry_discovery')
+            elif action in ('merge', 'split', 'alias', 'reject'):
+                service.reconcile(matter.matter_id, actor, entity_id, expected_revision=expected_revision,
+                    target_id=target_id, target_revision=target_revision, action=action,
+                    mention_ids=[mention_id] if mention_id else [])
+            elif action == 'undo':
+                service.undo(matter.matter_id, actor, operation_id)
+            elif action == 'create':
                 entity = service.create(matter.matter_id, actor, support=support, **fields)
                 entity_id = entity['entity_id']
             elif action == 'update':
                 service.update(matter.matter_id, actor, entity_id, expected_revision=expected_revision, **fields)
             elif action == 'attach':
                 service.attach(matter.matter_id, actor, entity_id, expected_revision=expected_revision, support=support)
+            elif action == 'review_mention':
+                service.review_mention(matter.matter_id, actor, entity_id, expected_revision=expected_revision,
+                    mention_id=mention_id, status=status)
             elif action == 'remove_mention':
                 service.remove_mention(matter.matter_id, actor, entity_id, expected_revision=expected_revision, mention_id=mention_id)
             elif action == 'delete':
@@ -122,7 +141,8 @@ def install_entity_routes(app, *, service_for, authorized_matter, auth_context,
             entity, mentions, history, note = service_for(matter).detail(matter.matter_id, auth_context(request).principal_id, entity_id)
         except KeyError as exc:
             raise HTTPException(404, 'Entity not found') from exc
-        payload = dict(format='recordbench-entity-v1', entity=entity, mentions=mentions, history=history)
+        payload = dict(format='recordbench-entity-v1', entity=entity, mentions=mentions, history=history,
+            reconciliations=service_for(matter).reconciliation_detail(matter.matter_id, auth_context(request).principal_id, entity_id)[1])
         audit(request, 'entity.export', 'success', context=auth_context(request), matter=matter,
               object_type='entity', object_id=entity_id)
         return transfer_response_lease(request, Response(json.dumps(payload, indent=2), media_type='application/json', headers={

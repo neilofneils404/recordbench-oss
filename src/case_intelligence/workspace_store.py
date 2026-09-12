@@ -1059,6 +1059,9 @@ class WorkspaceStore:
                 self.connection.execute(
                     "ALTER TABLE workbench_report_section ADD COLUMN compilation_basis TEXT NOT NULL DEFAULT ''"
                 )
+        if 'extractor_version' not in {row[1] for row in self.connection.execute('PRAGMA table_info(workbench_entity)')}:
+            migration = resources.files("case_intelligence").joinpath("migrations/sqlite/0033_entity_discovery.sql").read_text(encoding="utf-8")
+            self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
         from .full_text_review_budget import backfill_legacy_ledgers
         backfill_legacy_ledgers(self)
         session_columns = {
@@ -3119,6 +3122,8 @@ class WorkspaceStore:
             self.connection.execute(
                 "DELETE FROM workbench_analysis_run WHERE matter_id=?", (matter_id,)
             )
+            for table in ('workbench_entity_discovery_seen', 'workbench_entity_discovery_unit', 'workbench_entity_reconciliation'):
+                self.connection.execute(f"DELETE FROM {table} WHERE matter_id=?", (matter_id,))
             self.connection.execute(
                 "DELETE FROM workbench_entity WHERE matter_id=?", (matter_id,)
             )

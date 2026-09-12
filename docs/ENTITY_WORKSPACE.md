@@ -1,5 +1,8 @@
 # People, places, and things
 
+[Entity discovery and reconciliation](ENTITY_DISCOVERY.md) adds the slice-17
+workflow to this manual foundation. The sections below describe slice 16.
+
 Slice 16 introduces manually reviewed matter entities. Open **People, places &
 things** from matter navigation, create a person, place, or thing, and give it a
 display name, review status, and optional aliases (one per line). Separate

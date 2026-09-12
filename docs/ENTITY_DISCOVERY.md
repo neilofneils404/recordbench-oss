@@ -1,0 +1,129 @@
+# Entity discovery and reviewer reconciliation
+
+Slice 17 builds on the manual entity workspace. Open **People, places & things**
+and expand a text-review run under **Discover supported mentions**. **Discover
+next 10 units** extracts up to ten pending units from that run's sealed slice-12
+inventory. Each unit commits separately; stopping between requests preserves
+progress. Resume the text review to inventory remaining sources, then continue
+entity discovery. No model or background entity worker is required.
+
+The coverage panel distinguishes processed, pending, failed and changed units.
+Sources without a sealed inventory remain visibly unprocessed; unavailable
+sources are shown separately. Retrying failed discovery never overwrites a
+processed unit. Later source-version or content-basis changes label frozen
+coverage historical. A processed unit means the extractor visited it, not that
+it recognized every name or that OCR/transcription was complete.
+
+## What the initial extractor recognizes
+
+`deterministic-entities-v1` is a replaceable local rule implementation. It finds
+bounded capitalized name runs without requiring titles, organizations with a
+listed suffix, explicit `ID:`, `VIN:`, `serial:`, `badge:`, `plate:`, `account:`,
+`object:` or `identifier:` values, and numeric dates. Explicit `person:`, `name:`,
+`witness:`, `alias:`, `organization:` and `company:` lines preserve Unicode names
+including scripts without capitalization. No learned model, weights or remote
+service are introduced.
+
+This is a bounded recognizer, not general multilingual named-entity recognition.
+Unlabeled single-token names, scripts without capitalization, contextual aliases,
+unusual organization forms, OCR corruption and ordinary capitalized prose can
+be missed or misclassified. Reviewers can correct types and labels, attach
+manual support, and create identities without extraction. The synthetic results
+in the [dated validation receipt](ENTITY_DISCOVERY_VALIDATION_2026-09-12.json) do not establish real-case recall.
+
+Every detected occurrence initially gets a **separate suggested identity** and
+supported mention. The same name twice in a unit produces two distinct mention
+IDs and offsets. There is no 75-entity cutoff. A unit with more than 1,000
+proposals fails explicitly without saving a partial set. Existing text-review
+population limits remain unchanged.
+
+Mentions retain original source/version/unit support, the exact detected text,
+character offsets in that original extracted unit, extractor version and their
+own review status. Offsets are not byte positions or page coordinates. The
+original-source link opens the full unit; the displayed supporting excerpt
+retains the existing 6,000-character limit, so an occurrence later in a long
+unit can be outside that excerpt. Historical source support remains available
+as saved text when its current-source link is disabled.
+
+Dates retain their raw spelling, ambiguity and explicitly supplied timezone.
+Slash dates leave day/month order unresolved; missing zones remain unspecified.
+No normalized timestamp is guessed, and calendar validity is not asserted.
+
+## Reviewer decisions
+
+Similar names and alias labels propose up to 50 candidate identities. They do
+not establish identity; transcript speaker clusters are not used as identities.
+Open both candidates and their original passages before making a decision.
+
+- **Confirm alias link** records the two identities and adds the source label to
+  the destination's aliases without moving mentions.
+- **Confirm merge** transfers all mentions to the selected destination, retaining
+  both identity records and their correction history. Same-unit mentions remain
+  distinct; the emptied source identity stays available for inspection and undo.
+- **Keep distinct** rejects the pair in both directions without removing support.
+- **Split** transfers a selected mention into a separate identity. Create that
+  identity first, then enter its ID and current revision in the reconciliation
+  form. The same form allows deliberate reconciliation of dissimilar labels.
+- **Undo** reverses a decision only while both entities still have the revisions
+  saved by that decision. It preserves mention IDs and review corrections. Later
+  shared edits cause a conflict instead of being overwritten; compare the records
+  and make an explicit new correction. This is guarded single-operation undo,
+  not unrestricted rollback through subsequent edits.
+
+Entity and mention review statuses are separate. Dismissing a mention retains
+it and its support; removing it retains the removal in history. Extraction uses
+source-version/unit/offset occurrence receipts independently of extractor
+version, so rerunning the same occurrences cannot recreate removed mentions or
+overwrite reviewer labels, review statuses, splits or merges. Changed offsets or
+source versions can propose new occurrences, always separate from existing
+human work. Deleting an identity removes its reconciliation operations while
+retaining opaque occurrence suppression receipts until matter purge.
+
+All changes use the existing workspace lock, transaction authorization and
+revision checks. Source-backed extraction holds the source guard through commit.
+Routes delegate to narrow services and repositories. Existing notebook import,
+source-review return paths, manual workflows and older history snapshots remain
+supported.
+
+## Storage and recovery
+
+Mirrored migration `0033_entity_discovery.sql` atomically preserves and rebuilds
+the constrained entity/mention/history tables, extends supported types and
+machine provenance, removes the same-unit uniqueness constraint, and adds
+occurrence receipts, extraction coverage and reconciliation history. Manual
+attachment remains idempotent. New history remains linear mention deltas;
+reconciliation records identify the moved mentions and checked entity revisions.
+
+The control SQLite store remains authoritative on both retrieval profiles.
+Individual entity JSON includes mention details and correction history. Final
+matter bundles additionally include `entities/discovery.json` with frozen source
+coverage, unit outcomes, occurrence suppression receipts and reconciliation
+records. Bundle source availability is explicitly not revalidated. Matter purge
+and retention expiry remove all these records. Source bytes remain governed by
+the existing storage/backup contract, not embedded in final work-product bundles.
+
+Stop writers and back up the complete boundary described in
+[storage and backup](STORAGE_AND_BACKUP.md) before upgrading. Keep matching code,
+control database, session state and managed originals. Restore into a clean
+target and verify original bytes, support resolution, coverage and reviewer
+history. Rollback uses the verified pre-upgrade backup and matching pre-upgrade
+code; never point slice-16 code at slice-17 state. Export later work first because
+the old backup cannot contain it. Release tags remain immutable.
+
+Validation commands:
+
+```console
+python -m pytest -q tests/test_entity_discovery.py tests/test_entity_workspace.py tests/test_matter_notebook.py tests/test_notebook_conflicts.py
+python scripts/entity-discovery-restore-drill.py
+python scripts/entity-storage-restore-drill.py
+python scripts/browser-accept-entity-discovery.py --chrome-binary /path/to/chrome --chromedriver /path/to/chromedriver --output /tmp/generated-discovery-acceptance
+```
+
+The HTTP restore regression moves the original runtime and backup offline,
+serves the exact synthetic original bytes from the restored target, checks
+coverage and reconciliation, performs undo, exports and purges. The migration
+drill checks the original slice-16 reader against a clean pre-upgrade rollback.
+These are synthetic contributor checks, not installed-node acceptance.
+
+Slice 18 relationships/events, background material, matter memory, proposed
+slice 19, capacity expansion, held Mac work and deployment remain out of scope.

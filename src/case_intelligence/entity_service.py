@@ -1,9 +1,10 @@
 """Manual entity workflows with explicit source and workspace authority."""
 from dataclasses import asdict
+import json
 
 from .workspace_store import NOTEBOOK_STATUSES, WorkspaceProblem
 
-ENTITY_TYPES = ('person', 'place', 'thing')
+ENTITY_TYPES = ('person', 'place', 'thing', 'organization', 'identifier', 'date')
 ENTITY_STATUSES = NOTEBOOK_STATUSES
 REFERENCE_FIELDS = ('document_id', 'source_version_id', 'source_name', 'location',
                     'unit_number', 'chunk_id', 'excerpt_digest', 'excerpt', 'support_token')
@@ -43,6 +44,7 @@ class EntityService:
             available = self.validate_references(mentions)
             for index, mention in enumerate(mentions):
                 mention['available'] = index in available
+                mention['extraction_detail'] = json.loads(mention.get('date_json') or 'null')
             note = None
             if entity['notebook_item_id']:
                 try:
@@ -86,6 +88,15 @@ class EntityService:
             repo.save(matter_id, actor_id, entity_id, current)
             repo.record_history(matter_id, actor_id, entity_id, 'mention removed', removed_mentions=[removed])
 
+    def review_mention(self, matter_id, actor_id, entity_id, *, expected_revision, mention_id, status):
+        if status not in ENTITY_STATUSES:
+            raise WorkspaceProblem('Choose an available mention review status.')
+        with self.repository.transaction(matter_id, actor_id) as repo:
+            current = repo.check_revision(matter_id, entity_id, expected_revision)
+            repo.review_mention(matter_id, entity_id, mention_id, status)
+            repo.save(matter_id, actor_id, entity_id, current)
+            repo.record_history(matter_id, actor_id, entity_id, 'mention review: ' + mention_id + ' ' + status)
+
     def delete(self, matter_id, actor_id, entity_id, *, expected_revision):
         with self.repository.transaction(matter_id, actor_id) as repo:
             repo.check_revision(matter_id, entity_id, expected_revision)
@@ -112,6 +123,61 @@ class EntityService:
                      for reference in validated.values()]
             repo.record_history(matter_id, actor_id, entity['entity_id'], 'notebook imported', added_mentions=added)
             return entity
+
+    def reconciliation_detail(self, matter_id, actor_id, entity_id):
+        with self.repository.transaction(matter_id, actor_id) as repo:
+            repo.get(matter_id, entity_id)
+            return repo.candidates(matter_id, entity_id), repo.reconciliations(matter_id, entity_id)
+
+    def reconcile(self, matter_id, actor_id, entity_id, *, expected_revision,
+                  target_id, target_revision, action, mention_ids=()):
+        if action not in ('merge', 'split', 'alias', 'reject') or entity_id == target_id:
+            raise WorkspaceProblem('Choose two distinct identities and a reconciliation action.')
+        with self.repository.transaction(matter_id, actor_id) as repo:
+            source = repo.check_revision(matter_id, entity_id, expected_revision)
+            target = repo.check_revision(matter_id, target_id, target_revision)
+            if action == 'merge':
+                moved_ids = [row['mention_id'] for row in repo.mentions(matter_id, entity_id)]
+            elif action == 'split':
+                moved_ids = list(dict.fromkeys(mention_ids))
+            else:
+                moved_ids = []
+            if action == 'split' and not moved_ids:
+                raise WorkspaceProblem('Select at least one mention to split into the other identity.')
+            correction_fields = ('entity_id', 'entity_type', 'display_name', 'status', 'aliases', 'revision')
+            before = dict(source={key: source[key] for key in correction_fields},
+                target={key: target[key] for key in correction_fields}, mention_ids=moved_ids)
+            moved = repo.move_mentions(matter_id, entity_id, target_id, moved_ids)
+            destination = dict(target)
+            if action in ('merge', 'alias'):
+                destination['aliases'] = list(dict.fromkeys([*target['aliases'], source['display_name']]))
+                if len(destination['aliases']) > 30:
+                    raise WorkspaceProblem('The target already has 30 aliases. Review its labels before linking another.')
+            repo.save(matter_id, actor_id, entity_id, source)
+            repo.save(matter_id, actor_id, target_id, destination)
+            repo.record_history(matter_id, actor_id, entity_id, action + ' reviewed', removed_mentions=moved)
+            added = [dict(row, entity_id=target_id) for row in moved]
+            repo.record_history(matter_id, actor_id, target_id, action + ' reviewed', added_mentions=added)
+            return repo.save_reconciliation(matter_id, actor_id, action, before,
+                dict(source_revision=source['revision'] + 1, target_revision=target['revision'] + 1))
+
+    def undo(self, matter_id, actor_id, operation_id):
+        from .entity_repository import EntityEditConflict
+        with self.repository.transaction(matter_id, actor_id) as repo:
+            operation = repo.get_reconciliation(matter_id, operation_id)
+            if operation['undone']:
+                raise EntityEditConflict('This correction has already been undone.')
+            before, after = json.loads(operation['before_json']), json.loads(operation['after_json'])
+            source, target = before['source'], before['target']
+            repo.check_revision(matter_id, source['entity_id'], after['source_revision'])
+            repo.check_revision(matter_id, target['entity_id'], after['target_revision'])
+            moved = repo.move_mentions(matter_id, target['entity_id'], source['entity_id'], before['mention_ids'])
+            repo.save(matter_id, actor_id, source['entity_id'], source)
+            repo.save(matter_id, actor_id, target['entity_id'], target)
+            repo.record_history(matter_id, actor_id, source['entity_id'], 'reconciliation undone',
+                added_mentions=[dict(row, entity_id=source['entity_id']) for row in moved])
+            repo.record_history(matter_id, actor_id, target['entity_id'], 'reconciliation undone', removed_mentions=moved)
+            repo.undo_reconciliation(matter_id, operation_id)
 
 
 def current_reference_indexes(references, *, load_document, candidate_for, support_tokens):

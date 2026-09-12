@@ -2986,6 +2986,23 @@ class CaseIntelligenceWorkbench:
                 support_tokens=self._support_tokens),
         )
 
+    def entity_discovery(self, matter):
+        from .entity_discovery import EntityDiscovery
+        def load_unit(coverage):
+            document = self.source_store(matter).get(coverage['document_id'])
+            if document.state != 'ready' or document.version_id != coverage['source_version_id']:
+                raise KeyError(coverage['document_id'])
+            for ordinal, unit in enumerate(document.iter_parsed_units(), 1):
+                if ordinal == coverage['unit_ordinal']:
+                    candidate = self._candidate(matter, document, unit, ordinal)
+                    token = sorted(self._support_tokens(candidate))[0]
+                    return unit.text, dict(document_id=candidate.document_id,
+                        source_version_id=candidate.source_version_id, source_name=candidate.source_name,
+                        location=candidate.citation, unit_number=unit.number, chunk_id=candidate.chunk_id,
+                        excerpt_digest=candidate.excerpt_digest, excerpt=candidate.text[:6000], support_token=token)
+            raise KeyError(coverage['unit_ordinal'])
+        return EntityDiscovery(self.entity_service(matter), load_unit=load_unit)
+
     def notebook_reference_from_support(
         self, matter: MatterRecord, token: str
     ) -> dict[str, object]:
@@ -12992,7 +13009,7 @@ def create_workbench_app(
         )
 
     from .entity_routes import install_entity_routes
-    install_entity_routes(app, service_for=bench.entity_service,
+    install_entity_routes(app, service_for=bench.entity_service, discovery_for=bench.entity_discovery,
                           authorized_matter=authorized_matter, auth_context=auth_context,
                           require_csrf=require_csrf, templates=templates,
                           base_context=base_context, audit=audit,
@@ -14843,6 +14860,9 @@ def create_workbench_app(
                     add_work_product(kind="intake_receipt", path=f"intake/{index:03d}-{receipt_artifact.filename}", artifact=receipt_artifact)
             repository = bench.workspace.entity_repository(export_read=True, administrator_override=administrator_override)
             with repository.transaction(matter.matter_id, read_actor_id):
+                add_work_product(kind="entity_discovery", path="entities/discovery.json",
+                    artifact=ExportArtifact(body=json.dumps(repository.discovery_export(matter.matter_id), indent=2).encode("utf-8"),
+                        media_type="application/json", filename="discovery.json"))
                 for index, record in enumerate(repository.export_records(matter.matter_id), 1):
                     add_work_product(kind="entity", path=f"entities/{index:03d}-entity.json",
                         artifact=ExportArtifact(body=json.dumps(record, indent=2).encode("utf-8"),

@@ -1,6 +1,6 @@
 # 17: Improve entity discovery and reviewer-controlled reconciliation
 
-Status: proposed. Depends on 16.
+Status: active. Slice 16 landed in #77. Storage/behavior contract: #78.
 
 ## Finding and outcome
 
@@ -34,3 +34,10 @@ Measure mention recall and false merges for untitled names, aliases, same-name
 people, multilingual/OCR variation, and more than 75 entities. Verify resume,
 source replacement, review corrections surviving re-extraction, and merge/split
 undo. Persistence changes need migration and clean-restore evidence.
+
+## Implementation contract
+
+See [entity discovery](../ENTITY_DISCOVERY.md) for the implemented processing,
+reviewer decisions, deterministic recognition limits and recovery contract.
+This slice remains active until its ready PR passes final-head hosted review
+and a separate maintainer decision lands it.

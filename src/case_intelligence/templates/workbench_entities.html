@@ -15,18 +15,48 @@
     <input type="hidden" name="q" value="{{ q }}">
     {% if row %}<input type="hidden" name="entity_id" value="{{ row.entity_id }}"><input type="hidden" name="expected_revision" value="{{ row.revision }}">{% endif %}
   {% endmacro %}
+  {% if not entity %}
+  <section class="notebook-tool-card" aria-labelledby="discovery-heading"><h2 id="discovery-heading">Discover supported mentions</h2>
+    <p>Uses the frozen unit inventory from Review all extracted text. Each action processes up to 10 pending units and saves progress. Recognition is a bounded deterministic suggestion, not proof of completeness or identity. No model is required.</p>
+    {% for run in coverage %}<details><summary>Text review {{ run.run_id }} · {{ run.counts.processed }} units processed · {{ run.counts.pending }} pending · {{ run.counts.failed }} failed · {{ run.counts.invalidated }} changed</summary>
+      <p>Extractor: {{ run.extractor_version }}. Units not yet inventoried by text review remain unprocessed; resume that review to make them available.</p>
+      {% for source in run.sources %}<p>{{ source.source_name }}: {{ source.state }} · {{ source.unit_count }} units · {{ 'inventory sealed' if source.inventory_sealed else 'not yet inventoried' }}</p>{% endfor %}
+      <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('discover') }}<input type="hidden" name="run_id" value="{{ run.run_id }}"><button class="button button-secondary">Discover next 10 units</button></form>
+      {% if run.counts.failed %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('retry_discovery') }}<input type="hidden" name="run_id" value="{{ run.run_id }}"><button class="button button-secondary">Retry failed discovery</button></form>{% endif %}
+      {% for unit in run.units %}<p>Source {{ unit.document_id }} · unit {{ unit.unit_ordinal }}: {{ unit.state }} {{ unit.note }}</p>{% endfor %}
+    </details>{% else %}<p>No frozen text-review population yet. Start Review all extracted text from Review. Manual entity work is available below.</p>{% endfor %}
+  </section>
+  {% endif %}
   {% if entity %}
-    <p>{{ entity.entity_type|title }} · {{ entity.status|replace('_',' ')|title }} · Revision {{ entity.revision }}<br><small>Identity {{ entity.entity_id }} · {{ 'Imported from case notes; original provenance retained' if entity.origin == 'notebook' else 'Created by a reviewer' }}</small></p>
+    <p>{{ entity.entity_type|title }} · {{ entity.status|replace('_',' ')|title }} · Revision {{ entity.revision }}<br><small>Identity {{ entity.entity_id }} · {{ ('Machine discovery: ' + entity.extractor_version) if entity.extractor_version else 'Imported from case notes; original provenance retained' if entity.origin == 'notebook' else 'Created by a reviewer' }}</small></p>
     {% if entity.aliases %}<p>Aliases: {{ entity.aliases|join(', ') }}</p>{% endif %}
     <p>Alias labels do not establish that two people are the same. No identities are automatically merged.</p>
     {% if passage %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('attach', entity) }}<input type="hidden" name="support" value="{{ support }}"><button class="button button-primary">Attach selected passage to this identity</button></form>{% endif %}
     <section aria-labelledby="mentions-heading"><h2 id="mentions-heading">Original-source mentions ({{ mentions|length }})</h2>
       {% for mention in mentions %}<article class="notebook-tool-card" id="{{ mention.mention_id }}"><h3>{{ mention.source_name }} · {{ mention.location }}</h3>
+        {% if mention.extractor_version %}<p>Machine occurrence: <strong>{{ mention.surface_text }}</strong> · characters {{ mention.start_offset }}–{{ mention.end_offset }} · {{ mention.review_status }} · {{ mention.extractor_version }}</p>{% if mention.extraction_detail %}<p>Suggested type: {{ mention.extraction_detail.kind }}{% if mention.extraction_detail.date %} · {{ mention.extraction_detail.date.ambiguity }} · Timezone: {{ mention.extraction_detail.date.timezone or 'not specified' }}. No normalized timestamp is assumed.{% endif %}</p>{% endif %}{% endif %}
         <blockquote>{{ mention.excerpt }}</blockquote>
-        <p>{{ 'Attached by a reviewer' if mention.origin == 'manual' else 'Imported notebook support' }} · {{ mention.created_at }}</p>
+        <p>{{ 'Machine suggestion; original support retained' if mention.origin == 'extraction' else 'Attached by a reviewer' if mention.origin == 'manual' else 'Imported notebook support' }} · {{ mention.created_at }}</p>
         {% if mention.available %}<a class="button button-secondary" href="/matters/{{ matter.slug }}?support={{ mention.support_token }}#support-pane">Open original passage</a>{% else %}<p role="status">Original passage changed or is unavailable. This retained excerpt is historical support; verify a current original before relying on it.</p>{% endif %}
+        <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('review_mention', entity) }}<input type="hidden" name="mention_id" value="{{ mention.mention_id }}"><label>Mention review status<select name="status">{% for value in entity_statuses %}<option value="{{ value }}"{% if value == mention.review_status %} selected{% endif %}>{{ value|replace('_',' ')|title }}</option>{% endfor %}</select></label><button class="button button-secondary">Save mention review</button></form>
         <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('remove_mention', entity) }}<input type="hidden" name="mention_id" value="{{ mention.mention_id }}"><button class="button button-secondary">Remove mention</button></form>
       </article>{% else %}<p>No mentions yet. Open a source passage, choose “Attach to entity”, and select this identity.</p>{% endfor %}
+    </section>
+    <section class="notebook-tool-card"><h2>Reviewer reconciliation</h2>
+      <p>Similar names only propose candidates (up to 50 shown). Open both identities and their original sources before deciding. Merge transfers all mentions; the original identity and its history remain. Alias confirmation links a label without moving mentions. Rejection retains both identities and their mentions.</p>
+      {% for candidate in candidates %}<article><h3><a href="{{ entity_url(candidate.entity_id) }}">{{ candidate.display_name }}</a></h3><p>{{ candidate.entity_id }} · revision {{ candidate.revision }}</p>
+        {% for action, label in [('alias','Confirm alias link'),('merge','Confirm merge into this identity'),('reject','Keep distinct; reject candidate')] %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden(action, entity) }}<input type="hidden" name="target_id" value="{{ candidate.entity_id }}"><input type="hidden" name="target_revision" value="{{ candidate.revision }}"><button class="button button-secondary">{{ label }}</button></form>{% endfor %}
+      </article>{% else %}<p>No similar-name candidates. A match never establishes identity.</p>{% endfor %}
+      <details><summary>Split a mention or reconcile a different identity</summary><p>Create a separate identity first, then use its ID and current revision here. Splitting transfers the selected mention, preserving its original support.</p>
+        <form method="post" action="/matters/{{ matter.slug }}/entities/actions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entity_id" value="{{ entity.entity_id }}"><input type="hidden" name="expected_revision" value="{{ entity.revision }}"><input type="hidden" name="return_to" value="{{ return_to }}"><input type="hidden" name="q" value="{{ q }}">
+          <label>Decision<select name="action"><option value="split">Split selected mention</option><option value="merge">Merge all mentions</option><option value="alias">Confirm alias link</option><option value="reject">Keep identities distinct</option></select></label>
+          <label>Destination identity ID<input name="target_id" required maxlength="80"></label><label>Destination revision<input type="number" name="target_revision" required min="1"></label>
+          <label>Mention to split<select name="mention_id" required>{% for mention in mentions %}<option value="{{ mention.mention_id }}">{{ mention.surface_text or mention.source_name }} · {{ mention.location }} · {{ mention.mention_id }}</option>{% endfor %}</select></label>
+          <button class="button button-secondary">Save reviewer decision</button>
+        </form>
+      </details>
+      {% for operation in reconciliations %}<p>{{ operation.action|title }} · {{ operation.created_at }} · {{ 'Undone' if operation.undone else 'Reviewer decision' }} · from <a href="{{ entity_url(operation.before.source.entity_id) }}">{{ operation.before.source.display_name }}</a> to <a href="{{ entity_url(operation.before.target.entity_id) }}">{{ operation.before.target.display_name }}</a></p>{% if not operation.undone %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('undo', entity) }}<input type="hidden" name="operation_id" value="{{ operation.operation_id }}"><button class="button button-secondary">Undo {{ operation.action }}</button></form>{% endif %}{% endfor %}
+      <p>Undo checks both saved revisions and refuses to overwrite later shared edits. Original identity records remain available after undo.</p>
     </section>
     <section class="notebook-tool-card"><h2>Case-note commentary</h2>
       {% if linked_note %}<a href="/matters/{{ matter.slug }}/notebook?edit={{ linked_note.item_id }}#{{ linked_note.item_id }}">{{ linked_note.title }}</a><p>{{ linked_note.body }}</p><p>The original case note remains editable. Later note changes do not overwrite this entity.</p>

@@ -21,25 +21,18 @@ claims of current capability or permission to bypass this queue.
 
 **Last updated:** 2026-09-12
 
-Verified `main` snapshot before this receipt update:
-`c1ada89bf15ea8f61906de3c62202da4d98e279f`
-(hierarchical synthesis landed as
-[#73](https://github.com/neilofneils404/recordbench-oss/pull/73), after
-PostgreSQL/pgvector CI in
-[#70](https://github.com/neilofneils404/recordbench-oss/pull/70) and the
-maintainer security-quota policy in
-[#71](https://github.com/neilofneils404/recordbench-oss/pull/71)). This receipt
-records a verified landed commit, not the self-referential SHA of the commit
-carrying the receipt. Slices **11**, **12** and **13** are Done;
-**16 → 18** are Next. No work on those slices is included in this receipt.
-The `postgres-integration` job passed on the landed #70 `main` commit
-`4dea52ce42eeb01ac1cab188a99f7fc44b571ab9` with seven
-tests passing and zero skipped
-([main CI receipt](https://github.com/neilofneils404/recordbench-oss/actions/runs/34695365785/job/103557849336)).
-
-It also passed on the landed slice-13 `main` commit recorded above: seven passed,
-zero skipped
-([slice-13 main CI receipt](https://github.com/neilofneils404/recordbench-oss/actions/runs/34699188264/job/103567811020)).
+Verified `main` snapshot before slice 17:
+`3f96b290ca71adbaef37b92e2d9f4d01cf7d226f`, the protected fast-forward of
+[slice 16 PR #77](https://github.com/neilofneils404/recordbench-oss/pull/77).
+GitHub confirms MERGED at that exact commit; contract issue #76 is closed as
+implemented. Final PR CI passed, hosted code findings were reconciled, and a
+verified security-quota exception (not a completed security review) preceded
+maintainer acceptance and native approval. The separate
+[post-merge Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34706467703)
+completed successfully on that exact landed commit. This is independent of
+the already-passing final PR checks. See the
+[dated slice-16 receipt](ENTITY_WORKSPACE_VALIDATION_2026-09-12.json) for tested
+scope and local baseline failures; those are diagnostic, not waived gates.
 
 ## Cruise order
 
@@ -51,7 +44,9 @@ zero skipped
 | 3 | Slice **11** — evidence-driven investigation (durable plan, reasons, checkpoints, zero-hit ledger rows) | Done |
 | 4 | Slice **12** — deepen full-text coverage as required to feed durable findings | Done |
 | 5 | Slice **13** — hierarchical synthesis (issue- then matter-level) with citations through intermediates | Done |
-| 6 | Slices **16 → 18** — People / Places / Things workspace, extraction, evidence-backed relationships | **Next** |
+| 6 | Slice **16** — manual People / Places / Things workspace | Done (#77) |
+| 7 | Slice **17** — entity discovery and reviewer reconciliation | **Next — active** |
+| 8 | Slice **18** — evidence-backed relationships and events | Queued separately |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 Slice **12** needed no further product PR. **Review all extracted text** is
@@ -76,21 +71,15 @@ The final PR application suite passed 2,723 tests (nine skipped), with hosted co
 review, a verified maintainer security-quota exception, acceptance and protected
 fast-forward of the exact no-reply head.
 
-## Active implementation: slice 16
+## Active implementation: slice 17
 
-Begin the 16 → 18 sequence with [16: entity workspace](product-slices/16-entity-workspace.md).
-Deliver manual matter-scoped entities and source-supported mentions first, then
-17's extraction/reconciliation and 18's events/assertions in separate reviewable
-changes. The first acceptance journey creates a person, attaches two original
-passages, revisits both mentions, and keeps another same-name person distinct.
-Alias labels do not establish identity or authorize automatic merging.
-
-Keep the workspace easy to reach during source review, preserve search context,
-and test keyboard navigation, shared-edit recovery, and source changes. Follow
-the [core evolution plan](CORE_EVOLUTION.md) for a narrow entity service and
-repository, preserving transaction authority instead of expanding route-level
-SQL. Schema work still requires migration, backup/clean-restore, and rollback
-evidence. The slice brief and existing release/review gates remain mandatory.
+Implement [17: entity discovery and reconciliation](product-slices/17-entity-extraction.md)
+on the landed manual entity service and repository. The storage/behavior
+contract is [#78](https://github.com/neilofneils404/recordbench-oss/issues/78).
+Preserve supported mentions, source versions, reviewer decisions and undo.
+Matching proposes candidates only; shared names and speaker clusters never
+establish identity. Slice 18 remains separately queued. Recovery, accessibility,
+source access and final-head hosted review remain mandatory.
 
 Every subsequent slice must state its reviewer outcome, actual processed scope,
 original support, human/machine distinctions, and recovery path. Manual review
