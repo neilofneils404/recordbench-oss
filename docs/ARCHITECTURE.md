@@ -1,5 +1,10 @@
 # Architecture
 
+This document describes current behavior. The [product north star](PRODUCT_NORTH_STAR.md)
+and [core evolution plan](CORE_EVOLUTION.md) describe the direction for extending
+it through focused modules while preserving shared authorization, provenance,
+transaction, and lifecycle contracts.
+
 ```text
 staff browser
     │ HTTPS
@@ -166,8 +171,9 @@ no stored snapshot, archive, export receipt or authority for a future download.
 [Investigation budgets](INVESTIGATION_BUDGETS.md) unify retrieval and generation
 limits with saved accounting. [Report review basis](REPORT_REVIEW_BASIS.md)
 converts saved results atomically with validated citations and separate human
-review. [Exact-search grammar](EXACT_SEARCH.md) is an independent reference
-parser, not yet a staff search route. [Export readiness](EXPORT_READINESS.md)
+review. [Exact-search grammar](EXACT_SEARCH.md) supplies the shared parser for the
+separate [exact-result service and staff UI](EXACT_SEARCH_RESULTS.md); it does
+not turn ranked answer retrieval into complete exact search. [Export readiness](EXPORT_READINESS.md)
 uses the same bounded preparation as the eventual download. The
 [selected acceptance record](SELECTED_ACCEPTANCE_2026-09-09.md) identifies the
 combined candidate and deferred feature stacks.
@@ -195,3 +201,11 @@ keep large and interrupted runs explicit. Source decisions remain compatible wit
 selected-passage review; detailed ledgers feed later synthesis consumers. Missing
 extraction, empty/zero-unit sources, failed ranges and unfinished inventories
 remain coverage gaps, independent of relevance-recognition quality.
+
+## Hierarchical investigation synthesis
+
+[Hierarchical synthesis](HIERARCHICAL_SYNTHESIS.md) consumes persisted investigation
+findings with original support through issue and matter stages. It preserves
+versioned checkpoints, charged requests, omissions, and source validation. Its
+input remains the bounded investigation evidence; full-text review ledgers need
+the separate [proposed adapter](product-slices/19-full-text-synthesis.md).

@@ -282,19 +282,18 @@ coordinates, certificates, or credentials belong in this repository.
 
 ## Where this is going
 
-The long-term goal is a first-class discovery workspace that an office can
-install, operate, and make its own.
+RecordBench is building a free, local-first review workspace for case teams:
+excellent manual review, complete exact search, accountable collection-wide
+processing, sourced investigation, and a shared memory of what the team learns.
+Administrators should be able to choose storage and supported model combinations,
+from a small local server toward larger GPU installations.
 
-- Guided intake that helps a team understand what arrived, what processed,
-  and what still needs attention.
-- Durable team matters and temporary review matters, chosen per matter,
-  with complete, reopenable case packages.
-- Relativity-style load file imports and exports.
-- Connected people, places, events, and timelines with reviewable links to
-  the source record.
-- Local AI first, with optional frontier models controlled per matter.
-- Installation and recovery that another office can follow without private
-  deployment knowledge.
+The [product north star](docs/PRODUCT_NORTH_STAR.md) describes that experience,
+including production-folder intake, background material separate from discovery,
+people and events with original support, and reviewer-controlled matter memory.
+The [current assessment and delivery plan](docs/PRODUCT_DIRECTION_2026-09-12.md)
+identifies what exists, the remaining gaps, and a staged path forward. The
+[exit-alpha cruise](docs/EXIT_ALPHA_CRUISE.md) selects the active build step.
 
 These are development goals. They are not all available in the current alpha.
 

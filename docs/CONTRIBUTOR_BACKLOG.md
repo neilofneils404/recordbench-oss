@@ -1,11 +1,15 @@
 # Contributor starting points
 
+Use the [product north star](PRODUCT_NORTH_STAR.md) to frame the user outcome.
+The [assessment and delivery plan](PRODUCT_DIRECTION_2026-09-12.md) connects
+individual slices to the complete case-team review experience.
+
 For scoped product work, start with the [portable product slices](product-slices/README.md).
 They record code-backed findings, dependencies, implementation boundaries, and
 synthetic acceptance criteria for installation, onboarding, accounts/groups,
 exact search, deep review, Reports, and People/Places/Things. Check each
 brief's Status line and the [exit-alpha cruise](EXIT_ALPHA_CRUISE.md) before
-coding; slices **16 → 18** are next. Refresh upstream and coordinate remaining work.
+coding; the cruise owns the active step. Refresh upstream and coordinate remaining work.
 
 These are candidate contributions, not assignments. Open a short issue with a
 synthetic reproduction or proposed acceptance path; check existing PRs before

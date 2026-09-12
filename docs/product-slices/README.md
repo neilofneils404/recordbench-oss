@@ -1,7 +1,11 @@
 # Portable RecordBench product slices
 
+The [product north star](../PRODUCT_NORTH_STAR.md) governs product direction;
+the [assessment](../PRODUCT_DIRECTION_2026-09-12.md) records gaps and delivery
+stages, and the cruise below owns the active implementation order.
+
 Status: implementation briefs. Binding execution order is the
-[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md); slices **16 → 18** are next.
+[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md); consult its active step.
 Findings checked September 8, 2026 against upstream `main` at
 `26f5ece14871ba9312c9aeaf87d42b47edff3022` are a dated checkout note.
 Live slice status is the cruise file and each brief's Status line. The
@@ -27,7 +31,7 @@ they must not become the only place where product behavior is implemented.
 
 IDs identify work, not an obligation to execute everything in numeric order.
 [Exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) is the binding execution order:
-slices **16 → 18** are next. The briefs remain the implementation specifications;
+consult its Next row. The briefs remain the implementation specifications;
 the cruise document takes precedence over historical sequencing below.
 
 On the verified slice-13 `main` snapshot
@@ -39,8 +43,8 @@ on `main`; PostgreSQL search-job acceptance remains pending. Slice **08** has
 the exact-result service on `main`; real PostgreSQL indexed acceptance remains
 pending. Slice **09** has proximity on `main`; wildcards and field filters
 remain. Hierarchy (**13**) landed in [#73](https://github.com/neilofneils404/recordbench-oss/pull/73).
-The entity workspace slices (**16–18**) remain proposed and are the next cruise step. Remaining 00/08 PostgreSQL acceptance and 09 operators are not the
-cruise Next row. The report's People/Places/Things format does not claim to
+The entity workspace slices (**16–18**) remain proposed. The cruise selects
+active work, including sequencing of remaining 00/08 acceptance and 09 operators. The report's People/Places/Things format does not claim to
 implement the persistent entity workspace or identity resolution.
 
 Implementation PR inventory recorded September 8 (historical status; see
@@ -94,9 +98,8 @@ installation before deployment-sensitive changes are accepted.
 Historical starting batch (superseded by the cruise order): 00, 01, 07, 10, and 14. These establish known
 results, reduce install confusion, define exact-search semantics, expose real
 review limits, and stop losing useful context when making Reports. Slices 01–07,
-10–15 are now on `main`. Next is 16 → 18. Entity work follows that review
-foundation. Remaining 00/08 PostgreSQL acceptance and 09 operators (wildcards
-and field filters) are separate from the cruise Next row.
+10–15 are on the dated baseline above. Entity work follows that review
+foundation; consult the cruise for the active step and later scheduling.
 
 ## Evidence and current answers
 
@@ -119,6 +122,12 @@ observations, reproduction examples, and the limits of those checks.
   and model-evaluation limits are documented in [HIERARCHICAL_SYNTHESIS.md](../HIERARCHICAL_SYNTHESIS.md).
 * People/place/date candidates exist, but the persistent entity workspace
   (16–18) is still proposed.
+
+## Proposed extension
+
+[19: full-text synthesis](19-full-text-synthesis.md) connects one terminal
+full-text review to cited synthesis. It is proposed, not scheduled, and does
+not displace the active entity sequence.
 
 ## Definition of done for every slice
 

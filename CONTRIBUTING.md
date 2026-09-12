@@ -101,6 +101,13 @@ workflow actions are pinned to reviewed commit SHAs.
 
 ## Development model
 
+Use the [product north star](docs/PRODUCT_NORTH_STAR.md) to frame the user outcome
+and the [exit-alpha cruise](docs/EXIT_ALPHA_CRUISE.md) to select active work.
+The [core evolution plan](docs/CORE_EVOLUTION.md) guides incremental service and
+repository extraction. A new feature should strengthen those boundaries while
+preserving atomic authorization, source validation, and saving. Update linked
+capability claims when behavior changes; keep historical receipts dated.
+
 Tests that start background workers must respect their job ownership and the
 workspace transaction lock. Prefer public workflow transitions over direct SQL
 to establish retry states. If a fixture manually claims and completes a job,
