@@ -46,7 +46,9 @@ s=WorkspaceStore(Path(sys.argv[1])); a=s.upsert_principal('test','synthetic-enti
         excerpt_digest='a' * 64, excerpt='Synthetic original passage naming Alex Example.', support_token='a' * 40)
     def service(control):
         return EntityService(control.entity_repository(), source_guard=nullcontext,
-            resolve_support=lambda token: reference, load_note=control.notebook_item, load_references=control.notebook_references)
+            resolve_support=lambda token: reference, load_note=control.notebook_item, load_references=control.notebook_references,
+            validate_references=lambda values: frozenset(index for index, value in enumerate(values)
+                if all(value[key] == expected for key, expected in reference.items())))
     entity = service(store).create(matter_id, actor, display_name='Alex Example', support='a' * 40, aliases='A. Example')
     service(store).update(matter_id, actor, entity['entity_id'], expected_revision=1, display_name='Alex Example', status='confirmed')
     expected = service(store).detail(matter_id, actor, entity['entity_id'])

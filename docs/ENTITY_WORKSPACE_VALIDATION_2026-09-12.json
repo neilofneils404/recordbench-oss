@@ -4,7 +4,7 @@
   "scope": "Slice 16 manual matter entity workspace; local contributor validation, not deployment or confidential-casework readiness",
   "baseline": "e11ab25ccbbde7e864914b3bb7ba56603792b8b4",
   "focused_entity_tests": {
-    "passed": 9
+    "passed": 13
   },
   "related_entity_notebook_branding_backup_checks": {
     "passed": 68,
@@ -12,7 +12,7 @@
     "note": "Optional integration prerequisite absent; additional protected-HTTP regression passed separately."
   },
   "full_application": {
-    "passed": 2606,
+    "passed": 2611,
     "failed": 125,
     "skipped": 9,
     "test_storage_reserve_gib": 0,
@@ -61,5 +61,45 @@
   "search_context_followup": {
     "passed": 18,
     "browser": "Repeated complete Chrome journey; return links verified against both actual originating searches."
+  },
+  "hosted_review_corrections": {
+    "targeted_passed": 65,
+    "checks": [
+      "Deleted entity ID retained in audit",
+      "Only referenced documents parsed once for availability",
+      "Original search survives full-document and section navigation",
+      "Mention history uses linear addition/removal deltas; older full snapshots preserved",
+      "Investigation checkpoint fixture holds the workspace lock for raw transactions"
+    ],
+    "browser": {
+      "synthetic": true,
+      "success": true,
+      "checks": [
+        "Two synthetic originals uploaded and searchable without a model",
+        "Visible empty state and keyboard creation of a person with an alias",
+        "Two exact source passages attached to one identity and both reopened from its detail page",
+        "Another same-name person remains distinct, with no automatic alias merge",
+        "Shared-edit conflict preserves the submitted name and aliases alongside the current saved identity",
+        "390-pixel reflow without horizontal page overflow",
+        "Return link retains the source-review search context"
+      ],
+      "browser": "152.0.7977.83"
+    },
+    "restore": {
+      "synthetic": true,
+      "baseline": "e11ab25ccbbde7e864914b3bb7ba56603792b8b4",
+      "upgrade_preserved_notes": true,
+      "clean_restore_preserved_entity_mentions_alias_history": true,
+      "baseline_reader_verified_clean_rollback": true,
+      "integrity": "ok",
+      "scope": "SQLite control store only; original-source restoration is exercised separately."
+    }
+  },
+  "initial_hosted_head": {
+    "head": "8667e55bd2c3612e6a453471639f290a40a4a2bc",
+    "pr_quality_gates": "passed",
+    "push_quality_gates": "failed on an unlocked raw transaction in the investigation checkpoint fixture; corrected, not waived",
+    "code_review": "Four P2 findings addressed; renewed final-head review required",
+    "security_review": "Quota exhausted; no passed security review or maintainer exception claimed"
   }
 }

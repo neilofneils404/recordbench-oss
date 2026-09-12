@@ -122,6 +122,8 @@ def main():
                 driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", link)
                 link.click()
                 wait.until(lambda d: d.find_element(By.ID, 'support-pane'))
+                if term == 'archive':
+                    click('.support-header-open')
                 click('a[href*="/entities?support="]')
                 assert 'Selected original passage' in body()
                 click('form:has(input[value="attach"]) button')

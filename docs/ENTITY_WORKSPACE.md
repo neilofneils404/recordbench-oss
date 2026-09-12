@@ -29,7 +29,7 @@ source unit or another identity remains distinct.
 If a source changes or becomes unavailable, the saved excerpt remains labeled
 historical and its live-source link is disabled. New attachment and note import
 must resolve current support before saving. Reviewers can remove a mistaken
-mention and attach a current one; correction history retains earlier snapshots.
+mention and attach a current one; correction history retains the original added and removed support.
 A removed mention is no longer current support.
 
 ## Existing case notes and provenance
@@ -46,7 +46,10 @@ The current notebook has no `thing` type; things can be created manually.
 The entity records manual creation versus notebook import. Imported snapshots
 retain the note's manual/answer/citation/extraction origin; suggested machine
 work stays suggested until a reviewer changes it. Subsequent entity revisions
-retain their actor, timestamp, action, labels, state and mentions. Changes to a
+retain their actor, timestamp, action and label/state snapshot, with explicit
+mention additions and removals. Each original excerpt is stored in history only
+when added or removed, rather than copied on every later edit. Older full
+snapshots remain readable; new history records declare `history_format: 2`. Changes to a
 linked note do not silently update the entity. Deleting a linked note removes
 that live commentary link, but its explicit import snapshot remains part of the
 entity until the entity or matter is deleted.
@@ -58,6 +61,8 @@ uses the existing workspace connection/lock and an immediate SQLite transaction,
 rechecking live membership and active lifecycle before reads or writes. An
 integer revision is checked before editing, attaching/removing mentions or
 deleting. Independent connections cannot both save from the same revision.
+Availability checks group references by document and parse each referenced
+document once, without repeatedly scanning the matter corpus.
 Conflicts show the saved identity and preserve submitted form text for deliberate
 comparison and resubmission. Lost access never returns the submitted draft.
 

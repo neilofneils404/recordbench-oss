@@ -74,6 +74,7 @@ def install_entity_routes(app, *, service_for, authorized_matter, auth_context,
         actor = auth_context(request).principal_id
         service = service_for(matter)
         fields = dict(display_name=display_name, entity_type=entity_type, status=status, aliases=aliases)
+        deleted_entity_id = ''
         try:
             if action == 'create':
                 entity = service.create(matter.matter_id, actor, support=support, **fields)
@@ -86,6 +87,7 @@ def install_entity_routes(app, *, service_for, authorized_matter, auth_context,
                 service.remove_mention(matter.matter_id, actor, entity_id, expected_revision=expected_revision, mention_id=mention_id)
             elif action == 'delete':
                 service.delete(matter.matter_id, actor, entity_id, expected_revision=expected_revision)
+                deleted_entity_id = entity_id
                 entity_id = ''
             elif action == 'import':
                 entity_id = service.import_note(matter.matter_id, actor, item_id)['entity_id']
@@ -109,7 +111,7 @@ def install_entity_routes(app, *, service_for, authorized_matter, auth_context,
                 return render(request, slug, q=q, support=support, return_to=return_to,
                               error=error, draft=dict(fields, action='create'), status_code=409)
         audit(request, 'entity.' + action, 'success', context=auth_context(request), matter=matter,
-              object_type='entity', object_id=entity_id or matter.matter_id)
+              object_type='entity', object_id=entity_id or deleted_entity_id or matter.matter_id)
         path = f'/matters/{slug}/entities' + ('/' + entity_id if entity_id else '')
         return RedirectResponse(path + '?' + urlencode(dict(q=q, return_to=return_path(slug, return_to))), status_code=303)
 

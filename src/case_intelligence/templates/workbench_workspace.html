@@ -538,21 +538,21 @@
         <span class="support-label">{{ 'Cited recording' if support.evidence_kind == 'transcript' else 'Supporting source' }}</span>
         <h2 id="support-heading">{{ support.source_name }}</h2>
         <p>{{ support.position_label }}</p>
-        <a class="support-header-open" href="{{ support.source_review_href }}">{% if support.evidence_kind == 'transcript' %}Open full recording and transcript{% elif support.kind == 'PDF' %}Open full PDF{% else %}Read full document{% endif %}</a>
+        <a class="support-header-open" href="{{ entity_context_href(support.source_review_href, request.query_params.get('entity_return_to', '')) }}">{% if support.evidence_kind == 'transcript' %}Open full recording and transcript{% elif support.kind == 'PDF' %}Open full PDF{% else %}Read full document{% endif %}</a>
       </div>
       <a class="icon-button support-close" href="/matters/{{ matter.slug }}?conversation={{ conversation.conversation_id }}" aria-label="Close supporting source">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </a>
     </header>
     <div class="support-toolbar">
-      {% if support.previous_href %}<a class="icon-button" href="{{ support.previous_href }}" aria-label="Previous section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></a>{% else %}<span class="icon-button disabled"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></span>{% endif %}
+      {% if support.previous_href %}<a class="icon-button" href="{{ entity_context_href(support.previous_href, request.query_params.get('entity_return_to', '')) }}" aria-label="Previous section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></a>{% else %}<span class="icon-button disabled"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></span>{% endif %}
       <a href="/matters/{{ matter.slug }}/entities?support={{ support.support_token }}&amp;return_to={{ (request.query_params.get('entity_return_to') or (request.url.path ~ '?' ~ request.url.query ~ '#support-pane'))|urlencode }}">Attach to entity</a>
       <span class="support-position">{{ support.location }}</span>
       <form method="post" action="/matters/{{ matter.slug }}/notebook/from-support/{{ support.support_token }}" data-working-form data-working-label="Saving…">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="support-save-button" type="submit">Save to case notes</button>
       </form>
-      {% if support.next_href %}<a class="icon-button" href="{{ support.next_href }}" aria-label="Next section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></a>{% else %}<span class="icon-button disabled"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></span>{% endif %}
+      {% if support.next_href %}<a class="icon-button" href="{{ entity_context_href(support.next_href, request.query_params.get('entity_return_to', '')) }}" aria-label="Next section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></a>{% else %}<span class="icon-button disabled"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></span>{% endif %}
     </div>
     <div class="source-paper">
       <div class="paper-heading">
@@ -574,7 +574,7 @@
         {% endif %}
         <div class="support-media-actions">
           <button class="button button-primary" type="button" data-support-play>▶ Play cited moment · {{ support.location }}</button>
-          <a href="{{ support.source_review_href }}">Open full recording and transcript</a>
+          <a href="{{ entity_context_href(support.source_review_href, request.query_params.get('entity_return_to', '')) }}">Open full recording and transcript</a>
         </div>
         <p>This passage comes from a machine transcript. Listen at the cited time before relying on wording or speaker identity.</p>
       </section>

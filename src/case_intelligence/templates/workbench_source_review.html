@@ -59,12 +59,12 @@
         <h2 id="extracted-reader-heading">{{ source.position_label }}</h2>
       </div>
       <nav class="reader-pagination" aria-label="Source section navigation">
-        {% if source.previous_href %}<a class="button button-secondary" href="{{ source.previous_href }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
-        {% if source.next_href %}<a class="button button-secondary" href="{{ source.next_href }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
+        {% if source.previous_href %}<a class="button button-secondary" href="{{ entity_context_href(source.previous_href, request.query_params.get('entity_return_to', '')) }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
+        {% if source.next_href %}<a class="button button-secondary" href="{{ entity_context_href(source.next_href, request.query_params.get('entity_return_to', '')) }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
       </nav>
     </header>
     {% if source.unit %}
-    {% if entity_support_token %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/entities?support={{ entity_support_token }}&amp;return_to={{ (request.url.path ~ '?' ~ request.url.query)|urlencode }}">Attach passage to entity</a>{% endif %}
+    {% if entity_support_token %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/entities?support={{ entity_support_token }}&amp;return_to={{ (request.query_params.get('entity_return_to') or (request.url.path ~ '?' ~ request.url.query))|urlencode }}">Attach passage to entity</a>{% endif %}
     <pre>{{ source.unit.text }}</pre>
     {% else %}
     <div class="reader-empty">

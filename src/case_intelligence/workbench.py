@@ -2973,13 +2973,17 @@ class CaseIntelligenceWorkbench:
         )
 
     def entity_service(self, matter):
-        from .entity_service import EntityService
+        from .entity_service import EntityService, current_reference_indexes
         return EntityService(
             self.workspace.entity_repository(),
             source_guard=self.source_store(matter).mutation_guard,
             resolve_support=lambda token: self.notebook_reference_from_support(matter, token),
             load_note=self.workspace.notebook_item,
             load_references=self.workspace.notebook_references,
+            validate_references=lambda references: current_reference_indexes(references,
+                load_document=self.source_store(matter).get,
+                candidate_for=lambda document, unit, ordinal: self._candidate(matter, document, unit, ordinal),
+                support_tokens=self._support_tokens),
         )
 
     def notebook_reference_from_support(
@@ -5593,6 +5597,16 @@ def _query_url(path: str, **values: str) -> str:
     return path + (("?" + urlencode(filtered)) if filtered else "")
 
 
+def _entity_context_href(href: str, origin: str = "") -> str:
+    """Carry source-review origin through existing document/section links."""
+    if not origin:
+        return href
+    parsed = urlparse(href)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query["entity_return_to"] = [origin]
+    return parsed._replace(query=urlencode(query, doseq=True)).geturl()
+
+
 def _workspace_citation_href(
     citation: object, matter_slug: str, conversation_id: str = "", *, entity_return_to: str = ""
 ) -> str:
@@ -5722,6 +5736,7 @@ def create_workbench_app(
         product_name=PRODUCT_NAME,
         product_tagline=PRODUCT_TAGLINE,
         citation_href=_workspace_citation_href,
+        entity_context_href=_entity_context_href,
     )
     app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
 

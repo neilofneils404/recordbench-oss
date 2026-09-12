@@ -103,27 +103,49 @@ class EntityRepository:
              actor_id, self.now(), matter_id, entity_id),
         )
 
+    def has_mention(self, matter_id, entity_id, support_token):
+        return self.connection.execute(
+            'SELECT 1 FROM workbench_entity_mention WHERE matter_id=? AND entity_id=? AND support_token=?',
+            (matter_id, entity_id, support_token),
+        ).fetchone() is not None
+
     def add_mention(self, matter_id, actor_id, entity_id, reference, origin):
         names = ('document_id', 'source_version_id', 'source_name', 'location', 'unit_number',
                  'chunk_id', 'excerpt_digest', 'excerpt', 'support_token')
+        mention_id = 'mention-' + uuid.uuid4().hex
         self.connection.execute(
             'INSERT INTO workbench_entity_mention(mention_id,matter_id,entity_id,' + ','.join(names)
             + ',origin,created_by,created_at) VALUES (' + ','.join('?' for _ in range(15)) + ')',
-            ('mention-' + uuid.uuid4().hex, matter_id, entity_id, *(reference[name] for name in names),
+            (mention_id, matter_id, entity_id, *(reference[name] for name in names),
              origin, actor_id, self.now()),
         )
 
+        return dict(self.connection.execute(
+            'SELECT * FROM workbench_entity_mention WHERE mention_id=?', (mention_id,)).fetchone())
+
     def remove_mention(self, matter_id, entity_id, mention_id):
+        removed = self.connection.execute(
+            'SELECT * FROM workbench_entity_mention WHERE matter_id=? AND entity_id=? AND mention_id=?',
+            (matter_id, entity_id, mention_id),
+        ).fetchone()
+        if removed is None:
+            raise KeyError(mention_id)
         cursor = self.connection.execute(
             'DELETE FROM workbench_entity_mention WHERE matter_id=? AND entity_id=? AND mention_id=?',
             (matter_id, entity_id, mention_id),
         )
         if cursor.rowcount != 1:
             raise KeyError(mention_id)
+        return dict(removed)
 
-    def record_history(self, matter_id, actor_id, entity_id, action):
+    def record_history(self, matter_id, actor_id, entity_id, action, *, added_mentions=(), removed_mentions=()):
         current = self.get(matter_id, entity_id)
-        snapshot = dict(current, mentions=self.mentions(matter_id, entity_id))
+        # Store each mention only at addition/removal, never in every later edit.
+        # Old full snapshots remain readable; new records describe explicit deltas.
+        snapshot = dict(current, history_format=2, added_mentions=list(added_mentions),
+                        removed_mentions=list(removed_mentions))
+        if action not in ('created', 'notebook imported'):
+            snapshot.pop('notebook_snapshot', None)
         self.connection.execute(
             'INSERT INTO workbench_entity_history VALUES (?,?,?,?,?,?,?)',
             (entity_id, matter_id, current['revision'], action, json.dumps(snapshot), actor_id, self.now()),

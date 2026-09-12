@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from case_intelligence.entity_repository import EntityEditConflict
-from case_intelligence.entity_service import EntityService
+from case_intelligence.entity_service import EntityService, REFERENCE_FIELDS, current_reference_indexes
 from case_intelligence.workbench import create_workbench_app
 from case_intelligence.workspace_store import WorkspaceProblem, WorkspaceStore
 from tests.test_matter_notebook import ACTOR, WEB_ACTOR, _seed, _reference, _create_matter
@@ -23,7 +23,9 @@ def service(store, references=None):
     refs = references if references is not None else {'a' * 40: _reference(), 'b' * 40: _reference('b')}
     return EntityService(store.entity_repository(), source_guard=nullcontext,
                          resolve_support=lambda token: refs[token],
-                         load_note=store.notebook_item, load_references=store.notebook_references)
+                         load_note=store.notebook_item, load_references=store.notebook_references,
+                         validate_references=lambda values: frozenset(index for index, value in enumerate(values)
+                             if value['support_token'] in refs and all(refs[value['support_token']][key] == value[key] for key in REFERENCE_FIELDS)))
 
 
 def setup(tmp_path):
@@ -48,7 +50,7 @@ def test_manual_distinct_identities_mentions_aliases_and_correction_history(tmp_
     assert entities.list(matter.matter_id, ACTOR, query='A. Example')[1] == 2
     entities.remove_mention(matter.matter_id, ACTOR, first['entity_id'], expected_revision=3, mention_id=mentions[0]['mention_id'])
     assert len(entities.detail(matter.matter_id, ACTOR, first['entity_id'])[1]) == 1
-    assert len(json.loads(entities.detail(matter.matter_id, ACTOR, first['entity_id'])[2][1]['snapshot_json'])['mentions']) == 2
+    assert len(json.loads(entities.detail(matter.matter_id, ACTOR, first['entity_id'])[2][0]['snapshot_json'])['removed_mentions']) == 1
     assert not entities.detail(matter.matter_id, ACTOR, other['entity_id'])[1]
     store.close()
 
@@ -79,7 +81,7 @@ def test_stale_source_import_rolls_back_and_existing_mentions_remain_historical(
         title='Synthetic unsupported import', origin='extraction', references=(_reference(), _reference('b')))
     refs = {'a' * 40: _reference()}
     stale = service(store, refs)
-    with pytest.raises(KeyError):
+    with pytest.raises(WorkspaceProblem):
         stale.import_note(matter.matter_id, ACTOR, note.item_id)
     assert entities.list(matter.matter_id, ACTOR)[1] == 0
     first = entities.create(matter.matter_id, ACTOR, display_name='Synthetic identity', support='a' * 40)
@@ -169,6 +171,10 @@ def test_web_journey_original_passages_context_same_name_and_edit_recovery(tmp_p
         support_page = client.get(support_href)
         entity_href = html.unescape(re.search(r'href="([^"]+/entities\?support=[^"]+)"', support_page.text).group(1))
         assert parse_qs(urlparse(entity_href).query)['return_to'] == [search_path + '#search-results']
+        full_href = html.unescape(re.search(r'class="support-header-open" href="([^"]+)"', support_page.text).group(1))
+        full_page = client.get(full_href)
+        full_entity_href = html.unescape(re.search(r'href="([^"]+/entities\?support=[^"]+)"', full_page.text).group(1))
+        assert parse_qs(urlparse(full_entity_href).query)['return_to'] == [search_path + '#search-results']
         context = f'/matters/{slug}?mode=search&q=Alex&page=2#support-pane'
         response = client.post(path + '/actions', data=dict(action='create', display_name='Alex Example', aliases='A. Example', support=tokens[0], return_to=context), follow_redirects=False)
         assert response.status_code == 303
@@ -295,3 +301,90 @@ def test_http_csrf_membership_and_source_version_fail_closed(tmp_path, monkeypat
         stale = client.post(path + '/actions', headers=_headers(OWNER), data=dict(csrf_token=csrf, action='create', display_name='Unsaved stale source identity', support=token))
         assert stale.status_code == 409 and 'Unsaved stale source identity' in stale.text
         assert bench.entity_service(matter).list(matter.matter_id, actor)[1] == 1
+
+
+def test_mention_history_grows_linearly_and_retains_removed_originals(tmp_path):
+    store, matter, _ = setup(tmp_path)
+    refs = {}
+    for index in range(40):
+        token = f'{index:040x}'
+        refs[token] = dict(_reference(), support_token=token,
+                           excerpt=f'Synthetic mention {index}: ' + 'x' * 5900)
+    entities = service(store, refs)
+    entity = entities.create(matter.matter_id, ACTOR, display_name='Synthetic many-mention identity')
+    for token in refs:
+        entity = entities.attach(matter.matter_id, ACTOR, entity['entity_id'],
+                                 expected_revision=entity['revision'], support=token)
+    entity = entities.update(matter.matter_id, ACTOR, entity['entity_id'],
+                             expected_revision=entity['revision'], display_name='Synthetic human correction')
+    _, mentions, history, _ = entities.detail(matter.matter_id, ACTOR, entity['entity_id'])
+    snapshots = [json.loads(entry['snapshot_json']) for entry in history]
+    assert sum(len(entry['added_mentions']) for entry in snapshots) == 40
+    assert all('mentions' not in entry for entry in snapshots)
+    assert len(''.join(entry['snapshot_json'] for entry in history)) < 400_000
+    removed = mentions[0]
+    entities.remove_mention(matter.matter_id, ACTOR, entity['entity_id'],
+                             expected_revision=entity['revision'], mention_id=removed['mention_id'])
+    _, current_mentions, updated_history, _ = entities.detail(matter.matter_id, ACTOR, entity['entity_id'])
+    change = json.loads(updated_history[0]['snapshot_json'])
+    assert change['removed_mentions'][0]['excerpt'] == removed['excerpt']
+    assert change['added_mentions'] == [] and len(current_mentions) == 39
+    store.close()
+
+
+def test_availability_parses_only_referenced_documents_once_and_checks_every_field():
+    from types import SimpleNamespace
+    references = [_reference(), _reference('b'), _reference(), dict(_reference(), excerpt='Tampered quote')]
+    loads, parses, candidates = [], [], []
+    canonical = {item['document_id']: item for item in references[:2]}
+    def load(document_id):
+        loads.append(document_id)
+        reference = canonical[document_id]
+        def units():
+            parses.append(document_id)
+            return [SimpleNamespace(number=1)]
+        return SimpleNamespace(state='ready', document_id=document_id, parsed_units=units)
+    def candidate_for(document, unit, ordinal):
+        candidates.append(document.document_id)
+        reference = canonical[document.document_id]
+        return SimpleNamespace(document_id=document.document_id, source_version_id=reference['source_version_id'],
+            source_name=reference['source_name'], citation=reference['location'], chunk_id='chunk-1',
+            excerpt_digest=reference['excerpt_digest'], text=reference['excerpt'], token=reference['support_token'])
+    available = current_reference_indexes(references, load_document=load, candidate_for=candidate_for,
+                                          support_tokens=lambda value: (value.token,))
+    assert available == frozenset({0, 1, 2})
+    assert len(loads) == len(parses) == len(candidates) == 2
+
+
+def test_deleted_identity_remains_identifiable_in_content_free_audit(tmp_path):
+    with TestClient(create_workbench_app(tmp_path / 'runtime', auth_mode='test')) as client:
+        slug = _create_matter(client)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, WEB_ACTOR)
+        entity = bench.entity_service(matter).create(matter.matter_id, WEB_ACTOR, display_name='Synthetic deleted identity')
+        response = client.post(f'/matters/{slug}/entities/actions', data=dict(action='delete',
+            entity_id=entity['entity_id'], expected_revision=1), follow_redirects=False)
+        assert response.status_code == 303 and '/entities?' in response.headers['location']
+        event = next(item for item in bench.workspace.audit_events(matter.matter_id) if item.action == 'entity.delete')
+        assert event.object_id == entity['entity_id'] and event.object_type == 'entity'
+        assert 'Synthetic deleted identity' not in json.dumps(event.details)
+
+
+def test_existing_full_history_snapshot_survives_new_delta_edits(tmp_path):
+    store, matter, entities = setup(tmp_path)
+    entity = entities.create(matter.matter_id, ACTOR, display_name='Synthetic earlier snapshot', support='a' * 40)
+    history = entities.detail(matter.matter_id, ACTOR, entity['entity_id'])[2]
+    legacy = json.loads(history[0]['snapshot_json'])
+    legacy['mentions'] = legacy.pop('added_mentions')
+    legacy.pop('removed_mentions')
+    legacy.pop('history_format')
+    legacy_json = json.dumps(legacy)
+    with store._lock, store.connection:
+        store.connection.execute('UPDATE workbench_entity_history SET snapshot_json=? WHERE entity_id=? AND revision=1',
+                                  (legacy_json, entity['entity_id']))
+    entities.update(matter.matter_id, ACTOR, entity['entity_id'], expected_revision=1, display_name='Synthetic corrected label')
+    history = entities.detail(matter.matter_id, ACTOR, entity['entity_id'])[2]
+    assert history[-1]['snapshot_json'] == legacy_json
+    assert json.loads(history[0]['snapshot_json'])['history_format'] == 2
+    assert json.loads(history[0]['snapshot_json'])['added_mentions'] == []
+    store.close()
