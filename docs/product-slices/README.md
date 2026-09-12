@@ -1,7 +1,7 @@
 # Portable RecordBench product slices
 
 Status: implementation briefs. Binding execution order is the
-[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md); slice **13** is next.
+[exit-alpha cruise](../EXIT_ALPHA_CRUISE.md); slices **16 → 18** are next.
 Findings checked September 8, 2026 against upstream `main` at
 `26f5ece14871ba9312c9aeaf87d42b47edff3022` are a dated checkout note.
 Live slice status is the cruise file and each brief's Status line. The
@@ -27,18 +27,19 @@ they must not become the only place where product behavior is implemented.
 
 IDs identify work, not an obligation to execute everything in numeric order.
 [Exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) is the binding execution order:
-slice **13** is next. The briefs remain the implementation specifications;
+slices **16 → 18** are next. The briefs remain the implementation specifications;
 the cruise document takes precedence over historical sequencing below.
 
-On current `main` (`a83f43f8240d0db501b5c506eb1a570c32f7fdaa`): slices **01–07**,
-**10–12**, and **14–15** are implemented, including installer handoff (02),
+On the verified slice-13 `main` snapshot
+(`c1ada89bf15ea8f61906de3c62202da4d98e279f`): slices **01–07**,
+**10–15** are implemented, including installer handoff (02),
 first-run team setup (03), reusable team groups (06), adaptive investigation
-(11), and all-extracted-text review (12). Slice **00** has the synthetic corpus
+(11), all-extracted-text review (12), and cited hierarchical synthesis (13). Slice **00** has the synthetic corpus
 on `main`; PostgreSQL search-job acceptance remains pending. Slice **08** has
 the exact-result service on `main`; real PostgreSQL indexed acceptance remains
 pending. Slice **09** has proximity on `main`; wildcards and field filters
-remain. Hierarchy (**13**) and the entity workspace slices (**16–18**) remain
-proposed. Remaining 00/08 PostgreSQL acceptance and 09 operators are not the
+remain. Hierarchy (**13**) landed in [#73](https://github.com/neilofneils404/recordbench-oss/pull/73).
+The entity workspace slices (**16–18**) remain proposed and are the next cruise step. Remaining 00/08 PostgreSQL acceptance and 09 operators are not the
 cruise Next row. The report's People/Places/Things format does not claim to
 implement the persistent entity workspace or identity resolution.
 
@@ -93,7 +94,7 @@ installation before deployment-sensitive changes are accepted.
 Historical starting batch (superseded by the cruise order): 00, 01, 07, 10, and 14. These establish known
 results, reduce install confusion, define exact-search semantics, expose real
 review limits, and stop losing useful context when making Reports. Slices 01–07,
-10–12, and 14–15 are now on `main`. Next is 13. Entity work follows that review
+10–15 are now on `main`. Next is 16 → 18. Entity work follows that review
 foundation. Remaining 00/08 PostgreSQL acceptance and 09 operators (wildcards
 and field filters) are separate from the cruise Next row.
 
@@ -109,11 +110,13 @@ observations, reproduction examples, and the limits of those checks.
   proximity. The ranked answer retriever is still not that exact set.
   PostgreSQL indexed exact-search acceptance remains pending. Wildcards and
   field filters remain unsupported.
-* Investigations follow evidence within a budget. Final synthesis is still at
-  most 12 passages until 13. Selected-passage source checks remain; **Review
+* Investigations follow evidence within a budget. Saved findings now feed issue-level and
+  matter-level synthesis with original citations and explicit partial results;
+  each generation call retains its existing input limit. Selected-passage source checks remain; **Review
   all extracted text** covers every eligible unit in a frozen population.
 * Reports preserve review basis and can compile saved work into drafts.
-  Hierarchical cited synthesis is 13.
+  Hierarchical cited synthesis landed as slice 13; its versioned checkpoints
+  and model-evaluation limits are documented in [HIERARCHICAL_SYNTHESIS.md](../HIERARCHICAL_SYNTHESIS.md).
 * People/place/date candidates exist, but the persistent entity workspace
   (16–18) is still proposed.
 
