@@ -302,6 +302,9 @@ def test_recorded_security_state_cannot_be_waived(state):
     '<!-- codex-security-review:v1 malformed -->',
     '<!-- codex-security-review:v2 {} -->',
     '| **Security Review** | **Running** |',
+    '| **Security review** | **Running** |',
+    '| <strong>SECURITY REVIEW</strong> | Failed |',
+    '| **Safety Review** | **Running** |',
 ])
 def test_unrecognized_security_state_cannot_be_waived(state):
     comments = quota_comments()
@@ -312,6 +315,7 @@ def test_unrecognized_security_state_cannot_be_waived(state):
 @pytest.mark.parametrize("command,when", [
     ("review", "2026-01-01T12:01:30Z"),
     ("security review", "2026-01-01T12:02:30Z"),
+    ("security review", "2026-01-01T12:02:00Z"),
     ("security review", "2026-01-01T12:04:00Z"),
 ])
 def test_quota_does_not_ignore_newer_review_requests(command, when):

@@ -61,7 +61,8 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
     # A quota exception is deliberately limited to an absent security review.
     # Recorded running, failed, stale or malformed security state still blocks.
     exception = None
-    if "codex-security-review:" in body or "**Security Review**" in body:
+    rows = [line.strip() for line in body.splitlines() if line.lstrip().startswith("|")]
+    if "codex-security-review:" in body.casefold() or any("security" in row.casefold() for row in rows):
         if not marker:
             return "pending", "Review summary has no verifiable commit binding"
         try:
@@ -71,6 +72,13 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
         if metadata.get("headSha") != head or metadata.get("status") != "completed":
             return "pending", "Waiting for security review of the current commit"
     else:
+        # Only the known code-only table can mean security review is absent.
+        # New labels/markup must not turn running security state into absence.
+        for row in rows:
+            if ("**Code Review**" not in row
+                    and row != "| Review | Status | Commit | Review trigger |"
+                    and not re.fullmatch(r"\|(?:\s*:?-+:?\s*\|)+", row)):
+                return "pending", "Unrecognized review summary; quota exception cannot apply"
         exception = quota_exception(head, comments)
         if exception is None:
             return "pending", "Waiting for security review or a verified maintainer quota exception"
@@ -97,7 +105,7 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
             if waived_at and label == "Security Review":
                 # A new request after the bound receipt needs its own response,
                 # even if it was made before the maintainer wrote the exception.
-                if requested > receipt_at:
+                if requested >= receipt_at:
                     return "pending", "A newer security request needs a new quota receipt or completed review"
             if requested > completed[label]:
                 return "pending", "A newer review request is still awaiting completion"
