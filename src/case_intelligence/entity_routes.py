@@ -1,6 +1,6 @@
 """HTTP adapters for the manual entity service; no persistence SQL."""
 import json
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode
 
 from fastapi import Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -8,19 +8,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from .entity_repository import EntityEditConflict
 from .entity_service import ENTITY_STATUSES, ENTITY_TYPES
 from .workspace_store import WorkspaceProblem
+from .review_navigation import matter_return_path
 
 
-def install_entity_routes(app, *, service_for, discovery_for, authorized_matter, auth_context,
+def install_entity_routes(app, *, service_for, discovery_for, assertions_for, authorized_matter, auth_context,
                           require_csrf, templates, base_context, audit,
                           require_response_lease, transfer_response_lease):
     def return_path(slug, value):
-        parsed = urlsplit(value)
-        prefix = f'/matters/{slug}'
-        if (len(value) <= 4000 and not parsed.scheme and not parsed.netloc
-                and (parsed.path == prefix or parsed.path.startswith(prefix + '/'))
-                and '\\' not in value and not any(ord(c) < 32 for c in value)):
-            return value
-        return prefix
+        return matter_return_path(slug, value, fallback=f'/matters/{slug}')
 
     def render(request, slug, *, entity_id='', q='', page=1, review_page=1, candidate_page=1, support='', return_to='',
                error='', draft=None, status_code=200):
@@ -31,6 +26,7 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
         mentions, history, note = [], [], None
         candidates, reconciliations = [], []
         has_more_candidates = False
+        assertions, assertion_total = [], 0
         discovery = discovery_for(matter)
         runs = discovery.runs(matter.matter_id, actor, page=review_page) if not entity_id else []
         has_more_reviews = len(runs) > 20
@@ -40,6 +36,7 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
             if entity_id:
                 entity, mentions, history, note = service.detail(matter.matter_id, actor, entity_id)
                 candidates, reconciliations, has_more_candidates = service.reconciliation_detail(matter.matter_id, actor, entity_id, page=candidate_page)
+                assertions, assertion_total = assertions_for(matter).list(matter.matter_id, actor, entity_id=entity_id)
         except KeyError as exc:
             raise HTTPException(404, 'Entity or matter is no longer available') from exc
         passage = None
@@ -53,10 +50,11 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
         def entity_url(identifier='', target_page=1):
             path = f'/matters/{slug}/entities' + ('/' + identifier if identifier else '')
             return path + '?' + urlencode(dict(q=q, page=target_page, support=support, return_to=return_to))
-        return templates.TemplateResponse(request=request, name='workbench_entities.html', context={
+        response = templates.TemplateResponse(request=request, name='workbench_entities.html', context={
             **base_context(request, matter), 'matter': matter, 'entity': entity,
             'entities': entities, 'total': total, 'page': page, 'q': q,
             'mentions': mentions, 'history': [dict(entry, snapshot=json.loads(entry['snapshot_json'])) for entry in history], 'linked_note': note,
+            'assertions': assertions, 'assertion_total': assertion_total,
             'passage': passage, 'support': support, 'return_to': return_to,
             'entity_url': entity_url, 'entity_types': ENTITY_TYPES, 'entity_statuses': ENTITY_STATUSES,
             'coverage': coverage, 'review_page': review_page, 'has_more_reviews': has_more_reviews,
@@ -67,6 +65,12 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
             'candidates': candidates, 'reconciliations': [dict(row, before=json.loads(row['before_json'])) for row in reconciliations],
             'error': error, 'draft': draft, 'show_assistant_dock': False,
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
+        try:
+            with service.repository.transaction(matter.matter_id, actor):
+                pass
+        except KeyError as exc:
+            raise HTTPException(404, 'Entity or matter is no longer available') from exc
+        return response
 
     @app.get('/matters/{slug}/entities', response_class=HTMLResponse)
     @app.get('/matters/{slug}/entities/{entity_id}', response_class=HTMLResponse)

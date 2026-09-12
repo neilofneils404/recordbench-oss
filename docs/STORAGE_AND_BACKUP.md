@@ -240,3 +240,11 @@ revocation, provider boundaries, migration 0031 and backup/rollback constraints.
 entity/mention/history retention, final-bundle preservation and clean restore.
 Rollback requires the pre-upgrade backup and matching old reader; old purge
 code must not operate on upgraded entity state.
+
+## Events and assertions
+
+[Events and assertions](EVIDENCE_ASSERTIONS.md) adds migration 0034 to the same
+control backup boundary. Preserve original source bytes separately from exported
+work product. Clean restore verifies originals, explicit roles, conflicting
+accounts and decision history. Rollback requires the verified pre-upgrade backup
+and matching older reader; older purge code must never open upgraded state.

@@ -1062,6 +1062,8 @@ class WorkspaceStore:
         if 'extractor_version' not in {row[1] for row in self.connection.execute('PRAGMA table_info(workbench_entity)')}:
             migration = resources.files("case_intelligence").joinpath("migrations/sqlite/0033_entity_discovery.sql").read_text(encoding="utf-8")
             self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
+        migration = resources.files("case_intelligence").joinpath("migrations/sqlite/0034_evidence_assertions.sql").read_text(encoding="utf-8")
+        self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
         from .full_text_review_budget import backfill_legacy_ledgers
         backfill_legacy_ledgers(self)
         session_columns = {
@@ -3080,6 +3082,11 @@ class WorkspaceStore:
         return EntityRepository(connection=self.connection, lock=self._lock,
                                 authorize=authority, now=self._now)
 
+    def assertion_repository(self, *, export_read=False, administrator_override=False):
+        from .assertion_repository import AssertionRepository
+        return AssertionRepository(self.entity_repository(
+            export_read=export_read, administrator_override=administrator_override))
+
     def complete_matter_purge(
         self, matter_id: str, purge_id: str
     ) -> MatterLifecycleRecord:
@@ -3124,6 +3131,7 @@ class WorkspaceStore:
             )
             for table in ('workbench_entity_discovery_seen', 'workbench_entity_discovery_unit', 'workbench_entity_reconciliation'):
                 self.connection.execute(f"DELETE FROM {table} WHERE matter_id=?", (matter_id,))
+            self.connection.execute('DELETE FROM workbench_assertion WHERE matter_id=?', (matter_id,))
             self.connection.execute(
                 "DELETE FROM workbench_entity WHERE matter_id=?", (matter_id,)
             )

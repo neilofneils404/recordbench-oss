@@ -1,0 +1,124 @@
+{
+  "date": "2026-09-12",
+  "synthetic_only": true,
+  "scope": "Manual reviewer events and assertions on landed entity workspace/discovery; no learned inference, deployment or installed-node qualification.",
+  "verified_main": "e9ab89c792b562c2abf27715d15b5f70d3216900",
+  "prerequisite": {
+    "pr": 81,
+    "head": "e0301b9839b8c69d07f40c5f5827ab4873f428d6",
+    "state_at_validation": "Open; prerequisite incorporated as dependency, not claimed merged."
+  },
+  "contract_issue": 80,
+  "focused": {
+    "passed": 173,
+    "deselected": 1,
+    "scope": "Assertions, HTTP acceptance, navigation, existing entities/discovery/notebook, export/readiness, lifecycle and documentation.",
+    "command": "python -m pytest -q tests/test_evidence_assertions.py tests/test_assertion_workflow.py tests/test_assertion_navigation.py tests/test_entity_workspace.py tests/test_entity_discovery.py tests/test_matter_notebook.py tests/test_notebook_conflicts.py tests/test_reports_bundle.py tests/test_export_readiness.py tests/test_matter_management.py tests/test_matter_continuity_lifecycle.py tests/test_documentation.py --deselect tests/test_reports_bundle.py::test_timestamped_clip_and_transcript_support_survive_bundle",
+    "deselected_node": "tests/test_reports_bundle.py::test_timestamped_clip_and_transcript_support_survive_bundle",
+    "deselection_reason": "Native media failure independently present on exact main; unfiltered focused run failed this node. Hosted Linux must execute it; deselection is not acceptance of the missing media gate."
+  },
+  "native_full_suite": {
+    "baseline": {
+      "passed": 2640,
+      "failed": 125,
+      "skipped": 9
+    },
+    "candidate_checkpoint": {
+      "passed": 2666,
+      "failed": 125,
+      "skipped": 9
+    },
+    "failure_node_sha256": "0a74919c6f0f6e5e1e84d2a7486eca42e3783ed63a941f0a367ed3f66942d30a",
+    "baseline_only": [],
+    "candidate_only": [],
+    "acceptance": "Not passed. Exact failure-node equality is diagnosis only. Candidate full suite preceded final navigation/security regressions; final focused and browser checks cover review corrections. Final-head hosted Linux CI is required."
+  },
+  "browser": {
+    "synthetic": true,
+    "success": true,
+    "checks": [
+      "Four synthetic originals uploaded and searchable with generation unavailable",
+      "Search original passage, attach to entity, and return to the same source-review query",
+      "Keyboard traversal creates an event with typed entity role, raw uncertain date, attribution, and supporting original",
+      "Both attributed accounts open their original passages; support pane and full source return directly to the same assertion and review context",
+      "Reviewer explicitly links the person as subject and the depot as location through labeled role controls",
+      "Reviewer confirms, then disputes and corrects the interpretation without changing either source account",
+      "Unrelated same-name identity and co-mentioned people acquire no event or relationship automatically",
+      "A separate assertion can be corrected and removed from chronology",
+      "Two-browser stale edit preserves all submitted interpretation and date fields beside the saved revision",
+      "390-pixel reflow preserves evidence and correction controls without horizontal page overflow",
+      "Leaving and returning through chronology restores the reviewed disagreement and source support",
+      "Visible export action downloads review status, typed role, uncertain date, history, and both incompatible original accounts"
+    ],
+    "browser": "153.0.8010.36",
+    "scope": "Manual browser workflow without a model. Complete original-source restore, authorization, source changes and purge are covered by test_assertion_workflow.py."
+  },
+  "browser_screenshots": [
+    {
+      "file": "assertion-accounts.png",
+      "sha256": "b68d8fc4303e1bbce48bb22ff32b21987ef50724881dd56ad8dce4ef96499dc4"
+    },
+    {
+      "file": "assertion-chronology.png",
+      "sha256": "bfcd4a044714ab95c7e1032c48bcd99de09a04e7816077b0cc63752555c9f719"
+    },
+    {
+      "file": "assertion-conflict.png",
+      "sha256": "ba07edff6fce8c17eec349113c506ed2e2e2c8db26df9c8769099b63ea01d6a2"
+    },
+    {
+      "file": "assertion-desktop.png",
+      "sha256": "4bc52656a65f49ea9391346436f13f733f863307cb5be1007e4cdeacbbbc65fd"
+    },
+    {
+      "file": "assertion-mobile-recovery.png",
+      "sha256": "3dd8008114c3fb0df23355fb476cade6dc367505799a75eb02ec58337a996409"
+    },
+    {
+      "file": "assertion-mobile.png",
+      "sha256": "c429b837fd7f74098ebf7fd8476ff4d5d109c3a5529da6fc2255c942cd8e3789"
+    }
+  ],
+  "recovery": {
+    "synthetic": true,
+    "baseline": "e9ab89c792b562c2abf27715d15b5f70d3216900",
+    "stopped_preupgrade_backup_files": 8,
+    "stopped_upgraded_backup_files": 8,
+    "complete_runtime_hashes_verified": true,
+    "original_files_and_source_passages_restored": true,
+    "entities_notes_assertions_accounts_roles_history_preserved": true,
+    "restored_assertion_purge_verified": true,
+    "matching_baseline_reader_verified_clean_rollback": true,
+    "integrity": "ok",
+    "scope": "Synthetic application runtime and managed originals; no installed-node or PostgreSQL projection qualification."
+  },
+  "earlier_schema_regressions": "Both slice16 entity-storage and slice17 entity-discovery migration/rollback drills pass.",
+  "transcription": {
+    "passed": 194
+  },
+  "compile": "Passed",
+  "compose": "Standard, Kerberos and dedicated local-account graphs passed.",
+  "publication": "Working-tree sanitizer passed; installed complete outgoing-history guard required before push.",
+  "independent_review": {
+    "resolved": [
+      "Reauthorize HTML after response rendering and exports after serialization.",
+      "Preserve selected evidence through entity search and role corrections.",
+      "Keep removed role selected on conflict; retry cannot silently recreate it.",
+      "Visible safe return from original passage and full source, rejecting malformed and normalized traversal URLs."
+    ],
+    "status": "No unresolved findings in locally reviewed paths; not a substitute for hosted review."
+  },
+  "proves": [
+    "Two incompatible attributed accounts retain original support and a separate human decision.",
+    "Explicit person and place roles connect a reviewer-authored event without merging same-name identities.",
+    "Raw ambiguous date remains unresolved unless reviewer explicitly supplies a valid ordering date.",
+    "Co-mentions and discovery/reconciliation do not infer or rebind event relationships.",
+    "Saved corrections survive leaving, restart, complete clean restore, export and deliberate purge."
+  ],
+  "remaining_gates": [
+    "Prerequisite PR81 main acceptance and successful landing.",
+    "Final implementation-head hosted code review, security review or explicitly verified maintainer quota exception, required CI and maintainer acceptance.",
+    "Rebase/retarget onto verified main and renew gates as required; no deployment authorized."
+  ],
+  "next_scoped_gap": "Proposed slice19 full-text findings to synthesis, subject to cruise promotion; entity-to-Report compilation, background/memory, production import, capacity and held Mac work remain separate."
+}

@@ -2988,6 +2988,10 @@ class CaseIntelligenceWorkbench:
                 support_tokens=self._support_tokens),
         )
 
+    def assertion_service(self, matter):
+        from .assertion_service import AssertionService
+        return AssertionService(self.workspace.assertion_repository(), self.entity_service(matter))
+
     def entity_discovery(self, matter):
         from itertools import groupby
         from .entity_discovery import EntityDiscovery
@@ -5638,6 +5642,12 @@ def _entity_context_href(href: str, origin: str = "") -> str:
     return parsed._replace(query=urlencode(query, doseq=True)).geturl()
 
 
+def _source_review_return_href(slug: str, origin: str = "") -> str:
+    """Expose a direct return only to this matter's local review context."""
+    from .review_navigation import matter_return_path
+    return matter_return_path(slug, origin)
+
+
 def _workspace_citation_href(
     citation: object, matter_slug: str, conversation_id: str = "", *, entity_return_to: str = ""
 ) -> str:
@@ -5768,6 +5778,7 @@ def create_workbench_app(
         product_tagline=PRODUCT_TAGLINE,
         citation_href=_workspace_citation_href,
         entity_context_href=_entity_context_href,
+        source_review_return_href=_source_review_return_href,
     )
     app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
 
@@ -13024,11 +13035,19 @@ def create_workbench_app(
 
     from .entity_routes import install_entity_routes
     install_entity_routes(app, service_for=bench.entity_service, discovery_for=bench.entity_discovery,
+                          assertions_for=bench.assertion_service,
                           authorized_matter=authorized_matter, auth_context=auth_context,
                           require_csrf=require_csrf, templates=templates,
                           base_context=base_context, audit=audit,
                           require_response_lease=require_matter_response_lease,
                           transfer_response_lease=transfer_matter_response_lease)
+
+    from .assertion_routes import install_assertion_routes
+    install_assertion_routes(app, service_for=bench.assertion_service, entities_for=bench.entity_service,
+                             authorized_matter=authorized_matter, auth_context=auth_context,
+                             require_csrf=require_csrf, templates=templates, base_context=base_context,
+                             audit=audit, require_response_lease=require_matter_response_lease,
+                             transfer_response_lease=transfer_matter_response_lease)
 
     @app.get("/matters/{slug}/notebook", response_class=HTMLResponse)
     def matter_notebook(
@@ -14881,6 +14900,12 @@ def create_workbench_app(
                     add_work_product(kind="entity", path=f"entities/{index:03d}-entity.json",
                         artifact=ExportArtifact(body=json.dumps(record, indent=2).encode("utf-8"),
                             media_type="application/json", filename="entity.json"))
+            repository = bench.workspace.assertion_repository(export_read=True, administrator_override=administrator_override)
+            with repository.transaction(matter.matter_id, read_actor_id):
+                for index, record in enumerate(repository.export_records(matter.matter_id), 1):
+                    add_work_product(kind="assertion", path=f"assertions/{index:04d}-assertion.json",
+                        artifact=ExportArtifact(body=json.dumps(record, indent=2).encode("utf-8"),
+                            media_type="application/json", filename="assertion.json"))
             artifact = export_matter_bundle(
                 matter,
                 conversations,

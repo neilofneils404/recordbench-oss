@@ -136,3 +136,12 @@ but cannot resume; malformed locators remain in exports and cannot become links.
 
 [Reusable team groups](TEAM_GROUPS.md) documents explicit matter grants, live
 revocation, provider boundaries, migration 0031 and backup/rollback constraints.
+
+## Source-backed events and assertions
+
+[Events and assertions](EVIDENCE_ASSERTIONS.md) reuse the authorized entity unit
+of work and source mutation guard. Every write checks the displayed record
+revision; role attachment/replacement checks the explicit entity revision.
+Attribution, original support and human review remain separate. Historical
+source or identity snapshots never regain current authority through export or
+reconciliation. Matter purge removes records, roles, accounts and history.

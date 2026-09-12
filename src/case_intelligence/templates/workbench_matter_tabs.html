@@ -18,6 +18,7 @@
   <a class="{% if active == 'entities' %}selected{% endif %}" href="/matters/{{ matter.slug }}/entities"{% if active == 'entities' %} aria-current="page"{% endif %}>
     <span>People, places &amp; things</span>
   </a>
+  <a class="{% if active == 'chronology' %}selected{% endif %}" href="/matters/{{ matter.slug }}/chronology"{% if active == 'chronology' %} aria-current="page"{% endif %}><span>Chronology</span></a>
   <a class="{% if active == 'settings' %}selected{% endif %}" href="/matters/{{ matter.slug }}/settings"{% if active == 'settings' %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8 4 2-1-2-3-2 .5-1.5-1L16 5h-4l-.5 2.5-1.5 1L8 8 6 11l2 1v2l-2 1 2 3 2-.5 1.5 1L12 21h4l.5-2.5 1.5-1 2 .5 2-3-2-1v-2Z"/></svg>
     <span>Settings</span>

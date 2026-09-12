@@ -37,3 +37,10 @@ each assertion resolves to its support, corrections survive reruns, and exports
 retain the disagreements. UI acceptance uses entity detail and chronology;
 visual graph layout is a later slice. Supply schema migration, backup/restore,
 and rollback evidence before release.
+
+## Implementation contract
+
+The manual workflow, source and revision boundaries, exports, limits and
+migration/restore/rollback instructions are recorded in
+[EVIDENCE_ASSERTIONS.md](../EVIDENCE_ASSERTIONS.md). Final-head hosted reviews,
+CI and maintainer acceptance remain distinct from local synthetic verification.

@@ -1,5 +1,8 @@
 # People, places, and things
 
+[Events and assertions](EVIDENCE_ASSERTIONS.md) connects explicit entity roles
+to separately attributed source accounts and human review decisions.
+
 [Entity discovery and reconciliation](ENTITY_DISCOVERY.md) adds the slice-17
 workflow to this manual foundation. The sections below describe slice 16.
 
