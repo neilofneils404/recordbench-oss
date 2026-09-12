@@ -19,10 +19,14 @@ QUOTA_EXCEPTION = re.compile(
     r"RecordBench security quota exception: ([0-9a-f]{40}); request: ([1-9][0-9]*); response: ([1-9][0-9]*)")
 QUOTA_RESPONSE = "You have reached your Codex usage limits for security reviews. Please try again later."
 SECURITY_HELP_LINE = '- Comment "@codex review" or "@codex security review".'
-CODE_ONLY_BOILERPLATE = {
+CODE_ONLY_PREFIX = (
     SUMMARY,
     "## Codex Review Summary",
     "This comment shows the latest Codex review activity on this pull request.",
+    "| Review | Status | Commit | Review trigger |",
+    "| --- | --- | --- | --- |",
+)
+CODE_ONLY_SUFFIX = (
     "<details> <summary>ℹ️ About Codex in GitHub</summary>",
     "<br/>",
     "[Your team has set up Codex to review pull requests in this repo]"
@@ -33,7 +37,11 @@ CODE_ONLY_BOILERPLATE = {
     "Codex reacts with 👀 while any review is running, comments if it has suggestions, "
     "and reacts with 👍 once all reviews finish with no findings.",
     "</details>",
-}
+)
+CODE_ONLY_ROW = re.compile(
+    r'\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* '
+    r'<relative-time datetime="(?P<completed_at>[^"<>]+)">[^<>]+</relative-time> '
+    r'\| `(?P<head_prefix>[0-9a-f]{7,40})` \| [^|\r\n]+ \|')
 
 
 def comment_time(comment: dict) -> datetime:
@@ -77,7 +85,7 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
     # A quota exception is deliberately limited to an absent security review.
     # Recorded running, failed, stale or malformed security state still blocks.
     exception = None
-    rows = [line.strip() for line in body.splitlines() if line.lstrip().startswith("|")]
+    code_match = None
     # The bot's exact help sentence is not a review outcome. Any other mention
     # of security anywhere in the summary is recorded/unknown security state,
     # including prose, headings and HTML outside the table.
@@ -93,32 +101,36 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
         if metadata.get("headSha") != head or metadata.get("status") != "completed":
             return "pending", "Waiting for security review of the current commit"
     else:
-        if any(line.strip() and not line.lstrip().startswith("|")
-               and line.strip() not in CODE_ONLY_BOILERPLATE for line in body.splitlines()):
+        # Require the entire known code-only structure, in order. A subset of
+        # familiar lines could be a truncated summary that lost security state.
+        lines = [line.strip() for line in body.splitlines() if line.strip()]
+        if (len(lines) != len(CODE_ONLY_PREFIX) + 1 + len(CODE_ONLY_SUFFIX)
+                or tuple(lines[:len(CODE_ONLY_PREFIX)]) != CODE_ONLY_PREFIX
+                or tuple(lines[-len(CODE_ONLY_SUFFIX):]) != CODE_ONLY_SUFFIX
+                or (code_match := CODE_ONLY_ROW.fullmatch(lines[len(CODE_ONLY_PREFIX)])) is None):
             return "pending", "Unrecognized review summary; quota exception cannot apply"
-        # Only the known code-only table can mean security review is absent.
-        # New labels/markup must not turn running security state into absence.
-        code_rows = [row for row in rows if re.match(r"\|\s*(?:📝\s*)?\*\*Code Review\*\*\s*\|", row)]
-        if len(code_rows) != 1:
-            return "pending", "Unrecognized review summary; quota exception cannot apply"
-        for row in rows:
-            if (row not in code_rows
-                    and row != "| Review | Status | Commit | Review trigger |"
-                    and not re.fullmatch(r"\|(?:\s*:?-+:?\s*\|)+", row)):
-                return "pending", "Unrecognized review summary; quota exception cannot apply"
         exception = quota_exception(head, comments)
         if exception is None:
             return "pending", "Waiting for security review or a verified maintainer quota exception"
     waived_at, receipt_at = exception if exception else (None, None)
     completed = {}
     for label in (("Code Review",) if waived_at else ("Code Review", "Security Review")):
-        row = next((line for line in body.splitlines() if f"**{label}**" in line), "")
-        time = re.search(r'datetime="([^\"]+)"', row)
-        sha = re.search(r"`([0-9a-f]{7,40})`", row)
-        if "**Completed**" not in row or not time or not sha or not head.startswith(sha.group(1)):
+        if waived_at:
+            time_text = code_match.group("completed_at")
+            sha_text = code_match.group("head_prefix")
+        else:
+            row = next((line for line in body.splitlines() if f"**{label}**" in line), "")
+            time = re.search(r'datetime="([^\"]+)"', row)
+            sha = re.search(r"`([0-9a-f]{7,40})`", row)
+            if "**Completed**" not in row or not time or not sha:
+                return "pending", "Waiting for both reviews on the current commit"
+            time_text, sha_text = time.group(1), sha.group(1)
+        if not head.startswith(sha_text):
             return "pending", "Waiting for both reviews on the current commit"
         try:
-            completed[label] = datetime.fromisoformat(time.group(1).replace("Z", "+00:00"))
+            completed[label] = datetime.fromisoformat(time_text.replace("Z", "+00:00"))
+            if completed[label].tzinfo is None:
+                raise ValueError("Review timestamp requires a timezone")
         except ValueError:
             return "pending", "Review completion time is invalid"
     if waived_at:

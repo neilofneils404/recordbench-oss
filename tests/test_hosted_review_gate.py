@@ -227,8 +227,28 @@ def test_acceptance_timestamp_tie_is_ambiguous():
 
 def quota_comments():
     code_only = summary()
-    code_only["body"] = "\n".join(line for line in code_only["body"].splitlines()
-                                   if "security-review:v1" not in line and "**Security Review**" not in line)
+    # Complete observed bot format, with synthetic commit and timestamps.
+    code_only["body"] = f'''{GATE.SUMMARY}
+
+## Codex Review Summary
+
+This comment shows the latest Codex review activity on this pull request.
+
+| Review | Status | Commit | Review trigger |
+| --- | --- | --- | --- |
+| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-01-01T12:00:00Z">2026-01-01T12:00:00Z</relative-time> | `{HEAD[:7]}` | Manual request |
+
+<details> <summary>ℹ️ About Codex in GitHub</summary>
+<br/>
+
+[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
+- Open a pull request for review
+- Mark a draft as ready
+- Comment "@codex review" or "@codex security review".
+
+Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.
+
+</details>'''
     return [code_only,
         {"id": 101, "body": "@codex security review\n\nRecordBench security review head: " + HEAD,
          "maintainerCanAccept": True, "author_association": "OWNER", "updated_at": "2026-01-01T12:01:00Z"},
@@ -321,7 +341,7 @@ def test_unrecognized_security_state_cannot_be_waived(state):
 
 def test_exact_bot_help_line_is_not_security_state():
     comments = quota_comments()
-    comments[0]["body"] += "\n" + GATE.SECURITY_HELP_LINE
+    assert GATE.SECURITY_HELP_LINE in comments[0]["body"]
     assert evaluate(HEAD, comments, [])[0] == "success"
     comments[0]["body"] += "\n**Security Review**: Failed"
     assert evaluate(HEAD, comments, [])[0] == "pending"
@@ -329,8 +349,45 @@ def test_exact_bot_help_line_is_not_security_state():
 
 def test_known_full_bot_summary_remains_eligible_for_quota_exception():
     comments = quota_comments()
-    comments[0]["body"] += "\n" + "\n".join(sorted(GATE.CODE_ONLY_BOILERPLATE - {GATE.SUMMARY}))
+    comments[0]["body"] = "\n\n".join("  " + line for line in comments[0]["body"].splitlines())
     assert evaluate(HEAD, comments, [])[0] == "success"
+
+
+@pytest.mark.parametrize("index", range(14))
+def test_truncated_code_only_summary_cannot_use_quota_exception(index):
+    comments = quota_comments()
+    lines = [line for line in comments[0]["body"].splitlines() if line.strip()]
+    assert len(lines) == 14
+    del lines[index]
+    comments[0]["body"] = "\n".join(lines)
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+def test_reordered_or_duplicated_known_summary_lines_are_rejected():
+    for index in range(13):
+        comments = quota_comments()
+        lines = [line for line in comments[0]["body"].splitlines() if line.strip()]
+        lines[index], lines[index + 1] = lines[index + 1], lines[index]
+        comments[0]["body"] = "\n".join(lines)
+        assert evaluate(HEAD, comments, [])[0] == "pending"
+    comments = quota_comments()
+    comments[0]["body"] += "\n" + GATE.SECURITY_HELP_LINE
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+def test_malformed_code_row_columns_are_rejected():
+    for replacement in ("", "| Manual request | Extra column "):
+        comments = quota_comments()
+        comments[0]["body"] = comments[0]["body"].replace("| Manual request ", replacement)
+        assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+def test_quota_binds_the_commit_column_not_display_text():
+    comments = quota_comments()
+    comments[0]["body"] = comments[0]["body"].replace(
+        f"| `{HEAD[:7]}` |", "| `bbbbbbb` |").replace(
+        ">2026-01-01T12:00:00Z</relative-time>", f">`{HEAD[:7]}`</relative-time>")
+    assert evaluate(HEAD, comments, [])[0] == "pending"
 
 
 def test_duplicate_or_unrecognized_code_rows_cannot_hide_other_review_state():
