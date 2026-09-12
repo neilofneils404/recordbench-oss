@@ -189,7 +189,7 @@ maintain or admin permission for the request, exception and acceptance authors.
 It requires the official bot identity, exact quota message, matching full head,
 and request-before-response-before-exception timestamps. Editing an old request
 cannot reuse a previous response. Removed evidence or a changed head invalidates
-the exception; a later review request needs a new completion or quota receipt.
+the exception. Any other security request at or after the bound request time needs its own completion or quota receipt, including requests before the referenced response and ambiguous same-second requests.
 
 This path applies only when the latest official review summary has no security
 review row or security metadata. Recorded running, failed, malformed or stale
@@ -207,7 +207,7 @@ remote tag target and active protection, and dispatch from that tag. The workflo
 definition itself is therefore immutable; never dispatch the bootstrap from a
 mutable feature branch. The job verifies the ref is protected and the PR head
 matches the dispatched revision, then runs the immutable gate implementation at
-`967ac36670e3326d0dd1b030410b863e3d1a67f3`, reviewed as part of #71. The same
+`0f1e52ac9018b538ef231a1938308254aaf1fbcb`, reviewed as part of #71. The same
 code-review, quota-evidence, permission, discussion and acceptance checks apply.
 It does not execute the policy PR head with its write token, accept an arbitrary
 checkout input, forge a completed security review or change branch protections.
