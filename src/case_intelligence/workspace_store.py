@@ -9908,6 +9908,7 @@ class WorkspaceStore:
             raise ValueError("research result is too large")
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,)
             ).fetchone()
@@ -9934,6 +9935,19 @@ class WorkspaceStore:
                 raise WorkspaceProblem(
                     "Access to this matter was removed before the investigation result could be saved."
                 )
+            if row["source_set_id"] is not None:
+                try:
+                    scope = self.source_set_document_ids(row["matter_id"], row["source_set_id"])
+                except KeyError as exc:
+                    raise WorkspaceProblem("The selected source set is no longer available.") from exc
+                evidence = result.get("evidence")
+                if not isinstance(evidence, list) or any(
+                    not isinstance(item, Mapping) or item.get("document_id") not in scope
+                    for item in evidence
+                ):
+                    raise WorkspaceProblem(
+                        "A cited source left the selected set before the investigation could be saved."
+                    )
             result_message_id = row["result_message_id"]
             conversation_id = row["conversation_id"]
             if conversation_id is not None and result_message_id is None:

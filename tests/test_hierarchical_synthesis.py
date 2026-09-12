@@ -402,3 +402,24 @@ def test_failed_synthesis_displays_saved_issue_checkpoint_and_spent_budget(chain
     invalid = client.get(f"/matters/{matter.slug}/research?job={job.job_id}")
     assert invalid.status_code == 200 and "checkpoint could not be verified" in invalid.text
     assert "Jupiter" not in invalid.text
+
+
+def test_source_set_removal_after_processing_refuses_final_transaction(chain):
+    from case_intelligence.workspace_store import WorkspaceProblem
+    bench, client, matter, original_job, calls, citations = chain
+    bench.workspace.cancel_research_job(matter.matter_id, matter.owner_id, original_job.job_id)
+    selected = bench.workspace.create_source_set(matter.matter_id, "Synthetic final scope",
+        [item.document_id for item in citations.values()], matter.owner_id)
+    job, _ = bench.workspace.queue_research_job(matter.matter_id, matter.owner_id,
+        original_job.question, "Synthetic final scope", "research-request-" + "e" * 32,
+        source_set_id=selected.source_set_id)
+    claimed = bench.workspace.claim_research_job("synthetic-final-scope-worker")
+    result = bench._process_research_job(claimed, lambda: False)
+    assert result["hierarchical_synthesis"]["matter"]
+    bench.workspace.remove_source_organization(matter.matter_id, citations["first"].document_id)
+    with pytest.raises(WorkspaceProblem, match="left the selected set"):
+        bench._finish_research_job(claimed, result)
+    saved = bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id)
+    assert saved.state == "running"
+    assert saved.result_message_id is None
+    assert not bench.workspace.connection.in_transaction

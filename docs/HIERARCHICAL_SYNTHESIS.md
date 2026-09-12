@@ -146,3 +146,8 @@ email/late-availability coverage cases and the new output regressions.
 Interrupted runs also expose their validated issue/matter checkpoints and charged
 budget on the details page. Unverifiable checkpoint text is hidden with an
 explicit recovery notice rather than rendered as a saved finding.
+
+Final saving also rechecks every cited document against the selected source set
+inside the workspace write transaction. A source removed after processing but
+before completion prevents both the succeeded state and conversation result
+from being committed; unrelated source additions remain coverage disclosures.
