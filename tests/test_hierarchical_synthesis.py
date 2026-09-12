@@ -367,3 +367,38 @@ def test_removing_cited_source_from_selected_set_during_synthesis_refuses_save(c
     saved = bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id)
     assert saved.result["hierarchical_synthesis"]["requests_spent"] == 1
     assert saved.result["hierarchical_synthesis"]["issue"] == []
+
+
+def test_failed_synthesis_displays_saved_issue_checkpoint_and_spent_budget(chain, monkeypatch):
+    bench, client, matter, job, calls, citations = chain
+    original_answer = bench.generator.answer
+    synthesis_calls = []
+    def answer(*args, **kwargs):
+        if kwargs.get("working_context"):
+            synthesis_calls.append(kwargs)
+            if len(synthesis_calls) == 2:
+                raise RuntimeError("Synthetic matter-stage interruption")
+        return original_answer(*args, **kwargs)
+    monkeypatch.setattr(bench.generator, "answer", answer)
+    claimed = bench.workspace.claim_research_job("synthetic-failing-worker")
+    with pytest.raises(RuntimeError, match="matter-stage interruption"):
+        bench._process_research_job(claimed, lambda: False)
+    bench.workspace.fail_research_job(job.job_id, "Synthetic matter-stage interruption")
+    saved = bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id)
+    assert len(saved.result["hierarchical_synthesis"]["issue"]) == 1
+    assert saved.result["hierarchical_synthesis"]["requests_spent"] == 2
+    page = client.get(f"/matters/{matter.slug}/research?job={job.job_id}")
+    assert page.status_code == 200
+    assert "Issue and matter synthesis checkpoints" in page.text
+    assert "Run state: failed. 2 of 32 generation requests charged" in page.text
+    assert "Issue section 1" in page.text
+    assert "Intermediate summaries are not evidence sources" in page.text
+    corrupted = deepcopy(saved.result)
+    corrupted["hierarchical_synthesis"]["issue"][0]["claims"][0]["text"] = "A submarine transported 9999 satellites to Jupiter."
+    import json
+    with bench.workspace.connection:
+        bench.workspace.connection.execute("UPDATE workbench_research_job SET result_json=? WHERE job_id=?",
+            (json.dumps(corrupted), job.job_id))
+    invalid = client.get(f"/matters/{matter.slug}/research?job={job.job_id}")
+    assert invalid.status_code == 200 and "checkpoint could not be verified" in invalid.text
+    assert "Jupiter" not in invalid.text

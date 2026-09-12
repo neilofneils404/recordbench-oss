@@ -143,3 +143,6 @@ media-inspection and transcription providers are controlled fixtures; this is
 output/provenance acceptance, not audio-model qualification.
 The expanded post-review focused suite passed 307 tests, including the existing
 email/late-availability coverage cases and the new output regressions.
+Interrupted runs also expose their validated issue/matter checkpoints and charged
+budget on the details page. Unverifiable checkpoint text is hidden with an
+explicit recovery notice rather than rendered as a saved finding.

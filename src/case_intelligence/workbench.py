@@ -9156,6 +9156,19 @@ def create_workbench_app(
                                        if spent < limits["passes"] + count <= 15
                                        and elapsed < limits["search_seconds"] + count * 180 <= 2700]
                 active = replace(active, result={"budget": active.review_budget})
+        research_synthesis = None
+        research_synthesis_invalid = False
+        if active and active.result.get("hierarchical_synthesis") is not None:
+            from .hierarchical_synthesis import validate_state, completion_receipt
+            try:
+                saved = active.result["hierarchical_synthesis"]
+                ledger, findings = validate_state(saved, active.result.get("passes", []),
+                    active.result.get("evidence", []), final=active.state == "succeeded")
+                if active.state == "succeeded":
+                    validate_research_basis(matter, active)
+                research_synthesis = {**saved, **completion_receipt(saved, findings, ledger)}
+            except (ValueError, KeyError, TypeError, AttributeError, IndexError, ExportProblem):
+                research_synthesis_invalid = True
         return templates.TemplateResponse(
             request=request,
             name="workbench_research.html",
@@ -9167,6 +9180,8 @@ def create_workbench_app(
                 "research_jobs": jobs,
                 "active_research": active,
                 "research_stale": research_stale,
+                "research_synthesis": research_synthesis,
+                "research_synthesis_invalid": research_synthesis_invalid,
                 "rebuild_options": rebuild_options,
                 "notice": notice,
                 "error": error,
