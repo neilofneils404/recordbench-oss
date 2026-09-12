@@ -209,3 +209,8 @@ findings with original support through issue and matter stages. It preserves
 versioned checkpoints, charged requests, omissions, and source validation. Its
 input remains the bounded investigation evidence; full-text review ledgers need
 the separate [proposed adapter](product-slices/19-full-text-synthesis.md).
+
+[Manual entities](ENTITY_WORKSPACE.md) use a narrow entity service and repository
+over the existing authorized SQLite unit of work. Original passage validation
+and final save remain under the source mutation guard; names and aliases never
+merge stable matter-scoped identities.

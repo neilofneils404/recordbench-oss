@@ -1,0 +1,66 @@
+{% extends "workbench_base.html" %}
+{% block title %}{{ entity.display_name if entity else 'People, places & things' }} · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block content %}
+<main class="notebook-main">
+  <header class="notebook-heading"><div><p class="eyebrow">{{ matter.display_name }}</p><h1>{{ entity.display_name if entity else 'People, places & things' }}</h1><p>Keep distinct identities and the original passages that support your review.</p></div></header>
+  {% with active='entities' %}{% include 'workbench_matter_tabs.html' %}{% endwith %}
+  {% include 'workbench_retention_notice.html' %}
+  <p><a href="{{ return_to }}">Return to source review</a>{% if entity %} · <a href="{{ entity_url() }}">All entities</a>{% endif %}</p>
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+  {% if passage %}<section class="notebook-tool-card" aria-label="Selected original passage"><h2>Selected original passage</h2><p>{{ passage.source_name }} · {{ passage.location }}</p><blockquote>{{ passage.excerpt }}</blockquote><p>Choose an existing identity below or create a separate one.</p></section>{% endif %}
+  {% macro hidden(action, row=None) %}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="{{ action }}">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    <input type="hidden" name="q" value="{{ q }}">
+    {% if row %}<input type="hidden" name="entity_id" value="{{ row.entity_id }}"><input type="hidden" name="expected_revision" value="{{ row.revision }}">{% endif %}
+  {% endmacro %}
+  {% if entity %}
+    <p>{{ entity.entity_type|title }} · {{ entity.status|replace('_',' ')|title }} · Revision {{ entity.revision }}<br><small>Identity {{ entity.entity_id }} · {{ 'Imported from case notes; original provenance retained' if entity.origin == 'notebook' else 'Created by a reviewer' }}</small></p>
+    {% if entity.aliases %}<p>Aliases: {{ entity.aliases|join(', ') }}</p>{% endif %}
+    <p>Alias labels do not establish that two people are the same. No identities are automatically merged.</p>
+    {% if passage %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('attach', entity) }}<input type="hidden" name="support" value="{{ support }}"><button class="button button-primary">Attach selected passage to this identity</button></form>{% endif %}
+    <section aria-labelledby="mentions-heading"><h2 id="mentions-heading">Original-source mentions ({{ mentions|length }})</h2>
+      {% for mention in mentions %}<article class="notebook-tool-card" id="{{ mention.mention_id }}"><h3>{{ mention.source_name }} · {{ mention.location }}</h3>
+        <blockquote>{{ mention.excerpt }}</blockquote>
+        <p>{{ 'Attached by a reviewer' if mention.origin == 'manual' else 'Imported notebook support' }} · {{ mention.created_at }}</p>
+        {% if mention.available %}<a class="button button-secondary" href="/matters/{{ matter.slug }}?support={{ mention.support_token }}#support-pane">Open original passage</a>{% else %}<p role="status">Original passage changed or is unavailable. This retained excerpt is historical support; verify a current original before relying on it.</p>{% endif %}
+        <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('remove_mention', entity) }}<input type="hidden" name="mention_id" value="{{ mention.mention_id }}"><button class="button button-secondary">Remove mention</button></form>
+      </article>{% else %}<p>No mentions yet. Open a source passage, choose “Attach to entity”, and select this identity.</p>{% endfor %}
+    </section>
+    <section class="notebook-tool-card"><h2>Case-note commentary</h2>
+      {% if linked_note %}<a href="/matters/{{ matter.slug }}/notebook?edit={{ linked_note.item_id }}#{{ linked_note.item_id }}">{{ linked_note.title }}</a><p>{{ linked_note.body }}</p><p>The original case note remains editable. Later note changes do not overwrite this entity.</p>
+      {% elif entity.notebook_item_id %}<p>The original case note was removed. Its import snapshot remains in this entity's history until the entity or matter is deleted.</p>
+      {% else %}<p>No imported note. <a href="/matters/{{ matter.slug }}/notebook">Open case notes</a> for commentary.</p>{% endif %}
+    </section>
+  {% else %}
+    <section aria-labelledby="entity-list-heading"><h2 id="entity-list-heading">Saved identities</h2>
+      <form method="get" class="notebook-filter-form"><label>Find a name or alias<input type="search" name="q" value="{{ q }}" maxlength="200"></label><input type="hidden" name="support" value="{{ support }}"><input type="hidden" name="return_to" value="{{ return_to }}"><button class="button button-secondary">Search entities</button></form>
+      <p>{{ total }} result{{ '' if total == 1 else 's' }}</p>
+      {% for row in entities %}<article class="notebook-tool-card"><h3><a href="{{ entity_url(row.entity_id) }}">{{ row.display_name }}</a></h3><p>{{ row.entity_type|title }} · {{ row.status|replace('_',' ')|title }}{% if row.aliases %} · {{ row.aliases|join(', ') }}{% endif %}<br><small>Identity {{ row.entity_id }}</small></p>{% if passage %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('attach', row) }}<input type="hidden" name="support" value="{{ support }}"><button class="button button-secondary">Attach passage to {{ row.display_name }}</button></form>{% endif %}</article>
+      {% else %}<p>{{ 'No names or aliases match this search.' if q else 'No entities yet. Create a person, place, or thing below. Same-name people remain separate identities.' }}</p>{% endfor %}
+      <nav aria-label="Entity pages">{% if page > 1 %}<a href="{{ entity_url(target_page=page-1) }}">Previous page</a>{% endif %} {% if page * 50 < total %}<a href="{{ entity_url(target_page=page+1) }}">Next page</a>{% endif %}</nav>
+    </section>
+  {% endif %}
+  <section class="notebook-tool-card" aria-labelledby="entity-form-heading">
+    <h2 id="entity-form-heading">{{ 'Review your unsaved changes' if draft else ('Edit identity' if entity else 'Create a separate identity') }}</h2>
+    {% if draft %}<p>Your submitted text is below. Compare it with the saved identity above before saving. Saving now uses the current revision.</p>{% endif %}
+    {% set form = draft if draft and draft.action in ('create','update') else entity %}
+    <form class="notebook-item-form" method="post" action="/matters/{{ matter.slug }}/entities/actions">
+      {{ hidden('update' if entity else 'create', entity) }}
+      {% if not entity and passage %}<input type="hidden" name="support" value="{{ support }}">{% endif %}
+      <label>Display name<input name="display_name" maxlength="160" value="{{ form.display_name if form else '' }}" required></label>
+      <label>Type<select name="entity_type">{% for value in entity_types %}<option value="{{ value }}"{% if form and form.entity_type == value %} selected{% endif %}>{{ value|title }}</option>{% endfor %}</select></label>
+      <label>Review status<select name="status">{% for value in entity_statuses %}<option value="{{ value }}"{% if (form and form.status == value) or (not form and value == 'needs_review') %} selected{% endif %}>{{ value|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+      <label>Aliases (one per line)<textarea name="aliases" maxlength="5000" rows="3">{{ form.aliases if draft and form == draft else (form.aliases|join('\n') if form else '') }}</textarea></label>
+      <p>Use aliases as review labels. They never merge identities.</p>
+      <button class="button button-primary"{% if support and not passage and not entity %} disabled{% endif %}>{{ 'Save changes' if entity else ('Create identity and attach passage' if passage else 'Create identity') }}</button>
+    </form>
+  </section>
+  {% if entity %}
+    <details class="notebook-tool-card"><summary>Correction history ({{ history|length }})</summary>{% for entry in history %}<article><h3>Revision {{ entry.revision }} · {{ entry.action }}</h3><p>{{ entry.created_at }}</p><p>{{ entry.snapshot.display_name }} · {{ entry.snapshot.entity_type|title }} · {{ entry.snapshot.status|replace('_',' ')|title }}</p>{% if entry.snapshot.aliases %}<p>Aliases: {{ entry.snapshot.aliases|join(', ') }}</p>{% endif %}{% for prior in entry.snapshot.mentions %}<p>{{ prior.source_name }} · {{ prior.location }}</p><blockquote>{{ prior.excerpt }}</blockquote>{% endfor %}{% if entry.snapshot.notebook_snapshot %}<p>Imported note: {{ entry.snapshot.notebook_snapshot.title }} ({{ entry.snapshot.notebook_snapshot.origin }})</p><p>{{ entry.snapshot.notebook_snapshot.body }}</p>{% endif %}</article>{% endfor %}</details>
+    <p><a href="/matters/{{ matter.slug }}/entities/{{ entity.entity_id }}/export">Export identity, mentions, and history (JSON)</a></p>
+    <details class="notebook-tool-card"><summary>Delete this entity</summary><p>This removes this identity, its mentions, and correction history. Original sources and case notes remain.</p><form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('delete', entity) }}<button class="button button-secondary">Delete entity and its history</button></form></details>
+  {% endif %}
+</main>
+{% endblock %}

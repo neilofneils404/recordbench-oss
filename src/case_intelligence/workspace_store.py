@@ -1046,6 +1046,7 @@ class WorkspaceStore:
             "migrations/sqlite/0029_report_compilation_basis.sql",
             "migrations/sqlite/0030_full_text_review_limits.sql",
             "migrations/sqlite/0031_team_groups.sql",
+            "migrations/sqlite/0032_entity_workspace.sql",
         ):
             migration = resources.files("case_intelligence").joinpath(name).read_text(encoding="utf-8")
             self.connection.executescript(migration)
@@ -3069,6 +3070,13 @@ class WorkspaceStore:
             raise KeyError(purge_id)
         return self.matter_lifecycle(matter_id)
 
+    def entity_repository(self, *, export_read=False, administrator_override=False):
+        from .entity_repository import EntityRepository
+        authority = (lambda matter_id, actor_id: self._authorize_export_read(
+            matter_id, actor_id, administrator_override=administrator_override)) if export_read else self.membership
+        return EntityRepository(connection=self.connection, lock=self._lock,
+                                authorize=authority, now=self._now)
+
     def complete_matter_purge(
         self, matter_id: str, purge_id: str
     ) -> MatterLifecycleRecord:
@@ -3110,6 +3118,9 @@ class WorkspaceStore:
             )
             self.connection.execute(
                 "DELETE FROM workbench_analysis_run WHERE matter_id=?", (matter_id,)
+            )
+            self.connection.execute(
+                "DELETE FROM workbench_entity WHERE matter_id=?", (matter_id,)
             )
             self.connection.execute(
                 "DELETE FROM workbench_notebook_item WHERE matter_id=?", (matter_id,)

@@ -2972,6 +2972,16 @@ class CaseIntelligenceWorkbench:
             bool(autoplay),
         )
 
+    def entity_service(self, matter):
+        from .entity_service import EntityService
+        return EntityService(
+            self.workspace.entity_repository(),
+            source_guard=self.source_store(matter).mutation_guard,
+            resolve_support=lambda token: self.notebook_reference_from_support(matter, token),
+            load_note=self.workspace.notebook_item,
+            load_references=self.workspace.notebook_references,
+        )
+
     def notebook_reference_from_support(
         self, matter: MatterRecord, token: str
     ) -> dict[str, object]:
@@ -11739,6 +11749,10 @@ def create_workbench_app(
                 **base_context(request, matter),
                 "matter": matter,
                 "source": source,
+                "entity_support_token": (
+                    bench._citation(matter, bench._candidate(matter, source.document, source.unit, source.unit_index)).support_token
+                    if source.unit and source.document.state == "ready" else ""
+                ),
                 "email_coverage_notice": (
                     str(_source_coverage(bench.workspace.matter_readiness(matter.matter_id))["notice"])
                     if source.document.media_type in EMAIL_MEDIA_TYPES else ""
@@ -12960,6 +12974,14 @@ def create_workbench_app(
             ),
             status_code=303,
         )
+
+    from .entity_routes import install_entity_routes
+    install_entity_routes(app, service_for=bench.entity_service,
+                          authorized_matter=authorized_matter, auth_context=auth_context,
+                          require_csrf=require_csrf, templates=templates,
+                          base_context=base_context, audit=audit,
+                          require_response_lease=require_matter_response_lease,
+                          transfer_response_lease=transfer_matter_response_lease)
 
     @app.get("/matters/{slug}/notebook", response_class=HTMLResponse)
     def matter_notebook(
@@ -14803,6 +14825,12 @@ def create_workbench_app(
                 for format_name in ("markdown", "csv", "json"):
                     receipt_artifact = export_intake_receipt(receipt, format_name)
                     add_work_product(kind="intake_receipt", path=f"intake/{index:03d}-{receipt_artifact.filename}", artifact=receipt_artifact)
+            repository = bench.workspace.entity_repository(export_read=True, administrator_override=administrator_override)
+            with repository.transaction(matter.matter_id, read_actor_id):
+                for index, record in enumerate(repository.export_records(matter.matter_id), 1):
+                    add_work_product(kind="entity", path=f"entities/{index:03d}-entity.json",
+                        artifact=ExportArtifact(body=json.dumps(record, indent=2).encode("utf-8"),
+                            media_type="application/json", filename="entity.json"))
             artifact = export_matter_bundle(
                 matter,
                 conversations,

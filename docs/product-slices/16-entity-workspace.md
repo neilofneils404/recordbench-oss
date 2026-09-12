@@ -1,6 +1,8 @@
 # 16: Make People, Places, and Things a first-class workspace
 
-Status: proposed. Product UI follows 12 so discovery has a deeper review basis.
+Status: implementation under review. See [entity workspace](../ENTITY_WORKSPACE.md)
+for the manual workflow, storage contract, recovery commands and limits.
+The cruise remains Next until this implementation lands.
 
 ## Finding and outcome
 

@@ -37,7 +37,7 @@
       <ul>
         <li>uploaded processing copies and extracted/OCR text;</li>
         <li>searchable copies and derived search data;</li>
-        <li>saved conversations, answers, investigations, every-source decisions, matter notebook items, processing records, source inventory, and case-team access.</li>
+        <li>saved conversations, answers, investigations, every-source decisions, matter notebook items, entities and their mentions/correction history, processing records, source inventory, and case-team access.</li>
       </ul>
       <p>Original files outside this workbench are never deleted. A content-free closure receipt and the append-only security audit remain.</p>
     </section>
@@ -49,7 +49,7 @@
         {% if lifecycle.state == 'purge_failed' %}
         <p>Download the work product that remains after the interrupted cleanup before trying deletion again. Original source files are not included.</p>
         {% else %}
-        <p>Download the matter report, every saved conversation, the matter notebook, and portable JSON before closing. Original source files are not included.</p>
+        <p>Download the matter report, every saved conversation, the matter notebook, entities with mention/correction history, and portable JSON before closing. Original source files are not included.</p>
         {% endif %}
       </div>
       <div class="report-export-actions"><a class="button button-secondary" href="/matters/{{ matter.slug }}/export-readiness">Check export</a><a class="button button-secondary" href="/matters/{{ matter.slug }}/export" data-download>Download final bundle</a></div>

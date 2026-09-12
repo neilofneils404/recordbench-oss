@@ -64,6 +64,7 @@
       </nav>
     </header>
     {% if source.unit %}
+    {% if entity_support_token %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/entities?support={{ entity_support_token }}&amp;return_to={{ (request.url.path ~ '?' ~ request.url.query)|urlencode }}">Attach passage to entity</a>{% endif %}
     <pre>{{ source.unit.text }}</pre>
     {% else %}
     <div class="reader-empty">

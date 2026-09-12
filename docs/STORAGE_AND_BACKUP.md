@@ -233,3 +233,10 @@ an earlier snapshot before opening access.
 
 [Reusable team groups](TEAM_GROUPS.md) documents explicit matter grants, live
 revocation, provider boundaries, migration 0031 and backup/rollback constraints.
+
+## Matter entities
+
+[Entity workspace](ENTITY_WORKSPACE.md) documents additive migration 0032,
+entity/mention/history retention, final-bundle preservation and clean restore.
+Rollback requires the pre-upgrade backup and matching old reader; old purge
+code must not operate on upgraded entity state.

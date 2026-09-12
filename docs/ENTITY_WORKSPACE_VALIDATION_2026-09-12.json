@@ -1,0 +1,61 @@
+{
+  "date": "2026-09-12",
+  "synthetic": true,
+  "scope": "Slice 16 manual matter entity workspace; local contributor validation, not deployment or confidential-casework readiness",
+  "baseline": "e11ab25ccbbde7e864914b3bb7ba56603792b8b4",
+  "focused_entity_tests": {
+    "passed": 9
+  },
+  "related_entity_notebook_branding_backup_checks": {
+    "passed": 68,
+    "skipped": 1,
+    "note": "Optional integration prerequisite absent; additional protected-HTTP regression passed separately."
+  },
+  "full_application": {
+    "passed": 2606,
+    "failed": 125,
+    "skipped": 9,
+    "test_storage_reserve_gib": 0,
+    "baseline_replay": {
+      "failed": 125,
+      "failing_node_sets_equal": true
+    },
+    "acceptance": "Not passed. Baseline comparison is diagnostic only; hosted Linux gates required."
+  },
+  "browser": {
+    "synthetic": true,
+    "success": true,
+    "checks": [
+      "Two synthetic originals uploaded and searchable without a model",
+      "Visible empty state and keyboard creation of a person with an alias",
+      "Two exact source passages attached to one identity and both reopened from its detail page",
+      "Another same-name person remains distinct, with no automatic alias merge",
+      "Shared-edit conflict preserves the submitted name and aliases alongside the current saved identity",
+      "390-pixel reflow without horizontal page overflow",
+      "Return link retains the source-review search context"
+    ],
+    "browser": "152.0.7977.83"
+  },
+  "control_store_restore": {
+    "synthetic": true,
+    "baseline": "e11ab25ccbbde7e864914b3bb7ba56603792b8b4",
+    "upgrade_preserved_notes": true,
+    "clean_restore_preserved_entity_mentions_alias_history": true,
+    "baseline_reader_verified_clean_rollback": true,
+    "integrity": "ok",
+    "scope": "SQLite control store only; original-source restoration is exercised separately."
+  },
+  "complete_runtime_restore": "Stopped synthetic app, copied backup into absent clean target, resolved original passage through restored app, checked entity bundle and purge in HTTP regression.",
+  "compilation": "passed",
+  "compose": "standard, Kerberos and dedicated local-account graphs passed",
+  "limitations": [
+    "No extraction or relationships",
+    "Existing passage-unit support and 6000-character excerpt limit",
+    "No automatic identity merging",
+    "No automatic Report compilation of entities",
+    "No operator installation, confidential-casework or downstream adoption acceptance"
+  ],
+  "transcription": {
+    "passed": 194
+  }
+}

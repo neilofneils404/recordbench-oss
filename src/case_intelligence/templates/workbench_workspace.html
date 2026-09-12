@@ -546,6 +546,7 @@
     </header>
     <div class="support-toolbar">
       {% if support.previous_href %}<a class="icon-button" href="{{ support.previous_href }}" aria-label="Previous section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></a>{% else %}<span class="icon-button disabled"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></span>{% endif %}
+      <a href="/matters/{{ matter.slug }}/entities?support={{ support.support_token }}&amp;return_to={{ (request.url.path ~ '?' ~ request.url.query ~ '#support-pane')|urlencode }}">Attach to entity</a>
       <span class="support-position">{{ support.location }}</span>
       <form method="post" action="/matters/{{ matter.slug }}/notebook/from-support/{{ support.support_token }}" data-working-form data-working-label="Saving…">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
