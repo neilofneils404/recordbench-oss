@@ -46,11 +46,15 @@ advertisement does not replace acceptance of the selected model/runtime pair.
 6. Keep behavior changes and mechanical movement separately reviewable. No
    arbitrary file-size target justifies a risky rewrite during feature delivery.
 
-For slice 16, a small entity service and repository should own entity/mention
-operations, with explicit actor/matter authority and shared transaction scope.
-Routes should not acquire another large block of entity persistence SQL. The
-full-text synthesis adapter should reuse `hierarchical_synthesis.py` through a
-validated input contract; it should not copy the synthesis engine.
+Slices 16 and 17 now use `entity_service.py`, `entity_repository.py` and
+`entity_discovery.py` / `entity_extractor.py` for entity/mention operations,
+discovery and reconciliation,
+with explicit actor/matter authority and shared transaction scope. Slice 18
+should extend these boundaries without moving persistence SQL into routes.
+The proposed full-text synthesis adapter should reuse `hierarchical_synthesis.py`
+through a validated input contract; it should not copy the synthesis engine.
+Source roles, unified matter memory and production relationship preservation in
+the boundary table are intended contracts, not claims of implemented workflows.
 
 ## Evidence that modularity helped
 

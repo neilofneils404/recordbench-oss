@@ -43,9 +43,15 @@ on `main`; PostgreSQL search-job acceptance remains pending. Slice **08** has
 the exact-result service on `main`; real PostgreSQL indexed acceptance remains
 pending. Slice **09** has proximity on `main`; wildcards and field filters
 remain. Hierarchy (**13**) landed in [#73](https://github.com/neilofneils404/recordbench-oss/pull/73).
-The entity workspace slices (**16–18**) remain proposed. The cruise selects
-active work, including sequencing of remaining 00/08 acceptance and 09 operators. The report's People/Places/Things format does not claim to
-implement the persistent entity workspace or identity resolution.
+This dated snapshot predates entity delivery. On freshly verified `main` at
+`e9ab89c792b562c2abf27715d15b5f70d3216900`, **16** and **17** are also landed
+([#77](https://github.com/neilofneils404/recordbench-oss/pull/77),
+[#79](https://github.com/neilofneils404/recordbench-oss/pull/79)); see the
+[cruise receipt](../EXIT_ALPHA_CRUISE.md#current-upstream-receipt) for acceptance
+status. The cruise selects active work and later 00/08 acceptance and 09
+operators. The report's People/Places/Things format remains separate from the
+persistent entity workspace; entity records do not yet feed automatic Report
+compilation.
 
 Implementation PR inventory recorded September 8 (historical status; see
 [the September 9 selection](../SELECTED_ACCEPTANCE_2026-09-09.md) and live PR state):
@@ -120,8 +126,12 @@ observations, reproduction examples, and the limits of those checks.
 * Reports preserve review basis and can compile saved work into drafts.
   Hierarchical cited synthesis landed as slice 13; its versioned checkpoints
   and model-evaluation limits are documented in [HIERARCHICAL_SYNTHESIS.md](../HIERARCHICAL_SYNTHESIS.md).
-* People/place/date candidates exist, but the persistent entity workspace
-  (16–18) is still proposed.
+* Manual entities and supported mentions (16), incremental rule-based discovery
+  and reviewer reconciliation (17) are landed. Recognized occurrences are retained;
+  complete mention recall is not established. Relationships/events (18) remain
+  unimplemented; the cruise selects their narrow scope. Full-text findings still
+  do not feed the hierarchy; background/memory, production import fidelity and
+  larger-scale qualification remain separate gaps.
 
 ## Proposed extension
 

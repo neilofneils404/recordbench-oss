@@ -18,7 +18,7 @@ reviewable changes. No access to a private deployment is needed.
 
 | Area | Useful first contribution | Acceptance direction |
 | --- | --- | --- |
-| Browser CI | Run existing loose-file and Report-bundle journeys on hosted runners | Synthetic-only; assertion failures fail CI; bounded startup and cleanup |
+| Browser CI | Maintain the hosted synthetic intake and Report-bundle journeys; extend scoped coverage | Synthetic-only; assertion failures fail CI; bounded startup and cleanup |
 | Database CI | Maintain the `postgres-integration` Quality gates job and extend synthetic coverage | Existing database tests must pass without skips; slices 00/08 exact-search PostgreSQL acceptance remains pending |
 | Accessibility | Audit one Sources or Reports workflow for keyboard use and reflow | Reproducible before/after browser evidence; no global redesign |
 | Installation docs | Try the CPU evaluation profile from the public playbook | Record generic prerequisites, confusing steps, and recovery without real logs |

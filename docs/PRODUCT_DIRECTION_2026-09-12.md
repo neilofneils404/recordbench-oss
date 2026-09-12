@@ -14,7 +14,36 @@ hierarchical synthesis, reports, and team access already exist. The main product
 gap is connecting these into a coherent matter workspace with persistent
 knowledge and genuinely scalable collection review.
 
-## Current position
+## Current-state addendum: after slices 16 and 17
+
+This addendum supersedes execution and entity-gap claims below, while preserving
+the original assessment at its named revision. Upstream `main` was freshly read
+at `e9ab89c792b562c2abf27715d15b5f70d3216900`. The
+[cruise landing receipt](EXIT_ALPHA_CRUISE.md#current-upstream-receipt) records
+exact merged heads and distinguishes final PR CI, post-merge CI, hosted review,
+security-quota exceptions and local synthetic evidence.
+
+Slices 16 and 17 landed in [#77](https://github.com/neilofneils404/recordbench-oss/pull/77)
+and [#79](https://github.com/neilofneils404/recordbench-oss/pull/79).
+The [manual entity workspace](ENTITY_WORKSPACE.md) retains distinct identities,
+aliases, supported mentions and reviewer history. [Rule-based discovery](ENTITY_DISCOVERY.md)
+visits sealed full-text inventories and retains recognized occurrences; reviewers
+can reconcile candidates and undo decisions under revision checks. Visited-unit
+coverage is not complete mention recall. Unlabeled single-token names, contextual
+aliases, scripts without capitalization, OCR variation and unusual organizations
+remain limited; positive synthetic fixtures do not qualify real-case accuracy.
+
+The binding cruise now selects narrow slice 18 relationships/events, whose
+implementation and acceptance remain outstanding. Full-text findings do not yet
+feed hierarchical synthesis; slice 19 is proposed. Entity work does not yet feed
+automatic Report compilation; existing People/Places/Things report formatting is
+a separate workflow. Background material, inspectable matter memory, production
+import fidelity, PostgreSQL exact-search parity and large-scale qualification
+remain gaps. Existing holds and supported-release requirements remain in force.
+This documentation readback is not a fresh browser audit, model evaluation,
+deployment or confidential-casework validation.
+
+## Original position at the assessed revision
 
 | Need | Evidence in this revision | Remaining gap |
 | --- | --- | --- |
@@ -28,7 +57,7 @@ knowledge and genuinely scalable collection review.
 | Hardware and model choice | [Model portfolio](MODELS.md) and [installation](INSTALL.md) provide pinned candidates, GPU placement, preflight, storage selection, staging, and resumable setup. | Universal model/runtime installation and datacenter scaling are goals. The hierarchy's small native-model receipt uses evaluation settings that do not qualify default application requests or other topologies. |
 | Maintainable core | Focused modules already exist for exact search, full-text review, hierarchy, reports, accounts, and provenance. | `workbench.py` is 15,215 lines and `workspace_store.py` is 11,311 at this revision. Coordination and persistence remain concentrated; module extraction needs preserved transaction and authorization boundaries. |
 
-## Reconcile the execution documents
+## Original execution reconciliation (superseded by addendum)
 
 [PR #74](https://github.com/neilofneils404/recordbench-oss/pull/74) merged on
 September 12 at the assessed revision. Its landing receipt marks 13 Done and
@@ -41,7 +70,7 @@ dated evidence. Current behavior belongs in feature contracts, execution state
 in the cruise, product intent in the north star, and production qualification in
 release readiness. Updating one should trigger a check of linked claims.
 
-## Proposed delivery sequence
+## Original proposed delivery sequence (read with addendum)
 
 This is a proposed sequence for maintainer planning, not a second binding queue.
 Before implementing a new step, name its narrow scope in the cruise, inspect

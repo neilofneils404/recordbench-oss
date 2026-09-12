@@ -1,11 +1,15 @@
 # 17: Improve entity discovery and reviewer-controlled reconciliation
 
-Status: active. Slice 16 landed in #77. Storage/behavior contract: #78.
+Status: Done. [PR #79](https://github.com/neilofneils404/recordbench-oss/pull/79)
+landed at `e9ab89c792b562c2abf27715d15b5f70d3216900` on September 12.
+Slice 16 landed in #77. Storage/behavior contract: #78. See the
+[cruise receipt](../EXIT_ALPHA_CRUISE.md#current-upstream-receipt) for exact-head
+CI/review, the security-quota exception and local synthetic evidence.
 
 ## Finding and outcome
 
-Current patterns look for titled people, capitalized places after selected
-prepositions, and a limited set of date formats. Notebook suggestions stop at
+The pre-17 notebook patterns look for titled people, capitalized places after
+selected prepositions, and a limited set of date formats. Notebook suggestions stop at
 75 new items by default or 2,500 scanned units. They do not provide broad
 people/organization/object discovery or a complete set of mentions.
 
@@ -39,5 +43,7 @@ undo. Persistence changes need migration and clean-restore evidence.
 
 See [entity discovery](../ENTITY_DISCOVERY.md) for the implemented processing,
 reviewer decisions, deterministic recognition limits and recovery contract.
-This slice remains active until its ready PR passes final-head hosted review
-and a separate maintainer decision lands it.
+The brief above preserves the intended acceptance scope. The landed extractor
+is deterministic with limited recall, not general multilingual NER. Visited-unit
+coverage and bounded positive fixtures do not prove that every mention was found.
+Entity records do not yet feed automatic Report compilation.

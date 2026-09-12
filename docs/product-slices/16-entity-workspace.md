@@ -4,7 +4,8 @@ Status: Done. [PR #77](https://github.com/neilofneils404/recordbench-oss/pull/77
 landed by protected fast-forward at
 `3f96b290ca71adbaef37b92e2d9f4d01cf7d226f`; contract #76 is closed.
 See [entity workspace](../ENTITY_WORKSPACE.md) and its dated validation receipt
-for actual behavior and limits. Slice 17 is active; 18 remains queued separately.
+for actual behavior and limits. Slice 17 has also landed; consult the
+[cruise](../EXIT_ALPHA_CRUISE.md) for the active step and acceptance evidence.
 
 ## Finding and outcome
 

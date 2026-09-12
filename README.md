@@ -79,6 +79,15 @@ pending uploads for that selection. See
 New confirmed uploads retain separate [source occurrences](docs/UPLOAD_OCCURRENCES.md)
 when another selection uses the same path or bytes; retries keep the original source.
 
+The [People, places & things workspace](docs/ENTITY_WORKSPACE.md) keeps distinct
+matter identities, aliases, original supported mentions and reviewer history.
+[Entity discovery](docs/ENTITY_DISCOVERY.md) incrementally visits inventoried
+text-review units and proposes occurrences for reviewer reconciliation. Its
+rule-based recognizer has limited recall; processing a unit does not establish
+that every name was found. Relationships/events are still outstanding, and
+entity records do not yet feed automatic Report compilation. Full-text findings
+also do not yet feed [hierarchical investigation synthesis](docs/HIERARCHICAL_SYNTHESIS.md).
+
 Sources also offers [folder navigation](docs/SOURCE_FOLDER_NAVIGATION.md), with
 child-folder counts, parent navigation and the existing collection, source-set
 and review filters. Folder browsing preserves source identities and originals.

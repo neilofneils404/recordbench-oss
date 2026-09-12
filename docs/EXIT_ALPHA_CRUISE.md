@@ -21,6 +21,42 @@ claims of current capability or permission to bypass this queue.
 
 **Last updated:** 2026-09-12
 
+## Current upstream receipt
+
+Verified `main` snapshot after slice 17:
+`e9ab89c792b562c2abf27715d15b5f70d3216900`, the exact merged head of
+[PR #79](https://github.com/neilofneils404/recordbench-oss/pull/79), merged
+2026-09-12 at 18:52:19 UTC. Its prerequisites are merged at their reviewed heads:
+13 ([#73](https://github.com/neilofneils404/recordbench-oss/pull/73),
+`c1ada89bf15ea8f61906de3c62202da4d98e279f`) and 16
+([#77](https://github.com/neilofneils404/recordbench-oss/pull/77),
+`3f96b290ca71adbaef37b92e2d9f4d01cf7d226f`). PostgreSQL CI
+([#70](https://github.com/neilofneils404/recordbench-oss/pull/70),
+`4dea52ce42eeb01ac1cab188a99f7fc44b571ab9`) is also merged; it does not
+complete slices 00/08 exact-search acceptance.
+
+Slice 17's [final PR Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34711746368)
+passed on the exact head: application 2,765 passed, nine skipped; all jobs green.
+Final-head hosted code review completed with no major issues after prior findings
+were corrected and reconciled. Security review did **not** run: the
+[verified quota exception](https://github.com/neilofneils404/recordbench-oss/pull/79#issuecomment-5647929760)
+preceded separate full-head maintainer acceptance and native gate approval.
+The separate [post-merge Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34712490352)
+completed successfully at 19:05:20 UTC on the exact landed commit: application
+2,765 passed, nine skipped; PostgreSQL seven passed, zero skipped; all jobs green.
+This is independent of the final PR run. This verifies the prerequisites for the narrow slice-18 promotion below.
+
+The [dated slice-17 receipt](ENTITY_DISCOVERY_VALIDATION_2026-09-12.json)
+retains local synthetic browser, migration/rollback and restored-original-source
+evidence, including baseline-equal local failures. Those failures are diagnostic;
+the later hosted pass is separate acceptance evidence. The receipt's pending
+final-head review wording describes its preparation time and is superseded by
+this landing receipt. None of this establishes a supported release, deployment,
+learned-model quality or confidential-casework readiness.
+
+## Historical pre-17 receipt (superseded snapshot)
+
+The following receipt remains evidence for slice 16, not the current tip.
 Verified `main` snapshot before slice 17:
 `3f96b290ca71adbaef37b92e2d9f4d01cf7d226f`, the protected fast-forward of
 [slice 16 PR #77](https://github.com/neilofneils404/recordbench-oss/pull/77).
@@ -45,8 +81,8 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 4 | Slice **12** — deepen full-text coverage as required to feed durable findings | Done |
 | 5 | Slice **13** — hierarchical synthesis (issue- then matter-level) with citations through intermediates | Done |
 | 6 | Slice **16** — manual People / Places / Things workspace | Done (#77) |
-| 7 | Slice **17** — entity discovery and reviewer reconciliation | **Next — active** |
-| 8 | Slice **18** — evidence-backed relationships and events | Queued separately |
+| 7 | Slice **17** — entity discovery and reviewer reconciliation | Done (#79) |
+| 8 | Slice **18** — evidence-backed relationships and events | **Next — narrow implementation** |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 Slice **12** needed no further product PR. **Review all extracted text** is
@@ -71,15 +107,31 @@ The final PR application suite passed 2,723 tests (nine skipped), with hosted co
 review, a verified maintainer security-quota exception, acceptance and protected
 fast-forward of the exact no-reply head.
 
-## Active implementation: slice 17
+## Landed slice 17 and its limits
 
-Implement [17: entity discovery and reconciliation](product-slices/17-entity-extraction.md)
-on the landed manual entity service and repository. The storage/behavior
-contract is [#78](https://github.com/neilofneils404/recordbench-oss/issues/78).
-Preserve supported mentions, source versions, reviewer decisions and undo.
-Matching proposes candidates only; shared names and speaker clusters never
-establish identity. Slice 18 remains separately queued. Recovery, accessibility,
-source access and final-head hosted review remain mandatory.
+[Entity discovery](ENTITY_DISCOVERY.md) consumes sealed slice-12 unit inventories,
+retains each recognized occurrence, and offers reviewer-confirmed alias links,
+merge/split and guarded undo. Coverage records visited units, not complete name
+recall. Its rule-based extractor has limited recall and can misclassify prose;
+no learned NER quality or automatic identity resolution is claimed. Entity work
+is exported separately and does not yet feed automatic Report compilation.
+Full-text findings still do not feed hierarchical synthesis; proposed slice 19
+remains unscheduled.
+
+## Active implementation: slice 18
+
+Implement one focused [18: evidence-backed relationships and events](product-slices/18-evidence-backed-relationships.md)
+workflow on the landed hierarchy and entity records: typed entity roles,
+date/uncertainty, supporting and competing passages, and explicit reviewer
+status/corrections. Verify entity detail and chronology before a graph view.
+Shared names, co-mentions and speaker clusters never establish identity or a
+real-world relationship. The scoped storage/provenance/recovery contract is
+[#80](https://github.com/neilofneils404/recordbench-oss/issues/80); preserve its
+manual workflow and identity snapshots. Require synthetic regression, migration,
+backup/clean restore and rollback, authorization, accessibility, original support
+and final-head hosted review.
+This promotion authorizes the narrow next implementation, not its acceptance,
+automatic Report integration, background/memory work or a release.
 
 Every subsequent slice must state its reviewer outcome, actual processed scope,
 original support, human/machine distinctions, and recovery path. Manual review

@@ -48,6 +48,10 @@ basis under the same revision check. Word and Markdown exports retain that basis
 human edits, gaps, and source support. Blank documents remain available as an
 explicit secondary option.
 
+Persistent entity identities, mentions and reconciliation history from slices
+16/17 are not yet inputs to automatic Report compilation. The People/Places/Things
+report format remains separate from that entity workspace.
+
 The default selection is saved review work, not every source in a matter. Work
 that changed while compiling causes a visible failure before any report is saved.
 Stale or unresolved source support also fails explicitly. Full canonical source

@@ -6,14 +6,20 @@ bounded synthetic observations from that checkout, not a deployed-system audit
 or a fresh-host installation qualification. Source locations and the validation
 section below refer to that revision unless a later note says otherwise.
 
-Live implementation status as of September 12, 2026 against the verified `main` snapshot
+The earlier September 12 implementation-status note against the verified `main` snapshot
 `c1ada89bf15ea8f61906de3c62202da4d98e279f` lives in the
 [exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) and [slice index](README.md); it is
 not a re-run of the September 8 inspection. Since that checkout, reusable team
 groups (**06**), evidence-driven investigation (**11**), and full-text review
 (**12**) exist; hierarchical synthesis (**13**) landed in
 [#73](https://github.com/neilofneils404/recordbench-oss/pull/73).
-Slices **16 → 18** are Next.
+That slice-13 snapshot and sequence are superseded by the
+[September 12 current-state addendum](../PRODUCT_DIRECTION_2026-09-12.md#current-state-addendum-after-slices-16-and-17)
+and cruise receipt: **16** and **17** are landed at the freshly verified
+`e9ab89c792b562c2abf27715d15b5f70d3216900` tip. The cruise selects active work.
+The entity observations below remain historical findings, not current absence
+claims; rule-based discovery still has limited recall and relationships/events
+remain outstanding.
 
 ## Installation and onboarding
 
