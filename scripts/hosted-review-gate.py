@@ -14,6 +14,41 @@ SUMMARY = "<!-- codex-pull-request-review-summary -->"
 CONTEXT = "hosted-review-gate"
 APPROVAL_PREFIX = "RecordBench hosted review gate:"
 ACCEPTANCE = re.compile(r"RecordBench maintainer acceptance: ([0-9a-f]{40})")
+QUOTA_REQUEST = re.compile(r"@codex security review\n\nRecordBench security review head: ([0-9a-f]{40})")
+QUOTA_EXCEPTION = re.compile(
+    r"RecordBench security quota exception: ([0-9a-f]{40}); request: ([1-9][0-9]*); response: ([1-9][0-9]*)")
+QUOTA_RESPONSE = "You have reached your Codex usage limits for security reviews. Please try again later."
+
+
+def comment_time(comment: dict) -> datetime:
+    value = datetime.fromisoformat((comment.get("updated_at") or comment["created_at"]).replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        raise ValueError("Review timestamps must include a timezone")
+    return value
+
+
+def quota_exception(head: str, comments: list[dict]) -> tuple[datetime, datetime] | None:
+    """Verify an explicit, privileged full-head exception against the bot receipt."""
+    by_id = {c.get("id"): c for c in comments if c.get("id") is not None}
+    valid = []
+    for c in comments:
+        match = QUOTA_EXCEPTION.fullmatch(c.get("body", "").strip())
+        if not match or match.group(1) != head or not c.get("maintainerCanAccept"):
+            continue
+        requested = by_id.get(int(match.group(2)), {})
+        response = by_id.get(int(match.group(3)), {})
+        request_match = QUOTA_REQUEST.fullmatch(requested.get("body", "").strip())
+        if (not request_match or request_match.group(1) != head
+                or not requested.get("maintainerCanAccept")
+                or response.get("user", {}).get("login") != BOT
+                or response.get("user", {}).get("type") != "Bot"
+                or response.get("body", "").strip() != QUOTA_RESPONSE):
+            continue
+        # The request must already bind this full head when the bot responds.
+        # Editing an old request cannot recycle an earlier quota receipt.
+        if comment_time(requested) < comment_time(response) < comment_time(c):
+            valid.append((comment_time(c), comment_time(response)))
+    return max(valid, default=None)
 
 
 def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str, str]:
@@ -23,16 +58,25 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
         return "pending", "Waiting for GitHub Codex code and security reviews"
     body = max(summaries, key=lambda c: c.get("updated_at", ""))["body"]
     marker = re.search(r"<!-- codex-security-review:v1 (\{[^\n]*\}) -->", body)
-    if not marker:
-        return "pending", "Review summary has no verifiable commit binding"
-    try:
-        metadata = json.loads(marker.group(1))
-    except ValueError:
-        return "pending", "Review metadata is invalid"
-    if metadata.get("headSha") != head or metadata.get("status") != "completed":
-        return "pending", "Waiting for security review of the current commit"
+    # A quota exception is deliberately limited to an absent security review.
+    # Recorded running, failed, stale or malformed security state still blocks.
+    exception = None
+    if "codex-security-review:" in body or "**Security Review**" in body:
+        if not marker:
+            return "pending", "Review summary has no verifiable commit binding"
+        try:
+            metadata = json.loads(marker.group(1))
+        except ValueError:
+            return "pending", "Review metadata is invalid"
+        if metadata.get("headSha") != head or metadata.get("status") != "completed":
+            return "pending", "Waiting for security review of the current commit"
+    else:
+        exception = quota_exception(head, comments)
+        if exception is None:
+            return "pending", "Waiting for security review or a verified maintainer quota exception"
+    waived_at, receipt_at = exception if exception else (None, None)
     completed = {}
-    for label in ("Code Review", "Security Review"):
+    for label in (("Code Review",) if waived_at else ("Code Review", "Security Review")):
         row = next((line for line in body.splitlines() if f"**{label}**" in line), "")
         time = re.search(r'datetime="([^\"]+)"', row)
         sha = re.search(r"`([0-9a-f]{7,40})`", row)
@@ -42,12 +86,19 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
             completed[label] = datetime.fromisoformat(time.group(1).replace("Z", "+00:00"))
         except ValueError:
             return "pending", "Review completion time is invalid"
+    if waived_at:
+        completed["Security Review"] = waived_at
     for c in comments:
         if c.get("author_association") not in {"OWNER", "MEMBER", "COLLABORATOR"}:
             continue
         for command in re.finditer(r"@codex\s+(security\s+)?review\b", c.get("body", ""), re.I):
-            requested = datetime.fromisoformat((c.get("updated_at") or c["created_at"]).replace("Z", "+00:00"))
+            requested = comment_time(c)
             label = "Security Review" if command.group(1) else "Code Review"
+            if waived_at and label == "Security Review":
+                # A new request after the bound receipt needs its own response,
+                # even if it was made before the maintainer wrote the exception.
+                if requested > receipt_at:
+                    return "pending", "A newer security request needs a new quota receipt or completed review"
             if requested > completed[label]:
                 return "pending", "A newer review request is still awaiting completion"
     if any(not thread.get("isResolved", False) or not thread.get("resolverCanReconcile", False)
@@ -59,8 +110,10 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
         acceptance = ACCEPTANCE.fullmatch(c.get("body", "").strip())
         if not c.get("maintainerCanAccept") or not acceptance or acceptance.group(1) != head:
             continue
-        accepted = datetime.fromisoformat((c.get("updated_at") or c["created_at"]).replace("Z", "+00:00"))
+        accepted = comment_time(c)
         if accepted > max(completed.values()):
+            if waived_at:
+                return "success", "Code reviewed; maintainer accepted full commit with verified security quota exception"
             return "success", "Both reviews completed; maintainer accepted the full commit"
     return "pending", "Waiting for maintainer acceptance of the full reviewed commit"
 
@@ -149,7 +202,8 @@ def main() -> int:
 
     for comment in comments:
         comment["maintainerCanAccept"] = False
-        if ACCEPTANCE.fullmatch(comment.get("body", "").strip()):
+        if any(pattern.fullmatch(comment.get("body", "").strip())
+               for pattern in (ACCEPTANCE, QUOTA_REQUEST, QUOTA_EXCEPTION)):
             comment["maintainerCanAccept"] = can_reconcile(comment.get("user", {}).get("login", ""))
     for thread in threads:
         resolver = (thread.get("resolvedBy") or {}).get("login", "")
@@ -167,7 +221,7 @@ def main() -> int:
         raise RuntimeError("PR or base changed during inspection; rerun the gate")
     if state == "success":
         request(review_path, {"commit_id": head, "event": "APPROVE",
-            "body": f"{APPROVAL_PREFIX} PR #{number}, head {head}, base {base}. Both hosted reviews and maintainer acceptance verified."})
+            "body": f"{APPROVAL_PREFIX} PR #{number}, head {head}, base {base}. {description}."})
         if not unchanged():
             current = request(f"{prefix}/pulls/{number}")
             request(review_path, {"commit_id": current["head"]["sha"], "event": "REQUEST_CHANGES",

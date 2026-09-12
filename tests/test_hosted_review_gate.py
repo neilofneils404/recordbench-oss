@@ -1,5 +1,8 @@
 import importlib.util
 from pathlib import Path
+from copy import deepcopy
+
+import pytest
 
 SPEC = importlib.util.spec_from_file_location("hosted_gate", Path(__file__).resolve().parents[1] / "scripts/hosted-review-gate.py")
 GATE = importlib.util.module_from_spec(SPEC)
@@ -85,7 +88,8 @@ def test_acceptance_must_follow_both_completed_reviews():
     assert GATE.evaluate(HEAD, [summary()], [])[0] == "pending"
 
 
-def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch):
+@pytest.mark.parametrize("quota", [False, True])
+def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch, quota):
     monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
     monkeypatch.setenv("PR_NUMBER", "1")
     for permission, expected in (("read", "pending"), ("write", "success")):
@@ -108,6 +112,12 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch):
                 statuses.append(data["state"])
                 return {}
             if "/comments?" in path:
+                if quota:
+                    comments = quota_comments()
+                    for comment in comments:
+                        if comment.get("maintainerCanAccept"):
+                            comment["user"] = {"login": "fixture-reviewer"}
+                    return [*comments, accepted]
                 return [summary(), accepted]
             if path == "graphql":
                 return {"data": {"repository": {"pullRequest": {"reviewThreads": {
@@ -213,3 +223,108 @@ def test_acceptance_timestamp_tie_is_ambiguous():
     assert GATE.evaluate(HEAD, [summary(), accepted], [])[0] == "pending"
     accepted["updated_at"] = "2026-01-01T12:00:01Z"
     assert GATE.evaluate(HEAD, [summary(), accepted], [])[0] == "success"
+
+
+def quota_comments():
+    code_only = summary()
+    code_only["body"] = "\n".join(line for line in code_only["body"].splitlines()
+                                   if "security-review:v1" not in line and "**Security Review**" not in line)
+    return [code_only,
+        {"id": 101, "body": "@codex security review\n\nRecordBench security review head: " + HEAD,
+         "maintainerCanAccept": True, "author_association": "OWNER", "updated_at": "2026-01-01T12:01:00Z"},
+        {"id": 102, "body": GATE.QUOTA_RESPONSE, "user": {"login": GATE.BOT, "type": "Bot"},
+         "updated_at": "2026-01-01T12:02:00Z"},
+        {"id": 103, "body": "RecordBench security quota exception: " + HEAD + "; request: 101; response: 102",
+         "maintainerCanAccept": True, "updated_at": "2026-01-01T12:03:00Z"}]
+
+
+def test_quota_requires_explicit_exception_and_later_separate_acceptance():
+    comments = quota_comments()
+    assert evaluate(HEAD, comments, [])[0] == "success"
+    assert "quota exception" in evaluate(HEAD, comments, [])[1]
+    assert GATE.evaluate(HEAD, comments, [])[0] == "pending"
+    assert evaluate(HEAD, comments[:-1], [])[0] == "pending"
+    tied = approval()
+    tied["updated_at"] = comments[-1]["updated_at"]
+    assert GATE.evaluate(HEAD, [*comments, tied], [])[0] == "pending"
+    assert GATE.evaluate(HEAD, [*comments, approval(permitted=False)], [])[0] == "pending"
+
+
+@pytest.mark.parametrize("index,field,value", [
+    (1, "maintainerCanAccept", False),
+    (3, "maintainerCanAccept", False),
+    (2, "user", {"login": "synthetic-contributor", "type": "User"}),
+    (2, "user", {"login": GATE.BOT, "type": "User"}),
+    (2, "body", "Security review failed"),
+    (1, "body", "@codex security review"),
+    (1, "body", "@codex security review\n\nRecordBench security review head: " + "b" * 40),
+    (3, "body", "RecordBench security quota exception: " + "b" * 40 + "; request: 101; response: 102"),
+    (3, "body", "RecordBench security quota exception: " + HEAD + "; request: 999; response: 102"),
+    (3, "body", "RecordBench security quota exception: " + HEAD + "; request: 101; response: 999"),
+    (1, "updated_at", "2026-01-01T12:02:00Z"),
+    (1, "updated_at", "2026-01-01T12:02:01Z"),
+    (3, "updated_at", "2026-01-01T12:02:00Z"),
+])
+def test_quota_rejects_forged_missing_stale_or_edited_evidence(index, field, value):
+    comments = quota_comments()
+    comments[index][field] = value
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+@pytest.mark.parametrize("remove", [0, 1, 2, 3])
+def test_removed_quota_evidence_invalidates_exception(remove):
+    comments = quota_comments()
+    comments.pop(remove)
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+def test_quota_does_not_override_code_review_or_unreconciled_findings():
+    comments = quota_comments()
+    comments[0]["body"] = comments[0]["body"].replace("**Completed**", "**Running**")
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+    comments = quota_comments()
+    comments[0]["body"] = comments[0]["body"].replace(HEAD[:7], "b" * 7)
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+    assert evaluate(HEAD, quota_comments(), [{"isResolved": False}])[0] == "failure"
+    assert evaluate(HEAD, quota_comments(), [{"isResolved": True}])[0] == "failure"
+    assert evaluate(HEAD, quota_comments(), [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
+
+
+@pytest.mark.parametrize("state", ["running", "failed", "unknown"])
+def test_recorded_security_state_cannot_be_waived(state):
+    comments = quota_comments()
+    comments[0] = summary()
+    comments[0]["body"] = comments[0]["body"].replace('"status":"completed"', '"status":"' + state + '"')
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+@pytest.mark.parametrize("state", [
+    '<!-- codex-security-review:v1 malformed -->',
+    '<!-- codex-security-review:v2 {} -->',
+    '| **Security Review** | **Running** |',
+])
+def test_unrecognized_security_state_cannot_be_waived(state):
+    comments = quota_comments()
+    comments[0]["body"] += "\n" + state
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+@pytest.mark.parametrize("command,when", [
+    ("review", "2026-01-01T12:01:30Z"),
+    ("security review", "2026-01-01T12:02:30Z"),
+    ("security review", "2026-01-01T12:04:00Z"),
+])
+def test_quota_does_not_ignore_newer_review_requests(command, when):
+    comments = quota_comments()
+    comments.append({"body": "@codex " + command, "author_association": "OWNER", "updated_at": when})
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+def test_new_quota_receipt_allows_deliberate_retry():
+    comments = quota_comments()
+    newer = deepcopy(comments[1:])
+    for index, comment in enumerate(newer):
+        comment["id"] += 100
+        comment["updated_at"] = f"2026-01-01T12:0{index + 4}:00Z"
+    newer[-1]["body"] = newer[-1]["body"].replace("101", "201").replace("102", "202")
+    assert evaluate(HEAD, [*comments, *newer], [])[0] == "success"

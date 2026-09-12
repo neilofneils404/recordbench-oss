@@ -102,7 +102,7 @@ does not remove public copies or history. Revoke exposed credentials first.
 Protect the default branch with required CI, `hosted-review-gate`, resolved
 discussions, at least one native PR approval, stale-approval dismissal, approval
 of the most recent push, and no force pushes or deletion. `hosted-review-gate` requires completed GitHub Codex code and security
-reviews on the current head and review discussions reconciled by someone with
+reviews on the current head (or the narrow security-quota exception below) and review discussions reconciled by someone with
 repository write, maintain or admin access. An outside author cannot satisfy the
 gate by resolving their own findings. Request renewed
 reviews after corrections; never use a previous commit's review as acceptance.
@@ -135,7 +135,8 @@ workflow permissions are read-only and actions are pinned to full commits.
 Enable GitHub Actions PR-review approval capability for this trusted workflow;
 only this gate requests pull-request write permission.
 
-After both hosted reviews finish, a maintainer independently checks the full
+After both hosted reviews finish, or after code review and the verified
+security-quota exception below, a maintainer independently checks the full
 current head and review results, then posts this exact one-line PR comment,
 replacing the placeholder with the complete 40-character commit ID:
 
@@ -143,7 +144,8 @@ replacing the placeholder with the complete 40-character commit ID:
 RecordBench maintainer acceptance: FULL_COMMIT_ID
 ```
 
-The acceptance timestamp must be strictly later than both review completions and come from an account
+The acceptance timestamp must be strictly later than both review completions
+(or the code completion and quota-exception comment) and come from an account
 with current write, maintain or admin permission. This additional full-commit
 acceptance is required because the code-review summary abbreviates its commit
 ID; a matching short prefix alone is not sufficient. A changed head, a newer
@@ -153,6 +155,47 @@ through GitHub, rather than trusting the comment's displayed association.
 
 The maintainer still reviews disclosure, provenance, and reconciled findings.
 Outside contributors do not need or receive access to a private deployment.
+
+### Security-review quota exception
+
+A maintainer may proceed when GitHub Codex explicitly cannot start security
+review because its security-review quota is exhausted. This is a recorded
+exception, never a claim that security review passed. Completed current-head
+code review, required CI, reconciled discussions, native gate approval, strict
+up-to-date protection and no-reply publication checks remain required.
+
+On the PR, request security review with these exact two paragraphs, replacing
+the placeholder with the full current head:
+
+```text
+@codex security review
+
+RecordBench security review head: FULL_COMMIT_ID
+```
+
+After the official Codex bot replies with its explicit security-review usage
+limit message, inspect the full head and all review findings. Record this exact
+one-line exception using the numeric issue-comment IDs of that request and bot
+response on this PR:
+
+```text
+RecordBench security quota exception: FULL_COMMIT_ID; request: REQUEST_COMMENT_ID; response: RESPONSE_COMMENT_ID
+```
+
+Then post the ordinary full-head maintainer acceptance above, strictly after
+both the code-review completion and exception. The gate verifies live write,
+maintain or admin permission for the request, exception and acceptance authors.
+It requires the official bot identity, exact quota message, matching full head,
+and request-before-response-before-exception timestamps. Editing an old request
+cannot reuse a previous response. Removed evidence or a changed head invalidates
+the exception; a later review request needs a new completion or quota receipt.
+
+This path applies only when the latest official review summary has no security
+review row or security metadata. Recorded running, failed, malformed or stale
+security-review state must be reconciled through hosted review; quota cannot
+override it. The native approval and status explicitly identify the exception.
+No local review substitutes for required hosted code review. Branch protections
+and the trusted-default-branch workflow are not disabled to apply an exception.
 
 The gate withdraws its prior native approval when a PR moves away from the
 default branch. Publication identity dispositions support SHA-1 and SHA-256

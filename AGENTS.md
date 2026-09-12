@@ -12,8 +12,9 @@ content and metadata for private information. Hosted CI runs after upload and
 cannot prevent the initial disclosure. Private deployment facts belong outside
 this repository, including in plans and agent handoffs. Read docs/PUBLIC_ALPHA.md.
 
-Do not merge until GitHub Codex code and security reviews complete on the final
-commit, all findings are resolved or explicitly reconciled, and required CI
+Do not merge until GitHub Codex code review and either security review or the
+verified maintainer security-quota exception in `docs/PUBLIC_ALPHA.md` cover the
+final commit, all findings are resolved or explicitly reconciled, and required CI
 passes. A maintainer must also accept the full reviewed commit as described in
 `docs/PUBLIC_ALPHA.md`. A local or subagent review is additional evidence, not a
 substitute.
