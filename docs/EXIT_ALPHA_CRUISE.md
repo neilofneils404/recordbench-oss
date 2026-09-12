@@ -4,11 +4,16 @@ Binding execution order for leaving public contributor alpha.
 Product slice briefs under `docs/product-slices/` remain the implementation
 specs. When numeric slice order conflicts with this file, **this file wins**.
 
-**Last updated:** 2026-09-11
+**Last updated:** 2026-09-12
 
-Verified tip of `main`: `c5b507c2a3ffd8ac97734dec01ce6064d345a78e`
-(slice **11** merged as [#66](https://github.com/neilofneils404/recordbench-oss/pull/66);
-slice **12** already on `main`).
+Verified `main` snapshot before this receipt update:
+`17eafce965062e9fbdf8884738e277573abc8f7f`
+(maintainer security-quota exception policy landed as
+[#71](https://github.com/neilofneils404/recordbench-oss/pull/71);
+slices **11** and **12** already on `main`). This receipt records a verified
+landed commit, not the self-referential SHA of the commit carrying the receipt.
+PostgreSQL CI [#70](https://github.com/neilofneils404/recordbench-oss/pull/70)
+must land and pass on `main` before starting slice **13**.
 
 ## Cruise order
 
