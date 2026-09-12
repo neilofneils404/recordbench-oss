@@ -20,11 +20,11 @@
     <p>Uses the frozen unit inventory from Review all extracted text. Each action processes up to 10 pending units and saves progress. Recognition is a bounded deterministic suggestion, not proof of completeness or identity. No model is required.</p>
     {% for run in coverage %}<details><summary>Text review {{ run.run_id }} · {{ run.counts.processed }} units processed · {{ run.counts.pending }} pending · {{ run.counts.failed }} failed · {{ run.counts.invalidated }} changed</summary>
       <p>Extractor: {{ run.extractor_version }}. Units not yet inventoried by text review remain unprocessed; resume that review to make them available.</p>
-      {% for source in run.sources %}<p>{{ source.source_name }}: {{ source.state }} · {{ source.unit_count }} units · {{ 'inventory sealed' if source.inventory_sealed else 'not yet inventoried' }}</p>{% endfor %}
+      <p>{{ run.source_total }} frozen sources · {{ run.uninventoried }} not yet inventoried · {{ run.source_counts.get('unavailable', 0) }} unavailable. <a href="{{ coverage_url(run.run_id) }}">View source and unit outcomes</a></p>
       <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('discover') }}<input type="hidden" name="run_id" value="{{ run.run_id }}"><button class="button button-secondary">Discover next 10 units</button></form>
       {% if run.counts.failed %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('retry_discovery') }}<input type="hidden" name="run_id" value="{{ run.run_id }}"><button class="button button-secondary">Retry failed discovery</button></form>{% endif %}
-      {% for unit in run.units %}<p>Source {{ unit.document_id }} · unit {{ unit.unit_ordinal }}: {{ unit.state }} {{ unit.note }}</p>{% endfor %}
     </details>{% else %}<p>No frozen text-review population yet. Start Review all extracted text from Review. Manual entity work is available below.</p>{% endfor %}
+    <nav aria-label="Text review run pages">{% if review_page > 1 %}<a href="{{ review_page_url(review_page-1) }}">Previous review runs</a>{% endif %} {% if has_more_reviews %}<a href="{{ review_page_url(review_page+1) }}">Next review runs</a>{% endif %}</nav>
   </section>
   {% endif %}
   {% if entity %}

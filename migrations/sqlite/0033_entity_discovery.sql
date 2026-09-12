@@ -82,7 +82,7 @@ CREATE TABLE workbench_entity_discovery_seen (
 );
 CREATE TABLE workbench_entity_discovery_unit (
     matter_id TEXT NOT NULL REFERENCES workbench_matter(matter_id) ON DELETE CASCADE,
-    run_id TEXT NOT NULL,
+    run_id TEXT NOT NULL REFERENCES workbench_review_run(run_id) ON DELETE CASCADE,
     document_id TEXT NOT NULL,
     source_version_id TEXT NOT NULL,
     unit_ordinal INTEGER NOT NULL,

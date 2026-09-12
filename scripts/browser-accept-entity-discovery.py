@@ -202,6 +202,11 @@ def main():
             click('form:has(input[value="discover"]) button')
             assert '1 units processed' in body()
             record('Discovery processes an inventoried unit without a model and shows remaining uninventoried sources honestly')
+            driver.find_element(By.CSS_SELECTOR, '#discovery-heading + p + details summary').click()
+            click('a[href*="/entity-discovery/"]')
+            assert len(driver.find_elements(By.CSS_SELECTOR, '[data-discovery-unit]')) == 1
+            assert 'Showing up to 50 units' in body()
+            record('Coverage details use a separate bounded source and unit page')
             rows = bench.entity_service(matter).list(matter.matter_id, ACTOR)[0]
             discovered = next(row for row in rows if row['extractor_version'])
             discovered_path = prefix + '/entities/' + discovered['entity_id']

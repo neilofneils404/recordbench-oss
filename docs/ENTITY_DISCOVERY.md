@@ -9,10 +9,15 @@ entity discovery. No model or background entity worker is required.
 
 The coverage panel distinguishes processed, pending, failed and changed units.
 Sources without a sealed inventory remain visibly unprocessed; unavailable
-sources are shown separately. Retrying failed discovery never overwrites a
-processed unit. Later source-version or content-basis changes label frozen
+sources are shown separately. Retrying failed discovery selects only failed
+units; pending units require the normal discovery action. Processed units are
+never overwritten. Later source-version or content-basis changes label frozen
 coverage historical. A processed unit means the extractor visited it, not that
 it recognized every name or that OCR/transcription was complete.
+
+Coverage uses aggregate counts on the entity index, with up to 20 review runs
+per page. A separate coverage view shows up to 50 sources and 50 unit outcomes
+per page. Counts describe the whole run, independently of the displayed page.
 
 ## What the initial extractor recognizes
 
@@ -34,7 +39,9 @@ in the [dated validation receipt](ENTITY_DISCOVERY_VALIDATION_2026-09-12.json) d
 Every detected occurrence initially gets a **separate suggested identity** and
 supported mention. The same name twice in a unit produces two distinct mention
 IDs and offsets. There is no 75-entity cutoff. A unit with more than 1,000
-proposals fails explicitly without saving a partial set. An aggregate 16 MiB
+proposals fails explicitly without saving a partial set. The built-in extractor
+stops before constructing proposal 1,001; replacement iterators are consumed
+only through that first over-limit item. An aggregate 16 MiB
 logical entity payload budget (including retained history and per-row allowance)
 admits machine writes conservatively before a unit is saved. Existing manual
 work counts toward that budget but is never removed to make room. Budget
@@ -43,7 +50,16 @@ shows an explicit error. Retrying, restoring or changing extractor versions
 does not reset this matter budget. It is not a claim about exact physical SQLite
 file size. Only the selected units are checkpointed; merely opening or starting
 discovery does not copy the entire inventory. Existing text-review population
-limits remain unchanged.
+limits remain unchanged. Each committed unit emits a content-free audit event
+before the next unit starts, so a later budget error retains the audit of earlier
+saved work.
+
+Streamed unit files use a transient offset index: at most 20,000 offsets across
+eight file identities, with no cached source text or persistent index. A first
+read validates the existing unit container; subsequent batches seek selected
+records directly. Source guards and before/after file-identity checks protect
+the read. Changed files rebuild the index; restart and restore need no index
+backup. Inline units retain direct ordinal access.
 
 Mentions retain original source/version/unit support, the exact detected text,
 character offsets in that original extracted unit, extractor version and their
@@ -104,7 +120,10 @@ supported.
 Mirrored migration `0033_entity_discovery.sql` atomically preserves and rebuilds
 the constrained entity/mention/history tables, extends supported types and
 machine provenance, removes the same-unit uniqueness constraint, and adds
-occurrence receipts, extraction coverage and reconciliation history. Manual
+occurrence receipts, extraction coverage and reconciliation history. Deleting a
+text-review run cascades its discovery coverage; saved entity mentions, reviewer
+decisions and occurrence suppression receipts remain until their own lifecycle
+removes them. Manual
 attachment remains idempotent. New history remains linear mention deltas;
 reconciliation records identify the moved mentions and checked entity revisions.
 

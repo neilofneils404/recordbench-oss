@@ -14,10 +14,11 @@ class UnitRecordLimit(ValueError):
 
 
 class _Reader:
-    def __init__(self, stream, maximum, budget_check, read_check):
+    def __init__(self, stream, maximum, budget_check, read_check, track_bytes=False):
         self.stream, self.maximum = stream, maximum
         self.budget_check, self.read_check = budget_check, read_check
         self.buffer, self.position, self.ended = '', 0, False
+        self.byte_base, self.track_bytes = 0, track_bytes
 
     def check(self):
         if self.budget_check is not None:
@@ -26,6 +27,8 @@ class _Reader:
     def peek(self):
         if self.position == len(self.buffer) and not self.ended:
             self.check()
+            if self.track_bytes:
+                self.byte_base += len(self.buffer.encode('utf-8'))
             self.buffer = self.stream.read(READ_CHARS)
             self.position = 0
             self.ended = not self.buffer
@@ -35,6 +38,9 @@ class _Reader:
                 self.read_check(len(self.buffer))
             self.check()
         return self.buffer[self.position:self.position + 1]
+
+    def byte_position(self):
+        return self.byte_base + len(self.buffer[:self.position].encode('utf-8'))
 
     def trim(self):
         while self.peek() in {' ', '\t', '\r', '\n'}:
@@ -105,11 +111,11 @@ class _Reader:
 
 
 def iter_unit_records(stream, *, max_record_chars=MAX_UNIT_RECORD_CHARS,
-                      budget_check=None, read_check=None):
+                      budget_check=None, read_check=None, record_span=None):
     """Yield records with optional per-read/decode and serialized-input budgets."""
     if type(max_record_chars) is not int or max_record_chars < 1:
         raise ValueError('Derived text record bound must be positive')
-    reader = _Reader(stream, max_record_chars, budget_check, read_check)
+    reader = _Reader(stream, max_record_chars, budget_check, read_check, record_span is not None)
     reader.token('{')
     version, seen = None, set()
     while True:
@@ -127,7 +133,11 @@ def iter_unit_records(stream, *, max_record_chars=MAX_UNIT_RECORD_CHARS,
                 reader.token(']')
             else:
                 while True:
+                    reader.trim()
+                    start = reader.byte_position() if record_span is not None else 0
                     record = reader.value()
+                    if record_span is not None:
+                        record_span(start, reader.byte_position())
                     if not isinstance(record, dict):
                         raise ValueError('Malformed derived text unit')
                     yield record

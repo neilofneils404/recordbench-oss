@@ -1,0 +1,25 @@
+{% extends "workbench_base.html" %}
+{% block title %}Entity discovery coverage · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block content %}
+<main class="notebook-main">
+  <header class="notebook-heading"><div><p class="eyebrow">{{ matter.display_name }}</p><h1>Entity discovery coverage</h1></div></header>
+  {% with active='entities' %}{% include 'workbench_matter_tabs.html' %}{% endwith %}
+  {% include 'workbench_retention_notice.html' %}
+  <p><a href="{{ entities_url }}">People, places & things</a> · <a href="{{ return_to }}">Return to source review</a></p>
+  <p>{{ coverage.counts.processed }} units processed · {{ coverage.counts.pending }} pending · {{ coverage.counts.failed }} failed · {{ coverage.counts.invalidated }} changed</p>
+  <p>Extractor: {{ coverage.extractor_version }}. Processing does not establish complete recognition. Uninventoried sources remain outside processed coverage.</p>
+  {% for action, label in [('discover','Discover next 10 units'),('retry_discovery','Retry failed discovery')] %}
+    {% if action == 'discover' or coverage.counts.failed %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="run_id" value="{{ coverage.run_id }}"><input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="return_to" value="{{ return_to }}"><button class="button button-secondary">{{ label }}</button>
+    </form>{% endif %}
+  {% endfor %}
+  <section aria-labelledby="source-coverage-heading"><h2 id="source-coverage-heading">Frozen sources ({{ coverage.source_total }})</h2><p>{{ coverage.uninventoried }} not yet inventoried. Showing up to 50 sources.</p>
+    {% for source in coverage.sources %}<article class="notebook-tool-card"><h3>{{ source.source_name }}</h3><p>{{ source.state }} · {{ source.unit_count }} units · {{ 'inventory sealed' if source.inventory_sealed else 'not yet inventoried' }}</p></article>{% endfor %}
+    <nav aria-label="Source coverage pages">{% if coverage.source_page > 1 %}<a href="{{ coverage_url(target_source_page=coverage.source_page-1) }}">Previous sources</a>{% endif %} {% if coverage.source_page * 50 < coverage.source_total %}<a href="{{ coverage_url(target_source_page=coverage.source_page+1) }}">Next sources</a>{% endif %}</nav>
+  </section>
+  <section aria-labelledby="unit-coverage-heading"><h2 id="unit-coverage-heading">Unit outcomes ({{ coverage.unit_total }})</h2><p>Showing up to 50 units.</p>
+    {% for unit in coverage.units %}<article class="notebook-tool-card" data-discovery-unit><h3>{{ unit.source_name }} · unit {{ unit.unit_ordinal }}</h3><p>{{ unit.state }} · {{ unit.note }}</p></article>{% endfor %}
+    <nav aria-label="Unit coverage pages">{% if coverage.page > 1 %}<a href="{{ coverage_url(target_page=coverage.page-1) }}">Previous units</a>{% endif %} {% if coverage.page * 50 < coverage.unit_total %}<a href="{{ coverage_url(target_page=coverage.page+1) }}">Next units</a>{% endif %}</nav>
+  </section>
+</main>
+{% endblock %}

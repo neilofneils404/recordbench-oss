@@ -818,6 +818,8 @@ class CaseIntelligenceWorkbench:
                 require_marker=True,
             )
         self.workspace = WorkspaceStore(self.runtime_dir / "workbench.sqlite", principal_enabled=principal_enabled)
+        from .entity_unit_reader import EntityUnitReader
+        self.entity_unit_reader = EntityUnitReader()
         self.workspace.recover_interrupted_matter_purges()
         self.workspace.recover_running_analysis_runs()
         self._stores: dict[str, PilotStore] = {}
@@ -2987,21 +2989,33 @@ class CaseIntelligenceWorkbench:
         )
 
     def entity_discovery(self, matter):
+        from itertools import groupby
         from .entity_discovery import EntityDiscovery
-        def load_unit(coverage):
-            document = self.source_store(matter).get(coverage['document_id'])
-            if document.state != 'ready' or document.version_id != coverage['source_version_id']:
-                raise KeyError(coverage['document_id'])
-            for ordinal, unit in enumerate(document.iter_parsed_units(), 1):
-                if ordinal == coverage['unit_ordinal']:
-                    candidate = self._candidate(matter, document, unit, ordinal)
-                    token = sorted(self._support_tokens(candidate))[0]
-                    return unit.text, dict(document_id=candidate.document_id,
-                        source_version_id=candidate.source_version_id, source_name=candidate.source_name,
-                        location=candidate.citation, unit_number=unit.number, chunk_id=candidate.chunk_id,
-                        excerpt_digest=candidate.excerpt_digest, excerpt=candidate.text[:6000], support_token=token)
-            raise KeyError(coverage['unit_ordinal'])
-        return EntityDiscovery(self.entity_service(matter), load_unit=load_unit)
+        def load_units(coverages):
+            for document_id, group in groupby(coverages, key=lambda row: row['document_id']):
+                requested = {row['unit_ordinal']: row for row in group}
+                try:
+                    document = self.source_store(matter).get(document_id)
+                    if document.state != 'ready':
+                        raise KeyError(document_id)
+                    for ordinal, unit in self.entity_unit_reader.iter_selected(self.source_store(matter), document, requested):
+                        coverage = requested.get(ordinal)
+                        if coverage is not None:
+                            candidate = self._candidate(matter, document, unit, ordinal)
+                            token = sorted(self._support_tokens(candidate))[0]
+                            loaded = (unit.text, dict(document_id=candidate.document_id,
+                                source_version_id=candidate.source_version_id, source_name=candidate.source_name,
+                                location=candidate.citation, unit_number=unit.number, chunk_id=candidate.chunk_id,
+                                excerpt_digest=candidate.excerpt_digest, excerpt=candidate.text[:6000], support_token=token))
+                            requested.pop(ordinal)
+                            yield coverage, loaded
+                        if not requested:
+                            break
+                except (KeyError, OSError, ValueError, RuntimeError, TypeError):
+                    pass
+                for coverage in requested.values():
+                    yield coverage, None
+        return EntityDiscovery(self.entity_service(matter), load_units=load_units)
 
     def notebook_reference_from_support(
         self, matter: MatterRecord, token: str

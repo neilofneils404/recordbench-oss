@@ -22,7 +22,7 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
             return value
         return prefix
 
-    def render(request, slug, *, entity_id='', q='', page=1, support='', return_to='',
+    def render(request, slug, *, entity_id='', q='', page=1, review_page=1, support='', return_to='',
                error='', draft=None, status_code=200):
         matter = authorized_matter(request, slug)
         actor = auth_context(request).principal_id
@@ -31,8 +31,9 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
         mentions, history, note = [], [], None
         candidates, reconciliations = [], []
         discovery = discovery_for(matter)
-        runs = discovery.runs(matter.matter_id, actor) if not entity_id else []
-        coverage = [discovery.coverage(matter.matter_id, actor, row['run_id']) for row in runs]
+        runs = discovery.runs(matter.matter_id, actor, page=review_page) if not entity_id else []
+        has_more_reviews = len(runs) > 20
+        coverage = [discovery.coverage(matter.matter_id, actor, row['run_id'], limit=0) for row in runs[:20]]
         try:
             entities, total = service.list(matter.matter_id, actor, query=q, page=page)
             if entity_id:
@@ -57,7 +58,10 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
             'mentions': mentions, 'history': [dict(entry, snapshot=json.loads(entry['snapshot_json'])) for entry in history], 'linked_note': note,
             'passage': passage, 'support': support, 'return_to': return_to,
             'entity_url': entity_url, 'entity_types': ENTITY_TYPES, 'entity_statuses': ENTITY_STATUSES,
-            'coverage': coverage, 'candidates': candidates, 'reconciliations': [dict(row, before=json.loads(row['before_json'])) for row in reconciliations],
+            'coverage': coverage, 'review_page': review_page, 'has_more_reviews': has_more_reviews,
+            'review_page_url': lambda value: f'/matters/{slug}/entities?' + urlencode(dict(q=q, support=support, return_to=return_to, review_page=value)),
+            'coverage_url': lambda value: f'/matters/{slug}/entity-discovery/{value}?' + urlencode(dict(q=q, return_to=return_to)),
+            'candidates': candidates, 'reconciliations': [dict(row, before=json.loads(row['before_json'])) for row in reconciliations],
             'error': error, 'draft': draft, 'show_assistant_dock': False,
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
 
@@ -65,8 +69,31 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
     @app.get('/matters/{slug}/entities/{entity_id}', response_class=HTMLResponse)
     def entities(request: Request, slug: str, entity_id: str = '',
                  q: str = Query('', max_length=200), page: int = Query(1, ge=1, le=100_000),
+                 review_page: int = Query(1, ge=1, le=100_000),
                  support: str = Query('', max_length=40), return_to: str = Query('', max_length=4000)):
-        return render(request, slug, entity_id=entity_id, q=q, page=page, support=support, return_to=return_to)
+        return render(request, slug, entity_id=entity_id, q=q, page=page, review_page=review_page, support=support, return_to=return_to)
+
+    @app.get('/matters/{slug}/entity-discovery/{run_id}', response_class=HTMLResponse)
+    def discovery_coverage(request: Request, slug: str, run_id: str,
+                           page: int = Query(1, ge=1, le=100_000),
+                           source_page: int = Query(1, ge=1, le=100_000),
+                           q: str = Query('', max_length=200), return_to: str = Query('', max_length=4000)):
+        matter = authorized_matter(request, slug)
+        actor = auth_context(request).principal_id
+        try:
+            coverage = discovery_for(matter).coverage(matter.matter_id, actor, run_id, page=page, source_page=source_page)
+        except KeyError as exc:
+            raise HTTPException(404, 'Review run is no longer available') from exc
+        return_to = return_path(slug, return_to)
+        def coverage_url(target_page=page, target_source_page=source_page):
+            return f'/matters/{slug}/entity-discovery/{run_id}?' + urlencode(dict(
+                page=target_page, source_page=target_source_page, q=q, return_to=return_to))
+        return templates.TemplateResponse(request=request, name='workbench_entity_discovery.html', context={
+            **base_context(request, matter), 'matter': matter, 'coverage': coverage,
+            'q': q, 'return_to': return_to, 'coverage_url': coverage_url,
+            'entities_url': f'/matters/{slug}/entities?' + urlencode(dict(q=q, return_to=return_to)),
+            'show_assistant_dock': False,
+        }, headers={'Cache-Control': 'no-store'})
 
     @app.post('/matters/{slug}/entities/actions', dependencies=[Depends(require_csrf)])
     def entity_action(request: Request, slug: str, action: str = Form(..., max_length=24),
@@ -85,7 +112,11 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
         deleted_entity_id = ''
         try:
             if action in ('discover', 'retry_discovery'):
-                discovery_for(matter).step(matter.matter_id, actor, run_id, retry=action == 'retry_discovery')
+                discovery_for(matter).step(matter.matter_id, actor, run_id, retry=action == 'retry_discovery',
+                    on_committed=lambda event: audit(request, 'entity.discovery_unit', 'success' if event['state'] == 'processed' else 'failure',
+                        context=auth_context(request), matter=matter, object_type='review_run', object_id=run_id,
+                        details={'count': event['count'], 'unit_count': 1,
+                                 'state': {'processed': 'completed', 'failed': 'failed', 'invalidated': 'attention'}[event['state']]}))
             elif action in ('merge', 'split', 'alias', 'reject'):
                 service.reconcile(matter.matter_id, actor, entity_id, expected_revision=expected_revision,
                     target_id=target_id, target_revision=target_revision, action=action,

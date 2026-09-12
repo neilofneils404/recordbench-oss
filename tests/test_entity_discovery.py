@@ -198,6 +198,11 @@ def test_web_discovery_full_source_restore_export_and_purge(tmp_path, monkeypatc
         assert page.status_code == 200 and 'Discover next 10 units' in page.text
         response = client.post(path + '/actions', data=dict(action='discover', run_id=run.run_id, return_to=f'/matters/{slug}?q=Alex'))
         assert response.status_code == 200 and '1 units processed' in response.text
+        events = [event for event in store.audit_events(matter.matter_id) if event.action == 'entity.discovery_unit']
+        assert len(events) == 1 and events[0].outcome == 'success'
+        assert 'data-discovery-unit' not in response.text
+        coverage_page = client.get(f'/matters/{slug}/entity-discovery/{run.run_id}')
+        assert coverage_page.status_code == 200 and coverage_page.text.count('data-discovery-unit') == 1
         svc = bench.entity_service(matter)
         identities, total = svc.list(matter.matter_id, WEB_ACTOR)
         assert total == 4
@@ -382,3 +387,146 @@ def test_replaceable_extractor_must_resolve_conflicting_same_span(frozen):
     assert discovery.step(matter.matter_id, ACTOR, run.run_id)['counts']['failed'] == 1
     assert discovery.service.list(matter.matter_id, ACTOR)[1] == 0
     assert store.entity_repository().discovery_export(matter.matter_id)['occurrence_tombstones'] == []
+
+
+def test_large_match_population_is_capped_before_object_materialization(monkeypatch):
+    import case_intelligence.entity_extractor as module
+    original = module.EntityOccurrence
+    created = 0
+    def counted(*args, **kwargs):
+        nonlocal created
+        created += 1
+        return original(*args, **kwargs)
+    monkeypatch.setattr(module, 'EntityOccurrence', counted)
+    with pytest.raises(ValueError, match='proposal limit'):
+        module.DeterministicEntityExtractor().extract('ID: X1\n' * 1_000_000)
+    assert created == 1000
+
+
+def test_replacement_iterator_is_consumed_only_to_proposal_bound(frozen):
+    from case_intelligence.entity_extractor import EntityOccurrence
+    class Streaming(DeterministicEntityExtractor):
+        consumed = 0
+        def extract(self, text):
+            for _ in range(1_000_000):
+                self.consumed += 1
+                yield EntityOccurrence(0, 12, 'Alex Example', 'person')
+    extractor = Streaming()
+    discovery = discovery_fixture(frozen, ['Alex Example arrived.'], extractor)
+    store, matter, run, _ = frozen
+    assert discovery.step(matter.matter_id, ACTOR, run.run_id)['counts']['failed'] == 1
+    assert extractor.consumed == 1001
+    assert discovery.service.list(matter.matter_id, ACTOR)[1] == 0
+
+
+def test_terminal_review_delete_cascades_coverage_without_deleting_mentions(frozen):
+    discovery = discovery_fixture(frozen, ['Alex Example arrived.'])
+    store, matter, run, _ = frozen
+    discovery.step(matter.matter_id, ACTOR, run.run_id)
+    before = store.entity_repository().discovery_storage_bytes(matter.matter_id)
+    store.fail_review_run(run.run_id, 'Synthetic fixture completed.')
+    FullTextReviewLedger(store).delete(matter.matter_id, ACTOR, run.run_id)
+    exported = store.entity_repository().discovery_export(matter.matter_id)
+    assert exported['coverage'] == exported['sources'] == []
+    assert len(exported['occurrence_tombstones']) == 1
+    assert discovery.service.list(matter.matter_id, ACTOR)[1] == 1
+    assert store.entity_repository().discovery_storage_bytes(matter.matter_id) < before
+    assert not store.connection.execute('PRAGMA foreign_key_check').fetchall()
+
+
+def test_retry_does_not_start_pending_discovery(frozen):
+    class Failed(DeterministicEntityExtractor):
+        def extract(self, text):
+            raise ValueError('Synthetic failure')
+    discovery = discovery_fixture(frozen, ['Alex Example arrived.', 'Jordan Sample left.'], Failed())
+    _, matter, run, _ = frozen
+    assert discovery.step(matter.matter_id, ACTOR, run.run_id, limit=1)['counts']['failed'] == 1
+    discovery.extractor = DeterministicEntityExtractor()
+    coverage = discovery.step(matter.matter_id, ACTOR, run.run_id, retry=True)
+    assert coverage['counts'] == dict(processed=1, pending=1, failed=0, invalidated=0)
+    assert discovery.service.list(matter.matter_id, ACTOR)[1] == 1
+
+
+def test_unit_coverage_pagination_keeps_complete_aggregate_counts(frozen):
+    discovery = discovery_fixture(frozen, [f'Alex Example{i} arrived.' for i in range(120)])
+    _, matter, run, _ = frozen
+    first = discovery.coverage(matter.matter_id, ACTOR, run.run_id)
+    second = discovery.coverage(matter.matter_id, ACTOR, run.run_id, page=2)
+    third = discovery.coverage(matter.matter_id, ACTOR, run.run_id, page=3)
+    summary = discovery.coverage(matter.matter_id, ACTOR, run.run_id, limit=0)
+    assert first['counts']['pending'] == second['counts']['pending'] == third['counts']['pending'] == 120
+    assert [len(page['units']) for page in (first, second, third)] == [50, 50, 20]
+    assert [row['unit_ordinal'] for page in (first, second, third) for row in page['units']] == list(range(1, 121))
+    assert summary['units'] == summary['sources'] == [] and summary['unit_total'] == 120
+
+
+def test_partial_budget_failure_reports_every_committed_unit(frozen):
+    discovery = discovery_fixture(frozen, ['Alex Example arrived.' + ' x' * 4000, 'Jordan Sample left.' + ' x' * 4000])
+    discovery.byte_limit = 70000
+    _, matter, run, _ = frozen
+    events = []
+    with pytest.raises(WorkspaceProblem, match='byte budget'):
+        discovery.step(matter.matter_id, ACTOR, run.run_id, on_committed=events.append)
+    assert len(events) == 1 and events[0]['state'] == 'processed' and events[0]['count'] == 1
+    assert discovery.service.list(matter.matter_id, ACTOR)[1] == 1
+
+
+def test_application_batches_requested_ordinals_in_one_document_pass(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    from case_intelligence.workbench import create_workbench_app
+    from tests.test_matter_notebook import _create_matter, WEB_ACTOR
+    with TestClient(create_workbench_app(tmp_path, auth_mode='test')) as client:
+        slug = _create_matter(client)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, WEB_ACTOR)
+        class Document:
+            state = 'ready'
+            passes = reads = 0
+            def iter_parsed_units(self):
+                self.passes += 1
+                for number in range(1, 1001):
+                    self.reads += 1
+                    yield PilotUnit(number, f'Synthetic unit {number}')
+        document = Document()
+        monkeypatch.setattr(bench.source_store(matter), 'get', lambda identifier: document)
+        monkeypatch.setattr(bench, '_candidate', lambda matter, document, unit, ordinal: SimpleNamespace(
+            document_id='synthetic-document', source_version_id='synthetic-version', source_name='Synthetic source',
+            citation=f'Unit {ordinal}', chunk_id=f'chunk-{ordinal}', excerpt_digest='a'*64, text=unit.text))
+        monkeypatch.setattr(bench, '_support_tokens', lambda candidate: frozenset({'a'*40}))
+        requested = [dict(document_id='synthetic-document', unit_ordinal=ordinal) for ordinal in range(501, 511)]
+        loaded = list(bench.entity_discovery(matter).load_units(requested))
+        assert len(loaded) == 10 and document.passes == 1 and document.reads == 510
+        assert [unit['unit_ordinal'] for unit, _ in loaded] == list(range(501, 511))
+
+
+def test_streamed_offset_index_is_reused_and_invalidated_without_caching_text(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import case_intelligence.entity_unit_reader as module
+    from dataclasses import asdict
+    name = 'a' * 32 + '.json'
+    path = tmp_path / name
+    records = [asdict(PilotUnit(i, f'José Álvarez unit {i}')) for i in range(1, 201)]
+    # Preserve both UTF-8 multi-byte characters and serialized CRLF whitespace.
+    path.write_bytes(json.dumps(dict(version=1, units=records), ensure_ascii=False, indent=2).replace('\n', '\r\n').encode())
+    source = SimpleNamespace(derived=tmp_path, _units_file_is_safe=lambda value: value == name)
+    document = SimpleNamespace(units=[], units_file=name)
+    calls = reads = 0
+    original = module.iter_unit_records
+    def tracked(*args, **kwargs):
+        nonlocal calls, reads
+        calls += 1
+        for record in original(*args, **kwargs):
+            reads += 1
+            yield record
+    monkeypatch.setattr(module, 'iter_unit_records', tracked)
+    reader = module.EntityUnitReader()
+    first = list(reader.iter_selected(source, document, range(151, 161)))
+    second = list(reader.iter_selected(source, document, range(191, 201)))
+    assert calls == 1 and reads == 200
+    assert first[0][1].text == 'José Álvarez unit 151' and second[-1][1].number == 200
+    assert all(isinstance(position, int) for offsets in reader._indexes.values() for pair in offsets for position in pair)
+    records[199] = asdict(PilotUnit(200, 'Replaced synthetic original unit.'))
+    path.write_text(json.dumps(dict(version=1, units=records), ensure_ascii=False))
+    assert list(reader.iter_selected(source, document, [200]))[0][1].text == 'Replaced synthetic original unit.'
+    assert calls == 2 and reads == 400

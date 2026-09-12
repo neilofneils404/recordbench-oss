@@ -168,10 +168,10 @@ class EntityRepository:
                        reconciliations=self.reconciliations(matter_id, entity_id),
                        source_support='Retained original-source support; availability is not revalidated in this bundle.')
 
-    def discovery_runs(self, matter_id):
+    def discovery_runs(self, matter_id, page=1):
         return [dict(row) for row in self.connection.execute(
             'SELECT r.run_id,r.state,r.created_at FROM workbench_review_run r '
-            'JOIN workbench_text_review t ON t.run_id=r.run_id WHERE r.matter_id=? ORDER BY r.created_at DESC', (matter_id,))]
+            'JOIN workbench_text_review t ON t.run_id=r.run_id WHERE r.matter_id=? ORDER BY r.created_at DESC,r.run_id LIMIT 21 OFFSET ?', (matter_id, (page - 1) * 20))]
 
     def require_discovery_run(self, matter_id, run_id):
         if not self.connection.execute('SELECT 1 FROM workbench_review_run r JOIN workbench_text_review t '
@@ -187,9 +187,9 @@ class EntityRepository:
             "LEFT JOIN workbench_entity_discovery_unit d ON d.matter_id=? AND d.run_id=u.run_id "
             "AND d.document_id=u.document_id AND d.unit_ordinal=u.unit_ordinal AND d.extractor_version=? "
             "WHERE s.run_id=? AND s.inventory_sealed=1 AND "
-            "(d.state IS NULL OR d.state='pending' OR (? AND d.state='failed')) "
+            "((? AND d.state='failed') OR (NOT ? AND (d.state IS NULL OR d.state='pending'))) "
             "ORDER BY u.document_id,u.unit_ordinal LIMIT ?",
-            (matter_id, version, matter_id, version, run_id, retry, limit))]
+            (matter_id, version, matter_id, version, run_id, retry, retry, limit))]
 
     def seed_discovery_unit(self, unit):
         self.connection.execute("INSERT OR IGNORE INTO workbench_entity_discovery_unit "
@@ -228,46 +228,49 @@ class EntityRepository:
             'SELECT state FROM workbench_entity_discovery_unit WHERE matter_id=? AND run_id=? AND document_id=? '
             'AND unit_ordinal=? AND extractor_version=?',
             (matter_id, unit['run_id'], unit['document_id'], unit['unit_ordinal'], unit['extractor_version'])).fetchone()
-        return row is None or row[0] == 'pending' or (retry and row[0] == 'failed')
+        return (row is not None and row[0] == 'failed') if retry else (row is None or row[0] == 'pending')
 
     def discovery_state(self, unit, state, note):
         self.connection.execute('UPDATE workbench_entity_discovery_unit SET state=?,note=? WHERE matter_id=? '
             'AND run_id=? AND document_id=? AND unit_ordinal=? AND extractor_version=?',
             (state, note, unit['matter_id'], unit['run_id'], unit['document_id'], unit['unit_ordinal'], unit['extractor_version']))
 
-    def discovery_coverage(self, matter_id, run_id, version):
-        if not any(row['run_id'] == run_id for row in self.discovery_runs(matter_id)):
-            raise KeyError(run_id)
-        units = [dict(row) for row in self.connection.execute(
-            'SELECT * FROM workbench_entity_discovery_unit WHERE matter_id=? AND run_id=? AND extractor_version=? '
-            'ORDER BY document_id,unit_ordinal', (matter_id, run_id, version))]
+    def discovery_coverage(self, matter_id, run_id, version, *, page=1, source_page=1, limit=50):
+        self.require_discovery_run(matter_id, run_id)
+        current = "(s.state!='invalidated' AND c.source_state='ready' AND c.version_id=s.source_version_id AND c.content_basis_digest=s.source_basis_digest)"
+        source_from = (' FROM workbench_text_review_source s LEFT JOIN workbench_source_catalog c '
+                       'ON c.document_id=s.document_id AND c.matter_id=? WHERE s.run_id=?')
+        source_state = f"CASE WHEN s.inventory_sealed=1 AND NOT COALESCE({current},0) THEN 'invalidated' ELSE s.state END"
+        source_counts = {row[0]: row[1] for row in self.connection.execute(
+            'SELECT ' + source_state + ',COUNT(*)' + source_from + ' GROUP BY 1', (matter_id, run_id))}
+        uninventoried = self.connection.execute('SELECT COUNT(*)' + source_from + ' AND s.inventory_sealed=0',
+            (matter_id, run_id)).fetchone()[0]
         sources = [dict(row) for row in self.connection.execute(
-            'SELECT document_id,source_name,state,inventory_sealed,unit_count FROM workbench_text_review_source WHERE run_id=?', (run_id,))]
-        indexed = {(row['document_id'], row['unit_ordinal']) for row in units}
-        # A sealed slice-12 unit is pending discovery even before the reviewer
-        # first queues it, or when its inventory arrived after the last batch.
-        for row in self.connection.execute(
-                'SELECT s.document_id,s.source_version_id,u.unit_ordinal,u.unit_digest FROM workbench_text_review_source s '
-                'JOIN workbench_text_review_unit u ON u.run_id=s.run_id AND u.document_id=s.document_id '
-                'WHERE s.run_id=? AND s.inventory_sealed=1', (run_id,)):
-            if (row['document_id'], row['unit_ordinal']) not in indexed:
-                units.append(dict(row, matter_id=matter_id, run_id=run_id, extractor_version=version,
-                    state='pending', note='Not yet queued for discovery.'))
-        units.sort(key=lambda row: (row['document_id'], row['unit_ordinal']))
-        current_sources = {row[0] for row in self.connection.execute(
-            "SELECT s.document_id FROM workbench_text_review_source s JOIN workbench_source_catalog c "
-            "ON c.document_id=s.document_id AND c.matter_id=? WHERE s.run_id=? AND s.state!='invalidated' "
-            "AND c.source_state='ready' AND c.version_id=s.source_version_id AND c.content_basis_digest=s.source_basis_digest",
-            (matter_id, run_id))}
-        for unit in units:
-            if unit['document_id'] not in current_sources:
-                unit['state'] = 'invalidated'
-                unit['note'] = 'Frozen source changed or is unavailable. Retained results are historical.'
-        for source in sources:
-            if source['inventory_sealed'] and source['document_id'] not in current_sources:
-                source['state'] = 'invalidated'
-        return dict(run_id=run_id, extractor_version=version, units=units, sources=sources,
-                    counts={state: sum(row['state'] == state for row in units) for state in ('pending', 'processed', 'failed', 'invalidated')})
+            'SELECT s.document_id,s.source_name,s.inventory_sealed,s.unit_count,' + source_state + ' AS state'
+            + source_from + ' ORDER BY s.document_id LIMIT ? OFFSET ?',
+            (matter_id, run_id, limit, (source_page - 1) * 50))] if limit else []
+        # Count in SQLite; only materialize the requested page of unit metadata.
+        cte = ("WITH coverage AS (SELECT s.run_id,s.document_id,s.source_name,s.source_version_id,"
+            "u.unit_ordinal,u.unit_digest,CASE WHEN NOT COALESCE(" + current + ",0) THEN 'invalidated' "
+            "ELSE COALESCE(d.state,'pending') END AS state,"
+            "CASE WHEN NOT COALESCE(" + current + ",0) THEN 'Frozen source changed or is unavailable.' "
+            "ELSE COALESCE(d.note,'Not yet queued for discovery.') END AS note "
+            "FROM workbench_text_review_source s JOIN workbench_text_review_unit u "
+            "ON u.run_id=s.run_id AND u.document_id=s.document_id "
+            "LEFT JOIN workbench_source_catalog c ON c.document_id=s.document_id AND c.matter_id=? "
+            "LEFT JOIN workbench_entity_discovery_unit d ON d.matter_id=? AND d.run_id=s.run_id "
+            "AND d.document_id=s.document_id AND d.unit_ordinal=u.unit_ordinal AND d.extractor_version=? "
+            "WHERE s.run_id=? AND s.inventory_sealed=1) ")
+        params = (matter_id, matter_id, version, run_id)
+        counts = dict.fromkeys(('pending','processed','failed','invalidated'), 0)
+        counts.update({row[0]: row[1] for row in self.connection.execute(
+            cte + 'SELECT state,COUNT(*) FROM coverage GROUP BY state', params)})
+        units = [dict(row) for row in self.connection.execute(
+            cte + 'SELECT * FROM coverage ORDER BY document_id,unit_ordinal LIMIT ? OFFSET ?',
+            (*params, limit, (page - 1) * 50))] if limit else []
+        return dict(run_id=run_id, extractor_version=version, units=units, sources=sources, counts=counts,
+            unit_total=sum(counts.values()), source_total=sum(source_counts.values()),
+            source_counts=source_counts, uninventoried=uninventoried, page=page, source_page=source_page)
 
     def discovery_seen(self, matter_id, key):
         cursor = self.connection.execute('INSERT OR IGNORE INTO workbench_entity_discovery_seen VALUES (?,?)', (matter_id, key))

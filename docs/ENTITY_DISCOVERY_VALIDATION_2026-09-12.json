@@ -138,5 +138,47 @@
     "byte_budget": "16 MiB aggregate logical entity payload, including retained history and per-row allowance; conservative pre-write admission, no version/retry/restore reset; dense units remain unprocessed without partial records.",
     "classification": "Explicit identifiers precede coincident dates; replacement extractors with conflicting same-span classifications fail without partial results.",
     "final_head_review": "Renewed hosted review and Quality required after corrections."
+  },
+  "second_hosted_review_corrections": {
+    "reviewed_head": "116b29a37f74d6c5e3382ae0f514ae9ebe6fba20",
+    "findings": [
+      "Bound proposal construction and replacement iterator consumption",
+      "Reuse bounded transient unit offsets across batches",
+      "Cascade coverage when its review run is deleted",
+      "Audit every committed unit before processing the next",
+      "Paginate review runs, source coverage and unit outcomes",
+      "Retry failed units exclusively"
+    ],
+    "focused_passed": 123,
+    "focused_skipped": 1,
+    "focused_scope": "Entity, full-text, notebook, branding and backup regressions",
+    "browser": {
+      "synthetic": true,
+      "success": true,
+      "checks": [
+        "Two synthetic originals uploaded and searchable without a model",
+        "Visible empty state and keyboard creation of a person with an alias",
+        "Two exact source passages attached to one identity and both reopened from its detail page",
+        "Another same-name person remains distinct, with no automatic alias merge",
+        "Shared-edit conflict preserves the submitted name and aliases alongside the current saved identity",
+        "390-pixel reflow without horizontal page overflow",
+        "Return link retains the source-review search context",
+        "Discovery processes an inventoried unit without a model and shows remaining uninventoried sources honestly",
+        "Coverage details use a separate bounded source and unit page",
+        "Reviewer confirms a candidate merge and undoes it without losing the extracted mention",
+        "Discovery and reconciliation reflow at 390 pixels with native labeled controls",
+        "Dissimilar empty manual identities can confirm and undo an alias without selecting a split mention"
+      ],
+      "browser": "152.0.7977.83"
+    },
+    "restore": "Both migration/clean rollback drills passed again; full-runtime original-source restore remains covered by the focused HTTP regression.",
+    "prior_head_quality": {
+      "head": "116b29a37f74d6c5e3382ae0f514ae9ebe6fba20",
+      "run": 34709011431,
+      "conclusion": "success",
+      "application_passed": 2752,
+      "application_skipped": 9
+    },
+    "final_head_review": "Fresh hosted Quality and code/security review or valid quota exception required after these corrections."
   }
 }
