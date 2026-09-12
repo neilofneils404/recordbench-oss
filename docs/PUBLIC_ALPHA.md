@@ -194,7 +194,7 @@ the exception; a later review request needs a new completion or quota receipt.
 This path applies only when the latest official review summary has no security
 review row or security metadata. Recorded running, failed, malformed or stale
 security-review state must be reconciled through hosted review; quota cannot
-override it. The native approval and status explicitly identify the exception.
+override it. Quota handling accepts only the known code-only summary structure, including its fixed help text; unrecognized prose, markup, metadata or review rows require diagnosis. The native approval and status explicitly identify the exception.
 No local review substitutes for required hosted code review. Branch protections
 are not disabled to apply an exception.
 
@@ -207,7 +207,7 @@ remote tag target and active protection, and dispatch from that tag. The workflo
 definition itself is therefore immutable; never dispatch the bootstrap from a
 mutable feature branch. The job verifies the ref is protected and the PR head
 matches the dispatched revision, then runs the immutable gate implementation at
-`b714dfcfdbf2c29e50a1c692673372245f639231`, reviewed as part of #71. The same
+`dbff807336a96e067a8a1431e5cf1f69caf275cc`, reviewed as part of #71. The same
 code-review, quota-evidence, permission, discussion and acceptance checks apply.
 It does not execute the policy PR head with its write token, accept an arbitrary
 checkout input, forge a completed security review or change branch protections.

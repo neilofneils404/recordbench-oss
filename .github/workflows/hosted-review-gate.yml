@@ -46,7 +46,7 @@ jobs:
       # bootstrap uses a literal reviewed commit, never the PR head.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/tags/recordbench-quota-policy-bootstrap-20260912-v1' && inputs.pr_number == '71' && 'b714dfcfdbf2c29e50a1c692673372245f639231' || github.event.repository.default_branch }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/tags/recordbench-quota-policy-bootstrap-20260912-v1' && inputs.pr_number == '71' && 'dbff807336a96e067a8a1431e5cf1f69caf275cc' || github.event.repository.default_branch }}
           persist-credentials: false
       - name: Verify hosted reviews and discussion resolution
         env:
