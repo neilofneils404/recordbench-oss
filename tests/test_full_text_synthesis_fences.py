@@ -647,3 +647,147 @@ def test_two_workspace_connections_atomically_replay_one_synthesis_admission(wor
         assert not bench.workspace.connection.in_transaction and not other.connection.in_transaction
     finally:
         other.close()
+
+
+@pytest.mark.parametrize("route", ["inspector", "export"])
+def test_response_rechecks_source_set_after_actual_original_scan(workspace, monkeypatch, route):
+    from case_intelligence.pilot_uploads import PilotDocument
+    from case_intelligence.workspace_store import WorkspaceStore
+
+    client, bench, matter, _ = workspace
+    run, documents, statements = seed_terminal_review(bench, matter, count=1, selected_set=True)
+    job = finish(bench, queue(bench, matter, run))
+    other = WorkspaceStore(bench.workspace.path)
+    original = PilotDocument.iter_parsed_units
+    scans = []
+
+    def scan_then_change_scope(document, **kwargs):
+        scans.append(document.document_id)
+        for unit in original(document, **kwargs):
+            if len(scans) == 2:
+                # A separate workspace connection can commit this edit while
+                # the final response scan holds the source-file mutation guard.
+                other.remove_source_organization(matter.matter_id, documents[0].document_id)
+                assert not other.source_set_document_ids(matter.matter_id, run.source_set_id)
+            yield unit
+
+    monkeypatch.setattr(PilotDocument, "iter_parsed_units", scan_then_change_scope)
+    try:
+        path = (f"/matters/{matter.slug}/research?job={job.job_id}" if route == "inspector"
+                else f"/matters/{matter.slug}/research/{job.job_id}/export?format=json")
+        response = client.get(path)
+        assert len(scans) == 2
+        assert response.status_code == 409
+        assert statements[0] not in response.text
+    finally:
+        other.close()
+
+
+@pytest.mark.parametrize("units_per_source", [1, 21])
+def test_maximum_unsealed_population_uses_one_aggregate_streaming_budget(
+        workspace, monkeypatch, units_per_source):
+    from dataclasses import asdict
+    import hashlib
+    from case_intelligence.pilot_uploads import PilotDocument, PilotUnit
+
+    _, bench, matter, model = workspace
+    earlier, documents, _ = seed_terminal_review(bench, matter, count=1)
+    store = bench.source_store(matter)
+    template = documents[0]
+    # Persist 1,000 actual derived-unit files. The new run is cancelled before
+    # any inventory seals; its zero ledger-unit counts cannot bound this scan.
+    rows = [asdict(PilotUnit(number, "Synthetic unsealed original.",
+        excerpt_digest=hashlib.sha256(b"Synthetic unsealed original.").hexdigest()))
+        for number in range(1, units_per_source + 1)]
+    template.units = deepcopy(rows)
+    for number in range(1, 1000):
+        document = replace(template, document_id=f"{number:032x}",
+            display_name=f"synthetic-unsealed-{number}.txt", name_key=f"synthetic-unsealed-{number}.txt",
+            units=deepcopy(rows), units_file="")
+        store.documents[document.document_id] = document
+        documents.append(document)
+    store._save([document.document_id for document in documents])
+    bench._sync_source_catalog(matter, documents)
+    queued = bench.workspace.queue_review_run(matter.matter_id, ACTOR,
+        earlier.criterion_version_id, run_kind="full", review_mode="full_text")
+    run = bench.workspace.cancel_review_run(matter.matter_id, ACTOR, queued.run_id)
+    prepared = bench._full_text_synthesis_service(matter).prepare(matter.matter_id, ACTOR, run.run_id)
+    receipt = prepared["full_text_synthesis_input"]
+    assert len(receipt["sources"]) == 1000
+    assert all(not source["inventory_sealed"] and source["unit_count"] == 0 for source in receipt["sources"])
+    scanned, yielded, reads = [], [], []
+    original = PilotDocument.iter_parsed_units
+
+    def observed(document, **kwargs):
+        assert kwargs["max_record_chars"] == 120_065_536
+        assert callable(kwargs["budget_check"])
+        charge = kwargs["read_check"]
+        def read(count):
+            reads.append(count)
+            charge(count)
+        scanned.append(document.document_id)
+        for unit in original(document, **{**kwargs, "read_check": read}):
+            yielded.append(unit.number)
+            yield unit
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Population validation must use actual bounded streaming, not a whole-file loader")
+
+    monkeypatch.setattr(PilotDocument, "iter_parsed_units", observed)
+    monkeypatch.setattr(PilotDocument, "parsed_units", forbidden)
+    if units_per_source == 1:
+        with store.mutation_guard():
+            assert bench._validate_full_text_synthesis_sources(matter, prepared) == receipt
+        assert len(scanned) == len(set(scanned)) == 1000
+        assert len(yielded) == 1000
+    else:
+        with pytest.raises(WorkspaceProblem, match="source-validation limit"):
+            bench.queue_full_text_synthesis(matter, ACTOR, run.run_id, "research-request-" + "c" * 32)
+        assert 900 < len(scanned) < 1000
+        assert len(scanned) == len(set(scanned))
+        assert len(yielded) == 20_001  # one over-limit unit, then no further read
+        assert not bench.workspace.research_jobs(matter.matter_id, ACTOR)
+    assert reads and 0 < max(reads) <= 65_536
+    assert not model.calls
+
+
+@pytest.mark.parametrize("limit", ["text", "serialized", "record", "deadline"])
+def test_preparation_refuses_at_bounded_actual_original_reader(workspace, monkeypatch, limit):
+    import case_intelligence.workbench as module
+    from case_intelligence.pilot_uploads import PilotDocument
+
+    _, bench, matter, model = workspace
+    run, documents, statements = seed_terminal_review(bench, matter, count=1)
+    document = documents[0]
+    path = bench.source_store(matter).derived / document.units_file
+    original = PilotDocument.iter_parsed_units
+    reads, yielded = [], []
+    clock = [0.0]
+    if limit == "text":
+        monkeypatch.setattr(module, "MAX_SYNTHESIS_SCAN_CHARS", len(statements[0]) - 1)
+    elif limit == "serialized":
+        path.write_text(" " * 200_000 + path.read_text())
+        monkeypatch.setattr(module, "MAX_SYNTHESIS_SCAN_SERIALIZED_CHARS", 1024)
+    elif limit == "record":
+        monkeypatch.setattr(module, "MAX_SYNTHESIS_SCAN_RECORD_CHARS", 64)
+    else:
+        monkeypatch.setattr(module, "monotonic", lambda: clock[0])
+
+    def observed(source, **kwargs):
+        charge = kwargs["read_check"]
+        def read(count):
+            reads.append(count)
+            if limit == "deadline":
+                clock[0] = 5.0
+            charge(count)
+        for unit in original(source, **{**kwargs, "read_check": read}):
+            yielded.append(unit.number)
+            yield unit
+
+    monkeypatch.setattr(PilotDocument, "iter_parsed_units", observed)
+    with pytest.raises(WorkspaceProblem, match="source-validation limit"):
+        bench.queue_full_text_synthesis(matter, ACTOR, run.run_id, "research-request-" + "f" * 32)
+    assert reads and max(reads) <= 65_536
+    assert len(yielded) == (1 if limit == "text" else 0)
+    assert not bench.workspace.research_jobs(matter.matter_id, ACTOR)
+    assert not model.calls

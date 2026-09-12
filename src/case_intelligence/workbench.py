@@ -229,6 +229,17 @@ MAX_FINAL_BUNDLE_REPORTS = 500
 MAX_FINAL_BUNDLE_REPORT_ROWS = 10_000
 MAX_FINAL_BUNDLE_REPORT_BYTES = 32 * 1024 * 1024
 MAX_UPLOAD_PREFLIGHT_REQUEST_BYTES = 6 * 1024 * 1024
+# One synthesis validation pass includes every frozen ready source, even when
+# its review inventory is unsealed. These are aggregate, not per-source limits.
+MAX_SYNTHESIS_SCAN_CHARS = 10_000_000
+MAX_SYNTHESIS_SCAN_UNITS = 20_000
+MAX_SYNTHESIS_SCAN_SERIALIZED_CHARS = 128_000_000
+MAX_SYNTHESIS_SCAN_RECORD_CHARS = 120_065_536
+MAX_SYNTHESIS_SCAN_SECONDS = 5.0
+_SYNTHESIS_SCAN_LIMIT = (
+    "The frozen review exceeds the synthesis source-validation limit. "
+    "No synthesis result was admitted or released. Use the saved review and originals."
+)
 _WORD = re.compile(r"[a-z0-9]+")
 _FOLLOWUP_WORDS = {"it", "that", "those", "they", "them", "this", "these", "he", "she", "there"}
 _COLLECTION_WIDE_QUESTION = re.compile(
@@ -499,6 +510,47 @@ def _backup_status_projection() -> dict[str, object]:
         "retention": retention,
         "stale": stale,
     }
+
+
+class _FullTextSynthesisSourceScan:
+    """Cooperative bounded reads, without materializing a source population."""
+
+    def __init__(self):
+        self.units = self.characters = self.serialized_characters = 0
+        self.deadline = monotonic() + MAX_SYNTHESIS_SCAN_SECONDS
+
+    def check(self):
+        if (self.units > MAX_SYNTHESIS_SCAN_UNITS
+                or self.characters > MAX_SYNTHESIS_SCAN_CHARS
+                or self.serialized_characters > MAX_SYNTHESIS_SCAN_SERIALIZED_CHARS
+                or monotonic() >= self.deadline):
+            raise WorkspaceProblem(_SYNTHESIS_SCAN_LIMIT)
+
+    def charge_read(self, characters):
+        # The text reader charges <=65,536 Unicode characters per read, then
+        # refuses over-budget input before retaining/decoding another record.
+        # Serialized UTF-8 bytes are at most four times the character count.
+        self.serialized_characters += characters
+        self.check()
+
+    def iter_units(self, document):
+        from .unit_stream import UnitRecordLimit
+        self.check()
+        try:
+            for unit in document.iter_parsed_units(budget_check=self.check,
+                    read_check=self.charge_read, max_record_chars=MAX_SYNTHESIS_SCAN_RECORD_CHARS):
+                self.units += 1
+                self.characters += len(unit.text)
+                # Refuse an oversized unit before making a UTF-8/hash copy.
+                self.check()
+                yield unit
+            self.check()
+        except WorkspaceProblem:
+            raise
+        except UnitRecordLimit as exc:
+            raise WorkspaceProblem(_SYNTHESIS_SCAN_LIMIT) from exc
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise WorkspaceProblem("A frozen synthesis source has no valid bounded text reader.") from exc
 
 
 @dataclass(frozen=True)
@@ -4758,7 +4810,8 @@ class CaseIntelligenceWorkbench:
             repository=FullTextSynthesisRepository(connection=self.workspace.connection,
                 lock=self.workspace._lock, authorize=self.workspace.membership),
             resolve_originals=lambda locators, **basis: resolve_text_report_citations(
-                self, matter, locators, **basis), generator=self.generator)
+                self, matter, locators, scan_units=_FullTextSynthesisSourceScan().iter_units,
+                **basis), generator=self.generator)
 
     def _validate_full_text_synthesis_sources(self, matter, prepared):
         """Caller holds the source guard and authorizes the actual reader/writer.
@@ -4768,22 +4821,37 @@ class CaseIntelligenceWorkbench:
         Completed outputs keep their historical human-decision context.
         """
         from .full_text_synthesis import validate_prepared
-        from .full_text_review import resolve_text_report_citations
+        from .full_text_review import compact_locator, resolve_text_report_citations
         receipt = validate_prepared(prepared)
         if receipt["matter_id"] != matter.matter_id:
             raise WorkspaceProblem("The synthesis input belongs to another matter.")
         repository = self._full_text_synthesis_service(matter).repository
         with self.workspace._lock:
             repository.validate_source_scope_locked(receipt)
+        scan = _FullTextSynthesisSourceScan()
+        originals = {}
+        for value in prepared["evidence"]:
+            ordinal = re.fullmatch(r"chunk-([1-9][0-9]*)", value["chunk_id"])
+            if ordinal is None:
+                raise WorkspaceProblem("A saved synthesis original has no valid unit ordinal.")
+            originals.setdefault(value["document_id"], []).append(
+                compact_locator(value, int(ordinal[1]), value["excerpt"]))
         ready = [source for source in receipt["sources"] if source["source_state"] == "ready"]
         for start in range(0, len(ready), 100):
             batch = ready[start:start + 100]
-            resolve_text_report_citations(self, matter, (),
+            # Resolve saved citations while scanning each source once. Sharing
+            # scan across batches also bounds uncited, omitted and unsealed units.
+            locators = [locator for source in batch for locator in originals.pop(source["document_id"], ())]
+            resolve_text_report_citations(self, matter, locators, scan_units=scan.iter_units,
                 source_basis_digests={source["document_id"]: source["source_basis_digest"] for source in batch},
                 source_versions={source["document_id"]: source["source_version_id"] for source in batch})
-        for value in prepared["evidence"]:
-            if self._current_workflow_citation(matter, self._workflow_citation(value)) is None:
-                raise WorkspaceProblem("A saved synthesis original is missing or changed.")
+        if originals:
+            raise WorkspaceProblem("A saved synthesis original is missing or changed.")
+        # Source-set edits use the workspace lock, not the source-file guard.
+        # Revalidate after the potentially lengthy actual-original scan so an
+        # overlapping set edit cannot release a result for the former scope.
+        with self.workspace._lock:
+            repository.validate_source_scope_locked(receipt)
         return receipt
 
     def queue_full_text_synthesis(self, matter, actor_id, run_id, request_key, *, expected_snapshot=None):

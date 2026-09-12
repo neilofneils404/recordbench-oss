@@ -578,7 +578,7 @@ def read_locator(raw):
     return value
 
 
-def _resolve_text_citations(bench, matter, values, *, hydrate, source_basis_digests=None, source_versions=None, export_bytes_remaining=None):
+def _resolve_text_citations(bench, matter, values, *, hydrate, source_basis_digests=None, source_versions=None, export_bytes_remaining=None, scan_units=None):
     """Bound selected support while validating whole frozen sources in one pass."""
     from .workflow_jobs import WorkflowFailure
     if export_bytes_remaining is not None and (type(export_bytes_remaining) is not int or not 0 <= export_bytes_remaining <= 100 * 1024 * 1024):
@@ -609,7 +609,8 @@ def _resolve_text_citations(bench, matter, values, *, hydrate, source_basis_dige
                 raise WorkflowFailure('The frozen full-text source is unavailable or changed.')
             basis = hashlib.sha256()
             basis.update(('{"source_version":' + json.dumps(document.version_id) + ',"units":[').encode())
-            for ordinal, unit in enumerate(document.iter_parsed_units(), 1):
+            units = document.iter_parsed_units() if scan_units is None else scan_units(document)
+            for ordinal, unit in enumerate(units, 1):
                 # Validate actual text even in uncited units, so stale per-unit
                 # digest metadata cannot make a changed source look frozen.
                 if hashlib.sha256(unit.text.encode()).hexdigest() != unit.excerpt_digest:
@@ -648,15 +649,17 @@ def validate_text_citations(bench, matter, values, *, source_basis_digests=None,
         source_basis_digests=source_basis_digests, source_versions=source_versions)
 
 
-def resolve_text_report_citations(bench, matter, values, *, source_basis_digests=None, source_versions=None):
+def resolve_text_report_citations(bench, matter, values, *, source_basis_digests=None, source_versions=None, scan_units=None):
     """Return <=100 canonical citations with complete, unsliced excerpts <=6,000.
 
     Optional frozen basis/version maps also validate listed sources with no
     citation. Each source is streamed once and every unit's actual digest is
-    checked. Callers retain their own Report snapshot/revision transaction.
+    checked. An optional scan_units iterator can enforce one aggregate budget
+    across multiple batches. Existing Report callers retain their own source
+    budgets and snapshot/revision transaction.
     """
     return _resolve_text_citations(bench, matter, values, hydrate=True,
-        source_basis_digests=source_basis_digests, source_versions=source_versions)
+        source_basis_digests=source_basis_digests, source_versions=source_versions, scan_units=scan_units)
 
 
 def resolve_text_export_citations(bench, matter, values, *, maximum_bytes, source_basis_digests, source_versions):

@@ -371,6 +371,62 @@ def test_instruction_only_question_accepts_exactly_2000_characters_without_label
         ledger.prepare()
 
 
+@pytest.mark.parametrize("backend", ["ollama", "openai_compatible"])
+@pytest.mark.parametrize("guidance", [False, True])
+def test_maximum_criterion_reaches_both_generation_requests_once_with_exclusion_tail(ledger, monkeypatch, backend, guidance):
+    from case_intelligence import generation
+    from case_intelligence.full_text_synthesis_repository import criterion_question
+
+    beginning = "Summarize the saved delivery accounts. "
+    exclusion = "Exclude violet-submarine speculation."
+    criterion = {"instructions": beginning,
+                 "include_guidance": "Include original dispatch statements." if guidance else "",
+                 "exclude_guidance": exclusion if guidance else ""}
+    if not guidance:
+        criterion["instructions"] += exclusion
+    padding = "x" * (2_000 - len(criterion_question(criterion)))
+    criterion["instructions"] = (beginning + padding if guidance else beginning + padding + exclusion)
+    expected = criterion_question(criterion)
+    assert len(expected) == 2_000 and expected.endswith(exclusion)
+    with ledger.db:
+        ledger.db.execute("UPDATE workbench_review_criterion_version SET instructions=?,include_guidance=?,exclude_guidance=?",
+            tuple(criterion[key] for key in ("instructions", "include_guidance", "exclude_guidance")))
+    ledger.add(1)
+    prepared = ledger.prepare()
+    assert prepared["full_text_synthesis_input"]["question"] == expected
+
+    # Exercise the real service, client prompt builder and transport payload;
+    # only transport and readiness I/O are replaced with synthetic responses.
+    requests = []
+    def request(url, payload, **kwargs):
+        requests.append(deepcopy(payload))
+        answer = {"answerable": True, "claims": [{"text": ledger.originals[1]["excerpt"], "evidence_ids": ["S1"]}],
+                  "limitation": None, "missing_information": ""}
+        message = {"content": json.dumps(answer)}
+        return {"message": message} if backend == "ollama" else {"choices": [{"message": message}]}
+    monkeypatch.setattr(generation, "_bounded_json_request", request)
+    monkeypatch.setattr(generation, "_bounded_json_get", lambda *args, **kwargs:
+        {"models": [{"name": "synthetic-generator"}], "data": [{"id": "synthetic-generator"}]})
+    client_type = generation.OllamaGenerator if backend == "ollama" else generation.OpenAICompatibleGenerator
+    ledger.service.generator = GroundedGenerationService(client_type("http://127.0.0.1:1", "synthetic-generator"))
+    receipt = prepared["full_text_synthesis_input"]
+    state = ledger.service.run(expected, prepared, lambda state: None, lambda: ledger.check(receipt), now=lambda: 1000)
+    assert state["stop_reason"] == "completed" and state["requests_spent"] == len(requests) == 2
+    normalized = " ".join(expected.split())
+    for level, payload in zip(("issue", "matter"), requests):
+        user = payload["messages"][1]["content"]
+        context_text, rest = user.split("\n\nQuestion:\n", 1)
+        question, _ = rest.split("\n\nMatter evidence:\n", 1)
+        assert question == normalized and question.endswith(exclusion)
+        assert len(question) <= generation.MAX_QUESTION_CHARS
+        context = json.loads(context_text.split(":\n", 1)[1])
+        assert f"{level}-level section" in context["task"]
+        assert "Retain supporting AND competing accounts" in context["task"]
+        assert "Summarize the saved delivery accounts" not in context["task"]
+        assert len(context_text) <= generation.MAX_WORKING_CONTEXT_CHARS
+        assert (payload["options"]["num_predict"] if backend == "ollama" else payload["max_tokens"]) == 1_200
+
+
 def test_complete_criterion_is_retained_in_all_final_export_formats(workspace, monkeypatch):
     _, bench, matter, model = workspace
     include = "Include decisive amber-bicycle dispatch support."

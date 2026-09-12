@@ -230,7 +230,7 @@ def run_synthesis(question, passes, evidence, generator, checkpoint: Callable,
                 # Never drop some of a claim's support to squeeze in a packet.
                 state["stop_reason"] = "character_budget"
                 break
-            context = json.dumps({"task": synthesis_question(question, level), "derived_findings_not_evidence": [
+            context = json.dumps({"task": synthesis_instructions(level), "derived_findings_not_evidence": [
                 {"text": claim["text"], "original_sources": [
                     f"S{spec['support_tokens'].index(token) + 1}" for token in claim["support_tokens"]]}
                 for claim in claims]}, ensure_ascii=False)
@@ -274,14 +274,12 @@ def run_synthesis(question, passes, evidence, generator, checkpoint: Callable,
     return state
 
 
-def synthesis_question(question, level):
+def synthesis_instructions(level):
+    """Keep stage instructions separate from the complete generator question."""
     instruction = ("Develop an issue-level section from the saved findings." if level == "issue" else
                    "Develop a matter-level section from the issue summaries.")
-    # Keep the actual reviewer objective intact. Instructions live in the
-    # non-evidence working context when the objective uses the full input limit.
     return (instruction + " Retain supporting AND competing accounts with separate original citations; "
-            "do not reconcile a contradiction without source support. Identify unresolved questions. "
-            + question)[:2000]
+            "do not reconcile a contradiction without source support. Identify unresolved questions.")
 
 
 def synthesis_answer(state, evidence):

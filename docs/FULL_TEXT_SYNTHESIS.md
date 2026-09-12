@@ -25,7 +25,10 @@ The action uses the selected run's complete criterion and its frozen source
 population. Instructions remain unchanged when guidance is empty; otherwise
 instructions and include/exclude guidance form one labelled canonical question. There is no new question, search, combined-run selection, or
 additional review pass. The complete criterion must fit the existing 2,000-character
-question limit, including any labels; longer input is refused without truncation. The action
+question limit, including any labels; longer input is refused without truncation.
+The complete question reaches each issue- and matter-stage request. Stage
+instructions live separately in working context, without a shortened duplicate
+of the criterion. The action
 uses the existing CSRF-protected form and includes the displayed input snapshot,
 so a human edit between viewing the page and submitting cannot silently change
 the admitted input.
@@ -72,13 +75,31 @@ Original locators bind the matter, document, source version, unit, location,
 excerpt digest, and full unit length. The application validates actual stored
 source text for every frozen ready source, including sources whose findings were
 omitted or whose ranges yielded no finding. Source validation is bounded and
-batched. It does not expand an existing search result or materialize the entire
-matter's parsed units.
+batched. One scan budget spans all batches, including unsealed sources, and
+resolves admitted citations during that same pass. Preparation's original
+resolver uses the same limits. It does not expand an existing search result or
+materialize the entire matter's parsed units.
 
 A selected source set must still have exactly its frozen membership. Adding or
 removing a member, changing a source version or content basis, losing a source,
 or losing access refuses affected work. A missing or incompatible original
-locator is an error; it is not repaired with generated prose.
+locator is an error; it is not repaired with generated prose. Selected-set scope
+is rechecked after the original scan, so a membership edit during hashing refuses
+the response as stale.
+
+Each successful source-validation pass permits at most 10,000,000 text
+characters, 20,000 units and 128,000,000 serialized JSON characters. Their
+maximum UTF-8 sizes are 40,000,000 and 512,000,000 bytes respectively. A final
+read buffer or decoded unit can exceed its aggregate allowance and trigger
+refusal; oversized text is refused before an additional UTF-8/hash copy.
+The reader also bounds one JSON record to 120,065,536 characters, accommodating
+the escaped representation of a unit within the text limit. A cooperative
+five-second deadline is checked during reads of at most 65,536 characters,
+decoding and unit iteration; it is not an operating-system hard I/O timeout.
+Exceeding any limit refuses admission or derived output in full, while the saved
+review and originals remain available. No prefix is accepted as a verified
+source population. Preparation and full-population validation are separately
+bounded passes; five seconds is not a budget for the complete HTTP request.
 
 ## Admission and partial coverage
 

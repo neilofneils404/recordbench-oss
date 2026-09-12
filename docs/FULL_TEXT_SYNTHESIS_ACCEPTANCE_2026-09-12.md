@@ -39,7 +39,7 @@ and exports; they do not measure model quality.
 | Atomic replay and audit | Concurrent duplicate requests create one job and one queue event; operation attribution excludes criterion, evidence and human-note text |
 | Direct exports | JSON, Markdown, and Word preserve receipt, hierarchy, partial status, and original citation identities; corrupt input is refused |
 
-The final three adapter suites contain **114 synthetic cases**. A focused run
+The initial three adapter suites contained **114 synthetic cases**. A focused run
 including the new version fences and legacy investigation, export and Report
 coverage passed **225 tests**; the final lifecycle-fence suite, with later audit
 and replay cases, passed **52 tests**. The adapter-bound suite passed **29 tests**,
@@ -194,3 +194,54 @@ other portfolios, different hardware, or confidential material. Production
 generation settings, model selection, admission capacity, and installed nodes
 remain unchanged. Hosted final-head checks, required review, and maintainer
 acceptance are separate outstanding gates.
+
+## Review corrections and refreshed model evidence
+
+Review of implementation candidate `1c6870d1a880998ee70eb9fb91db84328dc2f85f`
+identified a clipped duplicate of the criterion in working context, a source-set
+edit window during original scanning, and missing aggregate scan limits. The
+primary generator question already preserved the complete criterion. The
+correction removes its duplicate from working context and keeps stage
+instructions separate. Four transport regressions verify the complete
+2,000-character criterion, ending in exclusion guidance, in both issue and
+matter requests for Ollama and OpenAI-compatible clients. Existing question,
+working-context, evidence and output limits remain unchanged. An independent
+review of this correction found no actionable regression; its transport and
+hierarchy checks passed 26 tests.
+
+The source scanner now uses one aggregate budget across all batches, including
+uncited and unsealed sources. Preparation's original resolver uses the same
+bounded reader; admitted citations are checked within the population pass.
+Selected-set scope is rechecked after scanning. The
+[feature contract](FULL_TEXT_SYNTHESIS.md#frozen-input-and-original-evidence)
+records the character, unit, record and cooperative time limits. Exhaustion
+refuses admission or derived output without accepting a partial source scan.
+
+The corrected three adapter suites passed **126 tests**. Eight new scan
+regressions use actual bounded readers: 1,000 derived-unit files scan once each;
+a cancelled, unsealed 21,000-unit population refuses at the first unit above
+20,000; preparation refuses text, serialized-input, record and deadline
+exhaustion; and separate workspace connections change selected-set membership
+during the final inspector/export scan, receiving 409 without source text.
+Broader full-text, Report streaming and reader coverage passed **166 tests**.
+The criterion correction's adapter, hierarchy, generation and legacy planner
+run passed **203 tests**. Compile and working-tree publication checks passed.
+The corrected source scanner also passed all seven pinned-browser checks and
+a repeated complete-runtime clean-restore/matching-reader rollback drill, with
+the same 24 originals, two reused nodes and 13 retained request charges.
+
+Because the working-context prompt changed, both model modes were repeated
+with the same pinned artifact, isolated runtime and settings above. The default
+wire again failed structured output, this time after **48.57 seconds**, with one
+charged request and no quality evaluation. The explicit `think=false` run
+completed in **107.48 seconds** with **24/24 exact original statements**, both
+decisive accounts, zero false displayed claims and 12 charged service requests.
+The same unsupported and oversized candidates remained omissions and the
+result remained partial. Independent validation checked all 24 distinct
+original units, exact claim-to-citation matches, hierarchy state and admission
+accounting. The refreshed model receipt SHA-256 is
+`7f691f7b2a10a80d5c9a07da45462d06a748142443d89561629135d832989b27`.
+The owned model process was stopped and its port independently confirmed closed.
+This supersedes the earlier prompt's model evidence for the corrected candidate;
+it retains the same qualification limits and does not establish default-wire
+quality or hosted acceptance.
