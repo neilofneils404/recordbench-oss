@@ -13,7 +13,7 @@ import time
 from typing import Callable, Mapping
 
 from .generation import (
-    EvidenceItem, GenerationGroundingRejected, VerifiedAnswer, VerifiedClaim,
+    EvidenceItem, GenerationGroundingRejected, VerifiedAnswer, VerifiedClaim, MEDIA_TRANSCRIPT_NOTICE,
     verify_original_claim,
 )
 
@@ -297,7 +297,11 @@ def synthesis_answer(state, evidence):
     return VerifiedAnswer(bool(claims), "Supporting and competing evidence from saved findings:",
                           tuple(claims), VerifiedClaim(notice, ()) if claims else None,
                           notice if not claims else "", tuple(dict.fromkeys(token for claim in claims for token in claim.evidence_ids)),
-                          bool(state["requests_spent"]), 0, verification_notice=notice)
+                          bool(state["requests_spent"]), 0,
+                          evidence_notice=MEDIA_TRANSCRIPT_NOTICE if any(
+                              evidence[int(identifier[1:]) - 1]["evidence_kind"] == "transcript"
+                              for claim in claims for identifier in claim.evidence_ids) else "",
+                          verification_notice=notice)
 
 
 def synthesis_notice(state):

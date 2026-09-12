@@ -252,3 +252,13 @@ def test_boundary_revocation_after_generation_prevents_saving_response(corpus):
                       GroundedGenerationService(client), lambda value: saved.append(deepcopy(value)), boundary)
     assert saved[-1]["requests_spent"] == 1
     assert saved[-1]["issue"] == []
+
+
+def test_final_transcript_orientation_retains_machine_transcription_caution(corpus):
+    from case_intelligence.generation import MEDIA_TRANSCRIPT_NOTICE
+    state, _ = execute(corpus)
+    # Isolate the final assembler's modality notice; source verification at the
+    # generator and persisted-node boundaries has separate attribution tests.
+    corpus[1][23]["evidence_kind"] = "transcript"
+    answer = synthesis_answer(state, corpus[1])
+    assert answer.evidence_notice == MEDIA_TRANSCRIPT_NOTICE
