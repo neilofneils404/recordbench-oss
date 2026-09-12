@@ -114,9 +114,12 @@ are not measured corpus-capacity qualification. Final bundles remain bounded by
 the existing aggregate work-product limit. Work-product exports do not contain
 original files and are not reopenable RecordBench packages.
 
-Entity-to-Report compilation, full-text-to-synthesis, matter memory/background,
-production import, larger capacity, learned relationship extraction, a visual
-graph, held Mac work and deployment remain separate scopes.
+Entity-to-Report compilation, matter memory/background, production import,
+larger capacity, learned relationship extraction, a visual graph, held Mac work
+and deployment remain separate scopes. The landed
+[single-run full-text synthesis adapter](FULL_TEXT_SYNTHESIS.md) has its own
+bounded input and export contract; it does not infer relationships or connect
+entity records to Reports.
 
 ## Migration, clean restore and rollback
 
@@ -155,3 +158,7 @@ The [dated validation receipt](EVIDENCE_ASSERTIONS_VALIDATION_2026-09-12.json)
 records actual results and limitations. Hosted
 final-head code/security review, required CI and maintainer acceptance are
 separate gates; synthetic acceptance is not confidential-casework readiness.
+
+The [historical post-18 receipt](EXIT_ALPHA_CRUISE.md#historical-post-18-receipt-superseded-snapshot)
+records this feature's final-head gates and passed independent post-merge checks.
+The dated synthetic receipt retains its preparation-time observations.

@@ -84,9 +84,17 @@ matter identities, aliases, original supported mentions and reviewer history.
 [Entity discovery](docs/ENTITY_DISCOVERY.md) incrementally visits inventoried
 text-review units and proposes occurrences for reviewer reconciliation. Its
 rule-based recognizer has limited recall; processing a unit does not establish
-that every name was found. Relationships/events are still outstanding, and
-entity records do not yet feed automatic Report compilation. Full-text findings
-also do not yet feed [hierarchical investigation synthesis](docs/HIERARCHICAL_SYNTHESIS.md).
+that every name was found. [Manual events and assertions](docs/EVIDENCE_ASSERTIONS.md)
+retain typed roles, uncertain dates, supporting and competing originals, and
+reviewer corrections. Entity records do not yet feed automatic Report compilation.
+
+[Full-text synthesis](docs/FULL_TEXT_SYNTHESIS.md) connects saved machine findings
+from one terminal full-text review to the shared hierarchy for its complete
+criterion. Reviewers can inspect originals, frozen human context, coverage gaps
+and omissions, then export JSON, Markdown or Word. Complete originals over
+6,000 characters are omitted in full. Multiple runs, new questions, greater
+capacity and copying this adapter into a Report remain outside the first substep;
+production model defaults are unchanged.
 
 Sources also offers [folder navigation](docs/SOURCE_FOLDER_NAVIGATION.md), with
 child-folder counts, parent navigation and the existing collection, source-set

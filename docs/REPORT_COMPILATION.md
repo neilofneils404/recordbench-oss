@@ -40,6 +40,13 @@ Timeline, People/Places/Things report, or Topic brief. Saved team notes and the
 latest available AI work provide an editable starting selection. A topic brief
 requires a focus; the other formats accept an optional focus.
 
+The first [full-text synthesis adapter](FULL_TEXT_SYNTHESIS.md) is excluded from
+Report selection, copying and compilation. Direct requests also refuse before
+generation or saving because these generic paths cannot yet preserve its complete
+frozen receipt and source population. Use its direct JSON, Markdown or Word
+exports. Ordinary investigations and full-text review material retain their
+existing Report paths.
+
 The request queues durable background work and opens its progress page. Reviewers
 can stop it, leave the page, or retry a failed request from Reports. Completion
 opens the document as readable prose with source links. **Edit this draft** exposes

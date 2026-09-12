@@ -5,6 +5,11 @@ its exact criterion, frozen source and human-decision context, the existing
 hierarchy, inspector, and direct exports. All inputs are synthetic. The
 [feature contract](FULL_TEXT_SYNTHESIS.md) defines the bounds and lifecycle.
 
+Status note: Preparation-time pending-gate statements below describe the local
+candidate when recorded. The [landing addendum](#landing-addendum) records the
+later merge and independent post-merge checks. Earlier measurements and
+limitations, including the refreshed review-correction evidence, are unchanged.
+
 Scope: [issue #83](https://github.com/neilofneils404/recordbench-oss/issues/83) and
 the prerequisite scope-documentation [PR #84](https://github.com/neilofneils404/recordbench-oss/pull/84).
 These references do not assert that either the scope PR or implementation has
@@ -245,3 +250,19 @@ The owned model process was stopped and its port independently confirmed closed.
 This supersedes the earlier prompt's model evidence for the corrected candidate;
 it retains the same qualification limits and does not establish default-wire
 quality or hosted acceptance.
+
+## Landing addendum
+
+Recorded 2026-09-12. [PR #85](https://github.com/neilofneils404/recordbench-oss/pull/85)
+merged at `95f290bf350742bc77c915eb0269c774069f3633` on 2026-09-12 at 21:59:37 UTC; the final reviewed
+head was `95f290bf350742bc77c915eb0269c774069f3633`. The
+[cruise receipt](EXIT_ALPHA_CRUISE.md#current-upstream-receipt) records final-head
+Quality, hosted code review, the actual security gate, maintainer acceptance,
+and the separate successful post-merge Quality run.
+
+That landing supersedes the preparation-time pending hosted gates. It does not
+change the native baseline failures, default-wire failure, qualified `think=false`
+model result, or complete-original omissions over 6,000 characters. Only the
+first single-run adapter is Done. Report copy/compilation, multiple runs, new
+questions and greater capacity remain outside it. No installed-node update,
+deployment, supported release or subsequent product priority is claimed.

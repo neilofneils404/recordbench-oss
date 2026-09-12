@@ -7,6 +7,13 @@ An unanswerable result is labeled as needing review, not verified synthesis.
 Missing historical counters and stop reasons say "Not recorded" rather than
 inventing values. No new generation occurs during conversion.
 
+This conversion excludes the first
+[single-run full-text synthesis adapter](FULL_TEXT_SYNTHESIS.md). Its Report
+choices are hidden and direct copy/compilation requests refuse until these paths
+can preserve the complete frozen input receipt and source population. Its direct
+JSON, Markdown and Word exports remain available; ordinary full-text review
+conversion is unchanged.
+
 Only support belonging to a section's saved claims/limitation is attached to
 that section. The saved summary and pass text are checked against their answer
 records, and the exact evidence ledger and nested citations are revalidated

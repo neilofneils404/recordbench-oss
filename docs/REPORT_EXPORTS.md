@@ -44,7 +44,10 @@ sources. A bundle containing cited Reports therefore fails explicitly and asks
 an administrator to restore source access before retrying. It never traverses
 quarantine, recreates an active source directory, or silently drops Reports.
 This limitation does not change the existing frozen investigation-ledger
-recovery contract. Retain a verified download before deliberately closing.
+recovery contract. The separate [full-text synthesis adapter](FULL_TEXT_SYNTHESIS.md)
+requires current original-source validation and refuses quarantined-source
+exports; it does not inherit that older investigation recovery shortcut.
+Retain a verified download before deliberately closing.
 
 ## Validation and rollback
 

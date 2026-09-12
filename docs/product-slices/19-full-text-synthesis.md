@@ -1,9 +1,16 @@
 # 19: Synthesize one full-text review with original support
 
-Status: first single-run adapter promoted in the [exit-alpha cruise](../EXIT_ALPHA_CRUISE.md),
-after verified slice-18 landing. Implementation and acceptance remain pending.
-Depends on landed 12 and 13; contract [#83](https://github.com/neilofneils404/recordbench-oss/issues/83).
-This promotion does not change capacity defaults or authorize the future work below.
+Status: **Done — first single-run adapter only.**
+[PR #85](https://github.com/neilofneils404/recordbench-oss/pull/85) landed at
+`95f290bf350742bc77c915eb0269c774069f3633`; the
+[cruise receipt](../EXIT_ALPHA_CRUISE.md#current-upstream-receipt) records
+final-head acceptance and passed independent post-merge checks. See the
+[feature contract](../FULL_TEXT_SYNTHESIS.md) and
+[dated acceptance](../FULL_TEXT_SYNTHESIS_ACCEPTANCE_2026-09-12.md).
+Depends on landed 12 and 13; contract
+[#83](https://github.com/neilofneils404/recordbench-oss/issues/83).
+Future work below remains unscheduled. Capacity defaults and production model
+settings are unchanged.
 
 ## User outcome
 
@@ -48,6 +55,10 @@ synthesis must refuse matter closure, and completed/cancelled receipts and
 checkpoints must join complete matter purge. Late workers cannot recreate them.
 
 ## Synthetic acceptance
+
+The [dated receipt](../FULL_TEXT_SYNTHESIS_ACCEPTANCE_2026-09-12.md) records these
+checks. The long-original case proves explicit whole-unit omission over 6,000
+characters; it does not claim recall of the omitted late statements.
 
 - Distribute supported findings and a late contradiction across more than 12
   extracted units. Require original support for both accounts in final output.

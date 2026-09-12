@@ -6,6 +6,24 @@ bounded synthetic observations from that checkout, not a deployed-system audit
 or a fresh-host installation qualification. Source locations and the validation
 section below refer to that revision unless a later note says otherwise.
 
+## Current implementation status
+
+The [current assessment addendum](../PRODUCT_DIRECTION_2026-09-12.md#current-state-addendum-after-slice-19-first-adapter)
+and [cruise receipt](../EXIT_ALPHA_CRUISE.md#current-upstream-receipt) record
+the verified implementation snapshot `95f290bf350742bc77c915eb0269c774069f3633` and its acceptance.
+Slices 16–18 are landed. Slice 19's first adapter now synthesizes findings from
+one terminal full-text run for its complete criterion, preserving originals,
+frozen human context, explicit omissions and bounded recovery. Its direct
+exports do not imply Report compilation or greater collection capacity.
+
+Older observations below retain their named revisions; they are not current
+absence claims. Rule-based discovery still has limited recall. Automatic
+relationship inference, entity-to-Report compilation, multi-run synthesis,
+new questions and larger-scale qualification remain separate gaps. No new
+implementation priority is selected.
+
+## Historical implementation-status note: after slice 18
+
 The earlier September 12 implementation-status note against the verified `main` snapshot
 `c1ada89bf15ea8f61906de3c62202da4d98e279f` lives in the
 [exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) and [slice index](README.md); it is
@@ -15,7 +33,7 @@ groups (**06**), evidence-driven investigation (**11**), and full-text review
 [#73](https://github.com/neilofneils404/recordbench-oss/pull/73).
 That slice-13 snapshot and sequence are superseded by the
 [September 12 current-state addendum](../PRODUCT_DIRECTION_2026-09-12.md#current-state-addendum-after-slice-18)
-and cruise receipt: **16**, **17**, and **18** are landed at the verified
+and [historical cruise receipt](../EXIT_ALPHA_CRUISE.md#historical-post-18-receipt-superseded-snapshot): **16**, **17**, and **18** are landed at the verified
 `19d57fbec29325ae9b5ab296e6a2adcb18a5e0ec` snapshot. The cruise promotes only
 slice **19**'s first single-run adapter; its implementation and acceptance remain
 pending. The entity observations below remain historical findings, not current
@@ -115,6 +133,11 @@ synthesizes saved findings through issue and matter groups with original
 citations. The final twelve-passage reselection in the historical table is
 superseded for new investigations; the per-call generation limits remain.
 
+The separate [full-text adapter](../FULL_TEXT_SYNTHESIS.md) now connects one
+terminal run to that hierarchy. Its 48-candidate bound and whole-unit omission
+over 6,000 characters remain distinct from investigation retrieval limits and
+full-text processing coverage.
+
 | Stage | Observed bound or behavior | Source |
 | --- | --- | --- |
 | Default investigation plan | Up to five preset question variants | `workbench.py::_research_plan` |
@@ -163,6 +186,10 @@ and compile saved work into drafts; see
 [report review basis](../REPORT_REVIEW_BASIS.md) and
 [report compilation](../REPORT_COMPILATION.md). Hierarchical cited synthesis
 landed as **13**, with original support retained through issue and matter groups.
+The first full-text synthesis adapter has direct JSON, Markdown and Word exports,
+but generic Report copy/compilation refuses until it can preserve the complete
+frozen receipt and source population. Ordinary investigation and full-text review
+Report paths remain available.
 
 At the September 8 checkout, the report's evidentiary appendix could be longer
 than its reasoning while the answer was constrained by the final 12-passage

@@ -168,5 +168,8 @@ coverage and reconciliation, performs undo, exports and purges. The migration
 drill checks the original slice-16 reader against a clean pre-upgrade rollback.
 These are synthetic contributor checks, not installed-node acceptance.
 
-Slice 18 relationships/events, background material, matter memory, proposed
-slice 19, capacity expansion, held Mac work and deployment remain out of scope.
+Discovery remains scoped to recognized occurrences and reviewer reconciliation.
+[Manual events/assertions](EVIDENCE_ASSERTIONS.md) and the
+[first full-text synthesis adapter](FULL_TEXT_SYNTHESIS.md) are separate landed
+features with their own contracts. Background material, matter memory, greater
+capacity, held Mac work and deployment remain outside this discovery contract.

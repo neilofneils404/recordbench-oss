@@ -15,14 +15,46 @@ current behavior; the north star describes intent; release readiness defines
 what must be proven before a supported release.
 
 The [September 12 assessment](PRODUCT_DIRECTION_2026-09-12.md) identifies gaps
-and subsequent delivery stages. Slice 19 is promoted below only for its first
-single-run adapter. Background material, matter memory, production imports,
-and larger capacity remain future
-scoped work, not claims of current capability or permission to bypass this queue.
+and subsequent delivery stages. Slice 19's first single-run adapter is landed
+as recorded below. Multiple-run aggregation, new questions, background material,
+matter memory, production imports and larger capacity remain separately scoped
+work. This receipt selects no further product step.
 
 **Last updated:** 2026-09-12
 
 ## Current upstream receipt
+
+Verified `main` implementation snapshot after slice 19's first adapter:
+`95f290bf350742bc77c915eb0269c774069f3633`, merged in
+[PR #85](https://github.com/neilofneils404/recordbench-oss/pull/85) at
+2026-09-12 at 21:59:37 UTC. Its scope prerequisite
+[#84](https://github.com/neilofneils404/recordbench-oss/pull/84) landed at
+`126a468a707a6f9b66d3a4f2565585b54ff98244`; its separate
+[post-merge Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34719400464)
+passed all six jobs: application 2,819 passed, nine skipped; PostgreSQL seven
+passed, zero skipped.
+
+The [final PR Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34720656875) passed on
+`95f290bf350742bc77c915eb0269c774069f3633`: application 2,945 passed, nine skipped; PostgreSQL seven passed, zero skipped; all six jobs green.
+[Hosted code review](https://github.com/neilofneils404/recordbench-oss/pull/85#issuecomment-5648909015) covered that head after findings
+were resolved or reconciled. Security review did **not** run: the authorized [verified quota exception](https://github.com/neilofneils404/recordbench-oss/pull/85#issuecomment-5648923555) was recorded for this exact head before maintainer acceptance.
+[Full-head maintainer acceptance](https://github.com/neilofneils404/recordbench-oss/pull/85#issuecomment-5648957842) preceded merge.
+Native gate approval and strict protection were verified before the normal protected fast-forward; independent readback confirmed that protections remained unchanged.
+
+The independent [post-merge Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34721488683) passed
+on `95f290bf350742bc77c915eb0269c774069f3633` at 2026-09-12 at 22:11:43 UTC:
+application 2,945 passed, nine skipped; PostgreSQL seven passed, zero skipped; all six jobs green. This is separate from the final PR run.
+The [feature contract](FULL_TEXT_SYNTHESIS.md) and
+[dated acceptance](FULL_TEXT_SYNTHESIS_ACCEPTANCE_2026-09-12.md#landing-addendum)
+retain synthetic source, browser, recovery and qualified model evidence. The
+default model wire probe failed; the passing fixed-corpus evaluation explicitly
+used `think=false`. Native baseline-equal failures remain diagnostic. This
+accepts the first upstream adapter only, not an installed-node update,
+deployment, greater capacity or a supported release.
+
+## Historical post-18 receipt (superseded snapshot)
+
+This receipt records readiness at the time of the first slice-19 promotion.
 
 Verified `main` snapshot after slice 18:
 `19d57fbec29325ae9b5ab296e6a2adcb18a5e0ec`, the exact merged head of
@@ -111,8 +143,12 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 6 | Slice **16** — manual People / Places / Things workspace | Done (#77) |
 | 7 | Slice **17** — entity discovery and reviewer reconciliation | Done (#79) |
 | 8 | Slice **18** — evidence-backed relationships and events | Done (#82) |
-| 9 | Slice **19** — first substep: synthesize one terminal full-text run for its criterion | **Next — narrow implementation** |
+| 9 | Slice **19** — first substep: synthesize one terminal full-text run for its criterion | Done — first adapter only (#85) |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
+
+No further product step is selected. Later slice-19 work and other proposals
+require a separate explicit cruise update. Existing holds and parallel
+release-readiness requirements remain unchanged.
 
 Slice **12** needed no further product PR. **Review all extracted text** is
 already on `main` from [#59](https://github.com/neilofneils404/recordbench-oss/pull/59)
@@ -144,8 +180,8 @@ merge/split and guarded undo. Coverage records visited units, not complete name
 recall. Its rule-based extractor has limited recall and can misclassify prose;
 no learned NER quality or automatic identity resolution is claimed. Entity work
 is exported separately and does not yet feed automatic Report compilation.
-Full-text findings still do not feed hierarchical synthesis; the first slice-19
-adapter is the authorized next implementation below.
+The separate [single-run full-text adapter](FULL_TEXT_SYNTHESIS.md) now feeds
+saved machine findings into the shared hierarchy within its frozen bounds.
 
 ## Landed slice 18 and its limits
 
@@ -156,40 +192,32 @@ records. Shared names, co-mentions and speaker clusters do not establish identit
 or relationships. This manual workflow does not add automatic relationship
 inference or entity-to-Report compilation.
 
-## Active implementation: slice 19, first single-run adapter
+<a id="active-implementation-slice-19-first-single-run-adapter"></a>
 
-Implement the first substep of [19: full-text synthesis](product-slices/19-full-text-synthesis.md):
-one terminal full-text review, its existing criterion and authorized matter,
-through the landed shared hierarchy. Preserve all criterion instructions and
-include/exclude guidance within its existing question bound, or refuse the input
-explicitly; never silently truncate the terms that produced its findings. Bind a
-versioned immutable input receipt to
-the consistent run, relevant decision revisions, frozen population, source and
-extraction identities, coverage, finding identities and original locators. Stream
-enumeration and bounded admission; preserve inspectable omissions, including
-oversized originals, failures and no-finding ranges. Earlier generated summaries
-and range decisions never become original evidence.
+## Landed slice 19: first single-run adapter and its limits
 
-The content-free provenance/storage contract is
-[#83](https://github.com/neilofneils404/recordbench-oss/issues/83).
-Require cancellation/recovery and durable charging, active/stale/cross-matter
-refusal, save-time and response authorization, browser/source/export acceptance,
-versioned backup/clean restore and rollback, and a separate pinned local-model
-evaluation. Human decisions remain separate frozen context with revision checks.
-The new action requires CSRF protection and a negative request regression.
-Bind the input ledger atomically: concurrent creator deletion must either be
-blocked by a dependency/lease or invalidate active synthesis without losing
-charged work. Include synthesis in active-work matter-close refusal, complete
-purge cleanup and late-worker fencing; prove concurrent deletion and clean purge
-with synthetic records. Revoke the initiating member during an in-flight model
-request and prove that later checkpoints/final saves and status/export responses
-refuse access while charged work survives.
+The [first adapter](FULL_TEXT_SYNTHESIS.md) accepts one terminal full-text run,
+its complete criterion and frozen authorized source population. Its versioned
+receipt retains original locators, coverage, omissions and human-decision
+revisions. Original passages supply evidence; rationales and earlier summaries
+do not substitute for them.
 
-This promotion authorizes implementation, not acceptance. Multiple-run
-aggregation, new questions, capacity increases, entity-to-Report integration,
-background/memory, production imports, held Mac integration and deployment stay
-outside this substep. Do not mark 19 Done before its reviewed implementation
-actually merges and its independent post-merge checks pass.
+Admission retains at most 48 candidates and explicitly omits complete originals
+over 6,000 characters. Aggregate original-scan limits refuse incomplete validation;
+existing generation bounds remain unchanged. Source, source-set, access, ledger
+and worker-attempt changes fence admission, recovery and saved output. Human
+decisions remain frozen context, separate from evidence.
+
+The terminal-review action reuses the hierarchy inspector and direct JSON,
+Markdown and Word exports. Report copy/compilation remains unsupported for this
+adapter. The [dated receipt](FULL_TEXT_SYNTHESIS_ACCEPTANCE_2026-09-12.md)
+records 24-original support and contradiction, explicit omissions, keyboard
+recovery, durable charges, complete-runtime restore and matching-reader rollback.
+The model result retains its explicit evaluation-setting qualification.
+
+Only this first substep is Done. Multiple-run aggregation, new questions,
+adjustable capacity, entity-to-Report integration, background/memory,
+production imports, held Mac integration and deployment remain outside it.
 
 Every subsequent slice must state its reviewer outcome, actual processed scope,
 original support, human/machine distinctions, and recovery path. Manual review
@@ -240,5 +268,7 @@ propose queries and draft prose only.
 - [11-evidence-driven-investigation.md](product-slices/11-evidence-driven-investigation.md)
 - [FULL_TEXT_REVIEW.md](FULL_TEXT_REVIEW.md)
 - [13-hierarchical-synthesis.md](product-slices/13-hierarchical-synthesis.md)
+- [FULL_TEXT_SYNTHESIS.md](FULL_TEXT_SYNTHESIS.md)
+- [FULL_TEXT_SYNTHESIS_ACCEPTANCE_2026-09-12.md](FULL_TEXT_SYNTHESIS_ACCEPTANCE_2026-09-12.md)
 - [RELEASE_READINESS.md](RELEASE_READINESS.md)
 - [CONTRIBUTOR_BACKLOG.md](CONTRIBUTOR_BACKLOG.md)
