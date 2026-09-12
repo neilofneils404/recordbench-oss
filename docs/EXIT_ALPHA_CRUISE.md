@@ -15,13 +15,40 @@ current behavior; the north star describes intent; release readiness defines
 what must be proven before a supported release.
 
 The [September 12 assessment](PRODUCT_DIRECTION_2026-09-12.md) identifies gaps
-and subsequent delivery stages. Proposed slice 19, background material, matter
-memory, production imports, and larger capacity are future scoped work, not
-claims of current capability or permission to bypass this queue.
+and subsequent delivery stages. Slice 19 is promoted below only for its first
+single-run adapter. Background material, matter memory, production imports,
+and larger capacity remain future
+scoped work, not claims of current capability or permission to bypass this queue.
 
 **Last updated:** 2026-09-12
 
 ## Current upstream receipt
+
+Verified `main` snapshot after slice 18:
+`19d57fbec29325ae9b5ab296e6a2adcb18a5e0ec`, the exact merged head of
+[PR #82](https://github.com/neilofneils404/recordbench-oss/pull/82), merged
+2026-09-12 at 20:06:27 UTC. Its docs prerequisite
+[#81](https://github.com/neilofneils404/recordbench-oss/pull/81) landed at
+`e0301b9839b8c69d07f40c5f5827ab4873f428d6`.
+
+The final [PR Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34715322212)
+and [exact-branch run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34715316801)
+passed. Final-head hosted code review completed after its actionable findings
+were corrected. Security review did **not** run: the authorized
+[verified quota exception](https://github.com/neilofneils404/recordbench-oss/pull/82#issuecomment-5648357396)
+preceded full-head maintainer acceptance and native approval. Branch protections
+remained unchanged.
+
+The independent [post-merge Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34716107938)
+passed on that exact landed commit: application 2,819 passed, nine skipped;
+PostgreSQL seven passed, zero skipped; all six jobs green. This independent
+readback establishes readiness for the narrow slice-19 promotion below. The
+[slice-18 feature contract](EVIDENCE_ASSERTIONS.md) retains its synthetic browser,
+original-source, authorization and clean-restore evidence. Local native baseline
+failures remain diagnostic, separate from hosted acceptance. This receipt does
+not establish deployment, an installed-node update or a supported release.
+
+## Historical post-17 receipt (superseded snapshot)
 
 Verified `main` snapshot after slice 17:
 `e9ab89c792b562c2abf27715d15b5f70d3216900`, the exact merged head of
@@ -44,7 +71,8 @@ preceded separate full-head maintainer acceptance and native gate approval.
 The separate [post-merge Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34712490352)
 completed successfully at 19:05:20 UTC on the exact landed commit: application
 2,765 passed, nine skipped; PostgreSQL seven passed, zero skipped; all jobs green.
-This is independent of the final PR run. This verifies the prerequisites for the narrow slice-18 promotion below.
+This is independent of the final PR run. This established the prerequisites for
+the subsequent slice-18 promotion.
 
 The [dated slice-17 receipt](ENTITY_DISCOVERY_VALIDATION_2026-09-12.json)
 retains local synthetic browser, migration/rollback and restored-original-source
@@ -82,7 +110,8 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 5 | Slice **13** — hierarchical synthesis (issue- then matter-level) with citations through intermediates | Done |
 | 6 | Slice **16** — manual People / Places / Things workspace | Done (#77) |
 | 7 | Slice **17** — entity discovery and reviewer reconciliation | Done (#79) |
-| 8 | Slice **18** — evidence-backed relationships and events | **Next — narrow implementation** |
+| 8 | Slice **18** — evidence-backed relationships and events | Done (#82) |
+| 9 | Slice **19** — first substep: synthesize one terminal full-text run for its criterion | **Next — narrow implementation** |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 Slice **12** needed no further product PR. **Review all extracted text** is
@@ -115,23 +144,41 @@ merge/split and guarded undo. Coverage records visited units, not complete name
 recall. Its rule-based extractor has limited recall and can misclassify prose;
 no learned NER quality or automatic identity resolution is claimed. Entity work
 is exported separately and does not yet feed automatic Report compilation.
-Full-text findings still do not feed hierarchical synthesis; proposed slice 19
-remains unscheduled.
+Full-text findings still do not feed hierarchical synthesis; the first slice-19
+adapter is the authorized next implementation below.
 
-## Active implementation: slice 18
+## Landed slice 18 and its limits
 
-Implement one focused [18: evidence-backed relationships and events](product-slices/18-evidence-backed-relationships.md)
-workflow on the landed hierarchy and entity records: typed entity roles,
-date/uncertainty, supporting and competing passages, and explicit reviewer
-status/corrections. Verify entity detail and chronology before a graph view.
-Shared names, co-mentions and speaker clusters never establish identity or a
-real-world relationship. The scoped storage/provenance/recovery contract is
-[#80](https://github.com/neilofneils404/recordbench-oss/issues/80); preserve its
-manual workflow and identity snapshots. Require synthetic regression, migration,
-backup/clean restore and rollback, authorization, accessibility, original support
-and final-head hosted review.
-This promotion authorizes the narrow next implementation, not its acceptance,
-automatic Report integration, background/memory work or a release.
+[Events and assertions](EVIDENCE_ASSERTIONS.md) preserve typed entity roles,
+raw/uncertain dates, supporting and competing originals, and explicit reviewer
+status and corrections. Entity detail and paginated chronology expose the
+records. Shared names, co-mentions and speaker clusters do not establish identity
+or relationships. This manual workflow does not add automatic relationship
+inference or entity-to-Report compilation.
+
+## Active implementation: slice 19, first single-run adapter
+
+Implement the first substep of [19: full-text synthesis](product-slices/19-full-text-synthesis.md):
+one terminal full-text review, its existing criterion and authorized matter,
+through the landed shared hierarchy. Bind a versioned immutable input receipt to
+the consistent run, relevant decision revisions, frozen population, source and
+extraction identities, coverage, finding identities and original locators. Stream
+enumeration and bounded admission; preserve inspectable omissions, including
+oversized originals, failures and no-finding ranges. Earlier generated summaries
+and range decisions never become original evidence.
+
+The content-free provenance/storage contract is
+[#83](https://github.com/neilofneils404/recordbench-oss/issues/83).
+Require cancellation/recovery and durable charging, active/stale/cross-matter
+refusal, save-time and response authorization, browser/source/export acceptance,
+versioned backup/clean restore and rollback, and a separate pinned local-model
+evaluation. Human decisions remain separate frozen context with revision checks.
+
+This promotion authorizes implementation, not acceptance. Multiple-run
+aggregation, new questions, capacity increases, entity-to-Report integration,
+background/memory, production imports, held Mac integration and deployment stay
+outside this substep. Do not mark 19 Done before its reviewed implementation
+actually merges and its independent post-merge checks pass.
 
 Every subsequent slice must state its reviewer outcome, actual processed scope,
 original support, human/machine distinctions, and recovery path. Manual review

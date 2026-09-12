@@ -1,8 +1,9 @@
 # 19: Synthesize one full-text review with original support
 
-Status: proposed, not scheduled. Depends on 12 and 13. Activate a named sub-step
-in the [exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) before implementation.
-This brief does not displace the entity sequence or change capacity defaults.
+Status: first single-run adapter promoted in the [exit-alpha cruise](../EXIT_ALPHA_CRUISE.md),
+after verified slice-18 landing. Implementation and acceptance remain pending.
+Depends on landed 12 and 13; contract [#83](https://github.com/neilofneils404/recordbench-oss/issues/83).
+This promotion does not change capacity defaults or authorize the future work below.
 
 ## User outcome
 
