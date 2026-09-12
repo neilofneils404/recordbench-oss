@@ -14,13 +14,39 @@ hierarchical synthesis, reports, and team access already exist. The main product
 gap is connecting these into a coherent matter workspace with persistent
 knowledge and genuinely scalable collection review.
 
-## Current-state addendum: after slice 18
+## Current-state addendum: after slice 19 first adapter
+
+This addendum supersedes earlier implementation-status and queue claims below.
+[PR #85](https://github.com/neilofneils404/recordbench-oss/pull/85) landed the
+first single-run full-text synthesis adapter at `95f290bf350742bc77c915eb0269c774069f3633`.
+The [cruise receipt](EXIT_ALPHA_CRUISE.md#current-upstream-receipt) records
+final-head acceptance and passed independent post-merge checks. Slices 16–18
+remain landed, with their evidence retained in historical cruise receipts.
+
+A reviewer can now synthesize saved machine findings from one terminal full-text
+run for its complete criterion. The [contract](FULL_TEXT_SYNTHESIS.md) retains
+original citations, frozen human context, bounded admission, durable recovery
+and explicit coverage gaps. Complete originals over 6,000 characters are omitted
+in full; aggregate original-scan exhaustion refuses incomplete validation.
+Direct JSON, Markdown and Word exports are supported. Copying or compiling this
+adapter into a Report remains unsupported.
+
+Only that first connection is complete. Multiple runs, new questions, adjustable
+capacity, entity-to-Report compilation, background/memory, production import
+fidelity, PostgreSQL exact-search qualification and larger-corpus acceptance
+remain separate work. No next product step is selected. The model receipt retains
+its evaluation-only settings; production defaults, installed nodes and deployment
+are unchanged. Older assessments below retain their named historical revisions.
+
+<a id="current-state-addendum-after-slice-18"></a>
+
+## Historical addendum: after slice 18
 
 This addendum supersedes earlier queue and implementation-status claims below,
 including the original proposed delivery sequence. Slice 18 landed in
 [#82](https://github.com/neilofneils404/recordbench-oss/pull/82) at
 `19d57fbec29325ae9b5ab296e6a2adcb18a5e0ec`; the binding
-[cruise receipt](EXIT_ALPHA_CRUISE.md#current-upstream-receipt) records its passed
+[cruise receipt](EXIT_ALPHA_CRUISE.md#historical-post-18-receipt-superseded-snapshot) records its passed
 independent post-merge checks and separate security-quota exception.
 [Events and assertions](EVIDENCE_ASSERTIONS.md) now provide manual typed roles,
 supporting and competing originals, uncertain dates and reviewer corrections.
@@ -37,7 +63,7 @@ they are not the current implementation queue.
 This addendum supersedes execution and entity-gap claims below, while preserving
 the original assessment at its named revision. Upstream `main` was freshly read
 at `e9ab89c792b562c2abf27715d15b5f70d3216900`. The
-[cruise landing receipt](EXIT_ALPHA_CRUISE.md#current-upstream-receipt) records
+[cruise landing receipt](EXIT_ALPHA_CRUISE.md#historical-post-17-receipt-superseded-snapshot) records
 exact merged heads and distinguishes final PR CI, post-merge CI, hosted review,
 security-quota exceptions and local synthetic evidence.
 

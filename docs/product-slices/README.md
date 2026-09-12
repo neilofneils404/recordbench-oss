@@ -31,8 +31,20 @@ they must not become the only place where product behavior is implemented.
 
 IDs identify work, not an obligation to execute everything in numeric order.
 [Exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) is the binding execution order:
-consult its Next row. The briefs remain the implementation specifications;
-the cruise document takes precedence over historical sequencing below.
+consult its selected active step. If none is selected, a separate cruise update
+must authorize the next product increment. The briefs remain the implementation
+specifications; the cruise takes precedence over historical sequencing below.
+
+### Current implementation snapshot
+
+At verified implementation snapshot `95f290bf350742bc77c915eb0269c774069f3633`, slices 16–18 are
+landed and slice 19's **first single-run adapter only** is Done. The
+[cruise receipt](../EXIT_ALPHA_CRUISE.md#current-upstream-receipt) records
+final-head acceptance and independent post-merge checks. No further product
+step is selected. Remaining 00/08 PostgreSQL acceptance, 09 operators and
+later slice-19 work retain their separate scopes.
+
+### Historical implementation snapshots
 
 On the verified slice-13 `main` snapshot
 (`c1ada89bf15ea8f61906de3c62202da4d98e279f`): slices **01–07**,
@@ -47,7 +59,7 @@ This dated snapshot predates entity delivery. On freshly verified `main` at
 `e9ab89c792b562c2abf27715d15b5f70d3216900`, **16** and **17** are also landed
 ([#77](https://github.com/neilofneils404/recordbench-oss/pull/77),
 [#79](https://github.com/neilofneils404/recordbench-oss/pull/79)); see the
-[cruise receipt](../EXIT_ALPHA_CRUISE.md#current-upstream-receipt) for acceptance
+[cruise receipt](../EXIT_ALPHA_CRUISE.md#historical-post-17-receipt-superseded-snapshot) for acceptance
 status. The cruise selects active work and later 00/08 acceptance and 09
 operators. The report's People/Places/Things format remains separate from the
 persistent entity workspace; entity records do not yet feed automatic Report
@@ -100,6 +112,7 @@ installation before deployment-sensitive changes are accepted.
 | [16](16-entity-workspace.md) | First-class People, Places, and Things with mentions | 12; product UI after deeper review |
 | [17](17-entity-extraction.md) | Extract and reconcile more than title-based names | 16 |
 | [18](18-evidence-backed-relationships.md) | Connect entities, events, and conflicting accounts | 13, 17 |
+| [19](19-full-text-synthesis.md) | Synthesize one terminal full-text run for its criterion; first adapter landed, later work unscheduled | 12, 13 |
 
 Historical starting batch (superseded by the cruise order): 00, 01, 07, 10, and 14. These establish known
 results, reduce install confusion, define exact-search semantics, expose real
@@ -130,17 +143,23 @@ observations, reproduction examples, and the limits of those checks.
   and reviewer reconciliation (17) are landed. Recognized occurrences are retained;
   complete mention recall is not established. Manual relationships/events (18)
   landed in [#82](https://github.com/neilofneils404/recordbench-oss/pull/82), with
-  original support, competing accounts and explicit human decisions. Full-text findings still
-  do not feed the hierarchy; background/memory, production import fidelity and
-  larger-scale qualification remain separate gaps.
+  original support, competing accounts and explicit human decisions.
+* One terminal full-text run can feed the shared hierarchy for its complete
+  criterion, with a frozen input receipt, explicit omissions, durable recovery
+  and direct exports. Complete originals over 6,000 characters remain omitted.
+  Adapter-to-Report compilation, background/memory, production import fidelity
+  and larger-scale qualification remain separate gaps.
 
 ## Full-text synthesis extension
 
-[19: full-text synthesis](19-full-text-synthesis.md) connects one terminal
-full-text review to cited synthesis. Its first single-run adapter is promoted by
-the [binding cruise](../EXIT_ALPHA_CRUISE.md) after the verified entity sequence.
-Implementation and acceptance remain pending; multiple runs, new questions and
-capacity increases are outside that promotion.
+[19: full-text synthesis](19-full-text-synthesis.md) is **Done only for its
+first single-run adapter**, landed in
+[#85](https://github.com/neilofneils404/recordbench-oss/pull/85). The
+[contract](../FULL_TEXT_SYNTHESIS.md),
+[dated receipt](../FULL_TEXT_SYNTHESIS_ACCEPTANCE_2026-09-12.md), and
+[cruise](../EXIT_ALPHA_CRUISE.md#current-upstream-receipt) distinguish current
+behavior, synthetic/model evidence and hosted acceptance. Multiple runs,
+new questions and capacity increases remain unscheduled.
 
 ## Definition of done for every slice
 

@@ -198,8 +198,9 @@ canonical range checkpoints with compact locators, bounded model packets and
 frozen output-token limits. Durable per-actor/matter/instance reservations,
 pre-dispatch call charges, UTF-8 ledger accounting and bounded coverage counters
 keep large and interrupted runs explicit. Source decisions remain compatible with
-selected-passage review; detailed ledgers feed later synthesis consumers. Missing
-extraction, empty/zero-unit sources, failed ranges and unfinished inventories
+selected-passage review; a separate [single-run adapter](FULL_TEXT_SYNTHESIS.md)
+now feeds their saved findings to the shared hierarchy. Missing extraction,
+empty/zero-unit sources, failed ranges and unfinished inventories
 remain coverage gaps, independent of relevance-recognition quality.
 
 ## Hierarchical investigation synthesis

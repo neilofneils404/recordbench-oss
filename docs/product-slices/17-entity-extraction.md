@@ -3,7 +3,7 @@
 Status: Done. [PR #79](https://github.com/neilofneils404/recordbench-oss/pull/79)
 landed at `e9ab89c792b562c2abf27715d15b5f70d3216900` on September 12.
 Slice 16 landed in #77. Storage/behavior contract: #78. See the
-[cruise receipt](../EXIT_ALPHA_CRUISE.md#current-upstream-receipt) for exact-head
+[cruise receipt](../EXIT_ALPHA_CRUISE.md#historical-post-17-receipt-superseded-snapshot) for exact-head
 CI/review, the security-quota exception and local synthetic evidence.
 
 ## Finding and outcome
