@@ -51,7 +51,7 @@ def comment_time(comment: dict) -> datetime:
     return value
 
 
-def quota_exception(head: str, comments: list[dict]) -> tuple[datetime, datetime] | None:
+def quota_exception(head: str, comments: list[dict]) -> tuple[datetime, datetime, int] | None:
     """Verify an explicit, privileged full-head exception against the bot receipt."""
     by_id = {c.get("id"): c for c in comments if c.get("id") is not None}
     valid = []
@@ -71,7 +71,7 @@ def quota_exception(head: str, comments: list[dict]) -> tuple[datetime, datetime
         # The request must already bind this full head when the bot responds.
         # Editing an old request cannot recycle an earlier quota receipt.
         if comment_time(requested) < comment_time(response) < comment_time(c):
-            valid.append((comment_time(c), comment_time(response)))
+            valid.append((comment_time(c), comment_time(requested), requested["id"]))
     return max(valid, default=None)
 
 
@@ -112,7 +112,7 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
         exception = quota_exception(head, comments)
         if exception is None:
             return "pending", "Waiting for security review or a verified maintainer quota exception"
-    waived_at, receipt_at = exception if exception else (None, None)
+    waived_at, requested_at, request_id = exception if exception else (None, None, None)
     completed = {}
     for label in (("Code Review",) if waived_at else ("Code Review", "Security Review")):
         if waived_at:
@@ -142,9 +142,10 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
             requested = comment_time(c)
             label = "Security Review" if command.group(1) else "Code Review"
             if waived_at and label == "Security Review":
-                # A new request after the bound receipt needs its own response,
-                # even if it was made before the maintainer wrote the exception.
-                if requested >= receipt_at:
+                # Only the bound request may be covered by its quota receipt.
+                # Any later request (including before that receipt), or another
+                # request with an ambiguous same-second time, needs new evidence.
+                if c.get("id") != request_id and requested >= requested_at:
                     return "pending", "A newer security request needs a new quota receipt or completed review"
             if requested > completed[label]:
                 return "pending", "A newer review request is still awaiting completion"

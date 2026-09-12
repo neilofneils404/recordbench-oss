@@ -402,6 +402,8 @@ def test_duplicate_or_unrecognized_code_rows_cannot_hide_other_review_state():
 
 @pytest.mark.parametrize("command,when", [
     ("review", "2026-01-01T12:01:30Z"),
+    ("security review", "2026-01-01T12:01:30Z"),
+    ("security review", "2026-01-01T12:01:00Z"),
     ("security review", "2026-01-01T12:02:30Z"),
     ("security review", "2026-01-01T12:02:00Z"),
     ("security review", "2026-01-01T12:04:00Z"),
