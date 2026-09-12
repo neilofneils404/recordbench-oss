@@ -22,7 +22,7 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
             return value
         return prefix
 
-    def render(request, slug, *, entity_id='', q='', page=1, review_page=1, support='', return_to='',
+    def render(request, slug, *, entity_id='', q='', page=1, review_page=1, candidate_page=1, support='', return_to='',
                error='', draft=None, status_code=200):
         matter = authorized_matter(request, slug)
         actor = auth_context(request).principal_id
@@ -30,6 +30,7 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
         entity = None
         mentions, history, note = [], [], None
         candidates, reconciliations = [], []
+        has_more_candidates = False
         discovery = discovery_for(matter)
         runs = discovery.runs(matter.matter_id, actor, page=review_page) if not entity_id else []
         has_more_reviews = len(runs) > 20
@@ -38,7 +39,7 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
             entities, total = service.list(matter.matter_id, actor, query=q, page=page)
             if entity_id:
                 entity, mentions, history, note = service.detail(matter.matter_id, actor, entity_id)
-                candidates, reconciliations = service.reconciliation_detail(matter.matter_id, actor, entity_id)
+                candidates, reconciliations, has_more_candidates = service.reconciliation_detail(matter.matter_id, actor, entity_id, page=candidate_page)
         except KeyError as exc:
             raise HTTPException(404, 'Entity or matter is no longer available') from exc
         passage = None
@@ -61,6 +62,8 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
             'coverage': coverage, 'review_page': review_page, 'has_more_reviews': has_more_reviews,
             'review_page_url': lambda value: f'/matters/{slug}/entities?' + urlencode(dict(q=q, support=support, return_to=return_to, review_page=value)),
             'coverage_url': lambda value: f'/matters/{slug}/entity-discovery/{value}?' + urlencode(dict(q=q, return_to=return_to)),
+            'candidate_page': candidate_page, 'has_more_candidates': has_more_candidates,
+            'candidate_page_url': lambda value: f'/matters/{slug}/entities/{entity_id}?' + urlencode(dict(q=q, support=support, return_to=return_to, candidate_page=value)),
             'candidates': candidates, 'reconciliations': [dict(row, before=json.loads(row['before_json'])) for row in reconciliations],
             'error': error, 'draft': draft, 'show_assistant_dock': False,
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
@@ -70,8 +73,9 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
     def entities(request: Request, slug: str, entity_id: str = '',
                  q: str = Query('', max_length=200), page: int = Query(1, ge=1, le=100_000),
                  review_page: int = Query(1, ge=1, le=100_000),
+                 candidate_page: int = Query(1, ge=1, le=100_000),
                  support: str = Query('', max_length=40), return_to: str = Query('', max_length=4000)):
-        return render(request, slug, entity_id=entity_id, q=q, page=page, review_page=review_page, support=support, return_to=return_to)
+        return render(request, slug, entity_id=entity_id, q=q, page=page, review_page=review_page, candidate_page=candidate_page, support=support, return_to=return_to)
 
     @app.get('/matters/{slug}/entity-discovery/{run_id}', response_class=HTMLResponse)
     def discovery_coverage(request: Request, slug: str, run_id: str,
@@ -153,13 +157,13 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
             error = str(exc) if isinstance(exc, WorkspaceProblem) else 'The entity, note, or original passage changed or is unavailable. Your submitted text is preserved below.'
             try:
                 return render(request, slug, entity_id=entity_id, q=q, support=support, return_to=return_to,
-                              error=error, draft=dict(fields, action=action),
+                              error=error, draft=dict(fields, action=action, entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id),
                               status_code=409 if isinstance(exc, (EntityEditConflict, KeyError)) else 400)
             except HTTPException as gone:
                 if gone.status_code != 404:
                     raise
                 return render(request, slug, q=q, support=support, return_to=return_to,
-                              error=error, draft=dict(fields, action='create'), status_code=409)
+                              error=error, draft=dict(fields, action=action if action in ('merge','split','alias','reject') else 'create', entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id), status_code=409)
         audit(request, 'entity.' + action, 'success', context=auth_context(request), matter=matter,
               object_type='entity', object_id=entity_id or deleted_entity_id or matter.matter_id)
         path = f'/matters/{slug}/entities' + ('/' + entity_id if entity_id else '')
@@ -169,11 +173,9 @@ def install_entity_routes(app, *, service_for, discovery_for, authorized_matter,
     def entity_export(request: Request, slug: str, entity_id: str):
         matter = authorized_matter(request, slug)
         try:
-            entity, mentions, history, note = service_for(matter).detail(matter.matter_id, auth_context(request).principal_id, entity_id)
+            payload = service_for(matter).export(matter.matter_id, auth_context(request).principal_id, entity_id)
         except KeyError as exc:
             raise HTTPException(404, 'Entity not found') from exc
-        payload = dict(format='recordbench-entity-v1', entity=entity, mentions=mentions, history=history,
-            reconciliations=service_for(matter).reconciliation_detail(matter.matter_id, auth_context(request).principal_id, entity_id)[1])
         audit(request, 'entity.export', 'success', context=auth_context(request), matter=matter,
               object_type='entity', object_id=entity_id)
         return transfer_response_lease(request, Response(json.dumps(payload, indent=2), media_type='application/json', headers={

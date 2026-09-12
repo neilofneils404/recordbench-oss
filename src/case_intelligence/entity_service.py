@@ -39,19 +39,28 @@ class EntityService:
 
     def detail(self, matter_id, actor_id, entity_id):
         with self.source_guard(), self.repository.transaction(matter_id, actor_id) as repo:
-            entity = repo.get(matter_id, entity_id)
-            mentions = repo.mentions(matter_id, entity_id)
-            available = self.validate_references(mentions)
-            for index, mention in enumerate(mentions):
-                mention['available'] = index in available
-                mention['extraction_detail'] = json.loads(mention.get('date_json') or 'null')
-            note = None
-            if entity['notebook_item_id']:
-                try:
-                    note = self.load_note(matter_id, actor_id, entity['notebook_item_id'])
-                except KeyError:
-                    pass
-            return entity, mentions, repo.history(matter_id, entity_id), note
+            return self._detail(repo, matter_id, actor_id, entity_id)
+
+    def _detail(self, repo, matter_id, actor_id, entity_id):
+        entity = repo.get(matter_id, entity_id)
+        mentions = repo.mentions(matter_id, entity_id)
+        available = self.validate_references(mentions)
+        for index, mention in enumerate(mentions):
+            mention['available'] = index in available
+            mention['extraction_detail'] = json.loads(mention.get('date_json') or 'null')
+        note = None
+        if entity['notebook_item_id']:
+            try:
+                note = self.load_note(matter_id, actor_id, entity['notebook_item_id'])
+            except KeyError:
+                pass
+        return entity, mentions, repo.history(matter_id, entity_id), note
+
+    def export(self, matter_id, actor_id, entity_id):
+        with self.source_guard(), self.repository.transaction(matter_id, actor_id) as repo:
+            entity, mentions, history, _ = self._detail(repo, matter_id, actor_id, entity_id)
+            return dict(format="recordbench-entity-v1", entity=entity, mentions=mentions, history=history,
+                reconciliations=repo.reconciliations(matter_id, entity_id))
 
     def create(self, matter_id, actor_id, *, support='', **values):
         fields = self.fields(**values)
@@ -124,10 +133,14 @@ class EntityService:
             repo.record_history(matter_id, actor_id, entity['entity_id'], 'notebook imported', added_mentions=added)
             return entity
 
-    def reconciliation_detail(self, matter_id, actor_id, entity_id):
+    def reconciliation_detail(self, matter_id, actor_id, entity_id, *, page=1):
+        if not 1 <= page <= 100000:
+            raise WorkspaceProblem('Choose a valid candidate page.')
         with self.repository.transaction(matter_id, actor_id) as repo:
-            repo.get(matter_id, entity_id)
-            return repo.candidates(matter_id, entity_id), repo.reconciliations(matter_id, entity_id)
+            entity, pool = repo.candidate_page(matter_id, entity_id, page)
+            history = repo.reconciliations(matter_id, entity_id)
+        # Score only a bounded copied page, after releasing the writer lock.
+        return repo.score_candidates(entity, pool[:50]), history, len(pool) > 50
 
     def reconcile(self, matter_id, actor_id, entity_id, *, expected_revision,
                   target_id, target_revision, action, mention_ids=()):

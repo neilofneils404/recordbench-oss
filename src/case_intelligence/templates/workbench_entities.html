@@ -7,6 +7,8 @@
   {% include 'workbench_retention_notice.html' %}
   <p><a href="{{ return_to }}">Return to source review</a>{% if entity %} · <a href="{{ entity_url() }}">All entities</a>{% endif %}</p>
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+  {% set reconciliation_draft = draft if draft and draft.action in ('merge','split','alias','reject') else None %}
+  {% if reconciliation_draft %}<section class="notice" aria-label="Unsaved reconciliation"><h2>Review your unsaved decision</h2><p>Decision: {{ reconciliation_draft.action }} · source {{ reconciliation_draft.entity_id }} at revision {{ reconciliation_draft.expected_revision }} · destination {{ reconciliation_draft.target_id }} at revision {{ reconciliation_draft.target_revision }} · selected mention {{ reconciliation_draft.mention_id or 'none' }}.</p><p>Compare the saved identities and selected mention before updating the revisions and retrying. Your decision inputs remain below while this identity is available.</p></section>{% endif %}
   {% if passage %}<section class="notebook-tool-card" aria-label="Selected original passage"><h2>Selected original passage</h2><p>{{ passage.source_name }} · {{ passage.location }}</p><blockquote>{{ passage.excerpt }}</blockquote><p>Choose an existing identity below or create a separate one.</p></section>{% endif %}
   {% macro hidden(action, row=None) %}
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -43,15 +45,17 @@
       </article>{% else %}<p>No mentions yet. Open a source passage, choose “Attach to entity”, and select this identity.</p>{% endfor %}
     </section>
     <section class="notebook-tool-card"><h2>Reviewer reconciliation</h2>
-      <p>Similar names only propose candidates (up to 50 shown). Open both identities and their original sources before deciding. Merge transfers all mentions; the original identity and its history remain. Alias confirmation links a label without moving mentions. Rejection retains both identities and their mentions.</p>
+      <p>Each candidate page checks up to 50 identities in name order. Suggestions use similar display names or exact alias overlap; fuzzy alias variants may be missed. Open both identities and their original sources before deciding. Merge transfers all mentions; the original identity and its history remain. Alias confirmation links a label without moving mentions. Rejection retains both identities and their mentions.</p>
       {% for candidate in candidates %}<article><h3><a href="{{ entity_url(candidate.entity_id) }}">{{ candidate.display_name }}</a></h3><p>{{ candidate.entity_id }} · revision {{ candidate.revision }}</p>
         {% for action, label in [('alias','Confirm alias link'),('merge','Confirm merge into this identity'),('reject','Keep distinct; reject candidate')] %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden(action, entity) }}<input type="hidden" name="target_id" value="{{ candidate.entity_id }}"><input type="hidden" name="target_revision" value="{{ candidate.revision }}"><button class="button button-secondary">{{ label }}</button></form>{% endfor %}
-      </article>{% else %}<p>No similar-name candidates. A match never establishes identity.</p>{% endfor %}
-      <details><summary>Split a mention or reconcile a different identity</summary><p>Create a separate identity first, then use its ID and current revision here. Splitting transfers the selected mention, preserving its original support.</p>
-        <form method="post" action="/matters/{{ matter.slug }}/entities/actions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entity_id" value="{{ entity.entity_id }}"><input type="hidden" name="expected_revision" value="{{ entity.revision }}"><input type="hidden" name="return_to" value="{{ return_to }}"><input type="hidden" name="q" value="{{ q }}">
-          <label>Decision<select name="action"><option value="split">Split selected mention</option><option value="merge">Merge all mentions</option><option value="alias">Confirm alias link</option><option value="reject">Keep identities distinct</option></select></label>
-          <label>Destination identity ID<input name="target_id" required maxlength="80"></label><label>Destination revision<input type="number" name="target_revision" required min="1"></label>
-          <label>Mention to split<select name="mention_id"><option value="">Select a mention for split only</option>{% for mention in mentions %}<option value="{{ mention.mention_id }}">{{ mention.surface_text or mention.source_name }} · {{ mention.location }} · {{ mention.mention_id }}</option>{% endfor %}</select></label>
+      </article>{% else %}<p>No matches on this candidate page. Check further pages or use a destination identity directly. A match never establishes identity.</p>{% endfor %}
+      <nav aria-label="Candidate pages">{% if candidate_page > 1 %}<a href="{{ candidate_page_url(candidate_page-1) }}">Previous candidates</a>{% endif %} {% if has_more_candidates %}<a href="{{ candidate_page_url(candidate_page+1) }}">Next candidates</a>{% endif %}</nav>
+      <details{% if reconciliation_draft %} open{% endif %}><summary>Split a mention or reconcile a different identity</summary><p>Create a separate identity first, then use its ID and current revision here. Splitting transfers the selected mention, preserving its original support.</p>
+        <form method="post" action="/matters/{{ matter.slug }}/entities/actions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entity_id" value="{{ entity.entity_id }}"><input type="hidden" name="return_to" value="{{ return_to }}"><input type="hidden" name="q" value="{{ q }}">
+          <label>Source revision<input type="number" name="expected_revision" required min="1" value="{{ reconciliation_draft.expected_revision if reconciliation_draft else entity.revision }}"></label>
+          <label>Decision<select name="action">{% for value,label in [('split','Split selected mention'),('merge','Merge all mentions'),('alias','Confirm alias link'),('reject','Keep identities distinct')] %}<option value="{{ value }}"{% if reconciliation_draft and reconciliation_draft.action == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+          <label>Destination identity ID<input name="target_id" required maxlength="80" value="{{ reconciliation_draft.target_id if reconciliation_draft else '' }}"></label><label>Destination revision<input type="number" name="target_revision" required min="1" value="{{ reconciliation_draft.target_revision if reconciliation_draft else '' }}"></label>
+          <label>Mention to split<select name="mention_id"><option value="">Select a mention for split only</option>{% for mention in mentions %}<option value="{{ mention.mention_id }}"{% if reconciliation_draft and reconciliation_draft.mention_id == mention.mention_id %} selected{% endif %}>{{ mention.surface_text or mention.source_name }} · {{ mention.location }} · {{ mention.mention_id }}</option>{% endfor %}{% if reconciliation_draft and reconciliation_draft.mention_id and reconciliation_draft.mention_id not in mentions|map(attribute='mention_id')|list %}<option value="{{ reconciliation_draft.mention_id }}" selected>Previously selected mention {{ reconciliation_draft.mention_id }} (no longer on this identity)</option>{% endif %}</select></label>
           <button class="button button-secondary">Save reviewer decision</button>
         </form>
       </details>
@@ -73,8 +77,8 @@
     </section>
   {% endif %}
   <section class="notebook-tool-card" aria-labelledby="entity-form-heading">
-    <h2 id="entity-form-heading">{{ 'Review your unsaved changes' if draft else ('Edit identity' if entity else 'Create a separate identity') }}</h2>
-    {% if draft %}<p>Your submitted text is below. Compare it with the saved identity above before saving. Saving now uses the current revision.</p>{% endif %}
+    <h2 id="entity-form-heading">{{ 'Review your unsaved changes' if draft and not reconciliation_draft else ('Edit identity' if entity else 'Create a separate identity') }}</h2>
+    {% if draft and not reconciliation_draft %}<p>Your submitted text is below. Compare it with the saved identity above before saving. Saving now uses the current revision.</p>{% endif %}
     {% set form = draft if draft and draft.action in ('create','update') else entity %}
     <form class="notebook-item-form" method="post" action="/matters/{{ matter.slug }}/entities/actions">
       {{ hidden('update' if entity else 'create', entity) }}

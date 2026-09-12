@@ -286,27 +286,32 @@ class EntityRepository:
              json.dumps(dict(kind=occurrence.kind, date=occurrence.date)), 'suggested', matter_id, mention_id))
         return dict(self.connection.execute('SELECT * FROM workbench_entity_mention WHERE matter_id=? AND mention_id=?', (matter_id, mention_id)).fetchone())
 
-    def candidates(self, matter_id, entity_id):
-        from difflib import SequenceMatcher
+    def candidate_page(self, matter_id, entity_id, page):
         entity = self.get(matter_id, entity_id)
-        labels = [entity['display_name'], *entity['aliases']]
-        rejected = set()
-        for row in self.connection.execute(
-                "SELECT before_json FROM workbench_entity_reconciliation WHERE matter_id=? AND action='reject' AND undone=0", (matter_id,)):
-            decision = json.loads(row[0])
-            pair = {decision['source']['entity_id'], decision['target']['entity_id']}
-            if entity_id in pair:
-                rejected.update(pair - {entity_id})
+        rows = self.connection.execute(
+            "SELECT e.* FROM workbench_entity e WHERE e.matter_id=? AND e.entity_id!=? "
+            "AND NOT EXISTS (SELECT 1 FROM workbench_entity_reconciliation r WHERE r.matter_id=e.matter_id "
+            "AND r.action='reject' AND r.undone=0 AND "
+            "((json_extract(r.before_json,'$.source.entity_id')=? AND json_extract(r.before_json,'$.target.entity_id')=e.entity_id) "
+            "OR (json_extract(r.before_json,'$.target.entity_id')=? AND json_extract(r.before_json,'$.source.entity_id')=e.entity_id))) "
+            "ORDER BY e.display_name,e.entity_id LIMIT 51 OFFSET ?",
+            (matter_id, entity_id, entity_id, entity_id, (page - 1) * 50))
+        return entity, [self.record(row) for row in rows]
+
+    @staticmethod
+    def score_candidates(entity, pool):
+        from difflib import SequenceMatcher
+        labels = {value.casefold() for value in [entity['display_name'], *entity['aliases']]}
         result = []
-        for row in self.connection.execute('SELECT * FROM workbench_entity WHERE matter_id=? AND entity_id!=?', (matter_id, entity_id)):
-            other = self.record(row)
-            if other['entity_id'] in rejected:
-                continue
-            score = max(SequenceMatcher(None, a.casefold(), b.casefold()).ratio()
-                        for a in labels for b in [other['display_name'], *other['aliases']])
+        for other in pool:
+            other_labels = {value.casefold() for value in [other['display_name'], *other['aliases']]}
+            # Exact alias overlap needs no Cartesian fuzzy comparison. Fuzzy
+            # matching is confined to one display-name pair per identity.
+            score = 1.0 if labels & other_labels else SequenceMatcher(
+                None, entity['display_name'].casefold(), other['display_name'].casefold()).ratio()
             if score >= .72:
                 result.append(dict(other, match_score=score))
-        return sorted(result, key=lambda row: (-row['match_score'], row['entity_id']))[:50]
+        return sorted(result, key=lambda row: (-row['match_score'], row['entity_id']))
 
     def reconciliations(self, matter_id, entity_id):
         return [dict(row) for row in self.connection.execute(

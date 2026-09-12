@@ -81,8 +81,11 @@ on source/version/unit/offset, preserving reviewer corrections.
 
 ## Reviewer decisions
 
-Similar names and alias labels propose up to 50 candidate identities. They do
-not establish identity; transcript speaker clusters are not used as identities.
+Candidate pages inspect 50 identities at a time in name order, with next/previous
+controls. Each page proposes similar display names or exact alias overlap; fuzzy
+alias variants may be missed. Scoring runs after releasing the workspace writer
+transaction, with at most one display-name comparison per identity. A proposal
+does not establish identity; transcript speaker clusters are not used as identities.
 Open both candidates and their original passages before making a decision.
 
 - **Confirm alias link** records the two identities and adds the source label to
@@ -99,6 +102,11 @@ Open both candidates and their original passages before making a decision.
   shared edits cause a conflict instead of being overwritten; compare the records
   and make an explicit new correction. This is guarded single-operation undo,
   not unrestricted rollback through subsequent edits.
+
+A reconciliation conflict retains the decision, source and destination revisions,
+destination ID and selected mention. Compare the current identities, then update
+the revision inputs explicitly before retrying. A removed mention remains
+visible as the previously selected input, without being silently reassigned.
 
 Entity and mention review statuses are separate. Dismissing a mention retains
 it and its support; removing it retains the removal in history. Extraction uses
@@ -128,7 +136,9 @@ attachment remains idempotent. New history remains linear mention deltas;
 reconciliation records identify the moved mentions and checked entity revisions.
 
 The control SQLite store remains authoritative on both retrieval profiles.
-Individual entity JSON includes mention details and correction history. Final
+Individual entity JSON reads identity, mentions, correction history and
+reconciliation decisions in one authorized transaction, preserving a consistent
+export snapshot even when another reviewer saves a decision immediately afterward. Final
 matter bundles additionally include `entities/discovery.json` with frozen source
 coverage, unit outcomes, occurrence suppression receipts and reconciliation
 records. Bundle source availability is explicitly not revalidated. Matter purge

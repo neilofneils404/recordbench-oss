@@ -530,3 +530,111 @@ def test_streamed_offset_index_is_reused_and_invalidated_without_caching_text(tm
     path.write_text(json.dumps(dict(version=1, units=records), ensure_ascii=False))
     assert list(reader.iter_selected(source, document, [200]))[0][1].text == 'Replaced synthetic original unit.'
     assert calls == 2 and reads == 400
+
+
+def test_entity_export_remains_one_snapshot_when_reconciliation_follows_commit(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from tests.test_entity_workspace import ACTOR
+    store, matter, service = setup(tmp_path)
+    source = service.create(matter.matter_id, ACTOR, display_name='Alex Example')
+    target = service.create(matter.matter_id, ACTOR, display_name='Alex Example')
+    original = service.repository.transaction
+    inject = True
+    @contextmanager
+    def reconcile_after_snapshot(*args):
+        nonlocal inject
+        with original(*args) as repo:
+            yield repo
+        if inject:
+            inject = False
+            service.reconcile(matter.matter_id, ACTOR, source['entity_id'], expected_revision=1,
+                target_id=target['entity_id'], target_revision=1, action='alias')
+    monkeypatch.setattr(service.repository, 'transaction', reconcile_after_snapshot)
+    exported = service.export(matter.matter_id, ACTOR, source['entity_id'])
+    assert exported['entity']['revision'] == 1
+    assert exported['history'][0]['revision'] == 1
+    assert exported['reconciliations'] == []
+    current = service.export(matter.matter_id, ACTOR, source['entity_id'])
+    assert current['entity']['revision'] == 2 and len(current['reconciliations']) == 1
+    store.close()
+
+
+def test_candidate_scoring_is_paged_and_runs_outside_writer_transaction(tmp_path, monkeypatch):
+    import difflib
+    from tests.test_entity_workspace import ACTOR
+    store, matter, service = setup(tmp_path)
+    source = service.create(matter.matter_id, ACTOR, display_name='Alex Example',
+        aliases='\n'.join(f'Source label {i}' for i in range(30)))
+    for index in range(120):
+        service.create(matter.matter_id, ACTOR, display_name=f'Alex Example {index:03d}',
+            aliases='\n'.join(f'Other label {index} {i}' for i in range(30)))
+    matcher = difflib.SequenceMatcher
+    calls = 0
+    def counted(*args, **kwargs):
+        nonlocal calls
+        assert not store.connection.in_transaction
+        calls += 1
+        return matcher(*args, **kwargs)
+    monkeypatch.setattr(difflib, 'SequenceMatcher', counted)
+    seen = set()
+    for page, count in [(1,50),(2,50),(3,20)]:
+        before = calls
+        candidates, _, more = service.reconciliation_detail(matter.matter_id, ACTOR, source['entity_id'], page=page)
+        assert len(candidates) == count and calls - before <= 50
+        assert more == (page < 3)
+        ids = {row['entity_id'] for row in candidates}
+        assert not seen & ids
+        seen.update(ids)
+    assert len(seen) == 120
+    store.close()
+
+
+@pytest.mark.parametrize('changed', ['source', 'target', 'mention'])
+def test_reconciliation_conflict_retains_decision_inputs(tmp_path, changed):
+    from fastapi.testclient import TestClient
+    import re
+    from html.parser import HTMLParser
+    from case_intelligence.workbench import create_workbench_app
+    from tests.test_matter_notebook import _create_matter, _reference, WEB_ACTOR
+    with TestClient(create_workbench_app(tmp_path, auth_mode='test')) as client:
+        slug = _create_matter(client)
+        bench = client.app.state.workbench
+        matter = bench.matter(slug, WEB_ACTOR)
+        service = bench.entity_service(matter)
+        source = service.create(matter.matter_id, WEB_ACTOR, display_name='Alex Example')
+        target = service.create(matter.matter_id, WEB_ACTOR, display_name='Jordan Sample')
+        with service.repository.transaction(matter.matter_id, WEB_ACTOR) as repo:
+            mention = repo.add_mention(matter.matter_id, WEB_ACTOR, source['entity_id'], _reference(), 'manual')
+        if changed == 'mention':
+            service.remove_mention(matter.matter_id, WEB_ACTOR, source['entity_id'], expected_revision=1, mention_id=mention['mention_id'])
+        else:
+            row = source if changed == 'source' else target
+            service.update(matter.matter_id, WEB_ACTOR, row['entity_id'], expected_revision=1, display_name=row['display_name']+' corrected')
+        response = client.post(f'/matters/{slug}/entities/actions', data=dict(action='split',
+            entity_id=source['entity_id'], expected_revision=1, target_id=target['entity_id'],
+            target_revision=1, mention_id=mention['mention_id'], return_to=f'/matters/{slug}?q=Alex'))
+        assert response.status_code == 409
+        form = re.search(r'<details open>.*?(<form.*?</form>)', response.text, re.S).group(1)
+        class Fields(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.values, self.select = {}, ''
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == 'input':
+                    self.values[attrs.get('name')] = attrs.get('value')
+                if tag == 'select':
+                    self.select = attrs['name']
+                if tag == 'option' and 'selected' in attrs:
+                    self.values[self.select] = attrs['value']
+        fields = Fields()
+        fields.feed(form)
+        assert fields.values['target_id'] == target['entity_id']
+        assert fields.values['target_revision'] == '1'
+        assert fields.values['expected_revision'] == '1'
+        assert fields.values['action'] == 'split'
+        assert fields.values['mention_id'] == mention['mention_id']
+        assert 'Review your unsaved decision' in response.text
+        assert service.reconciliation_detail(matter.matter_id, WEB_ACTOR, source['entity_id'])[1] == []
+        exported = client.get(f"/matters/{slug}/entities/{source['entity_id']}/export")
+        assert exported.status_code == 200 and exported.json() == service.export(matter.matter_id, WEB_ACTOR, source['entity_id'])

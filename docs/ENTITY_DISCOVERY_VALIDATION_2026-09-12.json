@@ -180,5 +180,43 @@
       "application_skipped": 9
     },
     "final_head_review": "Fresh hosted Quality and code/security review or valid quota exception required after these corrections."
+  },
+  "third_hosted_review_corrections": {
+    "reviewed_head": "2b1e9905ebfec7dd737e6433b5d9216941fc1c74",
+    "findings": [
+      "Read entity export and reconciliation history in one transaction",
+      "Page candidate input before scoring and release writer transaction before fuzzy comparisons",
+      "Retain reconciliation action, IDs, revisions and selected mention after conflicts"
+    ],
+    "focused_passed": 128,
+    "focused_skipped": 1,
+    "candidate_limit": "50 identities per page in name order; at most 50 display-name comparisons outside the writer transaction; exact alias overlap uses sets. Fuzzy alias variants may be missed.",
+    "browser": {
+      "synthetic": true,
+      "success": true,
+      "checks": [
+        "Two synthetic originals uploaded and searchable without a model",
+        "Visible empty state and keyboard creation of a person with an alias",
+        "Two exact source passages attached to one identity and both reopened from its detail page",
+        "Another same-name person remains distinct, with no automatic alias merge",
+        "Shared-edit conflict preserves the submitted name and aliases alongside the current saved identity",
+        "390-pixel reflow without horizontal page overflow",
+        "Return link retains the source-review search context",
+        "Discovery processes an inventoried unit without a model and shows remaining uninventoried sources honestly",
+        "Coverage details use a separate bounded source and unit page",
+        "Reviewer confirms a candidate merge and undoes it without losing the extracted mention",
+        "Discovery and reconciliation reflow at 390 pixels with native labeled controls",
+        "Dissimilar empty manual identities can confirm and undo an alias without selecting a split mention"
+      ],
+      "browser": "152.0.7977.83"
+    },
+    "prior_head_quality": {
+      "head": "2b1e9905ebfec7dd737e6433b5d9216941fc1c74",
+      "run": 34710665540,
+      "conclusion": "success",
+      "application_passed": 2760,
+      "application_skipped": 9
+    },
+    "final_head_review": "Fresh hosted Quality and code/security review or valid quota exception required after corrections."
   }
 }
