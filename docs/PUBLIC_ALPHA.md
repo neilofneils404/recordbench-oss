@@ -127,8 +127,7 @@ so a default-branch advance requires an updated head and fresh reviews. Native
 approvals must not be disabled while relying on this gate. Separate
 branches need their own deliberate protection policy.
 
-The gate reads trusted default-branch code and GitHub metadata only, except for
-the scoped policy-installation dispatch below; it never executes the PR head
+The gate reads trusted default-branch code and GitHub metadata only; it never executes the PR head
 with a write token. External contributor workflows require
 maintainer approval. Use hosted runners with synthetic fixtures; do not attach
 private infrastructure or deployment credentials to public Actions. Default
@@ -198,23 +197,12 @@ override it. Quota handling requires the complete known code-only summary in ord
 No local review substitutes for required hosted code review. Branch protections
 are not disabled to apply an exception.
 
-The maintainer-authorized installation of this policy has one bootstrap dispatch
-for PR #71, from the tag `recordbench-quota-policy-bootstrap-20260912-v1`, while
-its base remains `129bb3aef6edf511d3e4e709b2e89015c685c313`. Protect the exact tag
-against updates and deletion with no bypass actors before creating it. Create
-the tag only at the final code-reviewed, maintainer-accepted PR head, verify the
-remote tag target and active protection, and dispatch from that tag. The workflow
-definition itself is therefore immutable; never dispatch the bootstrap from a
-mutable feature branch. The job verifies the ref is protected and the PR head
-matches the dispatched revision, then runs the immutable gate implementation at
-`0f1e52ac9018b538ef231a1938308254aaf1fbcb`, reviewed as part of #71. The same
-code-review, quota-evidence, permission, discussion and acceptance checks apply.
-It does not execute the policy PR head with its write token, accept an arbitrary
-checkout input, forge a completed security review or change branch protections.
-Ordinary events still read `main`; after this policy lands, its changed base
-makes this bootstrap unusable. Remove the scoped dispatch in the next maintenance
-update; retain the immutable bootstrap tag and its protection. Later quota
-exceptions use the ordinary default-branch gate.
+The policy landed in [#71](https://github.com/neilofneils404/recordbench-oss/pull/71)
+at `17eafce965062e9fbdf8884738e277573abc8f7f` after a one-time installation
+from the immutable protected tag `recordbench-quota-policy-bootstrap-20260912-v1`.
+The scoped bootstrap dispatch has been removed from the current workflow.
+Retain that historical tag and its update/deletion protection without bypass
+actors. All later quota exceptions use the ordinary default-branch gate.
 
 The gate withdraws its prior native approval when a PR moves away from the
 default branch. Publication identity dispositions support SHA-1 and SHA-256

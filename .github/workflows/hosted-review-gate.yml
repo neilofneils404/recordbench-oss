@@ -28,25 +28,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      # One-time maintainer bootstrap for #71. Create this update/deletion-
-      # protected tag only after final-head review: the workflow definition,
-      # not just its checkout, must be immutable at dispatch. No branch dispatch
-      # or PR-supplied checkout input selects the bootstrap implementation.
-      - name: Verify scoped quota-policy bootstrap
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/tags/recordbench-quota-policy-bootstrap-20260912-v1' && inputs.pr_number == '71'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EXPECTED_POLICY_HEAD: ${{ github.sha }}
-          BOOTSTRAP_REF_PROTECTED: ${{ github.ref_protected }}
-        run: |
-          test "$BOOTSTRAP_REF_PROTECTED" = "true"
-          test "$(gh api repos/neilofneils404/recordbench-oss/pulls/71 --jq '.head.sha')" = "$EXPECTED_POLICY_HEAD"
-          test "$(gh api repos/neilofneils404/recordbench-oss/pulls/71 --jq '.base.sha')" = "129bb3aef6edf511d3e4e709b2e89015c685c313"
-      # All ordinary events use trusted default-branch code. The scoped manual
-      # bootstrap uses a literal reviewed commit, never the PR head.
+      # Always execute trusted default-branch code, never the PR head.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/tags/recordbench-quota-policy-bootstrap-20260912-v1' && inputs.pr_number == '71' && '0f1e52ac9018b538ef231a1938308254aaf1fbcb' || github.event.repository.default_branch }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Verify hosted reviews and discussion resolution
         env:

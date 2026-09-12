@@ -7,13 +7,16 @@ specs. When numeric slice order conflicts with this file, **this file wins**.
 **Last updated:** 2026-09-12
 
 Verified `main` snapshot before this receipt update:
-`17eafce965062e9fbdf8884738e277573abc8f7f`
-(maintainer security-quota exception policy landed as
-[#71](https://github.com/neilofneils404/recordbench-oss/pull/71);
-slices **11** and **12** already on `main`). This receipt records a verified
-landed commit, not the self-referential SHA of the commit carrying the receipt.
-PostgreSQL CI [#70](https://github.com/neilofneils404/recordbench-oss/pull/70)
-must land and pass on `main` before starting slice **13**.
+`4dea52ce42eeb01ac1cab188a99f7fc44b571ab9`
+(PostgreSQL/pgvector CI landed as
+[#70](https://github.com/neilofneils404/recordbench-oss/pull/70), after the
+maintainer security-quota policy in
+[#71](https://github.com/neilofneils404/recordbench-oss/pull/71)). This receipt
+records a verified landed commit, not the self-referential SHA of the commit
+carrying the receipt. Slices **11** and **12** remain Done; **13** remains Next.
+The `postgres-integration` job passed on that exact `main` commit with seven
+tests passing and zero skipped
+([main CI receipt](https://github.com/neilofneils404/recordbench-oss/actions/runs/34695365785/job/103557849336)).
 
 ## Cruise order
 
