@@ -128,16 +128,19 @@ observations, reproduction examples, and the limits of those checks.
   and model-evaluation limits are documented in [HIERARCHICAL_SYNTHESIS.md](../HIERARCHICAL_SYNTHESIS.md).
 * Manual entities and supported mentions (16), incremental rule-based discovery
   and reviewer reconciliation (17) are landed. Recognized occurrences are retained;
-  complete mention recall is not established. Relationships/events (18) remain
-  unimplemented; the cruise selects their narrow scope. Full-text findings still
+  complete mention recall is not established. Manual relationships/events (18)
+  landed in [#82](https://github.com/neilofneils404/recordbench-oss/pull/82), with
+  original support, competing accounts and explicit human decisions. Full-text findings still
   do not feed the hierarchy; background/memory, production import fidelity and
   larger-scale qualification remain separate gaps.
 
-## Proposed extension
+## Full-text synthesis extension
 
 [19: full-text synthesis](19-full-text-synthesis.md) connects one terminal
-full-text review to cited synthesis. It is proposed, not scheduled, and does
-not displace the active entity sequence.
+full-text review to cited synthesis. Its first single-run adapter is promoted by
+the [binding cruise](../EXIT_ALPHA_CRUISE.md) after the verified entity sequence.
+Implementation and acceptance remain pending; multiple runs, new questions and
+capacity increases are outside that promotion.
 
 ## Definition of done for every slice
 

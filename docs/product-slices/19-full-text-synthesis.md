@@ -38,6 +38,12 @@ changes must retain the existing save-time and response authorization boundaries
 Document whether human decisions are frozen context or a later view; do not let
 a mid-run edit silently change the synthesis basis.
 
+The synthesis action must require the existing CSRF dependency. Input-ledger
+deletion must share atomic snapshot/dependency admission or invalidate active
+synthesis at its next guarded write; saved charges cannot disappear. Active
+synthesis must refuse matter closure, and completed/cancelled receipts and
+checkpoints must join complete matter purge. Late workers cannot recreate them.
+
 ## Synthetic acceptance
 
 - Distribute supported findings and a late contradiction across more than 12
@@ -50,6 +56,9 @@ a mid-run edit silently change the synthesis basis.
   nodes or refunding spend. Exhaust a limit and verify honest partial output.
 - Verify the browser path from terminal run to synthesis, original passage, and
   export, including keyboard access and understandable recovery.
+- Reject missing/invalid CSRF on synthesis requests. Exercise creator deletion
+  of the terminal input ledger during admission and generation, active-work
+  close refusal, complete purge and late-worker rejection after purge.
 - Version persisted records; restore a consistent backup into a clean database
   and resume/export. Document rollback compatibility even without a SQL migration.
 - Run a representative pinned local-model evaluation separately from deterministic

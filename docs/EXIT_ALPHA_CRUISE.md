@@ -173,6 +173,12 @@ Require cancellation/recovery and durable charging, active/stale/cross-matter
 refusal, save-time and response authorization, browser/source/export acceptance,
 versioned backup/clean restore and rollback, and a separate pinned local-model
 evaluation. Human decisions remain separate frozen context with revision checks.
+The new action requires CSRF protection and a negative request regression.
+Bind the input ledger atomically: concurrent creator deletion must either be
+blocked by a dependency/lease or invalidate active synthesis without losing
+charged work. Include synthesis in active-work matter-close refusal, complete
+purge cleanup and late-worker fencing; prove concurrent deletion and clean purge
+with synthetic records.
 
 This promotion authorizes implementation, not acceptance. Multiple-run
 aggregation, new questions, capacity increases, entity-to-Report integration,
