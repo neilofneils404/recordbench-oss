@@ -6,8 +6,8 @@ bounded synthetic observations from that checkout, not a deployed-system audit
 or a fresh-host installation qualification. Source locations and the validation
 section below refer to that revision unless a later note says otherwise.
 
-Live implementation status as of September 11, 2026 against `main` at
-`8d23ceeefbdf9f89cd4deba760126ea45e2cf188` lives in the
+Live implementation status as of September 12, 2026 against the verified `main` snapshot
+`c1ada89bf15ea8f61906de3c62202da4d98e279f` lives in the
 [exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) and [slice index](README.md); it is
 not a re-run of the September 8 inspection. Since that checkout, reusable team
 groups (**06**), evidence-driven investigation (**11**), and full-text review
@@ -101,8 +101,10 @@ and the explicit limit contract in [10](10-review-budget-visibility.md).
 
 The table records bounds observed at the September 8 checkout. On current
 `main`, slice **11** follows evidence with additional searches inside a budget,
-and slice **12** reviews every eligible extracted unit. Final synthesis is
-still at most 12 passages until **13**.
+and slice **12** reviews every eligible extracted unit. Slice **13** now
+synthesizes saved findings through issue and matter groups with original
+citations. The final twelve-passage reselection in the historical table is
+superseded for new investigations; the per-call generation limits remain.
 
 | Stage | Observed bound or behavior | Source |
 | --- | --- | --- |
@@ -151,12 +153,15 @@ and citations from machine-included decisions. Its cited-detail list stopped at
 and compile saved work into drafts; see
 [report review basis](../REPORT_REVIEW_BASIS.md) and
 [report compilation](../REPORT_COMPILATION.md). Hierarchical cited synthesis
-remains **13**.
+landed as **13**, with original support retained through issue and matter groups.
 
-The report's evidentiary appendix can therefore be longer than its reasoning,
-while the actual answer remains constrained by the final 12-passage packet and
-short answer output. This is an inference from the conversion and generation
-paths; no private or real user report was reviewed.
+At the September 8 checkout, the report's evidentiary appendix could be longer
+than its reasoning while the answer was constrained by the final 12-passage
+packet and short-answer output. That was an inference from the then-current
+conversion and generation paths; no private or real user report was reviewed.
+New investigations on the landed slice-13 snapshot use section-sized calls
+and combine verified matter sections. Their explicit budgets and partial states
+remain limits on coverage, not proof of whole-matter recall.
 
 Current upstream already includes saved Reports in complete matter bundles:
 `docs/REPORT_EXPORTS.md`, `reports_for_final_bundle`, and
@@ -167,8 +172,8 @@ and analytical usefulness are separate work.
 At inspection, open [PR #32](https://github.com/neilofneils404/recordbench-oss/pull/32)
 covered final-export readiness and links to Reports needing repair. Recheck its
 state and avoid overlapping that work. Slices [14](14-report-review-basis.md)
-and [15](15-purposeful-report-outlines.md) are on current `main`; hierarchical
-cited synthesis remains [13](13-hierarchical-synthesis.md).
+and [15](15-purposeful-report-outlines.md), together with hierarchical cited
+synthesis [13](13-hierarchical-synthesis.md), are on the verified main snapshot.
 
 ## People, Places, and Things
 
