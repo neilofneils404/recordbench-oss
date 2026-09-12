@@ -18,6 +18,22 @@ QUOTA_REQUEST = re.compile(r"@codex security review\n\nRecordBench security revi
 QUOTA_EXCEPTION = re.compile(
     r"RecordBench security quota exception: ([0-9a-f]{40}); request: ([1-9][0-9]*); response: ([1-9][0-9]*)")
 QUOTA_RESPONSE = "You have reached your Codex usage limits for security reviews. Please try again later."
+SECURITY_HELP_LINE = '- Comment "@codex review" or "@codex security review".'
+CODE_ONLY_BOILERPLATE = {
+    SUMMARY,
+    "## Codex Review Summary",
+    "This comment shows the latest Codex review activity on this pull request.",
+    "<details> <summary>ℹ️ About Codex in GitHub</summary>",
+    "<br/>",
+    "[Your team has set up Codex to review pull requests in this repo]"
+    "(https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you",
+    "- Open a pull request for review",
+    "- Mark a draft as ready",
+    SECURITY_HELP_LINE,
+    "Codex reacts with 👀 while any review is running, comments if it has suggestions, "
+    "and reacts with 👍 once all reviews finish with no findings.",
+    "</details>",
+}
 
 
 def comment_time(comment: dict) -> datetime:
@@ -62,7 +78,12 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
     # Recorded running, failed, stale or malformed security state still blocks.
     exception = None
     rows = [line.strip() for line in body.splitlines() if line.lstrip().startswith("|")]
-    if "codex-security-review:" in body.casefold() or any("security" in row.casefold() for row in rows):
+    # The bot's exact help sentence is not a review outcome. Any other mention
+    # of security anywhere in the summary is recorded/unknown security state,
+    # including prose, headings and HTML outside the table.
+    security_state = any("security" in line.casefold() for line in body.splitlines()
+                         if line.strip() != SECURITY_HELP_LINE)
+    if security_state:
         if not marker:
             return "pending", "Review summary has no verifiable commit binding"
         try:
@@ -72,10 +93,16 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
         if metadata.get("headSha") != head or metadata.get("status") != "completed":
             return "pending", "Waiting for security review of the current commit"
     else:
+        if any(line.strip() and not line.lstrip().startswith("|")
+               and line.strip() not in CODE_ONLY_BOILERPLATE for line in body.splitlines()):
+            return "pending", "Unrecognized review summary; quota exception cannot apply"
         # Only the known code-only table can mean security review is absent.
         # New labels/markup must not turn running security state into absence.
+        code_rows = [row for row in rows if re.match(r"\|\s*(?:📝\s*)?\*\*Code Review\*\*\s*\|", row)]
+        if len(code_rows) != 1:
+            return "pending", "Unrecognized review summary; quota exception cannot apply"
         for row in rows:
-            if ("**Code Review**" not in row
+            if (row not in code_rows
                     and row != "| Review | Status | Commit | Review trigger |"
                     and not re.fullmatch(r"\|(?:\s*:?-+:?\s*\|)+", row)):
                 return "pending", "Unrecognized review summary; quota exception cannot apply"

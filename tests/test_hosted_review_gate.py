@@ -305,10 +305,41 @@ def test_recorded_security_state_cannot_be_waived(state):
     '| **Security review** | **Running** |',
     '| <strong>SECURITY REVIEW</strong> | Failed |',
     '| **Safety Review** | **Running** |',
+    '**Security Review**: Failed',
+    'SECURITY REVIEW\nRunning',
+    '<h4>Security review</h4><p>Failed</p>',
+    '- Comment "@codex review" or "@codex security review". Failed',
+    '"@codex security review": Failed',
+    '**Safety check**: Failed',
+    '<!-- unrecognized-review-state -->',
 ])
 def test_unrecognized_security_state_cannot_be_waived(state):
     comments = quota_comments()
     comments[0]["body"] += "\n" + state
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+def test_exact_bot_help_line_is_not_security_state():
+    comments = quota_comments()
+    comments[0]["body"] += "\n" + GATE.SECURITY_HELP_LINE
+    assert evaluate(HEAD, comments, [])[0] == "success"
+    comments[0]["body"] += "\n**Security Review**: Failed"
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+
+
+def test_known_full_bot_summary_remains_eligible_for_quota_exception():
+    comments = quota_comments()
+    comments[0]["body"] += "\n" + "\n".join(sorted(GATE.CODE_ONLY_BOILERPLATE - {GATE.SUMMARY}))
+    assert evaluate(HEAD, comments, [])[0] == "success"
+
+
+def test_duplicate_or_unrecognized_code_rows_cannot_hide_other_review_state():
+    comments = quota_comments()
+    code = next(line for line in comments[0]["body"].splitlines() if "**Code Review**" in line)
+    comments[0]["body"] += "\n" + code.replace("**Completed**", "**Running**")
+    assert evaluate(HEAD, comments, [])[0] == "pending"
+    comments = quota_comments()
+    comments[0]["body"] += "\n" + code.replace("**Code Review**", "Other **Code Review**")
     assert evaluate(HEAD, comments, [])[0] == "pending"
 
 
