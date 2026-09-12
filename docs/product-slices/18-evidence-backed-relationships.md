@@ -1,6 +1,10 @@
 # 18: Connect entities through reviewable events and assertions
 
-Status: proposed. Depends on 13 and 17.
+Status: active — the [exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) selects the
+narrow manual event/assertion workflow under
+[contract #80](https://github.com/neilofneils404/recordbench-oss/issues/80).
+Depends on landed slices 13 and 17. Implementation and acceptance remain
+outstanding; this status is authorization to begin, not a delivery claim.
 
 ## Finding and outcome
 
