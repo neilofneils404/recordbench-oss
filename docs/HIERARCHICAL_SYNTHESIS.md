@@ -120,3 +120,26 @@ through the hierarchy and verifier under the stated model settings; it does not
 qualify arbitrary long packets, other portfolios, Linux/GPU throughput, or a
 private deployment. Deterministic focused acceptance separately passed 214 tests,
 including research, generation, report-basis, exports and backup/clean restore.
+
+### Review corrections
+
+Late source availability continues to produce the existing partial-coverage
+notice without discarding valid cited work. Each cited original is still
+revalidated, and a cited source leaving the selected set refuses the synthesis.
+Recovery rechecks the saved availability fingerprint and rebuilds changed inputs.
+
+Investigation pages and JSON/Markdown/Word exports explicitly retain the machine
+transcript caution. A missing or changed required caution fails provenance
+validation. Partial notices list rejected finding IDs and count omitted generated
+statements, including when every admitted group completed. Hierarchical portable
+JSON references now include the frozen `version` and a stable `citation_id` derived
+from the original locator identity; each claim joins to the exported source ledger
+using that identifier. Internal action tokens and routes remain excluded.
+
+Synthetic concurrent-upload and source-set regressions cover late additions and
+removal of cited scope. A persisted synthetic transcript exercises page rendering,
+all three export formats, warning validation, and claim-to-version joins. Its
+media-inspection and transcription providers are controlled fixtures; this is
+output/provenance acceptance, not audio-model qualification.
+The expanded post-review focused suite passed 307 tests, including the existing
+email/late-availability coverage cases and the new output regressions.

@@ -566,7 +566,7 @@ def test_late_upload_during_final_generation_is_not_claimed_as_searched(tmp_path
         original_answer = bench.generator.answer
 
         def pause_final_generation(question, *args, **kwargs):
-            if pause_stage == 'generation' and (answer_mode != 'research' or question.startswith('Answer the original research objective')):
+            if pause_stage == 'generation' and (answer_mode != 'research' or kwargs.get('working_context') or question.startswith('Answer the original research objective')):
                 generating.set()
                 assert continue_generation.wait(10), 'Concurrent upload did not finish'
             return original_answer(question, *args, **kwargs)
@@ -744,7 +744,7 @@ def test_recovered_final_research_checkpoint_retrieves_new_sources(tmp_path, mon
             pass
 
         def stop_before_final_generation(question, *args, **kwargs):
-            if question.startswith('Answer the original research objective'):
+            if kwargs.get('working_context') or question.startswith('Answer the original research objective'):
                 raise StoppedAfterPasses()
             return original_answer(question, *args, **kwargs)
 

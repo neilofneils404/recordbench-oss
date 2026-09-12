@@ -239,6 +239,7 @@ def test_model_invented_intermediate_statement_is_filtered_before_matter_context
     assert "Jupiter" not in synthesis_answer(state, corpus[1]).text
     assert all("Jupiter" not in call["working_context"] for call in client.calls)
     assert sum(node["omitted_claims"] for node in state["issue"]) > 0
+    assert "generated statements omitted: 12" in synthesis_answer(state, corpus[1]).text
 
 
 def test_boundary_revocation_after_generation_prevents_saving_response(corpus):
@@ -262,3 +263,107 @@ def test_final_transcript_orientation_retains_machine_transcription_caution(corp
     corpus[1][23]["evidence_kind"] = "transcript"
     answer = synthesis_answer(state, corpus[1])
     assert answer.evidence_notice == MEDIA_TRANSCRIPT_NOTICE
+
+
+def test_partial_notice_identifies_rejected_findings_and_omitted_model_claims(corpus):
+    corpus[0][0]["answer"]["claims"].append({"text": "A submarine transported 9999 satellites to Jupiter.",
+                                          "citations": [{"support_token": corpus[1][0]["support_token"]}]})
+    state, _ = execute(corpus)
+    text = synthesis_answer(state, corpus[1]).text
+    assert "rejected saved findings: 1 (P1C2)" in text
+    assert "generated statements omitted: 0" in text
+
+
+def test_transcript_backed_investigation_renders_caution_and_portable_version_links(tmp_path, monkeypatch):
+    import io
+    import json
+    import zipfile
+    from dataclasses import replace
+    from fastapi.testclient import TestClient
+    from case_intelligence.generation import MEDIA_TRANSCRIPT_NOTICE
+    from case_intelligence.managed_storage import StoragePolicy
+    from case_intelligence.workbench import create_workbench_app
+    from case_intelligence.work_product_exports import ExportProblem, validate_research_basis
+    from tests.test_matter_media_workflow import ImmediateMediaProcessor, EvidenceEchoGenerator, _matter, _upload_and_wait, ACTOR
+
+    # Isolate this output/provenance regression from Linux ffprobe placement.
+    # The uploaded fixture and persisted transcript still use the real media workflow.
+    from case_intelligence.pilot_uploads import _MediaProbe
+    monkeypatch.setattr("case_intelligence.pilot_uploads._probe_media",
+                        lambda source, media_type: _MediaProbe(10000, False, True))
+    from case_intelligence.media_preflight import REVISION
+    monkeypatch.setattr("case_intelligence.media_evidence.inspect_recording", lambda *args, **kwargs: {
+        "revision": REVISION, "outcome": "ready", "complete": True, "checked_ms": 10000,
+        "first_speech_ms": 0, "last_speech_ms": 10000, "quiet_ms": 0,
+        "leading_quiet_ms": 0, "trailing_quiet_ms": 0, "language": "not_assessed", "quality": [],
+    })
+    app = create_workbench_app(tmp_path / "runtime", generator=EvidenceEchoGenerator(), auth_mode="test",
+        media_processor=ImmediateMediaProcessor(), media_poll_seconds=.01, storage_policy=StoragePolicy(reserve_bytes=0))
+    with TestClient(app) as client:
+        slug = _matter(client, "Synthetic hierarchy transcript")
+        bench = app.state.workbench
+        bench.research.close()
+        bench.research = None
+        document, _ = _upload_and_wait(client, slug)
+        matter = bench.matter(slug, ACTOR)
+        job, _ = bench.workspace.queue_research_job(matter.matter_id, ACTOR,
+            "What does the machine transcript say?", "Synthetic spoken findings", "research-request-" + "f" * 32)
+        claimed = bench.workspace.claim_research_job("synthetic-transcript-worker")
+        result = bench._process_research_job(claimed, lambda: False)
+        completed = bench._finish_research_job(claimed, result)
+        assert result["answer"]["evidence_notice"] == MEDIA_TRANSCRIPT_NOTICE
+        assert any(item["evidence_kind"] == "transcript" for item in result["evidence"])
+        page = client.get(f"/matters/{slug}/research?job={job.job_id}")
+        assert page.status_code == 200 and MEDIA_TRANSCRIPT_NOTICE in page.text
+        assert "rejected saved findings:" in page.text and "generated statements omitted:" in page.text
+        for format_name in ("json", "markdown", "docx"):
+            artifact = bench.export_research_work_product(matter, completed, format_name)
+            if format_name == "docx":
+                with zipfile.ZipFile(io.BytesIO(artifact.body)) as archive:
+                    rendered = archive.read("word/document.xml").decode()
+            else:
+                rendered = artifact.body.decode()
+            assert MEDIA_TRANSCRIPT_NOTICE in rendered
+            if format_name == "json":
+                exported = json.loads(artifact.body)["investigation"]
+                ledger = {item["citation_id"]: item for item in exported["supporting_sources"]}
+                for level in ("issue", "matter"):
+                    for node in exported["hierarchical_synthesis"][level]:
+                        for claim in node["claims"]:
+                            for source in claim["sources"]:
+                                assert source == ledger[source["citation_id"]]
+                                assert source["version"] == document.version_id
+                assert "support_token" not in rendered and "source_version_id" not in rendered
+            else:
+                assert "rejected saved findings:" in rendered and "generated statements omitted:" in rendered
+        broken = deepcopy(result)
+        broken["answer"].pop("evidence_notice")
+        with pytest.raises(ExportProblem, match="provenance"):
+            validate_research_basis(matter, replace(completed, result=broken))
+
+
+from tests.test_investigation_planner import chain
+
+
+def test_removing_cited_source_from_selected_set_during_synthesis_refuses_save(chain, monkeypatch):
+    from case_intelligence.workflow_jobs import WorkflowFailure
+    bench, client, matter, original_job, calls, citations = chain
+    bench.workspace.cancel_research_job(matter.matter_id, matter.owner_id, original_job.job_id)
+    selected = bench.workspace.create_source_set(matter.matter_id, "Synthetic scoped hierarchy",
+        [item.document_id for item in citations.values()], matter.owner_id)
+    job, _ = bench.workspace.queue_research_job(matter.matter_id, matter.owner_id,
+        original_job.question, "Synthetic scoped hierarchy", "research-request-" + "d" * 32,
+        source_set_id=selected.source_set_id)
+    original_answer = bench.generator.answer
+    def answer(*args, **kwargs):
+        result = original_answer(*args, **kwargs)
+        if kwargs.get("working_context"):
+            bench.workspace.remove_source_organization(matter.matter_id, citations["first"].document_id)
+        return result
+    monkeypatch.setattr(bench.generator, "answer", answer)
+    claimed = bench.workspace.claim_research_job("synthetic-scoped-worker")
+    with pytest.raises(WorkflowFailure, match="left the selected set"):
+        bench._process_research_job(claimed, lambda: False)
+    saved = bench.workspace.research_job(matter.matter_id, matter.owner_id, job.job_id)
+    assert saved.result["hierarchical_synthesis"]["requests_spent"] == 1
+    assert saved.result["hierarchical_synthesis"]["issue"] == []

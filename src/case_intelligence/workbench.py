@@ -5117,9 +5117,13 @@ class CaseIntelligenceWorkbench:
                     raise WorkflowFailure("Research cancelled.")
                 self.workspace.membership(job.matter_id, job.actor_id)
                 self._validated_research_citations(matter, citations)
-                fingerprint = self.workspace.source_availability_fingerprint(matter.matter_id, job.source_set_id)
-                if fingerprint != current_fingerprint:
-                    raise WorkflowFailure("Sources changed during synthesis. Rebuild the investigation.")
+                if job.source_set_id:
+                    current_scope = self.workspace.source_set_document_ids(matter.matter_id, job.source_set_id)
+                    if any(citation.document_id not in current_scope for citation in citations):
+                        raise WorkflowFailure("Cited sources left the selected set during synthesis. Rebuild the investigation.")
+                # Late additions do not invalidate already verified originals.
+                # The existing completion coverage receipt discloses availability
+                # changes; newly added material is not silently synthesized.
 
             def save_synthesis(value):
                 nonlocal checkpoint

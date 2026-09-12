@@ -450,6 +450,8 @@ def _validate_research_export_scope(
         try:
             validate_state(hierarchy, result.get("passes", []), evidence, final=True)
             expected = synthesis_answer(hierarchy, evidence)
+            if result["answer"].get("evidence_notice", "") != expected.evidence_notice:
+                raise ValueError("The synthesis lost its evidence caution.")
             if result.get("summary") != expected.text:
                 raise ValueError("Final synthesis differs from its saved matter sections.")
             actual_claims = result["answer"]["claims"]
@@ -1185,6 +1187,17 @@ def export_research(
             excerpt = _plain(value.get("excerpt"))
             if excerpt:
                 citation["excerpt"] = excerpt
+            if "hierarchical_synthesis" in result:
+                original = next((item for item in result["evidence"]
+                                 if item["support_token"] == value.get("support_token")), None)
+                if original is not None:
+                    # Portable identity joins claims to the exported source ledger,
+                    # without exporting an application action token or route.
+                    identity = json.dumps({key: original[key] for key in (
+                        "document_id", "source_version_id", "chunk_id", "unit_number",
+                        "line_start", "line_end", "excerpt_digest", "evidence_kind")}, sort_keys=True)
+                    citation["citation_id"] = "citation-" + hashlib.sha256(identity.encode()).hexdigest()
+                    citation["version"] = original["source_version_id"]
             return citation
 
         safe_answer: dict[str, object] = {}
@@ -1208,6 +1221,7 @@ def export_research(
                 "introduction": _plain(answer.get("introduction")),
                 "claims": claims,
                 "missing_information": _plain(answer.get("missing_information")),
+                "evidence_notice": _plain(answer.get("evidence_notice")),
             }
             limitation = answer.get("limitation")
             if isinstance(limitation, Mapping):
@@ -1330,6 +1344,9 @@ def export_research(
     summary = _plain(result.get("summary"))
     if summary:
         blocks.extend((ExportBlock("Verified synthesis", "heading1"), ExportBlock(summary)))
+    evidence_notice = _plain((result.get("answer") or {}).get("evidence_notice"))
+    if evidence_notice:
+        blocks.append(ExportBlock(evidence_notice, "note"))
     hierarchy = result.get("hierarchical_synthesis")
     if isinstance(hierarchy, Mapping):
         from .hierarchical_synthesis import synthesis_notice

@@ -139,6 +139,7 @@
           <a href="/matters/{{ matter.slug }}{% if active_research.conversation_id %}?conversation={{ active_research.conversation_id }}{% endif %}#evidence-conversation">Return to conversation</a>
         </nav>
         <div class="research-summary prose">{{ active_research.result.summary }}</div>
+        {% if active_research.result.get('answer', {}).get('evidence_notice') %}<p class="workflow-caution" role="note">{{ active_research.result.answer.evidence_notice }}</p>{% endif %}
         {% set synthesis = active_research.result.get('hierarchical_synthesis') %}
         {% if synthesis %}
         <details class="research-finding"><summary>Issue and matter synthesis checkpoints · {{ 'partial' if synthesis.partial else 'complete within saved findings' }}</summary>
