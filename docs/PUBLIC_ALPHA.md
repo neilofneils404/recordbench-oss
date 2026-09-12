@@ -199,16 +199,22 @@ No local review substitutes for required hosted code review. Branch protections
 are not disabled to apply an exception.
 
 The maintainer-authorized installation of this policy has one bootstrap dispatch
-for PR #71, on `codex/security-quota-exception-20260912`, while its base remains
-`129bb3aef6edf511d3e4e709b2e89015c685c313`. It verifies the PR head matches the
-dispatched revision and runs the immutable gate implementation at
-`f4f9a8e38aa7e3662d06f0da44782fb195ec4019`, reviewed as part of #71. The same
+for PR #71, from the tag `recordbench-quota-policy-bootstrap-20260912-v1`, while
+its base remains `129bb3aef6edf511d3e4e709b2e89015c685c313`. Protect the exact tag
+against updates and deletion with no bypass actors before creating it. Create
+the tag only at the final code-reviewed, maintainer-accepted PR head, verify the
+remote tag target and active protection, and dispatch from that tag. The workflow
+definition itself is therefore immutable; never dispatch the bootstrap from a
+mutable feature branch. The job verifies the ref is protected and the PR head
+matches the dispatched revision, then runs the immutable gate implementation at
+`b714dfcfdbf2c29e50a1c692673372245f639231`, reviewed as part of #71. The same
 code-review, quota-evidence, permission, discussion and acceptance checks apply.
 It does not execute the policy PR head with its write token, accept an arbitrary
 checkout input, forge a completed security review or change branch protections.
 Ordinary events still read `main`; after this policy lands, its changed base
 makes this bootstrap unusable. Remove the scoped dispatch in the next maintenance
-update. Later quota exceptions use the ordinary default-branch gate.
+update; retain the immutable bootstrap tag and its protection. Later quota
+exceptions use the ordinary default-branch gate.
 
 The gate withdraws its prior native approval when a PR moves away from the
 default branch. Publication identity dispositions support SHA-1 and SHA-256
