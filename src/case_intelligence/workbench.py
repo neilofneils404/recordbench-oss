@@ -4721,6 +4721,12 @@ class CaseIntelligenceWorkbench:
         self, job: ResearchJobRecord, result: Mapping[str, object]
     ) -> ResearchJobRecord:
         matter = self._matter_by_id(job.matter_id)
+        if result.get("hierarchical_synthesis") is not None:
+            current_job = self.workspace.research_job(job.matter_id, job.actor_id, job.job_id)
+            try:
+                validate_research_basis(matter, replace(current_job, result=result))
+            except ExportProblem as exc:
+                raise WorkflowFailure("The synthesis checkpoint could not be verified.") from exc
         with self.source_store(matter).mutation_guard():
             raw_evidence = result.get("evidence")
             if not isinstance(raw_evidence, list):
@@ -4775,6 +4781,7 @@ class CaseIntelligenceWorkbench:
             "objective": base,
             "queries": [initial_query(question)],
             "planner_version": PLANNER_VERSION,
+            "synthesis_version": 1,
             "method": "Source-backed identifier, date, name, and phrase follow-ups; bounded retrieval and verified synthesis.",
         }
 
@@ -4817,6 +4824,7 @@ class CaseIntelligenceWorkbench:
             self.workspace.set_research_plan(job.job_id, plan, total_steps)
 
         checkpoint = dict(job.result) if job.result else {}
+        saved_synthesis = checkpoint.get("hierarchical_synthesis")
         passes = [dict(item) for item in checkpoint.get("passes", []) if isinstance(item, dict)]
         discarded_passes = int(checkpoint.get("discarded_passes", 0)) if adaptive else 0
         elapsed_before = float(checkpoint.get("search_elapsed_seconds", 0))
@@ -4911,6 +4919,7 @@ class CaseIntelligenceWorkbench:
             # Losing stale findings must not refund the resources already spent,
             # even if recovery is interrupted before its next search completes.
             checkpoint = {
+                **({"hierarchical_synthesis": saved_synthesis} if saved_synthesis else {}),
                 "budget": accounting(), "passes": [], "evidence": [],
                 "pending_searches": [], "discarded_passes": discarded_passes,
                 "search_elapsed_seconds": elapsed_before,
@@ -5057,6 +5066,7 @@ class CaseIntelligenceWorkbench:
                 if retrieval_available:
                     no_new_count = no_new_count + 1 if not new_selected else 0
             checkpoint = {
+                **({"hierarchical_synthesis": saved_synthesis} if saved_synthesis else {}),
                 "pending_searches": pending,
                 "seed_search_pending": seed_search_pending,
                 "lifetime_candidate_count": lifetime_candidates,
@@ -5098,34 +5108,67 @@ class CaseIntelligenceWorkbench:
         if cancelled():
             raise WorkflowFailure("Research cancelled.")
         citations = self._validated_research_citations(matter, citations)
-        final_citations = self._answer_evidence_citations(
-            matter,
-            citations,
-            maximum=budget.synthesis_inputs,
-            required_kinds=intent.required_evidence_kinds,
-        )
-        self.workspace.update_research_progress(
-            job.job_id,
-            stage="synthesizing",
-            message="Synthesizing findings from the cross-source evidence ledger.",
-            completed_steps=total_steps - 1,
-            candidate_count=candidate_count,
-            evidence_count=len(citations),
-        )
-        final_evidence = {
-            f"S{ordinal}": citation for ordinal, citation in enumerate(final_citations, 1)
-        }
-        final_packet = packet_for(final_evidence)
-        if adaptive:
-            checkpoint = {**checkpoint, "budget": accounting(len(final_packet), stop_reason)}
-            self.workspace.checkpoint_research_job(job.job_id, checkpoint)
-        try:
-            final_answer = self.generator.answer(
-                research_synthesis_question(job.question),
-                final_packet,
+        hierarchy = None
+        if plan.get("synthesis_version") == 1:
+            from .hierarchical_synthesis import run_synthesis, synthesis_answer
+
+            def synthesis_boundary():
+                if cancelled():
+                    raise WorkflowFailure("Research cancelled.")
+                self.workspace.membership(job.matter_id, job.actor_id)
+                self._validated_research_citations(matter, citations)
+                fingerprint = self.workspace.source_availability_fingerprint(matter.matter_id, job.source_set_id)
+                if fingerprint != current_fingerprint:
+                    raise WorkflowFailure("Sources changed during synthesis. Rebuild the investigation.")
+
+            def save_synthesis(value):
+                nonlocal checkpoint
+                synthesis_boundary()
+                checkpoint = {**checkpoint, "hierarchical_synthesis": value}
+                self.workspace.checkpoint_research_job(job.job_id, checkpoint)
+                self.workspace.update_research_progress(
+                    job.job_id, stage="synthesizing",
+                    message=f"Saved {len(value['issue'])} issue groups and {len(value['matter'])} matter sections; {value['requests_spent']} generation requests charged.",
+                    completed_steps=total_steps - 1, candidate_count=candidate_count,
+                    evidence_count=len(citations))
+
+            hierarchy = run_synthesis(job.question, passes,
+                [self._workflow_citation_payload(item) for item in citations],
+                self.generator, save_synthesis, synthesis_boundary, saved_synthesis)
+            final_citations = citations
+            final_evidence = {f"S{ordinal}": citation for ordinal, citation in enumerate(citations, 1)}
+            final_packet = tuple(dict.fromkeys(token for node in hierarchy["issue"]
+                                               for token in node["support_tokens"]))  # Committed group inputs.
+            final_answer = synthesis_answer(hierarchy, [self._workflow_citation_payload(item) for item in citations])
+        else:
+            final_citations = self._answer_evidence_citations(
+                matter,
+                citations,
+                maximum=budget.synthesis_inputs,
+                required_kinds=intent.required_evidence_kinds,
             )
-        except GenerationGroundingRejected:
-            final_answer = self._verification_abstention()
+            self.workspace.update_research_progress(
+                job.job_id,
+                stage="synthesizing",
+                message="Synthesizing findings from the cross-source evidence ledger.",
+                completed_steps=total_steps - 1,
+                candidate_count=candidate_count,
+                evidence_count=len(citations),
+            )
+            final_evidence = {
+                f"S{ordinal}": citation for ordinal, citation in enumerate(final_citations, 1)
+            }
+            final_packet = packet_for(final_evidence)
+            if adaptive:
+                checkpoint = {**checkpoint, "budget": accounting(len(final_packet), stop_reason)}
+                self.workspace.checkpoint_research_job(job.job_id, checkpoint)
+            try:
+                final_answer = self.generator.answer(
+                    research_synthesis_question(job.question),
+                    final_packet,
+                )
+            except GenerationGroundingRejected:
+                final_answer = self._verification_abstention()
         if cancelled():
             raise WorkflowFailure("Research cancelled.")
         # Generation can take long enough for a source to be replaced. Resolve
@@ -5184,6 +5227,7 @@ class CaseIntelligenceWorkbench:
             "candidate_count": candidate_count,
             "candidate_document_ids": sorted(candidate_documents),
             "retrieval_source_fingerprint": retrieval_boundary.get("source_fingerprint", ""),
+            **({"hierarchical_synthesis": hierarchy} if hierarchy is not None else {}),
             "summary": final_answer.text,
             "answer": final_answer_payload,
             "passes": passes,

@@ -518,7 +518,7 @@ def test_synthesis_failure_resume_honors_durable_search_stop(chain, monkeypatch)
     monkeypatch.setattr(bench, '_answer_search', search)
     original_answer = bench.generator.answer
     def answer(question, *args, **kwargs):
-        if question == research_synthesis_question(job.question):
+        if kwargs.get("working_context") or question == research_synthesis_question(job.question):
             raise RuntimeError('Synthetic synthesis outage')
         return original_answer(question, *args, **kwargs)
     monkeypatch.setattr(bench.generator, 'answer', answer)

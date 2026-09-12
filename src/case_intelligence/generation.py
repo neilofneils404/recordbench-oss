@@ -798,6 +798,11 @@ def _verify_text(text: object, evidence_ids: object, evidence: Mapping[str, Evid
     return VerifiedClaim(normalized, tuple(identifiers))
 
 
+def verify_original_claim(text, support_ids, originals):
+    """Revalidate a saved claim against originals, never intermediate prose."""
+    return _verify_text(text, support_ids, originals)
+
+
 class GroundedGenerationService:
     """Calls one local generator, then independently filters unsupported claims.
 

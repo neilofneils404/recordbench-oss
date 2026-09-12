@@ -1,0 +1,122 @@
+# Hierarchical investigation synthesis
+
+New investigations synthesize persisted slice-11 pass findings in two stages:
+issue-level groups, then matter-level sections from those issue groups. This is
+one reviewer question, with supporting and competing accounts kept as separate
+source-backed claims. Saved search gaps and competing accounts remain unresolved
+until the reviewer checks the originals. The final answer combines the verified
+matter sections rather than selecting another twelve passages for one answer.
+
+The first input adapter is the investigation's own persisted findings. It does
+not silently import unrelated full-text runs or expand the original matter or
+source-set boundary. Slice-12 full-text ledgers remain separately available in
+Reports; a future adapter must bind a terminal run and revision as required by
+[FULL_TEXT_REVIEW.md](FULL_TEXT_REVIEW.md).
+
+## Original support through both stages
+
+Every derived claim retains parent claim IDs and original support tokens. Those
+tokens resolve to the existing matter, document, source version, location, unit
+and excerpt-digest ledger. Only source-verified finding claims and separately
+sourced limitations enter the next stage. Free-form introductions, missing-answer
+prose and verification notices are never promoted into evidence.
+
+Each generation receives original source passages plus explicitly non-evidentiary
+working context describing its parent findings. The existing source-support
+verifier checks generated claims against those originals. Saved intermediate
+claims are checked again before reuse; unknown versions, changed input hashes,
+invalid parents or missing original support refuse the checkpoint. Final saving
+and exports validate the complete chain, and existing source-version, availability,
+membership and source-set checks still apply. Word, Markdown and JSON exports
+include the issue/matter records and original source references.
+
+These deterministic checks detect unsupported numbers, quotations, negation and
+insufficient source overlap. They do not establish semantic truth. Model-quality
+acceptance remains a separate test of decisive evidence recall and false claims.
+
+## Frozen limits and partial results
+
+Version 1 preserves the existing retrieval limits: at most 72 selected original
+units, 12 selections per search, and the existing search/time budget. Synthesis
+has its own fixed receipt:
+
+- At most 12 issue groups and 12 matter sections, with up to four parent claims
+  per group. A claim's original support stays together.
+- At most 12 original inputs, 6,000 characters per original, and 48,000 original
+  characters per call. Grouping conservatively fits the character budget.
+- 1,200 output tokens per generation call, using the existing generator adapter.
+  This is a section budget, not a whole-report output cap.
+- 32 generation requests, including charged interrupted requests. The existing
+  bounded generation service may make its ordinary verification repair calls
+  within each request; these are not additional synthesis groups.
+- 900 wall-clock seconds from first synthesis start, including restart downtime.
+  The deadline is checked between requests; an in-flight call can finish later.
+
+The saved receipt identifies omitted groups, rejected findings, uncited original
+units, characters outside synthesis packets, and the stopping reason. Partial
+processing stays visible in the answer, checkpoint inspector and exports. A
+completed bounded group traversal does not mean all relevant facts were found.
+Units and character budgets do not measure original pages read or whole-matter
+coverage. An exhausted synthesis requires a new investigation; extending search
+budget does not replenish synthesis requests or reset its deadline.
+
+## Checkpoints, backup and rollback
+
+`plan.synthesis_version` and `result.hierarchical_synthesis.version` identify the
+new format in the existing research-job JSON columns. No SQL migration is needed.
+Historical plans keep their previous synthesis behavior. Each completed issue or
+matter node is checkpointed before the next call. Requests are durably charged
+before dispatch, so cancellation or a crash cannot refund them. Restart reuses
+complete validated nodes and repeats only uncommitted work within the remaining
+budget. New searches or source changes invalidate derived nodes without refunding
+synthesis spend or its first-start deadline.
+
+Take the consistent backup described in [STORAGE_AND_BACKUP.md](STORAGE_AND_BACKUP.md)
+before upgrading. Older writers do not understand the new synthesis checkpoints;
+finish or cancel active work and restore a matching pre-upgrade backup for a
+rollback. Preserve the upgraded backup and exported post-upgrade work separately.
+
+`tests/test_hierarchical_synthesis.py` distributes support and contradiction over
+24 synthetic units, rejects corrupted intermediate provenance, proves pre-dispatch
+charging and restart reuse, exercises explicit partial results, and restores an
+online SQLite backup into a clean database before resuming and exporting JSON,
+Markdown and Word. Integrity and foreign-key checks are included. These plumbing
+tests do not substitute for representative local-model evaluation.
+
+## Local-model acceptance receipt — September 12, 2026
+
+The cross-group matter-stage evaluation used the already staged native
+`qwen3.5:4b` Q4_K_M candidate, Ollama 0.33.3 on Apple M4, manifest
+`sha256:2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd`.
+The installed artifact verifier rehashed the manifest and blobs before serving;
+the artifact's license is Apache-2.0. This is an Ollama distribution digest,
+not a claim of equivalence to a Hugging Face revision or a model swap.
+
+The fixed corpus contains 24 saved source findings, with decisive support in
+unit 1 and explicit contradiction in unit 24, plus an unsupported saved finding.
+The production hierarchy and source verifier ran six issue groups and six
+cross-group matter sections. The result retained all 24 originals (24/24), both
+decisive accounts (2/2), and no injected claim. Inspection of the 24 displayed
+claims against this fixed corpus found zero false claims: each matched its
+cited source statement exactly. It spent 12 generation requests in 102.74 seconds.
+The rejected unsupported finding correctly kept the receipt marked partial,
+even though no original unit was uncited and all admitted groups completed.
+
+Reproduce with the existing staged artifact; this command does not download:
+
+```console
+PYTHONPATH=src python scripts/evaluate-hierarchical-synthesis.py \
+  --model qwen3.5:4b \
+  --expected-digest 2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd \
+  --disable-thinking --output /tmp/hierarchical-model-evaluation.json
+```
+
+The harness explicitly uses the installed native evaluation setting
+`think=false`, 8,192 context tokens and 1,200 output tokens. The initial probe
+with the current application's default Ollama wire request returned no structured
+answer. The evaluation-only switch does not change application adapter defaults
+or advance the held Mac integration. This receipt qualifies the small corpus
+through the hierarchy and verifier under the stated model settings; it does not
+qualify arbitrary long packets, other portfolios, Linux/GPU throughput, or a
+private deployment. Deterministic focused acceptance separately passed 214 tests,
+including research, generation, report-basis, exports and backup/clean restore.

@@ -139,6 +139,16 @@
           <a href="/matters/{{ matter.slug }}{% if active_research.conversation_id %}?conversation={{ active_research.conversation_id }}{% endif %}#evidence-conversation">Return to conversation</a>
         </nav>
         <div class="research-summary prose">{{ active_research.result.summary }}</div>
+        {% set synthesis = active_research.result.get('hierarchical_synthesis') %}
+        {% if synthesis %}
+        <details class="research-finding"><summary>Issue and matter synthesis checkpoints · {{ 'partial' if synthesis.partial else 'complete within saved findings' }}</summary>
+          <p>{{ synthesis.requests_spent }} of {{ synthesis.policy.generation_requests }} generation requests charged. {{ synthesis.policy.wall_seconds }} seconds from first synthesis start, including restart downtime; {{ synthesis.policy.output_tokens_per_call }} output tokens per call. Stop: {{ synthesis.stop_reason|replace('_', ' ') }}.</p>
+          <p>Omitted groups: {{ synthesis.omitted_groups|join(', ') or 'None' }}. Intermediate summaries are not evidence sources.</p>
+          {% for level in ['issue', 'matter'] %}{% for node in synthesis[level] %}
+          <article><h3>{{ level|title }} section {{ loop.index }} · {{ node.state }}</h3>{% for claim in node.claims %}<p>{{ claim.text }}</p><ul>{% for evidence in active_research.result.evidence %}{% if evidence.support_token in claim.support_tokens %}<li><a href="{{ citation_href(evidence, matter.slug) }}">{{ evidence.source_name }} — {{ evidence.location }}</a></li>{% endif %}{% endfor %}</ul>{% endfor %}</article>
+          {% endfor %}{% endfor %}
+        </details>
+        {% endif %}
         {% set modality = active_research.result.get('answer', {}).get('modality_coverage') %}
         {% if modality %}<div class="answer-source-coverage" role="note"><strong>Requested source coverage · {{ modality.mode|title }}</strong><p>{{ modality.notice }}</p></div>{% endif %}
         {% set coverage = active_research.result.coverage %}

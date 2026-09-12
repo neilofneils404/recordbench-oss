@@ -18,8 +18,8 @@ and rechecks membership and source versions between steps.
 
 New runs allow at most five searches and 15 minutes of search-step time. The
 cooperative time limit is checked between calls; an in-flight retrieval or model
-call can finish after it. Final synthesis has its separate existing packet and
-output limits. A run also stops when it has 72 unique evidence passages, exhausts
+call can finish after it. Final synthesis has its separate checkpointed section and
+output limits; see [hierarchical synthesis](HIERARCHICAL_SYNTHESIS.md). A run also stops when it has 72 unique evidence passages, exhausts
 its proposal queue, or completes two available searches without selecting new evidence.
 Retrieval outages consume a pass and elapsed time but do not advance the
 no-new-evidence streak. Per-pass new-evidence counts include only passages
@@ -29,8 +29,9 @@ initial search can retry within the existing pass and time budgets. If the seed
 search remains unavailable when its budget ends, the run stays failed and offers
 an explicit extension; it never records an empty successful investigation. Previously selected passages
 are excluded before selection and are not regenerated in another search pass.
-The final synthesis still uses at most 12 passages: this is not whole-matter
-coverage or hierarchical synthesis.
+New investigations synthesize saved findings through issue and matter sections.
+Each generation remains bounded to at most 12 originals; this is not whole-matter
+coverage. Historical plans retain their original single-packet synthesis.
 
 The proposal queue holds at most 40 entries, with at most eight added per pass.
 Matching is intentionally conservative: unrecognized names, date formats, or
@@ -47,7 +48,8 @@ synthesis without running additional searches; an explicit extension clears it. 
 when cancellation is acknowledged, as with existing investigation accounting.
 A completed run with remaining proposals offers an explicit additional budget
 of one to five passes, adding three search minutes per pass. The lifetime ceiling
-is 15 passes and 45 search minutes; the evidence and synthesis limits do not grow.
+is 15 passes and 45 search minutes; the evidence and synthesis limits do not grow. Synthesis request spend and its
+first-start deadline remain charged across extensions.
 Only the initiating reviewer can resume or extend the job. Repeated submission
 while it is queued or running does not grant another extension. A form from an
 older budget is rejected, and each extension is recorded in the saved plan.

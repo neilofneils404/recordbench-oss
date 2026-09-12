@@ -1,6 +1,9 @@
 # 13: Synthesize a substantial review without losing source support
 
-Status: proposed. Depends on 11 or 12 and their persistent findings.
+Status: implementation in progress; not landed. Depends on 11 or 12 and their persistent findings.
+
+The initial input adapter and versioned checkpoint contract are described in
+[HIERARCHICAL_SYNTHESIS.md](../HIERARCHICAL_SYNTHESIS.md).
 
 ## Finding and outcome
 

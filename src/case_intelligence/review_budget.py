@@ -91,7 +91,7 @@ def budget_description(value: Mapping) -> str:
     text = (f"Review limits: {limits['passes']} passes; {timing}{limits['primary_candidates']} primary candidates per pass; "
             f"up to {limits['supplemental_candidates_per_kind']} supplemental candidates per missing requested source kind; "
             f"{limits['selected_per_pass']} selected passages per pass; {limits['unique_evidence']} unique evidence passages; "
-            f"{limits['synthesis_inputs']} synthesis inputs; {limits['evidence_item_chars']} characters per passage; "
+            f"{limits['synthesis_inputs']} synthesis inputs per generation; {limits['evidence_item_chars']} characters per passage; "
             f"{limits['evidence_chars']} evidence characters and {limits['output_tokens']} output tokens per generation. "
             + ("Requested limits equal effective limits. " if value["requested"] == limits else "Requested limits differ from effective limits. "))
     if counts:

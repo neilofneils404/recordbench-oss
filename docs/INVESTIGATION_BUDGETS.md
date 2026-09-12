@@ -4,13 +4,15 @@ Investigations use an explicit, capability-neutral `ReviewBudget` policy shared
 by orchestration, retrieval validation, generation bounds, saved progress, and
 exports. This policy represents the supported application contract; it does not
 inspect the development computer, select limits by operating system, or assume a
-particular GPU. Initial retrieval and synthesis limits remain unchanged. Explicit continuation
+particular GPU. Retrieval and per-generation packet limits remain unchanged. Explicit continuation
 can extend the search budget as described below.
 
 The default policy permits five search passes and 900 search-step seconds,
 20 primary candidates per pass,
 12 supplemental candidates per missing requested source kind, 12 selected
-passages per pass, 72 unique ledger passages, and 12 final synthesis inputs.
+passages per pass, 72 unique ledger passages, and 12 original synthesis inputs per generation.
+New investigations use the separate [hierarchical synthesis](HIERARCHICAL_SYNTHESIS.md)
+receipt for issue groups, matter sections, charged requests and a first-start deadline.
 Each generation receives at most 6,000 characters per passage and 48,000 evidence
 characters total, with a 1,200 output-token request. Packets now obey both text
 limits and record the number of omitted characters. A request for 30 primary
@@ -30,9 +32,11 @@ finding. Analyzed units are generation inputs, including rejected findings.
 
 The evidence ledger retains exact original locators and excerpts. Truncation
 counts refer to text omitted from each generation packet, including repeated
-occurrences and final synthesis; source text is not changed. Final synthesis input
-counts can be lower than the selected ledger when the total-character limit is
-reached. Progress counts cover committed pass checkpoints; cancellation can leave
+occurrences and legacy final synthesis; source text is not changed. Hierarchical
+synthesis separately reports original characters outside its bounded packets.
+Its synthesis-input count covers distinct originals admitted to completed issue
+groups, and can be lower than the selected ledger. Charged interrupted requests
+remain in the separate synthesis receipt. Progress counts cover committed pass checkpoints; cancellation can leave
 an in-flight generation uncounted. Legacy completion records `completed_bounded_plan`; adaptive runs record
 `pass_budget`, `time_budget`, `evidence_budget`, `no_new_evidence`, or
 `queue_exhausted`;
@@ -53,9 +57,9 @@ metadata and description; arbitrary saved metadata is not exported.
 The policy is a shared seam for future server capability negotiation. Higher
 capacity should arrive as a validated backend policy applied consistently to
 retrieval, orchestration, generation context, scheduling, and checkpoint recovery.
-A hierarchical synthesis mode should record each stage's input/output budget and
-carry source support through intermediate summaries; it must not relabel the
-current twelve-input synthesis as exhaustive. Increasing one retrieval argument
+Hierarchical synthesis records each stage's input/output budget and carries
+original support through intermediate summaries. Its bounded sections do not
+establish exhaustive coverage. Increasing one retrieval argument
 alone is not a capacity upgrade. Resource-admission and evidence-quality tests
 must accompany a higher-capacity policy, independently of the developer's host.
 

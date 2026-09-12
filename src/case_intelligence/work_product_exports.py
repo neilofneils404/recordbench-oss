@@ -444,6 +444,23 @@ def _validate_research_export_scope(
         raise ExportProblem(
             "The investigation synthesis does not match its verified answer."
         )
+    hierarchy = result.get("hierarchical_synthesis")
+    if hierarchy is not None or job.plan.get("synthesis_version") == 1:
+        from .hierarchical_synthesis import validate_state, synthesis_answer
+        try:
+            validate_state(hierarchy, result.get("passes", []), evidence, final=True)
+            expected = synthesis_answer(hierarchy, evidence)
+            if result.get("summary") != expected.text:
+                raise ValueError("Final synthesis differs from its saved matter sections.")
+            actual_claims = result["answer"]["claims"]
+            if len(actual_claims) != len(expected.claims):
+                raise ValueError("Final claims differ from the synthesis checkpoint.")
+            for actual, claim in zip(actual_claims, expected.claims):
+                tokens = [evidence[int(identifier[1:]) - 1]["support_token"] for identifier in claim.evidence_ids]
+                if actual["text"] != claim.text or [item["support_token"] for item in actual["citations"]] != tokens:
+                    raise ValueError("Final claim lost its intermediate-to-original support.")
+        except (ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
+            raise ExportProblem("The hierarchical synthesis provenance is invalid.") from exc
     passes = result.get("passes", [])
     if not isinstance(passes, list):
         raise ExportProblem("The investigation findings are invalid.")
@@ -1253,6 +1270,23 @@ def export_research(
             for citation in mapping_items(result.get("evidence"))
             if (safe := safe_citation(citation)) is not None
         )
+        hierarchy = result.get("hierarchical_synthesis")
+        safe_hierarchy = None
+        if isinstance(hierarchy, Mapping):
+            sources_by_token = {item["support_token"]: item for item in result["evidence"]}
+            safe_hierarchy = {key: hierarchy[key] for key in (
+                "version", "policy", "requests_spent", "stop_reason", "partial",
+                "omitted_groups", "rejected_findings", "truncated_characters")}
+            safe_hierarchy["uncited_sources"] = [safe_citation(sources_by_token[token])
+                                                   for token in hierarchy["uncited_evidence"]]
+            for level in ("issue", "matter"):
+                safe_hierarchy[level] = [{
+                    "id": node["id"], "parents": node["parents"], "state": node["state"],
+                    "omitted_claims": node["omitted_claims"],
+                    "claims": [{"text": claim["text"], "parents": claim["parents"],
+                                "sources": [safe_citation(sources_by_token[token]) for token in claim["support_tokens"]]}
+                               for claim in node["claims"]],
+                } for node in hierarchy[level]]
         body = json.dumps(
             {
                 "product": PRODUCT_NAME,
@@ -1269,6 +1303,7 @@ def export_research(
                     "coverage": safe_coverage,
                     "review_budget": job.review_budget,
                     "review_budget_description": job.review_budget_description,
+                    **({"hierarchical_synthesis": safe_hierarchy} if safe_hierarchy is not None else {}),
                     "findings": findings,
                     "unsearched_proposals": [
                         {"search": _plain(item.get("query")), "reason": _plain(item.get("reason")),
@@ -1295,6 +1330,20 @@ def export_research(
     summary = _plain(result.get("summary"))
     if summary:
         blocks.extend((ExportBlock("Verified synthesis", "heading1"), ExportBlock(summary)))
+    hierarchy = result.get("hierarchical_synthesis")
+    if isinstance(hierarchy, Mapping):
+        from .hierarchical_synthesis import synthesis_notice
+        blocks.append(ExportBlock("Synthesis checkpoints", "heading1"))
+        blocks.append(ExportBlock(synthesis_notice(hierarchy), "note"))
+        for level in ("issue", "matter"):
+            for node in hierarchy[level]:
+                blocks.append(ExportBlock(f"{level.title()} section {node['id']} — {node['state']}", "heading2"))
+                for claim in node["claims"]:
+                    blocks.append(ExportBlock(claim["text"]))
+                    blocks.append(ExportBlock("Derived through: " + ", ".join(claim["parents"]), "metadata"))
+                    for token in claim["support_tokens"]:
+                        source = next(item for item in result["evidence"] if item["support_token"] == token)
+                        blocks.append(ExportBlock(f"{source['source_name']} — {source['location']} (version {source['source_version_id']})", "citation"))
     coverage = result.get("coverage")
     if isinstance(coverage, Mapping):
         blocks.append(ExportBlock("Coverage", "heading1"))
