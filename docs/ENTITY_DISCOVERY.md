@@ -34,8 +34,16 @@ in the [dated validation receipt](ENTITY_DISCOVERY_VALIDATION_2026-09-12.json) d
 Every detected occurrence initially gets a **separate suggested identity** and
 supported mention. The same name twice in a unit produces two distinct mention
 IDs and offsets. There is no 75-entity cutoff. A unit with more than 1,000
-proposals fails explicitly without saving a partial set. Existing text-review
-population limits remain unchanged.
+proposals fails explicitly without saving a partial set. An aggregate 16 MiB
+logical entity payload budget (including retained history and per-row allowance)
+admits machine writes conservatively before a unit is saved. Existing manual
+work counts toward that budget but is never removed to make room. Budget
+exhaustion keeps the unit unprocessed, preserves earlier committed units and
+shows an explicit error. Retrying, restoring or changing extractor versions
+does not reset this matter budget. It is not a claim about exact physical SQLite
+file size. Only the selected units are checkpointed; merely opening or starting
+discovery does not copy the entire inventory. Existing text-review population
+limits remain unchanged.
 
 Mentions retain original source/version/unit support, the exact detected text,
 character offsets in that original extracted unit, extractor version and their
@@ -48,6 +56,12 @@ as saved text when its current-source link is disabled.
 Dates retain their raw spelling, ambiguity and explicitly supplied timezone.
 Slash dates leave day/month order unresolved; missing zones remain unspecified.
 No normalized timestamp is guessed, and calendar validity is not asserted.
+When the exact same span matches several rules, explicit identifiers take
+precedence over objects, organizations, people and dates, in that order.
+For example, `ID: 2026-09-12` remains an identifier. Replaceable extractors must
+resolve conflicting classifications for one span; otherwise the unit fails
+without partial mentions. Cross-version occurrence suppression remains based
+on source/version/unit/offset, preserving reviewer corrections.
 
 ## Reviewer decisions
 

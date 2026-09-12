@@ -108,5 +108,35 @@
       ],
       "browser": "152.0.7977.83"
     }
+  },
+  "hosted_review_corrections": {
+    "reviewed_head": "24ae8f8abee5b765ee0aa6286420e12b205dd674",
+    "findings": [
+      "P1: aggregate byte admission before occurrence persistence",
+      "P2: same-span classification precedence"
+    ],
+    "focused_passed": 89,
+    "focused_skipped": 1,
+    "browser": {
+      "synthetic": true,
+      "success": true,
+      "checks": [
+        "Two synthetic originals uploaded and searchable without a model",
+        "Visible empty state and keyboard creation of a person with an alias",
+        "Two exact source passages attached to one identity and both reopened from its detail page",
+        "Another same-name person remains distinct, with no automatic alias merge",
+        "Shared-edit conflict preserves the submitted name and aliases alongside the current saved identity",
+        "390-pixel reflow without horizontal page overflow",
+        "Return link retains the source-review search context",
+        "Discovery processes an inventoried unit without a model and shows remaining uninventoried sources honestly",
+        "Reviewer confirms a candidate merge and undoes it without losing the extracted mention",
+        "Discovery and reconciliation reflow at 390 pixels with native labeled controls",
+        "Dissimilar empty manual identities can confirm and undo an alias without selecting a split mention"
+      ],
+      "browser": "152.0.7977.83"
+    },
+    "byte_budget": "16 MiB aggregate logical entity payload, including retained history and per-row allowance; conservative pre-write admission, no version/retry/restore reset; dense units remain unprocessed without partial records.",
+    "classification": "Explicit identifiers precede coincident dates; replacement extractors with conflicting same-span classifications fail without partial results.",
+    "final_head_review": "Renewed hosted review and Quality required after corrections."
   }
 }

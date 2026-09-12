@@ -310,3 +310,75 @@ def test_sealed_units_are_pending_before_first_discovery_request(frozen):
     assert coverage['counts'] == dict(pending=2, processed=0, failed=0, invalidated=0)
     assert store.entity_repository().discovery_export(matter.matter_id)['coverage'] == []
     assert discovery.step(matter.matter_id, ACTOR, run.run_id, limit=1)['counts']['pending'] == 1
+
+
+def test_budget_rejects_dense_unit_before_any_mentions_or_receipts(frozen):
+    discovery = discovery_fixture(frozen, ['ID: X1\n' * 1000])
+    store, matter, run, _ = frozen
+    assert len(discovery.extractor.extract('ID: X1\n' * 1000)) == 1000
+    before = store.entity_repository().discovery_storage_bytes(matter.matter_id)
+    with pytest.raises(WorkspaceProblem, match='byte budget'):
+        discovery.step(matter.matter_id, ACTOR, run.run_id)
+    assert store.entity_repository().discovery_storage_bytes(matter.matter_id) == before
+    assert discovery.service.list(matter.matter_id, ACTOR)[1] == 0
+    assert discovery.coverage(matter.matter_id, ACTOR, run.run_id)['counts']['pending'] == 1
+    exported = store.entity_repository().discovery_export(matter.matter_id)
+    assert exported['coverage'] == exported['occurrence_tombstones'] == []
+
+
+def test_aggregate_budget_survives_retries_versions_and_clean_restore(frozen, tmp_path):
+    texts = ['Alex Example arrived.' + ' x' * 4000, 'Jordan Sample left.' + ' x' * 4000]
+    discovery = discovery_fixture(frozen, texts)
+    discovery.byte_limit = 70000
+    store, matter, run, _ = frozen
+    assert discovery.step(matter.matter_id, ACTOR, run.run_id, limit=1)['counts']['processed'] == 1
+    before = store.entity_repository().discovery_storage_bytes(matter.matter_id)
+    for _ in range(3):
+        with pytest.raises(WorkspaceProblem, match='byte budget'):
+            discovery.step(matter.matter_id, ACTOR, run.run_id)
+        assert store.entity_repository().discovery_storage_bytes(matter.matter_id) == before
+    target = tmp_path / 'budget-restore.sqlite'
+    with sqlite3.connect(target) as backup:
+        store.connection.backup(backup)
+    restored = WorkspaceStore(target)
+    try:
+        assert restored.entity_repository().discovery_storage_bytes(matter.matter_id) == before
+        service = EntityService(restored.entity_repository(), source_guard=nullcontext, resolve_support=lambda token: None,
+            load_note=restored.notebook_item, load_references=restored.notebook_references,
+            validate_references=discovery.service.validate_references)
+        resumed = EntityDiscovery(service, load_unit=discovery.load_unit, byte_limit=70000)
+        resumed.extractor.version = 'synthetic-new-version'
+        # A new version can visit the already retained span, but cannot reset
+        # the matter budget and persist another full-excerpt occurrence.
+        with pytest.raises(WorkspaceProblem, match='byte budget'):
+            resumed.step(matter.matter_id, ACTOR, run.run_id)
+        assert service.list(matter.matter_id, ACTOR)[1] == 1
+        assert resumed.coverage(matter.matter_id, ACTOR, run.run_id)['counts']['pending'] == 1
+    finally:
+        restored.close()
+
+
+def test_explicit_identifier_wins_same_span_date_without_losing_receipt(frozen):
+    text = 'ID: 2026-09-12'
+    rows = DeterministicEntityExtractor().extract(text)
+    assert len(rows) == 1 and rows[0].kind == 'identifier' and rows[0].label == '2026-09-12'
+    discovery = discovery_fixture(frozen, [text])
+    store, matter, run, _ = frozen
+    discovery.step(matter.matter_id, ACTOR, run.run_id)
+    entity = discovery.service.list(matter.matter_id, ACTOR)[0][0]
+    assert entity['entity_type'] == 'identifier'
+    discovery.extractor.version = 'synthetic-reextract-v2'
+    discovery.step(matter.matter_id, ACTOR, run.run_id)
+    assert discovery.service.list(matter.matter_id, ACTOR)[1] == 1
+
+
+def test_replaceable_extractor_must_resolve_conflicting_same_span(frozen):
+    from case_intelligence.entity_extractor import EntityOccurrence
+    class Conflicting(DeterministicEntityExtractor):
+        def extract(self, text):
+            return [EntityOccurrence(0, 12, 'Alex Example', kind) for kind in ('person', 'identifier')]
+    discovery = discovery_fixture(frozen, ['Alex Example arrived.'], Conflicting())
+    store, matter, run, _ = frozen
+    assert discovery.step(matter.matter_id, ACTOR, run.run_id)['counts']['failed'] == 1
+    assert discovery.service.list(matter.matter_id, ACTOR)[1] == 0
+    assert store.entity_repository().discovery_export(matter.matter_id)['occurrence_tombstones'] == []

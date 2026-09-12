@@ -69,4 +69,11 @@ class DeterministicEntityExtractor:
             found.append(EntityOccurrence(match.start(), match.end(), raw, 'date',
                 dict(raw=raw, ambiguity='day/month order unresolved' if '/' in raw else 'calendar validity unverified',
                      timezone=zone.group() if zone else None, normalized=None)))
-        return sorted(found, key=lambda item: (item.start, item.end, item.kind))
+        # Explicit identifiers outrank coincident calendar-looking strings.
+        # Keep one classification per exact span so cross-version occurrence
+        # receipts can suppress re-creation without silently losing a rule.
+        priority = {'identifier': 0, 'thing': 1, 'organization': 2, 'person': 3, 'date': 4}
+        selected = {}
+        for item in sorted(found, key=lambda item: (item.start, item.end, priority[item.kind])):
+            selected.setdefault((item.start, item.end), item)
+        return list(selected.values())

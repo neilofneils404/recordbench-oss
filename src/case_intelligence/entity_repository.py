@@ -173,24 +173,47 @@ class EntityRepository:
             'SELECT r.run_id,r.state,r.created_at FROM workbench_review_run r '
             'JOIN workbench_text_review t ON t.run_id=r.run_id WHERE r.matter_id=? ORDER BY r.created_at DESC', (matter_id,))]
 
-    def discovery_inventory(self, matter_id, run_id, version):
+    def require_discovery_run(self, matter_id, run_id):
         if not self.connection.execute('SELECT 1 FROM workbench_review_run r JOIN workbench_text_review t '
                 'ON t.run_id=r.run_id WHERE r.matter_id=? AND r.run_id=?', (matter_id, run_id)).fetchone():
             raise KeyError(run_id)
-        self.connection.execute(
-            "INSERT OR IGNORE INTO workbench_entity_discovery_unit "
-            "(matter_id,run_id,document_id,source_version_id,unit_ordinal,unit_digest,extractor_version,state) "
-            "SELECT ?,s.run_id,s.document_id,s.source_version_id,u.unit_ordinal,u.unit_digest,?,"
-            "CASE WHEN s.state='invalidated' OR u.state='invalidated' THEN 'invalidated' ELSE 'pending' END "
-            "FROM workbench_text_review_source s JOIN workbench_text_review_unit u "
-            "ON u.run_id=s.run_id AND u.document_id=s.document_id WHERE s.run_id=? AND s.inventory_sealed=1",
-            (matter_id, version, run_id))
 
     def discovery_pending(self, matter_id, run_id, version, limit, retry):
         return [dict(row) for row in self.connection.execute(
-            "SELECT * FROM workbench_entity_discovery_unit WHERE matter_id=? AND run_id=? AND extractor_version=? "
-            "AND (state='pending' OR (? AND state='failed')) ORDER BY document_id,unit_ordinal LIMIT ?",
-            (matter_id, run_id, version, retry, limit))]
+            "SELECT ? AS matter_id,u.run_id,u.document_id,s.source_version_id,u.unit_ordinal,u.unit_digest,"
+            "? AS extractor_version,COALESCE(d.state,'pending') AS state,COALESCE(d.note,'') AS note "
+            "FROM workbench_text_review_source s JOIN workbench_text_review_unit u "
+            "ON u.run_id=s.run_id AND u.document_id=s.document_id "
+            "LEFT JOIN workbench_entity_discovery_unit d ON d.matter_id=? AND d.run_id=u.run_id "
+            "AND d.document_id=u.document_id AND d.unit_ordinal=u.unit_ordinal AND d.extractor_version=? "
+            "WHERE s.run_id=? AND s.inventory_sealed=1 AND "
+            "(d.state IS NULL OR d.state='pending' OR (? AND d.state='failed')) "
+            "ORDER BY u.document_id,u.unit_ordinal LIMIT ?",
+            (matter_id, version, matter_id, version, run_id, retry, limit))]
+
+    def seed_discovery_unit(self, unit):
+        self.connection.execute("INSERT OR IGNORE INTO workbench_entity_discovery_unit "
+            "(matter_id,run_id,document_id,source_version_id,unit_ordinal,unit_digest,extractor_version,state) "
+            "VALUES (?,?,?,?,?,?,?,'pending')",
+            tuple(unit[key] for key in ('matter_id','run_id','document_id','source_version_id',
+                                       'unit_ordinal','unit_digest','extractor_version')))
+
+    def discovery_storage_bytes(self, matter_id):
+        # A logical payload budget, with per-row allowance. Include human records
+        # and retained history so repeated extractor versions cannot reset it.
+        total = 0
+        for table in ('workbench_entity', 'workbench_entity_mention', 'workbench_entity_history',
+                      'workbench_entity_discovery_seen', 'workbench_entity_discovery_unit',
+                      'workbench_entity_reconciliation'):
+            columns = [row[1] for row in self.connection.execute(f'PRAGMA table_info({table})')]
+            sizes = '+'.join(f'COALESCE(length(CAST("{column}" AS BLOB)),0)' for column in columns)
+            total += self.connection.execute(f'SELECT COALESCE(SUM(256+{sizes}),0) FROM {table} WHERE matter_id=?',
+                (matter_id,)).fetchone()[0]
+        return total
+
+    def has_discovery_receipt(self, matter_id, key):
+        return self.connection.execute('SELECT 1 FROM workbench_entity_discovery_seen WHERE matter_id=? AND occurrence_key=?',
+            (matter_id, key)).fetchone() is not None
 
     def discovery_source_current(self, matter_id, unit):
         return self.connection.execute(
@@ -205,7 +228,7 @@ class EntityRepository:
             'SELECT state FROM workbench_entity_discovery_unit WHERE matter_id=? AND run_id=? AND document_id=? '
             'AND unit_ordinal=? AND extractor_version=?',
             (matter_id, unit['run_id'], unit['document_id'], unit['unit_ordinal'], unit['extractor_version'])).fetchone()
-        return row is not None and (row[0] == 'pending' or (retry and row[0] == 'failed'))
+        return row is None or row[0] == 'pending' or (retry and row[0] == 'failed')
 
     def discovery_state(self, unit, state, note):
         self.connection.execute('UPDATE workbench_entity_discovery_unit SET state=?,note=? WHERE matter_id=? '
