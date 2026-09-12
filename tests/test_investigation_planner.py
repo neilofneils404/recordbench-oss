@@ -341,7 +341,7 @@ def test_source_set_membership_only_change_hides_checkpoint(chain):
     bench, client, matter, job, _, citations = chain
     source_set = bench.workspace.create_source_set(matter.matter_id, 'Synthetic scope',
         tuple(value.document_id for value in citations.values()), matter.owner_id)
-    with bench.workspace.connection:
+    with bench.workspace._lock, bench.workspace.connection:
         bench.workspace.connection.execute('UPDATE workbench_research_job SET source_set_id=? WHERE job_id=?', (source_set.source_set_id, job.job_id))
     bench.workspace.claim_research_job('synthetic-worker')
     plan = bench._research_plan(job.question, job.title)
@@ -350,7 +350,7 @@ def test_source_set_membership_only_change_hides_checkpoint(chain):
     saved = bench._finish_research_job(claimed, bench._process_research_job(claimed, lambda: False))
     url = f'/matters/{matter.slug}/research?job={job.job_id}'
     assert 'Continue from checkpoint' in client.get(url).text
-    with bench.workspace.connection:
+    with bench.workspace._lock, bench.workspace.connection:
         bench.workspace.connection.execute('DELETE FROM workbench_source_set_item WHERE source_set_id=? AND document_id=?', (source_set.source_set_id, citations['third'].document_id))
     assert bench._current_workflow_citation(matter, bench._workflow_citation(saved.result['evidence'][0])) is not None
     page = client.get(url)
