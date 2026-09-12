@@ -196,6 +196,7 @@ from .workspace_store import (
     ReviewDecisionConflict,
     NotebookEditConflict,
     WorkspaceStore,
+    is_full_text_synthesis,
 )
 from .workflow_jobs import (
     ResearchCoordinator,
@@ -3564,6 +3565,12 @@ class CaseIntelligenceWorkbench:
     def _assert_current_research_ledger(self, matter: MatterRecord, job: ResearchJobRecord) -> None:
         """Caller holds source mutation guard; validate all copied investigation support."""
         validate_research_basis(matter, job)
+        if is_full_text_synthesis(job.plan, job.result):
+            try:
+                self._validate_full_text_synthesis_sources(matter, job.result)
+            except (WorkspaceProblem, WorkflowFailure, ValueError, KeyError, TypeError) as exc:
+                raise ExportProblem("The frozen full-text synthesis sources are unavailable or changed.") from exc
+            return
         raw_evidence = job.result.get("evidence")
         if not isinstance(raw_evidence, list):
             raise ExportProblem(
@@ -3703,6 +3710,11 @@ class CaseIntelligenceWorkbench:
         """Resolve a saved investigation ledger before rendering any result text."""
 
         if frozen_source_catalog is not None:
+            if is_full_text_synthesis(job.plan, job.result):
+                raise ExportProblem(
+                    "The full-text synthesis cannot revalidate all frozen originals after closing was interrupted. "
+                    "Restore source access before exporting this work."
+                )
             self._assert_frozen_research_ledger(
                 matter, job, frozen_source_catalog
             )
@@ -4710,7 +4722,7 @@ class CaseIntelligenceWorkbench:
             return None
         if document.state != "ready" or document.version_id != citation.source_version_id:
             return None
-        for ordinal, unit in enumerate(document.parsed_units(), 1):
+        for ordinal, unit in enumerate(document.iter_parsed_units(), 1):
             if (
                 unit.number != citation.unit_number
                 or unit.text != citation.excerpt
@@ -4737,8 +4749,118 @@ class CaseIntelligenceWorkbench:
                 )
         return None
 
+    def _full_text_synthesis_service(self, matter: MatterRecord):
+        """Compose narrow snapshot, source-verifier and shared-generation services."""
+        from .full_text_synthesis import FullTextSynthesisService
+        from .full_text_synthesis_repository import FullTextSynthesisRepository
+        from .full_text_review import resolve_text_report_citations
+        return FullTextSynthesisService(
+            repository=FullTextSynthesisRepository(connection=self.workspace.connection,
+                lock=self.workspace._lock, authorize=self.workspace.membership),
+            resolve_originals=lambda locators, **basis: resolve_text_report_citations(
+                self, matter, locators, **basis), generator=self.generator)
+
+    def _validate_full_text_synthesis_sources(self, matter, prepared):
+        """Caller holds the source guard and authorizes the actual reader/writer.
+
+        Stream every ready frozen source, including uncited and omitted units.
+        The repository owns metadata checks; the existing verifier owns bytes.
+        Completed outputs keep their historical human-decision context.
+        """
+        from .full_text_synthesis import validate_prepared
+        from .full_text_review import resolve_text_report_citations
+        receipt = validate_prepared(prepared)
+        if receipt["matter_id"] != matter.matter_id:
+            raise WorkspaceProblem("The synthesis input belongs to another matter.")
+        repository = self._full_text_synthesis_service(matter).repository
+        with self.workspace._lock:
+            repository.validate_source_scope_locked(receipt)
+        ready = [source for source in receipt["sources"] if source["source_state"] == "ready"]
+        for start in range(0, len(ready), 100):
+            batch = ready[start:start + 100]
+            resolve_text_report_citations(self, matter, (),
+                source_basis_digests={source["document_id"]: source["source_basis_digest"] for source in batch},
+                source_versions={source["document_id"]: source["source_version_id"] for source in batch})
+        for value in prepared["evidence"]:
+            if self._current_workflow_citation(matter, self._workflow_citation(value)) is None:
+                raise WorkspaceProblem("A saved synthesis original is missing or changed.")
+        return receipt
+
+    def queue_full_text_synthesis(self, matter, actor_id, run_id, request_key, *, expected_snapshot=None):
+        if not self.generator.available:
+            raise WorkspaceProblem("Automatic synthesis is unavailable. Saved findings and manual source review remain available.")
+        service = self._full_text_synthesis_service(matter)
+        with self.source_store(matter).mutation_guard():
+            prepared = service.prepare(matter.matter_id, actor_id, run_id)
+            receipt = self._validate_full_text_synthesis_sources(matter, prepared)
+            if expected_snapshot is not None and expected_snapshot != receipt["snapshot_digest"]:
+                raise WorkspaceProblem("This review or its human decisions changed after the page opened. Reload the terminal review before synthesizing.")
+            return self.workspace.queue_research_job(matter.matter_id, actor_id,
+                receipt["question"], receipt["title"], request_key, receipt["source_set_id"],
+                initial_plan={"full_text_synthesis_version": 1, "synthesis_version": 1,
+                              "run_id": run_id, "input_digest": receipt["input_digest"]},
+                initial_result=prepared,
+                validate_locked=lambda: service.repository.validate_locked(matter.matter_id, actor_id, receipt))
+
+    def _process_full_text_synthesis(self, job, cancelled):
+        from .full_text_synthesis import validate_job_input, input_notice
+        from .hierarchical_synthesis import synthesis_answer
+        matter = self._matter_by_id(job.matter_id)
+        service = self._full_text_synthesis_service(matter)
+        prepared = dict(job.result)
+        receipt = validate_job_input(job, prepared)
+
+        def validate_locked():
+            service.repository.validate_locked(job.matter_id, job.actor_id, receipt)
+
+        def boundary():
+            if cancelled():
+                raise WorkflowFailure("Research cancelled.")
+            with self.source_store(matter).mutation_guard():
+                self._validate_full_text_synthesis_sources(matter, prepared)
+                with self.workspace._lock, self.workspace.connection:
+                    self.workspace.connection.execute("BEGIN IMMEDIATE")
+                    self.workspace._validate_research_attempt_locked(job)
+                    validate_locked()
+
+        def checkpoint(state):
+            with self.source_store(matter).mutation_guard():
+                self._validate_full_text_synthesis_sources(matter, prepared)
+                self.workspace.checkpoint_research_job(job.job_id,
+                    {**prepared, "hierarchical_synthesis": state}, expected_job=job,
+                    validate_locked=validate_locked)
+
+        state = service.run(job.question, prepared, checkpoint, boundary,
+                            prepared.get("hierarchical_synthesis"))
+        answer = synthesis_answer(state, prepared["evidence"])
+        payload = self._answer_payload(answer, {f"S{number}": self._workflow_citation(source)
+            for number, source in enumerate(prepared["evidence"], 1)})
+        boundary()
+        return {**prepared, "hierarchical_synthesis": state,
+                "summary": answer.text, "answer": payload, "stop_reason": state["stop_reason"],
+                "coverage": {"scope": "full_text_run", "search_pass_count": 0,
+                    "candidate_passage_count": receipt["counts"]["candidate_findings"],
+                    "evidence_passage_count": len(prepared["evidence"]),
+                    "evidence_source_count": len({source["document_id"] for source in prepared["evidence"]}),
+                    "notice": input_notice(receipt)}}
+
     def _research_checkpoint_stale(self, matter: MatterRecord, job: ResearchJobRecord, store: PilotStore | None = None) -> bool:
         """Use one source and locator predicate for display and recovery admission."""
+        if is_full_text_synthesis(job.plan, job.result):
+            try:
+                from .full_text_synthesis import validate_job_input
+                validate_job_input(job)
+                with self.source_store(matter).mutation_guard():
+                    self._validate_full_text_synthesis_sources(matter, job.result)
+                    if job.state != "succeeded":
+                        service = self._full_text_synthesis_service(matter)
+                        with self.workspace._lock, self.workspace.connection:
+                            self.workspace.connection.execute("BEGIN")
+                            service.repository.validate_locked(job.matter_id, job.actor_id,
+                                job.result["full_text_synthesis_input"])
+                return False
+            except (KeyError, ValueError, TypeError, WorkspaceProblem, WorkflowFailure):
+                return True
         if job.plan.get("planner_version") != PLANNER_VERSION:
             return False
         try:
@@ -4770,6 +4892,14 @@ class CaseIntelligenceWorkbench:
         self, job: ResearchJobRecord, result: Mapping[str, object]
     ) -> ResearchJobRecord:
         matter = self._matter_by_id(job.matter_id)
+        if is_full_text_synthesis(job.plan, job.result) or is_full_text_synthesis(job.plan, result):
+            service = self._full_text_synthesis_service(matter)
+            validate_research_basis(matter, replace(job, result=result))
+            with self.source_store(matter).mutation_guard():
+                self._validate_full_text_synthesis_sources(matter, result)
+                return self.workspace.finish_research_job(job.job_id, result, expected_job=job,
+                    validate_locked=lambda: service.repository.validate_locked(
+                        job.matter_id, job.actor_id, result["full_text_synthesis_input"]))
         if result.get("hierarchical_synthesis") is not None:
             current_job = self.workspace.research_job(job.matter_id, job.actor_id, job.job_id)
             try:
@@ -4837,6 +4967,8 @@ class CaseIntelligenceWorkbench:
     def _process_research_job(
         self, job: ResearchJobRecord, cancelled: Callable[[], bool]
     ) -> Mapping[str, object]:
+        if is_full_text_synthesis(job.plan, job.result):
+            return self._process_full_text_synthesis(job, cancelled)
         try:
             self.workspace.membership(job.matter_id, job.actor_id)
         except KeyError as exc:
@@ -9172,7 +9304,8 @@ def create_workbench_app(
             "result_url": result_url,
         }
 
-    @app.get("/matters/{slug}/research", response_class=HTMLResponse)
+    @app.get("/matters/{slug}/research", response_class=HTMLResponse,
+             dependencies=[Depends(require_matter_response_lease)])
     def matter_research(
         request: Request,
         slug: str,
@@ -9209,14 +9342,15 @@ def create_workbench_app(
         )
         research_stale = False
         rebuild_options = []
-        if active and active.plan.get("planner_version") == PLANNER_VERSION:
+        full_text_synthesis = bool(active and is_full_text_synthesis(active.plan, active.result))
+        if active and (active.plan.get("planner_version") == PLANNER_VERSION or is_full_text_synthesis(active.plan, active.result)):
             research_stale = bench._research_checkpoint_stale(matter, active)
             if research_stale:
                 try:
                     scope_available = active.source_set_id is None or bool(bench.workspace.source_set_document_ids(matter.matter_id, active.source_set_id))
                 except KeyError:
                     scope_available = False
-                if scope_available and active.state in {"succeeded", "failed", "cancelled"}:
+                if scope_available and active.plan.get("planner_version") == PLANNER_VERSION and active.state in {"succeeded", "failed", "cancelled"}:
                     limits = active.plan["budget"]["effective"]
                     spent = len(active.result.get("passes", [])) + int(active.result.get("discarded_passes", 0))
                     elapsed = float(active.result.get("search_elapsed_seconds", 0))
@@ -9224,6 +9358,14 @@ def create_workbench_app(
                                        if spent < limits["passes"] + count <= 15
                                        and elapsed < limits["search_seconds"] + count * 180 <= 2700]
                 active = replace(active, result={"budget": active.review_budget})
+        full_text_input = None
+        if active and is_full_text_synthesis(active.plan, active.result) and not research_stale:
+            from .full_text_synthesis import validate_prepared
+            try:
+                full_text_input = validate_prepared(active.result)
+            except (ValueError, KeyError, TypeError):
+                research_stale = True
+                active = replace(active, result={})
         research_synthesis = None
         research_synthesis_invalid = False
         if active and active.result.get("hierarchical_synthesis") is not None:
@@ -9237,7 +9379,7 @@ def create_workbench_app(
                 research_synthesis = {**saved, **completion_receipt(saved, findings, ledger)}
             except (ValueError, KeyError, TypeError, AttributeError, IndexError, ExportProblem):
                 research_synthesis_invalid = True
-        return templates.TemplateResponse(
+        response = templates.TemplateResponse(
             request=request,
             name="workbench_research.html",
             context={
@@ -9250,12 +9392,25 @@ def create_workbench_app(
                 "research_stale": research_stale,
                 "research_synthesis": research_synthesis,
                 "research_synthesis_invalid": research_synthesis_invalid,
+                "full_text_input": full_text_input,
+                "full_text_synthesis": full_text_synthesis,
                 "rebuild_options": rebuild_options,
                 "notice": notice,
                 "error": error,
             },
             headers={"Cache-Control": "no-store"},
         )
+        # Rendering may overlap a membership or source change. Check the actual
+        # viewer again before returning source-bearing HTML.
+        authorized_matter(request, slug)
+        if full_text_input:
+            try:
+                with bench.source_store(matter).mutation_guard():
+                    bench._validate_full_text_synthesis_sources(matter, active.result)
+                    authorized_matter(request, slug)
+            except (WorkspaceProblem, WorkflowFailure, ValueError, KeyError, TypeError) as exc:
+                raise HTTPException(409, "The synthesis sources changed. Reload the saved review.") from exc
+        return transfer_matter_response_lease(request, response)
 
     @app.post(
         "/matters/{slug}/research",
@@ -9378,14 +9533,24 @@ def create_workbench_app(
             # locator validation and recovery admission share one boundary.
             source_store = bench.source_store(matter)
             with source_store.mutation_guard():
+                current = bench.workspace.research_job(matter.matter_id, context.principal_id, job_id)
+                full_text_validator = None
+                if is_full_text_synthesis(current.plan, current.result):
+                    from .full_text_synthesis import validate_job_input
+                    validate_job_input(current)
+                    bench._validate_full_text_synthesis_sources(matter, current.result)
+                    service = bench._full_text_synthesis_service(matter)
+                    full_text_validator = lambda value: service.repository.validate_locked(
+                        matter.matter_id, context.principal_id, value.result["full_text_synthesis_input"])
                 job = bench.workspace.retry_research_job(
                     matter.matter_id, context.principal_id, job_id,
                     additional_passes=additional_passes, expected_passes=expected_passes,
                     checkpoint_is_stale=lambda current: bench._research_checkpoint_stale(matter, current, source_store),
+                    validate_locked=full_text_validator,
                 )
         except KeyError as exc:
             raise HTTPException(404, "Research run not found") from exc
-        except WorkspaceProblem as exc:
+        except (WorkspaceProblem, WorkflowFailure, ValueError) as exc:
             return RedirectResponse(
                 _query_url(f"/matters/{slug}/research", job=job_id, error=str(exc)),
                 status_code=303,
@@ -9430,9 +9595,14 @@ def create_workbench_app(
             artifact = bench.export_research_work_product(
                 matter, job, format_name
             )
+            if is_full_text_synthesis(job.plan, job.result):
+                authorized_matter(request, slug)
+                with bench.source_store(matter).mutation_guard():
+                    bench._validate_full_text_synthesis_sources(matter, job.result)
+                    authorized_matter(request, slug)
         except KeyError as exc:
             raise HTTPException(404, "Research run not found") from exc
-        except (WorkspaceProblem, ExportProblem) as exc:
+        except (WorkspaceProblem, ExportProblem, WorkflowFailure, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
         audit(
             request, "research.export", "success", context=context, matter=matter,
@@ -9643,6 +9813,16 @@ def create_workbench_app(
             request, "full_review.open", "success", context=context, matter=matter,
             object_type="review_run", object_id=active_run.run_id if active_run else None,
         )
+        synthesis_snapshot, synthesis_unavailable = "", ""
+        if (active_run and not administrator_override
+                and active_run.state in {"succeeded", "failed", "cancelled"}
+                and FullTextReviewLedger(bench.workspace).enabled(active_run.run_id)):
+            try:
+                captured = bench._full_text_synthesis_service(matter).repository.capture(
+                    matter.matter_id, context.principal_id, active_run.run_id)
+                synthesis_snapshot = captured["receipt"]["snapshot_digest"]
+            except (WorkspaceProblem, ValueError, KeyError) as exc:
+                synthesis_unavailable = str(exc)
         return templates.TemplateResponse(
             request=request,
             name="workbench_full_review.html",
@@ -9660,6 +9840,10 @@ def create_workbench_app(
                     matter.matter_id, read_actor, active_run.run_id
                 ) if active_run else None,
                 "active_run": active_run,
+                "synthesis_snapshot": synthesis_snapshot,
+                "synthesis_unavailable": synthesis_unavailable,
+                "synthesis_request_key": "research-request-" + uuid.uuid4().hex,
+                "synthesis_available": bench.generator.available,
                 "decision_page": decision_page,
                 "selected_decision": selected_decision,
                 "reviewer_name": decision_reviewer_name(selected_decision),
@@ -9671,6 +9855,25 @@ def create_workbench_app(
             },
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.post("/matters/{slug}/full-review/{run_id}/synthesize",
+              dependencies=[Depends(require_csrf)])
+    def synthesize_full_text_review(request: Request, slug: str, run_id: str,
+            request_key: str = Form(..., max_length=80),
+            expected_snapshot: str = Form(..., min_length=64, max_length=64)):
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        try:
+            job, created = bench.queue_full_text_synthesis(matter, context.principal_id,
+                run_id, request_key, expected_snapshot=expected_snapshot)
+        except (WorkspaceProblem, WorkflowFailure, ValueError, KeyError) as exc:
+            return RedirectResponse(_query_url(f"/matters/{slug}/full-review",
+                run=run_id, error=str(exc)), status_code=303)
+        if bench.research is not None:
+            bench.research.notify()
+        audit(request, "full_text.synthesis.create", "success", context=context, matter=matter,
+            object_type="research_job", object_id=job.job_id, details={"created": created})
+        return RedirectResponse(_query_url(f"/matters/{slug}/research", job=job.job_id), status_code=303)
 
     @app.post(
         "/matters/{slug}/full-review/criteria",
@@ -13410,7 +13613,8 @@ def create_workbench_app(
         if bench.workspace.all_notebook_items(matter.matter_id, actor, include_dismissed=False, limit=1):
             choices.append({"value": "notes:active", "title": "Team review notes", "description": "Your saved observations, people, places, events, and open questions"})
             defaults.append("notes:active")
-        research = [item for item in bench.workspace.research_jobs(matter.matter_id, actor) if item.state == "succeeded"]
+        research = [item for item in bench.workspace.research_jobs(matter.matter_id, actor)
+                    if item.state == "succeeded" and not is_full_text_synthesis(item.plan, item.result)]
         for index, item in enumerate(research[:15]):
             choices.append({"value": f"research:{item.job_id}", "title": item.title, "description": "AI investigation · saved findings and gaps"})
             if index == 0:
@@ -13434,6 +13638,8 @@ def create_workbench_app(
                     title = record.title
                 elif source == "research":
                     record = bench.workspace.research_job(matter.matter_id, actor, identifier)
+                    if is_full_text_synthesis(record.plan, record.result):
+                        raise WorkspaceProblem("Export this full-text synthesis directly. Copying it into a Report is not supported yet.")
                     if record.state != "succeeded":
                         raise WorkspaceProblem("That investigation has not finished yet.")
                     title = record.title

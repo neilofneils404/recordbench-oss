@@ -17,9 +17,15 @@
 
   <section class="workflow-intro research-intro {% if active_research %}has-active-work{% endif %}">
     <div>
+      {% if full_text_synthesis %}
+      <p class="eyebrow">Saved full-text findings</p>
+      <h2>Synthesize one review, with its original support.</h2>
+      <p>Findings from one frozen review pass through the shared synthesis. Inspect original accounts, omitted inputs and saved coverage before relying on the result.</p>
+      {% else %}
       <p class="eyebrow">A wider evidence pass</p>
       <h2>Research across the record, then show your work.</h2>
       <p>RecordBench breaks a question into bounded searches, compares source-diverse passages, verifies the synthesis, and saves an evidence and coverage ledger while it works.</p>
+      {% endif %}
     </div>
     <div class="workflow-scope-card">
       <span>Searchable now</span><strong>{{ readiness.searchable_count|default(0) }}</strong><small>of {{ readiness.total_count|default(0) }} matter sources</small>
@@ -43,7 +49,7 @@
       {% if active_research %}
       <article class="workflow-run-card" data-workflow-monitor data-status-url="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/status" data-terminal="{{ 'true' if active_research.state in ('succeeded','failed','cancelled') else 'false' }}" aria-live="polite">
         <header class="workflow-run-header">
-          <div><p class="eyebrow">Broader investigation</p><h2>{{ active_research.title }}</h2><p>{{ active_research.question }}</p></div>
+          <div><p class="eyebrow">{{ 'Full-text synthesis' if full_text_synthesis else 'Broader investigation' }}</p><h2>{{ active_research.title }}</h2><p>{{ active_research.question }}</p></div>
           <span class="workflow-state-badge state-{{ active_research.state }}" data-workflow-state>{{ active_research.state|replace('_',' ')|title }}</span>
         </header>
         <div class="workflow-progress" {% if active_research.total_steps == 0 %}data-indeterminate="true"{% endif %}>
@@ -56,12 +62,17 @@
         {% if active_research.state in ('queued','running') %}
         <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Cancel safely</button></form>
         {% elif active_research.state in ('failed','cancelled') and not research_stale %}
-        <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">Resume investigation</button></form>
+        <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">{{ 'Resume synthesis' if full_text_synthesis else 'Resume investigation' }}</button></form>
         {% endif %}
       </article>
 
       {% if research_stale %}
+      {% if full_text_synthesis %}
+      <p class="workflow-caution" role="alert">The frozen review, a human decision, or its sources changed. This synthesis cannot resume with a different basis. Return to the terminal full-text review to start a new synthesis; charged requests remain saved.</p>
+      <a href="/matters/{{ matter.slug }}/full-review?run={{ active_research.plan.run_id }}">Return to full-text review</a>
+      {% else %}
       <p class="workflow-caution">Sources changed. Saved findings and search proposals are no longer current and are hidden. Rebuild the checkpoint with available search budget, or start a new investigation.</p>
+      {% endif %}
       {% if active_research.state in ('succeeded','failed','cancelled') and rebuild_options %}
       <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -73,6 +84,22 @@
         <button class="button button-primary" type="submit">Rebuild checkpoint</button>
       </form>
       {% endif %}
+      {% endif %}
+      {% if full_text_input and not research_stale %}
+      <section class="workflow-run-card synthesis-input-receipt">
+        <h3>Frozen review input · {{ 'partial' if full_text_input.partial else 'all admitted findings' }}</h3>
+        <p><strong>{{ full_text_input.counts.get('admitted', 0) }}</strong> of <strong>{{ full_text_input.counts.candidate_findings }}</strong> candidate findings admitted. Originals over {{ full_text_input.admission.original_characters }} characters are omitted in full.</p>
+        <p>{{ full_text_input.human_decisions.notice }}</p>
+        <p><a href="/matters/{{ matter.slug }}/full-review?criterion={{ full_text_input.criterion_id }}&run={{ full_text_input.run_id }}">Open selected review</a> · <a href="/matters/{{ matter.slug }}/full-review/{{ full_text_input.run_id }}/text">Inspect every original range and coverage outcome</a></p>
+        <details><summary>Input limits, coverage and omissions</summary>
+          <p>Coverage counts describe processing, not recognition of every relevant fact. Each finding number is its saved range cursor.</p>
+          <dl>{% for reason, count in full_text_input.counts.items() %}<dt>{{ reason|replace('_', ' ')|capitalize }}</dt><dd>{{ count }}</dd>{% endfor %}</dl>
+          <p>Range outcomes: {% for reason, count in full_text_input.coverage.ranges.items() %}{{ reason|replace('_', ' ') }} {{ count }}{{ ', ' if not loop.last else '.' }}{% endfor %}</p>
+          <p>Source outcomes: {% for reason, count in full_text_input.coverage.sources.items() %}{{ reason|replace('_', ' ') }} {{ count }}{{ ', ' if not loop.last else '.' }}{% endfor %}</p>
+          <p>Unit outcomes: {% for reason, count in full_text_input.coverage.units.items() %}{{ reason|replace('_', ' ') }} {{ count }}{{ ', ' if not loop.last else '.' }}{% endfor %}</p>
+          <details><summary>Complete frozen input receipt</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ full_text_input|tojson(indent=2) }}</pre></details>
+        </details>
+      </section>
       {% endif %}
       {% if active_research.plan.get('planner_version') == 1 and not research_stale %}
       <section class="workflow-run-card">
@@ -130,8 +157,8 @@
         {% if research_synthesis_invalid %}<p class="workflow-caution" role="alert">The saved synthesis checkpoint could not be verified. Its derived text is hidden; start a new investigation or restore a compatible backup.</p>{% endif %}
         {% set synthesis = research_synthesis %}
         {% if synthesis and not research_stale %}
-        <details class="research-finding"><summary>Issue and matter synthesis checkpoints · {{ 'partial' if synthesis.partial else 'complete within saved findings' }}</summary>
-          <p>Run state: {{ active_research.state }}. {{ synthesis.requests_spent }} of {{ synthesis.policy.generation_requests }} generation requests charged. {{ synthesis.policy.wall_seconds }} seconds from first synthesis start, including restart downtime; {{ synthesis.policy.output_tokens_per_call }} output tokens per call. Last synthesis checkpoint: {{ synthesis.stop_reason|replace('_', ' ') }}. Interrupted requests remain charged.</p>
+        <details class="research-finding"><summary>Issue and matter synthesis checkpoints · {{ 'partial' if synthesis.partial or (full_text_input and full_text_input.partial) else 'complete within saved findings' }}</summary>
+          <p>Run state: {{ active_research.state }}. {{ synthesis.requests_spent }} of {{ synthesis.policy.generation_requests }} generation requests charged. {{ synthesis.policy.wall_seconds }} seconds from first synthesis start, including restart downtime; {{ synthesis.policy.output_tokens_per_call }} output tokens per call. Last synthesis checkpoint: {{ synthesis.stop_reason|replace('_', ' ') }}. Interrupted requests remain charged.{% if full_text_synthesis %} Each request includes the generator’s existing bounded verification repair, when needed.{% endif %}</p>
           <p>Omitted groups: {{ synthesis.omitted_groups|join(', ') or 'None' }}. Intermediate summaries are not evidence sources.</p>
           {% for level in ['issue', 'matter'] %}{% for node in synthesis[level] %}
           <article><h3>{{ level|title }} section {{ loop.index }} · {{ node.state }}</h3>{% for claim in node.claims %}<p>{{ claim.text }}</p><ul>{% for evidence in active_research.result.evidence %}{% if evidence.support_token in claim.support_tokens %}<li><a href="{{ citation_href(evidence, matter.slug) }}">{{ evidence.source_name }} — {{ evidence.location }}</a></li>{% endif %}{% endfor %}</ul>{% endfor %}</article>
@@ -140,12 +167,12 @@
         {% endif %}
       {% if active_research.state == 'succeeded' and not research_stale and not research_synthesis_invalid %}
       <section class="research-result">
-        <header class="workflow-section-heading"><div><p class="eyebrow">Verified synthesis</p><h2>Investigation brief</h2></div></header>
-        <nav class="workflow-completion-bar" aria-label="Completed investigation actions">
-          <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>Investigation ready</strong><small>{{ active_research.result.evidence|length }} supporting passage{% if active_research.result.evidence|length != 1 %}s{% endif %}</small></span></span>
+        <header class="workflow-section-heading"><div><p class="eyebrow">Verified synthesis</p><h2>{{ "Full-text synthesis" if full_text_synthesis else "Investigation brief" }}</h2></div></header>
+        <nav class="workflow-completion-bar" aria-label="Completed synthesis actions">
+          <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>{{ "Synthesis ready" if full_text_synthesis else "Investigation ready" }}</strong><small>{{ active_research.result.evidence|length }} supporting passage{% if active_research.result.evidence|length != 1 %}s{% endif %}</small></span></span>
           <a href="#research-support">Review support</a>
-          <a href="/matters/{{ matter.slug }}/reports/new?from=research:{{ active_research.job_id }}">Make report</a>
-          <details><summary>Save complete review record</summary><form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/report"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Copy investigation to report</button></form></details>
+          {% if not full_text_synthesis %}<a href="/matters/{{ matter.slug }}/reports/new?from=research:{{ active_research.job_id }}">Make report</a>
+          <details><summary>Save complete review record</summary><form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/report"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Copy investigation to report</button></form></details>{% endif %}
           <details><summary>Export</summary><div><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=docx" data-download>Word</a><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=markdown" data-download>Markdown</a><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=json" data-download>JSON</a></div></details>
           <a href="/matters/{{ matter.slug }}{% if active_research.conversation_id %}?conversation={{ active_research.conversation_id }}{% endif %}#evidence-conversation">Return to conversation</a>
         </nav>
@@ -154,13 +181,13 @@
         {% set modality = active_research.result.get('answer', {}).get('modality_coverage') %}
         {% if modality %}<div class="answer-source-coverage" role="note"><strong>Requested source coverage · {{ modality.mode|title }}</strong><p>{{ modality.notice }}</p></div>{% endif %}
         {% set coverage = active_research.result.coverage %}
-        <div class="workflow-section-heading workflow-section-heading-compact"><div><p class="eyebrow">Coverage ledger</p><h3>What this run searched and used</h3></div></div>
+        <div class="workflow-section-heading workflow-section-heading-compact"><div><p class="eyebrow">Coverage ledger</p><h3>{{ "What this synthesis used" if full_text_synthesis else "What this run searched and used" }}</h3></div></div>
         <div class="coverage-metrics">
-          <div><span>Focused searches</span><strong>{{ coverage.search_pass_count }}</strong></div><div><span>Passages considered</span><strong>{{ coverage.candidate_passage_count }}</strong></div><div><span>Supporting sources</span><strong>{{ coverage.evidence_source_count }}</strong></div><div><span>Supporting passages</span><strong>{{ coverage.evidence_passage_count }}</strong></div>
+          {% if not full_text_synthesis %}<div><span>Focused searches</span><strong>{{ coverage.search_pass_count }}</strong></div>{% endif %}<div><span>{{ "Saved candidate findings" if full_text_synthesis else "Passages considered" }}</span><strong>{{ coverage.candidate_passage_count }}</strong></div><div><span>Supporting sources</span><strong>{{ coverage.evidence_source_count }}</strong></div><div><span>Supporting passages</span><strong>{{ coverage.evidence_passage_count }}</strong></div>
         </div>
         <p class="workflow-caution">{{ coverage.notice }}</p>
         <div class="research-two-column">
-          <section><div class="workflow-section-heading"><div><p class="eyebrow">Search record</p><h3>Findings and gaps</h3></div></div>{% for pass in active_research.result.passes %}<article class="research-finding state-{{ pass.status }}"><header><span>{{ loop.index|string }} </span><div><strong>{{ pass.query }}</strong><small>{{ pass.candidate_sources }} source{% if pass.candidate_sources != 1 %}s{% endif %} considered · {{ pass.status|replace('_',' ') }}</small></div></header><p>{{ pass.text }}</p></article>{% endfor %}</section>
+          <section><div class="workflow-section-heading"><div><p class="eyebrow">{{ "Saved finding record" if full_text_synthesis else "Search record" }}</p><h3>Findings and gaps</h3></div></div>{% for pass in active_research.result.passes %}<article class="research-finding state-{{ pass.status }}"><header><span>{{ loop.index|string }} </span><div><strong>{{ pass.query }}</strong><small>{{ pass.candidate_sources }} source{% if pass.candidate_sources != 1 %}s{% endif %} considered · {{ pass.status|replace('_',' ') }}</small></div></header><p>{{ pass.text }}</p></article>{% endfor %}</section>
           <aside id="research-support"><div class="workflow-section-heading"><div><p class="eyebrow">Cited support</p><h3>Evidence record</h3></div><span>{{ active_research.result.evidence|length }}</span></div><div class="evidence-ledger">{% for evidence in active_research.result.evidence %}<a href="{{ citation_href(evidence, matter.slug) }}"><span>{{ loop.index }}</span><span><strong>{{ evidence.source_name }}</strong><small>{{ evidence.location }}</small></span></a>{% endfor %}</div></aside>
         </div>
       </section>

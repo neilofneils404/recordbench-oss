@@ -29,6 +29,7 @@ from .workspace_store import (
     ReviewDecisionRecord,
     ReviewRunRecord,
     SourceCatalogRecord,
+    is_full_text_synthesis,
 )
 
 DOCX_MEDIA_TYPE = (
@@ -240,6 +241,14 @@ def _validate_research_export_scope(
 
     if job.matter_id != matter.matter_id:
         raise ExportProblem("Investigation export crossed a matter boundary.")
+    if is_full_text_synthesis(job.plan, job.result) or is_full_text_synthesis(job.plan, result):
+        from .full_text_synthesis import validate_job_input, input_notice
+        try:
+            receipt = validate_job_input(job, result)
+            if result.get("coverage", {}).get("notice") != input_notice(receipt):
+                raise ValueError("The full-text synthesis no longer matches its frozen review basis.")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ExportProblem("The full-text synthesis provenance or omission receipt is invalid.") from exc
     evidence = result.get("evidence")
     if not isinstance(evidence, list):
         raise ExportProblem("The investigation evidence ledger is invalid.")
@@ -1256,7 +1265,7 @@ def export_research(
                 "supporting_sources": int(
                     coverage.get("evidence_source_count") or 0
                 ),
-                "scope": "Selected source set"
+                "scope": "One frozen full-text review" if coverage.get("scope") == "full_text_run" else "Selected source set"
                 if coverage.get("scope") == "source_set"
                 else "All searchable sources",
                 "notice": _plain(coverage.get("notice")),
@@ -1318,6 +1327,8 @@ def export_research(
                     "review_budget": job.review_budget,
                     "review_budget_description": job.review_budget_description,
                     **({"hierarchical_synthesis": safe_hierarchy} if safe_hierarchy is not None else {}),
+                    **({"full_text_synthesis_input": result["full_text_synthesis_input"]}
+                       if "full_text_synthesis_input" in result else {}),
                     "findings": findings,
                     "unsearched_proposals": [
                         {"search": _plain(item.get("query")), "reason": _plain(item.get("reason")),
@@ -1341,6 +1352,16 @@ def export_research(
         ExportBlock(job.question),
     ]
     blocks.append(ExportBlock(job.review_budget_description, "note"))
+    if "full_text_synthesis_input" in result:
+        from .full_text_synthesis import input_notice
+        receipt = result["full_text_synthesis_input"]
+        blocks.append(ExportBlock("Frozen full-text review input", "heading1"))
+        blocks.append(ExportBlock(input_notice(receipt), "note"))
+        blocks.append(ExportBlock(f"Review {receipt['run_id']} · criterion version {receipt['criterion_version_id']}", "metadata"))
+        blocks.append(ExportBlock(f"Input version {receipt['version']} · snapshot {receipt['snapshot_digest']} · human decision revision {receipt['decision_revision_digest']}", "metadata"))
+        blocks.append(ExportBlock(receipt["human_decisions"]["notice"], "note"))
+        blocks.append(ExportBlock("Complete input receipt", "heading2"))
+        blocks.append(ExportBlock(json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2), "metadata"))
     summary = _plain(result.get("summary"))
     if summary:
         blocks.extend((ExportBlock("Verified synthesis", "heading1"), ExportBlock(summary)))

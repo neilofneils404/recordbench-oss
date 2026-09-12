@@ -50,9 +50,12 @@ Slices 16 and 17 now use `entity_service.py`, `entity_repository.py` and
 `entity_discovery.py` / `entity_extractor.py` for entity/mention operations,
 discovery and reconciliation,
 with explicit actor/matter authority and shared transaction scope. Slice 18
-should extend these boundaries without moving persistence SQL into routes.
-The proposed full-text synthesis adapter should reuse `hierarchical_synthesis.py`
-through a validated input contract; it should not copy the synthesis engine.
+extends these boundaries without moving persistence SQL into routes.
+The [full-text synthesis adapter](FULL_TEXT_SYNTHESIS.md) reuses
+`hierarchical_synthesis.py` through a validated input contract. Its narrow
+repository owns streamed input snapshots and revision checks on the existing
+connection; its service owns evidence admission and shared-engine orchestration.
+The composition retains source guards and the authorized final-save transaction.
 Source roles, unified matter memory and production relationship preservation in
 the boundary table are intended contracts, not claims of implemented workflows.
 

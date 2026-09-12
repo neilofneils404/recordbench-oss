@@ -11,6 +11,7 @@ from .workspace_store import (
     ReviewDecisionRecord,
     ReviewRunRecord,
     WorkspaceStore,
+    is_full_text_synthesis,
 )
 
 
@@ -103,18 +104,22 @@ class ResearchCoordinator:
                     raise _WorkflowCancelled()
                 self.finish(job, result)
             except _WorkflowCancelled:
-                self._fail(job.job_id, "Research cancelled.")
+                self._fail(job.job_id, "Research cancelled.", expected_job=job)
             except WorkflowFailure as exc:
-                self._fail(job.job_id, str(exc))
+                self._fail(job.job_id, str(exc), expected_job=job)
             except Exception:
                 self._fail(
                     job.job_id,
                     "Research could not be completed. Saved sources and earlier runs are unchanged; try again.",
+                    expected_job=job,
                 )
 
-    def _fail(self, job_id: str, message: str) -> None:
+    def _fail(self, job_id: str, message: str, *, expected_job: ResearchJobRecord | None = None) -> None:
         try:
-            self.workspace.fail_research_job(job_id, message[:240])
+            if expected_job is not None and is_full_text_synthesis(expected_job.plan, expected_job.result):
+                self.workspace.fail_research_job(job_id, message[:240], expected_job=expected_job)
+            else:
+                self.workspace.fail_research_job(job_id, message[:240])
         except Exception:
             pass
 

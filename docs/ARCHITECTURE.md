@@ -207,8 +207,12 @@ remain coverage gaps, independent of relevance-recognition quality.
 [Hierarchical synthesis](HIERARCHICAL_SYNTHESIS.md) consumes persisted investigation
 findings with original support through issue and matter stages. It preserves
 versioned checkpoints, charged requests, omissions, and source validation. Its
-input remains the bounded investigation evidence; full-text review ledgers need
-the separate [proposed adapter](product-slices/19-full-text-synthesis.md).
+investigation input remains bounded. The [single-run full-text adapter](FULL_TEXT_SYNTHESIS.md)
+uses the same engine through `full_text_synthesis.py` and
+`full_text_synthesis_repository.py`: a narrow streamed snapshot repository shares
+the authorized SQLite transaction, while the service validates original support
+and produces the canonical input receipt. Routes only compose these interfaces.
+Both adapters retain the existing research-job lifecycle and versioned JSON.
 
 [Manual entities](ENTITY_WORKSPACE.md) use a narrow entity service and repository
 over the existing authorized SQLite unit of work. Original passage validation

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Callable, Iterable, Mapping
 
-from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, ResearchJobRecord, ReviewDecisionRecord, ReviewRunRecord, WorkspaceProblem
+from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, ResearchJobRecord, ReviewDecisionRecord, ReviewRunRecord, WorkspaceProblem, is_full_text_synthesis
 
 MAX_DETAIL_DECISIONS = 50
 MAX_DETAIL_CITATIONS = 100
@@ -37,6 +37,8 @@ def _section(heading: str, body: str, citations=()) -> dict[str, object]:
 
 
 def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
+    if is_full_text_synthesis(job.plan, job.result):
+        raise WorkspaceProblem("Export this full-text synthesis directly. Copying it into a Report is not supported yet.")
     result = job.result
     ledger = _rows(result.get("evidence"))
     by_token = {str(item.get("support_token", "")): item for item in ledger}

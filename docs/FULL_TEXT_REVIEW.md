@@ -96,14 +96,18 @@ including unresolved and zero-unit inventories. The UI paginates 100 ranges at
 a time. JSON/CSV downloads stream a consistent SQLite snapshot containing all
 source, unit and range records, including partial and failed work. The complete
 matter bundle includes the JSON ledger and retains its existing bundle byte
-limits. Final synthesis consumers should bind a terminal run and revision; an
-active forward cursor is not a completion watermark.
+limits. The [single-run synthesis adapter](FULL_TEXT_SYNTHESIS.md) binds a terminal run,
+exact criterion and decision-inclusive revision; an active forward cursor is
+not a completion watermark. Its input receipt preserves coverage gaps and
+explicit omissions, including complete originals above 6,000 characters.
 
 After a failed matter close, export readiness and the final bundle use the
 frozen source catalog without reopening quarantined source storage. Full-text
 ledgers and saved decisions remain exportable; adjacent source-check summaries
 retain recorded locations but leave supporting excerpts empty with an explicit
-quarantine notice. Saved review records are unchanged.
+quarantine notice. Saved review records are unchanged. Derived full-text
+synthesis requires current original access and refuses quarantined-source
+export; this does not change the standalone frozen ledger export.
 
 Standalone JSON/CSV downloads acquire the same matter response lease as other
 source-bearing exports. Matter closure and purge wait until the admitted stream

@@ -145,3 +145,22 @@ revision; role attachment/replacement checks the explicit entity revision.
 Attribution, original support and human review remain separate. Historical
 source or identity snapshots never regain current authority through export or
 reconciliation. Matter purge removes records, roles, accounts and history.
+
+## Single-run full-text synthesis
+
+The [adapter](FULL_TEXT_SYNTHESIS.md) binds one terminal full-text ledger, exact
+criterion, source scope and decision-inclusive revision in a consistent read
+snapshot. Human decisions are frozen context, never evidence. Only claims checked
+against original passages enter the shared bounded engine; oversized originals
+are explicitly omitted. Admission, retry, checkpoint and final save revalidate
+the input under the authorized transaction and source mutation guard. Deleted
+ledgers, edited decisions, revoked access, changed originals and expired worker
+attempts refuse further writes while retaining charged requests.
+
+The synthesis action requires CSRF validation and ordinary matter membership.
+Inspector/export responses recheck the actual reader and all frozen source
+identities, including uncited or omitted sources, after rendering. Completed
+results may retain their historical human-decision context; historical source
+identity never grants current access. Quarantined-source exports fail closed.
+Active synthesis uses existing research-job close/backup guards; matter purge
+removes the jobs, receipts and nodes, and late workers cannot recreate them.

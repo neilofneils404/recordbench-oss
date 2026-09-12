@@ -9,9 +9,12 @@ matter sections rather than selecting another twelve passages for one answer.
 
 The first input adapter is the investigation's own persisted findings. It does
 not silently import unrelated full-text runs or expand the original matter or
-source-set boundary. Slice-12 full-text ledgers remain separately available in
-Reports; a future adapter must bind a terminal run and revision as required by
-[FULL_TEXT_REVIEW.md](FULL_TEXT_REVIEW.md).
+source-set boundary. The separate [full-text input adapter](FULL_TEXT_SYNTHESIS.md)
+binds one terminal run, its exact criterion, original-source scope and frozen
+human-decision revision. It reuses this engine and inspector without combining
+runs or raising these limits. Complete originals above 6,000 characters are
+explicitly omitted before admission; their prefixes do not substitute for the
+whole unit. Full-text ledgers also remain separately available in Reports.
 
 ## Original support through both stages
 
@@ -36,7 +39,7 @@ acceptance remains a separate test of decisive evidence recall and false claims.
 
 ## Frozen limits and partial results
 
-Version 1 preserves the existing retrieval limits: at most 72 selected original
+For investigation inputs, version 1 preserves the existing retrieval limits: at most 72 selected original
 units, 12 selections per search, and the existing search/time budget. Synthesis
 has its own fixed receipt:
 

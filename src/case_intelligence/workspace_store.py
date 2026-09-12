@@ -101,6 +101,12 @@ class WorkspaceProblem(ValueError):
     """Expected staff-safe matter or conversation input failure."""
 
 
+def is_full_text_synthesis(plan: Mapping[str, object] | None, result: Mapping[str, object] | None) -> bool:
+    """Reserve either adapter key, even when its value needs strict rejection."""
+    return ("full_text_synthesis_version" in (plan or {})
+            or "full_text_synthesis_input" in (result or {}))
+
+
 class MatterNameConflict(WorkspaceProblem):
     """The name displayed when the edit began is no longer current."""
 
@@ -693,6 +699,12 @@ class ResearchJobRecord:
 
     @property
     def review_budget_description(self) -> str:
+        if is_full_text_synthesis(self.plan, self.result):
+            return (
+                "One saved full-text review for its original criterion. Existing synthesis "
+                "limits apply: 32 generation requests and 900 seconds from first start. "
+                "Interrupted requests stay charged; input omissions remain in the receipt."
+            )
         return budget_description(self.review_budget)
 
 
@@ -9500,9 +9512,13 @@ class WorkspaceStore:
         source_set_id: str | None = None,
         *,
         conversation_id: str | None = None,
+        initial_plan: Mapping[str, object] | None = None,
+        initial_result: Mapping[str, object] | None = None,
+        validate_locked: Callable[[], None] | None = None,
     ) -> tuple[ResearchJobRecord, bool]:
         actor = self.membership(matter_id, actor_id).principal_id
-        value = self._safe_text(question, label="Research question", maximum=2_000)
+        value = self._safe_text(question, label="Research question", maximum=2_000,
+            multiline=is_full_text_synthesis(initial_plan, initial_result))
         heading = self._safe_text(title, label="Research title", maximum=160)
         if not _RESEARCH_REQUEST.fullmatch(idempotency_key or ""):
             raise WorkspaceProblem("The research request expired. Refresh and try again.")
@@ -9512,11 +9528,19 @@ class WorkspaceStore:
             if not self.source_set_document_ids(matter_id, scope_id):
                 raise WorkspaceProblem("That source set is empty or no longer available.")
         now = self._now()
+        plan_json = json.dumps(dict(initial_plan or {}), ensure_ascii=False, separators=(",", ":"))
+        result_json = json.dumps(dict(initial_result or {}), ensure_ascii=False, separators=(",", ":"))
+        if len(plan_json) > 40_000 or len(result_json) > 2_000_000:
+            raise WorkspaceProblem("This synthesis input exceeds the saved-work limit.")
+        if is_full_text_synthesis(initial_plan, initial_result) and validate_locked is None:
+            raise WorkspaceProblem("Full-text synthesis admission requires its frozen-input validator.")
         with self._lock, self.connection:
             # Admission across the answer and research tables must share the
             # same database write lock, including across process-local stores.
             self.connection.execute("BEGIN IMMEDIATE")
             self.membership(matter_id, actor)
+            if validate_locked is not None:
+                validate_locked()
             existing = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE actor_id=? AND matter_id=? "
                 "AND idempotency_key=?",
@@ -9528,6 +9552,7 @@ class WorkspaceStore:
                     or existing["title"] != heading
                     or existing["source_set_id"] != scope_id
                     or existing["conversation_id"] != conversation_ref
+                    or (initial_plan is not None and json.loads(existing["plan_json"]) != dict(initial_plan))
                 ):
                     raise WorkspaceProblem(
                         "That saved request belongs to different investigation details. Refresh and try again."
@@ -9625,6 +9650,22 @@ class WorkspaceStore:
                     now,
                 ),
             )
+            if initial_plan is not None or initial_result is not None:
+                self.connection.execute(
+                    "UPDATE workbench_research_job SET plan_json=?,result_json=?,total_steps=2 WHERE job_id=?",
+                    (plan_json, result_json, job_id),
+                )
+                if is_full_text_synthesis(initial_plan, initial_result):
+                    from .full_text_synthesis import validate_job_input
+                    initial_row = self.connection.execute(
+                        "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,),
+                    ).fetchone()
+                    validate_job_input(self._research_job(initial_row))
+                    self.connection.execute(
+                        "UPDATE workbench_research_job SET candidate_count=?,evidence_count=?,message=? WHERE job_id=?",
+                        (initial_result["full_text_synthesis_input"]["counts"]["candidate_findings"],
+                         len(initial_result["evidence"]), "Saved full-text findings queued for synthesis.", job_id),
+                    )
             self._append_research_event_locked(
                 job_id, state="queued", stage="queued", message="Research saved and queued.",
                 completed_steps=0, total_steps=0, created_at=now,
@@ -9744,6 +9785,9 @@ class WorkspaceStore:
     def recover_running_research_jobs(self) -> int:
         now = self._now()
         with self._lock, self.connection:
+            # Recovery may overlap a delayed worker on another connection.
+            # Freeze its latest charged checkpoint before reading and requeueing.
+            self.connection.execute("BEGIN IMMEDIATE")
             rows = self.connection.execute(
                 "SELECT job_id,cancellation_requested,total_steps,completed_steps,result_json "
                 "FROM workbench_research_job WHERE state='running' ORDER BY created_at,job_id"
@@ -9816,6 +9860,7 @@ class WorkspaceStore:
             raise ValueError("invalid research plan")
         now = self._now()
         with self._lock, self.connection:
+            self._reject_full_text_legacy_write_locked(job_id)
             changed = self.connection.execute(
                 "UPDATE workbench_research_job SET plan_json=?,total_steps=?,stage='searching',"
                 "message='Research plan ready. Finding evidence.',updated_at=? "
@@ -9844,6 +9889,7 @@ class WorkspaceStore:
         value = self._safe_text(message, label="Research status", maximum=240, required=False)
         now = self._now()
         with self._lock, self.connection:
+            self._reject_full_text_legacy_write_locked(job_id)
             changed = self.connection.execute(
                 "UPDATE workbench_research_job SET stage=?,message=?,completed_steps=?,"
                 "candidate_count=?,evidence_count=?,updated_at=? WHERE job_id=? "
@@ -9873,6 +9919,7 @@ class WorkspaceStore:
         if len(encoded) > 2_000_000:
             raise ValueError("research checkpoint is too large")
         with self._lock, self.connection:
+            self._reject_full_text_legacy_write_locked(job_id)
             changed = self.connection.execute(
                 "UPDATE workbench_research_job SET result_json=?,completed_steps=0,"
                 "candidate_count=0,evidence_count=0,stage='searching',message=?,updated_at=? "
@@ -9890,8 +9937,30 @@ class WorkspaceStore:
             )
         return True
 
+    def _reject_full_text_legacy_write_locked(self, job_id: str) -> None:
+        row = self.connection.execute(
+            "SELECT plan_json,result_json FROM workbench_research_job WHERE job_id=?", (job_id,),
+        ).fetchone()
+        if row is not None and is_full_text_synthesis(json.loads(row["plan_json"]), json.loads(row["result_json"])):
+            raise WorkspaceProblem("Use the versioned full-text synthesis workflow to preserve its input and charged work.")
+
+    def _validate_research_attempt_locked(self, job: ResearchJobRecord, *, stopping: bool = False) -> None:
+        """Caller owns the write transaction; delayed workers cannot mutate a retry."""
+        current = self.connection.execute(
+            "SELECT * FROM workbench_research_job WHERE job_id=?", (job.job_id,),
+        ).fetchone()
+        if (current is None or current["matter_id"] != job.matter_id
+                or current["actor_id"] != job.actor_id or current["state"] != "running"
+                or current["attempts"] != job.attempts or current["worker_id"] != job.worker_id
+                or (current["cancellation_requested"] and not stopping)):
+            raise WorkspaceProblem("This synthesis attempt is no longer active.")
+        if not stopping:
+            self.membership(job.matter_id, job.actor_id)
+
     def checkpoint_research_job(
-        self, job_id: str, result: Mapping[str, object]
+        self, job_id: str, result: Mapping[str, object], *,
+        expected_job: ResearchJobRecord | None = None,
+        validate_locked: Callable[[], None] | None = None,
     ) -> ResearchJobRecord:
         """Persist resumable pass output without marking the run complete."""
 
@@ -9900,6 +9969,25 @@ class WorkspaceStore:
             raise ValueError("research checkpoint is too large")
         now = self._now()
         with self._lock, self.connection:
+            if expected_job is not None:
+                if expected_job.job_id != job_id:
+                    raise WorkspaceProblem("The synthesis attempt does not match this job.")
+                self.connection.execute("BEGIN IMMEDIATE")
+                self._validate_research_attempt_locked(expected_job)
+            current = self.connection.execute(
+                "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,),
+            ).fetchone()
+            if current is not None and (is_full_text_synthesis(json.loads(current["plan_json"]), json.loads(current["result_json"]))
+                    or is_full_text_synthesis(None, result)):
+                if expected_job is None or validate_locked is None:
+                    raise WorkspaceProblem("Full-text synthesis checkpoints require a validated active attempt.")
+                from .full_text_synthesis import validate_job_input
+                current_job = self._research_job(current)
+                validate_job_input(current_job)
+                validate_job_input(current_job, result)
+            if expected_job is not None:
+                if validate_locked is not None:
+                    validate_locked()
             changed = self.connection.execute(
                 "UPDATE workbench_research_job SET result_json=?,updated_at=? WHERE job_id=? "
                 "AND state='running' AND cancellation_requested=0",
@@ -9907,6 +9995,13 @@ class WorkspaceStore:
             ).rowcount
             if changed != 1:
                 raise WorkspaceProblem("This research run is no longer active.")
+            if expected_job is not None:
+                state = result.get("hierarchical_synthesis", {})
+                self.connection.execute(
+                    "UPDATE workbench_research_job SET stage='synthesizing',completed_steps=1,message=? WHERE job_id=?",
+                    (f"Saved {len(state.get('issue', []))} issue groups and {len(state.get('matter', []))} matter sections; "
+                     f"{state.get('requests_spent', 0)} generation requests charged.", job_id),
+                )
             row = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,)
             ).fetchone()
@@ -9924,7 +10019,9 @@ class WorkspaceStore:
             raise KeyError(job_id)
         return bool(row["cancellation_requested"] or row["state"] == "cancelled")
 
-    def finish_research_job(self, job_id: str, result: Mapping[str, object]) -> ResearchJobRecord:
+    def finish_research_job(self, job_id: str, result: Mapping[str, object], *,
+            expected_job: ResearchJobRecord | None = None,
+            validate_locked: Callable[[], None] | None = None) -> ResearchJobRecord:
         result = dict(result)
         result.pop("_retrieval_source_fingerprint", None)
         encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
@@ -9933,11 +10030,25 @@ class WorkspaceStore:
         now = self._now()
         with self._lock, self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
+            if expected_job is not None:
+                if expected_job.job_id != job_id:
+                    raise WorkspaceProblem("The synthesis attempt does not match this job.")
+                self._validate_research_attempt_locked(expected_job)
+                if validate_locked is not None:
+                    validate_locked()
             row = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,)
             ).fetchone()
             if row is None:
                 raise KeyError(job_id)
+            if (is_full_text_synthesis(json.loads(row["plan_json"]), json.loads(row["result_json"]))
+                    or is_full_text_synthesis(None, result)):
+                if expected_job is None or validate_locked is None:
+                    raise WorkspaceProblem("Full-text synthesis completion requires a validated active attempt.")
+                from .full_text_synthesis import validate_job_input
+                current_job = self._research_job(row)
+                validate_job_input(current_job)
+                validate_job_input(current_job, result)
             if row["state"] == "succeeded":
                 return self._research_job(row)
             if row["state"] != "running":
@@ -10060,10 +10171,18 @@ class WorkspaceStore:
             )
         return self._research_job(completed)
 
-    def fail_research_job(self, job_id: str, message: str) -> ResearchJobRecord:
+    def fail_research_job(self, job_id: str, message: str, *,
+            expected_job: ResearchJobRecord | None = None) -> ResearchJobRecord:
         value = self._safe_text(message, label="Research status", maximum=240, required=False)
         now = self._now()
         with self._lock, self.connection:
+            if expected_job is None:
+                self._reject_full_text_legacy_write_locked(job_id)
+            if expected_job is not None:
+                if expected_job.job_id != job_id:
+                    raise WorkspaceProblem("The synthesis attempt does not match this job.")
+                self.connection.execute("BEGIN IMMEDIATE")
+                self._validate_research_attempt_locked(expected_job, stopping=True)
             row = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE job_id=?", (job_id,)
             ).fetchone()
@@ -10098,6 +10217,10 @@ class WorkspaceStore:
             raise WorkspaceProblem("Only the reviewer who started this run can cancel it.")
         now = self._now()
         with self._lock, self.connection:
+            # Take the database write lock before reloading the checkpoint.
+            # Otherwise another store can save a charged request or node after
+            # this read and cancellation can overwrite it with stale JSON.
+            self.connection.execute("BEGIN IMMEDIATE")
             job = self.research_job(matter_id, actor_id, job_id)
             if job.state == "queued":
                 state, stage, message, finished = "cancelled", "cancelled", "Research cancelled before it started.", now
@@ -10125,7 +10248,7 @@ class WorkspaceStore:
             ).fetchone()
         return self._research_job(row)
 
-    def retry_research_job(self, matter_id: str, actor_id: str, job_id: str, *, additional_passes: int = 0, expected_passes: int | None = None, checkpoint_is_stale: Callable[[ResearchJobRecord], bool] | None = None) -> ResearchJobRecord:
+    def retry_research_job(self, matter_id: str, actor_id: str, job_id: str, *, additional_passes: int = 0, expected_passes: int | None = None, checkpoint_is_stale: Callable[[ResearchJobRecord], bool] | None = None, validate_locked: Callable[[ResearchJobRecord], None] | None = None) -> ResearchJobRecord:
         """Retry with an optional source-frozen locator validator for current data."""
         from .review_budget import ReviewBudget
         if type(additional_passes) is not int or not 0 <= additional_passes <= 5:
@@ -10143,6 +10266,17 @@ class WorkspaceStore:
             ).fetchone()
             if current is None:
                 raise KeyError(job_id)
+            full_text = is_full_text_synthesis(json.loads(current["plan_json"]), json.loads(current["result_json"]))
+            if full_text:
+                from .full_text_synthesis import validate_job_input
+                validate_job_input(self._research_job(current))
+                self.membership(matter_id, actor_id)
+                if validate_locked is None:
+                    raise WorkspaceProblem("Resuming synthesis requires validation of its frozen input.")
+                if additional_passes or current["state"] == "succeeded":
+                    raise WorkspaceProblem("This synthesis cannot gain new scope or budget. Start a new synthesis from a terminal review.")
+            if validate_locked is not None:
+                validate_locked(self._research_job(current))
             if current["state"] in {"queued", "running"}:
                 if additional_passes:
                     queued_plan = json.loads(current["plan_json"])
@@ -10216,7 +10350,12 @@ class WorkspaceStore:
                     raise WorkspaceProblem("Rebuilding needs additional search budget. Choose an extension or start a new investigation.")
             if additional_passes and not adaptive:
                 raise WorkspaceProblem("Start a new investigation to use evidence-driven searches.")
-            if adaptive:
+            if full_text:
+                # The versioned input and hierarchy carry the immutable basis,
+                # first-start deadline, saved nodes and lifetime charged calls.
+                result.pop("stop_reason", None)
+                completed, total = int(current["completed_steps"]), int(current["total_steps"])
+            elif adaptive:
                 plan["retry_request"] = {"additional_passes": additional_passes, "expected_passes": expected_passes}
                 if additional_passes:
                     if not stale and not result.get("pending_searches") and not result.get("seed_search_pending"):
@@ -10267,7 +10406,8 @@ class WorkspaceStore:
                 "plan_json=?,result_json=?,total_steps=?,completed_steps=?,"
                 "candidate_count=?,evidence_count=?,result_message_id=NULL,started_at=NULL,finished_at=NULL,updated_at=? "
                 "WHERE job_id=?", (json.dumps(plan), json.dumps(result), total, completed,
-                                   result.get("candidate_count", 0), len(result.get("evidence", [])), now, job_id)
+                                   result.get("full_text_synthesis_input", {}).get("counts", {}).get("candidate_findings", result.get("candidate_count", 0)),
+                                   len(result.get("evidence", [])), now, job_id)
             )
             self._append_research_event_locked(
                 job_id, state="queued", stage="queued", message="Investigation queued from checkpoint.",

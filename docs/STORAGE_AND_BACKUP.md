@@ -248,3 +248,19 @@ control backup boundary. Preserve original source bytes separately from exported
 work product. Clean restore verifies originals, explicit roles, conflicting
 accounts and decision history. Rollback requires the verified pre-upgrade backup
 and matching older reader; older purge code must never open upgraded state.
+
+## Single-run full-text synthesis receipts
+
+The [adapter](FULL_TEXT_SYNTHESIS.md) adds versioned plan/result JSON to the
+existing research-job table; it adds no SQL schema or new runtime file. A complete
+stopped-runtime backup must still include the control database, matter catalog,
+source originals, parsed units and other normal runtime stores. Active synthesis
+is existing research work and blocks closure/backup through those guards.
+
+The [synthetic clean-restore receipt](FULL_TEXT_SYNTHESIS_ACCEPTANCE_2026-09-12.md)
+checks complete copied runtime files with the original paths unavailable,
+original navigation, two reused nodes, interrupted-request accounting, completion
+and Word/Markdown/JSON exports. Rollback uses the exact pre-upgrade backup in a
+clean target with its matching old revision. Do not run old writers against new
+job JSON: they do not understand this adapter or its saved charges. Keep the
+upgraded backup and post-upgrade exports separately.

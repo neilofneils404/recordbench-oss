@@ -19,7 +19,7 @@ from .generation import VERIFICATION_OMISSION_NOTICE
 from .report_compilation import CompilationMaterial
 from .unit_stream import UnitRecordLimit
 from .work_product_exports import MAX_EXPORT_TEXT_CHARS, validate_research_basis
-from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, MAX_REPORT_SECTION_CITATIONS, WorkspaceProblem
+from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, MAX_REPORT_SECTION_CITATIONS, WorkspaceProblem, is_full_text_synthesis
 
 MAX_SELECTIONS = 20
 MAX_MATERIALS = 500
@@ -375,6 +375,8 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
             raise WorkspaceProblem("Choose saved work from this matter.")
         if kind == "research":
             job = bench.workspace.research_job(matter.matter_id, actor, identifier)
+            if is_full_text_synthesis(job.plan, job.result):
+                raise WorkspaceProblem("Export this full-text synthesis directly. Copying it into a Report is not supported yet.")
             if job.state != "succeeded":
                 raise WorkspaceProblem("Choose an investigation that has finished.")
             validate_research_basis(matter, job)
