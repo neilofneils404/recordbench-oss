@@ -11,7 +11,9 @@ Live implementation status as of September 11, 2026 against `main` at
 [exit-alpha cruise](../EXIT_ALPHA_CRUISE.md) and [slice index](README.md); it is
 not a re-run of the September 8 inspection. Since that checkout, reusable team
 groups (**06**), evidence-driven investigation (**11**), and full-text review
-(**12**) exist; hierarchical synthesis (**13**) is Next.
+(**12**) exist; hierarchical synthesis (**13**) landed in
+[#73](https://github.com/neilofneils404/recordbench-oss/pull/73).
+Slices **16 → 18** are Next.
 
 ## Installation and onboarding
 
@@ -126,14 +128,16 @@ equating zero hits with exclusion. At that checkout, its unit coverage still
 depended on selecting passages, so a completed source population was not a
 completed all-page read. On current `main`, **Review all extracted text**
 covers every eligible unit in a frozen population (slice **12**); selected-passage
-screening remains a separate mode, and cross-source hierarchical synthesis
-remains **13**.
+screening remains a separate mode. Cross-source hierarchical synthesis is now
+implemented as slice **13**, with the evaluation limits recorded in
+[HIERARCHICAL_SYNTHESIS.md](../HIERARCHICAL_SYNTHESIS.md).
 
 Implementation: [10](10-review-budget-visibility.md),
 [11](11-evidence-driven-investigation.md), [12](12-full-text-review-coverage.md),
-and [13](13-hierarchical-synthesis.md). Slices **11** and **12** exist on
-current `main`; **13** remains Next. The remaining gap is cited hierarchical
-synthesis, not an unbounded larger prompt.
+and [13](13-hierarchical-synthesis.md). Slices **11**, **12** and **13** exist on
+the verified slice-13 `main` snapshot. Synthesis consumes persisted findings
+through bounded issue and matter groups, preserving original support through
+the intermediate records.
 
 ## Why Reports can feel insubstantial
 

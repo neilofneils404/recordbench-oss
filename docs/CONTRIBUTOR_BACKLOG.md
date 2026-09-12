@@ -5,7 +5,7 @@ They record code-backed findings, dependencies, implementation boundaries, and
 synthetic acceptance criteria for installation, onboarding, accounts/groups,
 exact search, deep review, Reports, and People/Places/Things. Check each
 brief's Status line and the [exit-alpha cruise](EXIT_ALPHA_CRUISE.md) before
-coding; slice **13** is next. Refresh upstream and coordinate remaining work.
+coding; slices **16 → 18** are next. Refresh upstream and coordinate remaining work.
 
 These are candidate contributions, not assignments. Open a short issue with a
 synthetic reproduction or proposed acceptance path; check existing PRs before
