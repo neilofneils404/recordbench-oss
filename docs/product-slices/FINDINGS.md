@@ -14,12 +14,15 @@ groups (**06**), evidence-driven investigation (**11**), and full-text review
 (**12**) exist; hierarchical synthesis (**13**) landed in
 [#73](https://github.com/neilofneils404/recordbench-oss/pull/73).
 That slice-13 snapshot and sequence are superseded by the
-[September 12 current-state addendum](../PRODUCT_DIRECTION_2026-09-12.md#current-state-addendum-after-slices-16-and-17)
-and cruise receipt: **16** and **17** are landed at the freshly verified
-`e9ab89c792b562c2abf27715d15b5f70d3216900` tip. The cruise selects active work.
-The entity observations below remain historical findings, not current absence
-claims; rule-based discovery still has limited recall and relationships/events
-remain outstanding.
+[September 12 current-state addendum](../PRODUCT_DIRECTION_2026-09-12.md#current-state-addendum-after-slice-18)
+and cruise receipt: **16**, **17**, and **18** are landed at the verified
+`19d57fbec29325ae9b5ab296e6a2adcb18a5e0ec` snapshot. The cruise promotes only
+slice **19**'s first single-run adapter; its implementation and acceptance remain
+pending. The entity observations below remain historical findings, not current
+absence claims. Rule-based discovery still has limited recall; manual
+[events and assertions](../EVIDENCE_ASSERTIONS.md) now retain typed roles,
+supporting/competing originals, dates and reviewer corrections. Automatic
+relationship inference and entity-to-Report compilation remain outside that scope.
 
 ## Installation and onboarding
 
