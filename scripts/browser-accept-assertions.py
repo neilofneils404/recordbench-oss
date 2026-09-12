@@ -195,6 +195,25 @@ def main():
             matter = bench.matter(slug, ACTOR)
             wait.until(lambda _: len([document for document in bench.source_store(matter).documents.values() if document.state == 'ready']) == 4)
             record('Four synthetic originals uploaded and searchable with generation unavailable')
+            for width in (1440, 1200):
+                driver.set_window_size(width, 1000)
+                source('Morgan')
+                save = driver.find_element(By.CSS_SELECTOR, '.support-save-button')
+                driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", save)
+                # The real pointer target must be the button, rather than an
+                # overlapping source-navigation arrow or another toolbar item.
+                assert driver.execute_script('''const button = arguments[0];
+                    const box = button.getBoundingClientRect();
+                    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                    return !!hit && button.contains(hit);''', save)
+                if width == 1200:
+                    assert driver.find_element(By.ID, 'support-pane').rect['width'] <= 400
+                driver.save_screenshot(str(args.output / f'assertion-source-toolbar-{width}.png'))
+                click_element(save)
+                assert urlparse(driver.current_url).path == prefix + '/notebook'
+                assert ORIGINALS[0][1] in body()
+            driver.set_window_size(1440, 1000)
+            record('Source toolbar saves the original to case notes through real pointer clicks at desktop and narrow-pane widths without overlapping navigation controls')
             entity_path = create_identity('Morgan', 'Alex Example')
             driver.find_element(By.LINK_TEXT, 'Return to source review').click()
             assert 'mode=search' in driver.current_url and 'q=Morgan' in driver.current_url
@@ -232,6 +251,23 @@ def main():
                 assert urlparse(driver.current_url).path == event_path
                 assert parse_qs(urlparse(driver.current_url).query)['return_to'] == [review_return]
             record('Both attributed accounts open their original passages; support pane and full source return directly to the same assertion and review context')
+            driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', dict(width=390, height=844, deviceScaleFactor=1, mobile=False))
+            go(event_path + '?' + urlencode(dict(return_to=review_return)))
+            click_element(driver.find_elements(By.LINK_TEXT, 'Open original passage')[0])
+            wait.until(lambda d: d.find_element(By.ID, 'support-pane'))
+            return_link = wait.until(EC.visibility_of_element_located((By.LINK_TEXT, 'Return to review context')))
+            wait.until(lambda d: d.execute_script('''const link = arguments[0];
+                const box = link.getBoundingClientRect();
+                const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                return box.top >= 0 && box.bottom <= innerHeight && !!hit && link.contains(hit);''', return_link))
+            assert driver.execute_script('return document.documentElement.scrollWidth <= innerWidth')
+            driver.save_screenshot(str(args.output / 'assertion-source-return-mobile.png'))
+            click_element(return_link)
+            assert urlparse(driver.current_url).path == event_path
+            assert parse_qs(urlparse(driver.current_url).query)['return_to'] == [review_return]
+            driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride', {})
+            driver.set_window_size(1440, 1000)
+            record('At 390 pixels the source drawer exposes a visible clickable return link to the same assertion and source-review query')
             depot_path = create_identity('Morgan', 'Cedar Depot', entity_type='place')
             go(event_path)
             role_form = form('add_role')

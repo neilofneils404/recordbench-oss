@@ -389,6 +389,30 @@ def protected_assertion(tmp_path, monkeypatch):
             headers=_headers(OTHER), csrf=_csrf(page.text), entity=entity, record=record)
 
 
+@pytest.mark.parametrize('format_name', ['json', 'markdown'])
+def test_export_audit_distinguishes_each_assertion_and_matter_chronology(protected_assertion, format_name):
+    context = protected_assertion
+    client, bench, matter = (context[key] for key in ('client', 'bench', 'matter'))
+    service = bench.assertion_service(matter)
+    first_id = context['record']['assertion_id']
+    detail = service.detail(matter.matter_id, context['owner_id'], first_id)
+    second = service.create(matter.matter_id, context['owner_id'],
+        support=detail['accounts'][0]['support_token'], attributed_to='Morgan Sample',
+        roles=[dict(entity_id=context['entity']['entity_id'], expected_revision=1, role='subject')],
+        **(EVENT_FIELDS | dict(title='Separate synthetic assertion')))
+    expected = [('assertion', first_id), ('assertion', second['assertion_id']), ('matter', matter.matter_id)]
+    for object_type, object_id in expected:
+        path = (f'/matters/{matter.slug}/assertions/{object_id}/export'
+                if object_type == 'assertion' else f'/matters/{matter.slug}/chronology/export')
+        response = client.get(path, params=dict(format=format_name), headers=context['headers'])
+        assert response.status_code == 200
+    events = [event for event in bench.workspace.audit_events(matter.matter_id)
+              if event.action == 'assertion.export']
+    assert [(event.object_type, event.object_id) for event in events] == expected
+    assert all(event.outcome == 'success' and event.actor_principal_id == context['member_id'] for event in events)
+    assert all(not event.details for event in events)
+
+
 @pytest.mark.parametrize('view', ['assertion', 'chronology', 'create', 'entity', 'stale_update'])
 def test_midflight_html_membership_revocation_discards_saved_content_and_draft(protected_assertion, monkeypatch, view):
     from case_intelligence.entity_service import EntityService

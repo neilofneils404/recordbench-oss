@@ -6,7 +6,7 @@
   "prerequisite": {
     "pr": 81,
     "head": "e0301b9839b8c69d07f40c5f5827ab4873f428d6",
-    "state_at_validation": "Open; prerequisite incorporated as dependency, not claimed merged."
+    "state_at_validation": "Merged at the recorded exact head; PR retargeted to main. Separate post-merge Quality gates run34714727639 completed successfully."
   },
   "contract_issue": 80,
   "focused": {
@@ -31,16 +31,26 @@
     "failure_node_sha256": "0a74919c6f0f6e5e1e84d2a7486eca42e3783ed63a941f0a367ed3f66942d30a",
     "baseline_only": [],
     "candidate_only": [],
-    "acceptance": "Not passed. Exact failure-node equality is diagnosis only. Candidate full suite preceded final navigation/security regressions; final focused and browser checks cover review corrections. Final-head hosted Linux CI is required."
+    "acceptance": "Not passed. Exact failure-node equality is diagnosis only. Both the initial and final correction candidate full native suites match the exact baseline failures; final-head hosted Linux CI is required.",
+    "final_correction_candidate": {
+      "passed": 2694,
+      "failed": 125,
+      "skipped": 9,
+      "failure_node_sha256": "0a74919c6f0f6e5e1e84d2a7486eca42e3783ed63a941f0a367ed3f66942d30a",
+      "baseline_only": [],
+      "candidate_only": []
+    }
   },
   "browser": {
     "synthetic": true,
     "success": true,
     "checks": [
       "Four synthetic originals uploaded and searchable with generation unavailable",
+      "Source toolbar saves the original to case notes through real pointer clicks at desktop and narrow-pane widths without overlapping navigation controls",
       "Search original passage, attach to entity, and return to the same source-review query",
       "Keyboard traversal creates an event with typed entity role, raw uncertain date, attribution, and supporting original",
       "Both attributed accounts open their original passages; support pane and full source return directly to the same assertion and review context",
+      "At 390 pixels the source drawer exposes a visible clickable return link to the same assertion and source-review query",
       "Reviewer explicitly links the person as subject and the depot as location through labeled role controls",
       "Reviewer confirms, then disputes and corrects the interpretation without changing either source account",
       "Unrelated same-name identity and co-mentioned people acquire no event or relationship automatically",
@@ -64,11 +74,11 @@
     },
     {
       "file": "assertion-conflict.png",
-      "sha256": "ba07edff6fce8c17eec349113c506ed2e2e2c8db26df9c8769099b63ea01d6a2"
+      "sha256": "6fa30d98cbf7f4a07cd81d5941f1d5bebb34aa1f23fd7fb12ef917c9aee62ad0"
     },
     {
       "file": "assertion-desktop.png",
-      "sha256": "4bc52656a65f49ea9391346436f13f733f863307cb5be1007e4cdeacbbbc65fd"
+      "sha256": "8e3aa422b4dfaedec2f9254754f90155ef297636244e3fdce812caf12f0fef4b"
     },
     {
       "file": "assertion-mobile-recovery.png",
@@ -77,6 +87,18 @@
     {
       "file": "assertion-mobile.png",
       "sha256": "c429b837fd7f74098ebf7fd8476ff4d5d109c3a5529da6fc2255c942cd8e3789"
+    },
+    {
+      "file": "assertion-source-return-mobile.png",
+      "sha256": "489b7b033ba8d15c59ed8871d28a316ede0dd2177b03d163a13f9d49fbb7c14e"
+    },
+    {
+      "file": "assertion-source-toolbar-1200.png",
+      "sha256": "320ccb0ca08ae43118085f489ca9b56241e5eafdee307584b9c576d76f2d8d9c"
+    },
+    {
+      "file": "assertion-source-toolbar-1440.png",
+      "sha256": "2d1c71afab3d873a761c4b0c59a946f008bf8d92aa9dce65be1157e184def5dc"
     }
   ],
   "recovery": {
@@ -98,7 +120,7 @@
   },
   "compile": "Passed",
   "compose": "Standard, Kerberos and dedicated local-account graphs passed.",
-  "publication": "Working-tree sanitizer passed; installed complete outgoing-history guard required before push.",
+  "publication": "Working-tree sanitizer and installed complete outgoing-history guard passed before initial publication; both required again for the correction commit.",
   "independent_review": {
     "resolved": [
       "Reauthorize HTML after response rendering and exports after serialization.",
@@ -116,9 +138,22 @@
     "Saved corrections survive leaving, restart, complete clean restore, export and deliberate purge."
   ],
   "remaining_gates": [
-    "Prerequisite PR81 main acceptance and successful landing.",
     "Final implementation-head hosted code review, security review or explicitly verified maintainer quota exception, required CI and maintainer acceptance.",
-    "Rebase/retarget onto verified main and renew gates as required; no deployment authorized."
+    "No deployment or installed-node change is authorized."
   ],
-  "next_scoped_gap": "Proposed slice19 full-text findings to synthesis, subject to cruise promotion; entity-to-Report compilation, background/memory, production import, capacity and held Mac work remain separate."
+  "next_scoped_gap": "Proposed slice19 full-text findings to synthesis, subject to cruise promotion; entity-to-Report compilation, background/memory, production import, capacity and held Mac work remain separate.",
+  "hosted_corrections": {
+    "initial_head": "21274174c61ab4124087cf2c2b499c7f15a3b9a1",
+    "initial_pr_ci_run": 34714429458,
+    "initial_pr_ci": "Application, transcription, PostgreSQL, deployment contract and secret scan passed. Synthetic browser failed when the added source links caused Save to case notes to overlap a navigation button.",
+    "toolbar_fix": "Allow source controls to wrap; place the return link in the source header so it remains available in the mobile drawer.",
+    "toolbar_validation": "Existing Report browser journey: 12 checks passed. Extended assertion journey: 14 checks passed, including real Save clicks at 1440 and 1200 pixels and visible source return at 390 pixels.",
+    "hosted_code_finding": 3997327855,
+    "audit_fix": "Individual export audits identify the exported assertion; chronology export audits identify the matter. JSON and Markdown HTTP regressions export two different records and the chronology, verifying identifiers, actor, success and content-free metadata.",
+    "focused_regression": {
+      "passed": 80,
+      "scope": "Assertion HTTP workflow/navigation, entity workspace, browser runner and synthetic browser environment."
+    },
+    "acceptance": "These local corrections require renewed final-head hosted CI and reviews."
+  }
 }

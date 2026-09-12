@@ -157,7 +157,7 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
         return RedirectResponse(path + '?' + urlencode(dict(return_to=safe_return(slug, return_to),
             support=support if action not in ('create', 'attach', 'delete') else '')), status_code=303)
 
-    def export_response(request, matter, payload, format_name, filename):
+    def export_response(request, matter, payload, format_name, filename, *, object_type, object_id):
         from .assertion_exports import markdown_export
         body = json.dumps(payload, indent=2) if format_name == 'json' else markdown_export(payload)
         from .assertion_repository import MAX_STORAGE_BYTES
@@ -169,7 +169,7 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
         except KeyError as exc:
             raise HTTPException(404, 'Record or matter is no longer available') from exc
         audit(request, 'assertion.export', 'success', context=auth_context(request), matter=matter,
-              object_type='assertion', object_id=matter.matter_id)
+              object_type=object_type, object_id=object_id)
         return transfer_response_lease(request, Response(body, media_type='application/json' if format_name == 'json' else 'text/markdown',
             headers={'Content-Disposition': f'attachment; filename="{filename}.{ "json" if format_name == "json" else "md"}"', 'Cache-Control': 'no-store'}))
 
@@ -181,7 +181,8 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
             payload = service_for(matter).export(matter.matter_id, auth_context(request).principal_id, assertion_id)
         except KeyError as exc:
             raise HTTPException(404, 'Record is no longer available') from exc
-        return export_response(request, matter, payload, format, 'assertion')
+        return export_response(request, matter, payload, format, 'assertion',
+                               object_type='assertion', object_id=assertion_id)
 
     @app.get('/matters/{slug}/chronology/export', dependencies=[Depends(require_response_lease)])
     def export_chronology(request: Request, slug: str, entity_id: str = Query('', max_length=80),
@@ -193,4 +194,5 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
             raise HTTPException(404, 'Entity or matter is no longer available') from exc
         except WorkspaceProblem as exc:
             raise HTTPException(400, str(exc)) from exc
-        return export_response(request, matter, payload, format, 'chronology')
+        return export_response(request, matter, payload, format, 'chronology',
+                               object_type='matter', object_id=matter.matter_id)

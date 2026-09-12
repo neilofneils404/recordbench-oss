@@ -539,13 +539,13 @@
         <h2 id="support-heading">{{ support.source_name }}</h2>
         <p>{{ support.position_label }}</p>
         <a class="support-header-open" href="{{ entity_context_href(support.source_review_href, request.query_params.get('entity_return_to', '')) }}">{% if support.evidence_kind == 'transcript' %}Open full recording and transcript{% elif support.kind == 'PDF' %}Open full PDF{% else %}Read full document{% endif %}</a>
+        {% set review_return = source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) %}{% if review_return %}<a class="support-return-context" href="{{ review_return }}">Return to review context</a>{% endif %}
       </div>
       <a class="icon-button support-close" href="/matters/{{ matter.slug }}?conversation={{ conversation.conversation_id }}" aria-label="Close supporting source">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </a>
     </header>
     <div class="support-toolbar">
-      {% set review_return = source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) %}{% if review_return %}<a href="{{ review_return }}">Return to review context</a>{% endif %}
       {% if support.previous_href %}<a class="icon-button" href="{{ entity_context_href(support.previous_href, request.query_params.get('entity_return_to', '')) }}" aria-label="Previous section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></a>{% else %}<span class="icon-button disabled"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></span>{% endif %}
       <a href="/matters/{{ matter.slug }}/entities?support={{ support.support_token }}&amp;return_to={{ (request.query_params.get('entity_return_to') or (request.url.path ~ '?' ~ request.url.query ~ '#support-pane'))|urlencode }}">Attach to entity</a>
       <a href="/matters/{{ matter.slug }}/chronology?support={{ support.support_token }}&amp;return_to={{ (request.query_params.get('entity_return_to') or (request.url.path ~ '?' ~ request.url.query ~ '#support-pane'))|urlencode }}">Use in event or assertion</a>

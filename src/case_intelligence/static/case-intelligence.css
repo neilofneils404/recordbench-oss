@@ -3127,17 +3127,29 @@ textarea::placeholder,
 }
 
 .support-toolbar {
-  display: grid;
-  grid-template-columns: 40px minmax(80px, 1fr) auto 40px;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding: 0 16px 12px;
 }
 
 .support-toolbar .icon-button {
+  flex: 0 0 40px;
   width: 40px;
   height: 38px;
 }
+
+.support-toolbar > a:not(.icon-button) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  max-width: 100%;
+  font-size: 12px;
+}
+
+.support-toolbar .support-position { flex: 1 0 70px; }
+.support-return-context { display: block; margin-top: 6px; font-size: 12px; }
 
 .icon-button.disabled {
   opacity: 0.35;
@@ -5823,8 +5835,6 @@ select.source-scope {
   .notebook-item-actions { justify-content: flex-start; }
   .notebook-edit-panel .notebook-item-form { display: grid; grid-template-columns: 1fr; }
   .notebook-edit-panel .notebook-item-form > * { grid-column: 1 !important; }
-  .support-toolbar { grid-template-columns: 40px minmax(70px, 1fr) 40px; }
-  .support-toolbar form { grid-column: 1 / -1; grid-row: 2; }
   .support-save-button { width: 100%; }
   .composer-notebook-context { grid-column: 1 / -1; }
   .question-composer { grid-template-columns: minmax(0, 1fr); }

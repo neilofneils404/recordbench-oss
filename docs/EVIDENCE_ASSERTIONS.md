@@ -87,7 +87,8 @@ performed on reviewer text.
 History records actor, time, action and each revision's statement/date/decision,
 plus role and account additions, removals and corrections. Excerpts are recorded
 at addition/removal, not recopied on every edit. Content-free success audits
-follow the existing application audit boundary. Removing a record permanently
+follow the existing application audit boundary. Individual export audits identify
+the exported assertion; chronology export audits identify the matter. Removing a record permanently
 removes its roles, accounts and history; original sources and entities remain.
 
 ## Exports and bounds
