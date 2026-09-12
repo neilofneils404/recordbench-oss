@@ -18,7 +18,10 @@ Accept exactly one terminal full-text run, its frozen population, criterion,
 revision, and authorized matter. Define a versioned input receipt binding source
 and extraction identities, coverage, findings, and original locators. Resolve
 original text through the existing source verifier; a range decision or earlier
-summary is not itself evidence. Refuse incompatible, active, or stale input.
+summary is not itself evidence. Refuse incompatible, active, or stale input. Preserve the full criterion,
+including instructions and include/exclude guidance, in a bounded canonical
+question. If it exceeds the existing 2,000-character synthesis limit, refuse it
+explicitly; silently slicing any criterion field is not permitted.
 
 Stream and admit inputs within explicit existing resource limits; account for
 all candidate findings and omissions before any completion claim. Do not load an
@@ -52,6 +55,11 @@ checkpoints must join complete matter purge. Late workers cannot recreate them.
   empty source, and unsupported saved text. All remain correctly accounted for.
 - Reject an active run, mismatched matter, changed revision, missing original,
   and stale source version; preserve authorized historical output appropriately.
+- Exercise maximum-size instructions and include/exclude guidance: all terms
+  reach generation unchanged within the bound, or admission explicitly refuses.
+- Revoke the initiating member during an in-flight generation call. Subsequent
+  checkpoints/final saves and status/export responses must deny access without
+  refunding already charged work.
 - Interrupt after one completed intermediate; resume without duplicating saved
   nodes or refunding spend. Exhaust a limit and verify honest partial output.
 - Verify the browser path from terminal run to synthesis, original passage, and

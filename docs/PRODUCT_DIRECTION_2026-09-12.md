@@ -14,7 +14,25 @@ hierarchical synthesis, reports, and team access already exist. The main product
 gap is connecting these into a coherent matter workspace with persistent
 knowledge and genuinely scalable collection review.
 
-## Current-state addendum: after slices 16 and 17
+## Current-state addendum: after slice 18
+
+This addendum supersedes earlier queue and implementation-status claims below,
+including the original proposed delivery sequence. Slice 18 landed in
+[#82](https://github.com/neilofneils404/recordbench-oss/pull/82) at
+`19d57fbec29325ae9b5ab296e6a2adcb18a5e0ec`; the binding
+[cruise receipt](EXIT_ALPHA_CRUISE.md#current-upstream-receipt) records its passed
+independent post-merge checks and separate security-quota exception.
+[Events and assertions](EVIDENCE_ASSERTIONS.md) now provide manual typed roles,
+supporting and competing originals, uncertain dates and reviewer corrections.
+
+The cruise promotes only slice 19's first single-run full-text synthesis adapter.
+Its implementation and acceptance remain pending. Multiple-run aggregation, new
+questions, adjustable capacity, entity-to-Report compilation, background/memory,
+production import fidelity and deployment remain outside this promotion.
+Older receipts and assessments below retain their named historical revisions;
+they are not the current implementation queue.
+
+## Historical addendum: after slices 16 and 17
 
 This addendum supersedes execution and entity-gap claims below, while preserving
 the original assessment at its named revision. Upstream `main` was freshly read

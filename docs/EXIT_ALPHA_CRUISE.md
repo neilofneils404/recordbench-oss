@@ -160,7 +160,10 @@ inference or entity-to-Report compilation.
 
 Implement the first substep of [19: full-text synthesis](product-slices/19-full-text-synthesis.md):
 one terminal full-text review, its existing criterion and authorized matter,
-through the landed shared hierarchy. Bind a versioned immutable input receipt to
+through the landed shared hierarchy. Preserve all criterion instructions and
+include/exclude guidance within its existing question bound, or refuse the input
+explicitly; never silently truncate the terms that produced its findings. Bind a
+versioned immutable input receipt to
 the consistent run, relevant decision revisions, frozen population, source and
 extraction identities, coverage, finding identities and original locators. Stream
 enumeration and bounded admission; preserve inspectable omissions, including
@@ -178,7 +181,9 @@ Bind the input ledger atomically: concurrent creator deletion must either be
 blocked by a dependency/lease or invalidate active synthesis without losing
 charged work. Include synthesis in active-work matter-close refusal, complete
 purge cleanup and late-worker fencing; prove concurrent deletion and clean purge
-with synthetic records.
+with synthetic records. Revoke the initiating member during an in-flight model
+request and prove that later checkpoints/final saves and status/export responses
+refuse access while charged work survives.
 
 This promotion authorizes implementation, not acceptance. Multiple-run
 aggregation, new questions, capacity increases, entity-to-Report integration,
