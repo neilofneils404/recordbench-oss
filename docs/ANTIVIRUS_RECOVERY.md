@@ -10,7 +10,10 @@ The updater has download access; the scanner remains on the private service
 network and the offline import helper has no network. Missing, invalid or stale
 daily databases, or an interrupted import, block readiness. Main, daily and
 bytecode databases must all be nonempty regular files, not symlinks or writable
-by group/other users; either the supported CVD or CLD form is accepted. Freshness uses the
+by group/other users; either the supported CVD or CLD form is accepted. When
+both forms are present, every file must pass these protection checks. A protected
+sibling never hides an unsafe file, including a dangling symlink; all families
+are checked before any fresh daily database can make readiness succeed. Freshness uses the
 database header's reported build epoch within the preceding 72 hours, with five
 minutes of clock tolerance. Copying or touching a file does not refresh that age.
 FreshClam verifies updates and load-tests downloaded databases. The import path

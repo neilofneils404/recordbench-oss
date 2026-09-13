@@ -13,6 +13,19 @@ protected_database() {
     case "$mode" in ''|*[!0-7]*) return 1 ;; esac
     [ "$((0$mode & 022))" -eq 0 ]
 }
+# ClamAV sees the whole directory. A safe sibling cannot hide an unsafe file.
+# Check both suffixes before any family or freshness check can return success.
+for name in main daily bytecode; do
+    for suffix in cvd cld; do
+        candidate="$database/$name.$suffix"
+        if [ -e "$candidate" ] || [ -L "$candidate" ]; then
+            if ! protected_database "$candidate"; then
+                echo "signature-$name-unsafe"
+                exit 1
+            fi
+        fi
+    done
+done
 # All required databases must be nonempty regular files, never symlinks.
 for name in main bytecode; do
     present=false

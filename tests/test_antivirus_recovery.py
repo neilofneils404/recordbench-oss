@@ -256,4 +256,47 @@ def test_signature_health_requires_complete_regular_database_set(tmp_path, name,
     result = subprocess.run(["sh", str(ROOT / "deploy/clamav/signature-health.sh")],
         env={**os.environ, "RECORDBENCH_SIGNATURE_DIR": str(tmp_path)}, capture_output=True, text=True)
     assert (result.returncode == 0) == (state in {"cvd", "cld"})
-    assert result.stdout.strip() == ("signatures-fresh" if state in {"cvd", "cld"} else f"signature-{name}-missing")
+    expected = "signatures-fresh" if state in {"cvd", "cld"} else (
+        f"signature-{name}-missing" if state == "missing" else f"signature-{name}-unsafe")
+    assert result.stdout.strip() == expected
+
+
+@pytest.mark.parametrize("name", ["main", "daily", "bytecode"])
+@pytest.mark.parametrize("unsafe_suffix", ["cvd", "cld"])
+@pytest.mark.parametrize("problem", ["writable", "symlink", "dangling-symlink", "empty", "directory", "fifo"])
+def test_signature_health_rejects_unsafe_sibling_even_with_protected_database(tmp_path, name, unsafe_suffix, problem):
+    for database in antivirus.DATABASES:
+        (tmp_path / database).write_bytes(cvd_header())
+    protected_suffix = "cld" if unsafe_suffix == "cvd" else "cvd"
+    (tmp_path / f"{name}.{protected_suffix}").write_bytes(cvd_header())
+    unsafe = tmp_path / f"{name}.{unsafe_suffix}"
+    unsafe.unlink(missing_ok=True)
+    if problem == "writable":
+        unsafe.write_bytes(cvd_header())
+        unsafe.chmod(0o666)
+    elif problem == "symlink":
+        unsafe.symlink_to(tmp_path / f"{name}.{protected_suffix}")
+    elif problem == "dangling-symlink":
+        unsafe.symlink_to(tmp_path / "absent-synthetic-target")
+    elif problem == "empty":
+        unsafe.touch()
+    elif problem == "directory":
+        unsafe.mkdir()
+    else:
+        os.mkfifo(unsafe)
+    result = subprocess.run(["sh", str(ROOT / "deploy/clamav/signature-health.sh")],
+        env={**os.environ, "RECORDBENCH_SIGNATURE_DIR": str(tmp_path)},
+        capture_output=True, text=True, timeout=5)
+    assert result.returncode == 1
+    assert result.stdout.strip() == f"signature-{name}-unsafe"
+
+
+def test_signature_health_accepts_all_protected_siblings(tmp_path):
+    for name in ("main", "daily", "bytecode"):
+        for suffix in ("cvd", "cld"):
+            (tmp_path / f"{name}.{suffix}").write_bytes(cvd_header())
+    result = subprocess.run(["sh", str(ROOT / "deploy/clamav/signature-health.sh")],
+        env={**os.environ, "RECORDBENCH_SIGNATURE_DIR": str(tmp_path)},
+        capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0
+    assert result.stdout.strip() == "signatures-fresh"
