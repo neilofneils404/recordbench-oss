@@ -325,6 +325,7 @@ services:
       - ${RECORDBENCH_CONFIG_ROOT:?set RECORDBENCH_CONFIG_ROOT}/recordbench.env
     environment:
       RECORDBENCH_ALLOW_CONTAINER_BIND: "1"
+      CASE_INTELLIGENCE_RELEASE_ID: ${RECORDBENCH_RELEASE_ID:-dev}
       RECORDBENCH_BACKUP_STATUS_FILE: /var/lib/recordbench/state/backup-status.json
       CASE_INTELLIGENCE_POSTGRES_DSN_FILE: /run/recordbench-secrets/postgres-dsn
       CASE_INTELLIGENCE_CLAMAV_HOST: clamav
