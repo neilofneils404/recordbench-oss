@@ -85,8 +85,12 @@ def sources() -> tuple[QualitySource, ...]:
 
 
 def fingerprint() -> str:
+    """Bind the source gold and all evaluated questions and rubric definitions."""
     return hashlib.sha256(json.dumps({"suite": SUITE, "criterion": CRITERION,
-        "sources": [asdict(item) for item in sources()]}, sort_keys=True).encode()).hexdigest()
+        "sources": [asdict(item) for item in sources()],
+        "questions": [{"id": "follow_up", "text": FOLLOW_UP},
+                      {"id": "unsupported_premise", "text": UNSUPPORTED_QUESTION}],
+        "usefulness_rubric": USEFULNESS_RUBRIC}, sort_keys=True).encode()).hexdigest()
 
 
 def classification_metrics(predictions: dict[str, str], cases=None) -> dict:

@@ -1,6 +1,7 @@
 """Pump Cedar boundary checks; controlled answers are never model-quality scores."""
 from collections import Counter
 from contextlib import nullcontext
+from dataclasses import replace
 import hashlib
 import html
 import io
@@ -11,6 +12,7 @@ import pytest
 
 from case_intelligence.generation import (EvidenceItem, GroundedGenerationService,
     UnavailableGenerator)
+from case_intelligence import workflow_quality_gold
 from case_intelligence.workflow_quality_gold import (CRITERION, FOLLOW_UP, UNSUPPORTED_QUESTION,
     classification_metrics, fingerprint, sources)
 
@@ -44,7 +46,7 @@ def test_gold_rubric_and_uncertainty_accounting_are_independent_of_predictions()
     assert len(cases) == 30
     assert Counter(case.relevant for case in cases) == {True: 24, False: 6}
     assert len({case.case_id for case in cases}) == 30
-    assert fingerprint() == "56a5bca6a2e7d7d9b05331b25e97432a854731d18cdb4c237b2bfca2366740aa"
+    assert fingerprint() == "320926a4336789d175567ab597ee204a653662b9c2b7c8960651705e1bc80cfb"
     assert len(next(case.units for case in cases if case.case_id == "late_page-comparison")) == 15
     perfect = {case.case_id: "include" if case.relevant else "not_identified" for case in cases}
     assert classification_metrics(perfect)["recall"] == 1
@@ -60,6 +62,43 @@ def test_gold_rubric_and_uncertainty_accounting_are_independent_of_predictions()
     assert classification_metrics({})["precision"] is None
     with pytest.raises(ValueError):
         classification_metrics({"not-in-fixture": "include"})
+
+
+@pytest.mark.parametrize("control", ["SUITE", "CRITERION", "FOLLOW_UP", "UNSUPPORTED_QUESTION"])
+def test_gold_fingerprint_changes_with_each_evaluation_control(monkeypatch, control):
+    original = fingerprint()
+    monkeypatch.setattr(workflow_quality_gold, control,
+                        getattr(workflow_quality_gold, control) + " Synthetic changed control.")
+    assert fingerprint() != original
+
+
+@pytest.mark.parametrize("dimension", tuple(workflow_quality_gold.USEFULNESS_RUBRIC))
+def test_gold_fingerprint_changes_with_each_semantic_rubric_definition(monkeypatch, dimension):
+    original = fingerprint()
+    monkeypatch.setitem(workflow_quality_gold.USEFULNESS_RUBRIC, dimension,
+                        workflow_quality_gold.USEFULNESS_RUBRIC[dimension] + " Require an additional supported distinction.")
+    assert fingerprint() != original
+
+
+@pytest.mark.parametrize("change", [
+    {"units": ("Synthetic changed source content.",)},
+    {"relevant": False},
+    {"reason": "Synthetic changed gold-label justification."},
+])
+def test_gold_fingerprint_changes_with_source_content_and_gold_labels(monkeypatch, change):
+    original = fingerprint()
+    cases = sources()
+    monkeypatch.setattr(workflow_quality_gold, "sources", lambda: (replace(cases[0], **change), *cases[1:]))
+    assert fingerprint() != original
+
+
+def test_gold_fingerprint_is_stable_for_identical_inputs_and_rubric_mapping_order(monkeypatch):
+    original = fingerprint()
+    cases = tuple(replace(case) for case in sources())
+    monkeypatch.setattr(workflow_quality_gold, "sources", lambda: cases)
+    monkeypatch.setattr(workflow_quality_gold, "USEFULNESS_RUBRIC",
+                        dict(reversed(tuple(workflow_quality_gold.USEFULNESS_RUBRIC.items()))))
+    assert fingerprint() == original == fingerprint()
 
 
 @pytest.mark.parametrize("miss_maintenance", [False, True])

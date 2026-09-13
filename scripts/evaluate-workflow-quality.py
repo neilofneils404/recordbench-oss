@@ -27,6 +27,54 @@ from case_intelligence.workflow_quality_gold import (CRITERION, FOLLOW_UP,
     fingerprint, sources)
 
 
+class EvaluationIdentityError(RuntimeError):
+    """Fatal attribution failure, never a scored unavailable source packet."""
+
+
+class DigestCheckedOllamaGenerator(OllamaGenerator):
+    """Check tag snapshots around every inference, including internal repairs."""
+
+    def __init__(self, endpoint, model, expected_digest):
+        super().__init__(endpoint, model, timeout=90)
+        self.expected_digest = expected_digest
+        self.tag_digest_checks = 0
+        self.request_attempts = 0
+        self.verified_request_boundaries = 0
+
+    def verify_identity(self):
+        tags = _bounded_json_get(f"{self.endpoint}/api/tags", timeout=5)
+        models = tags.get("models") if isinstance(tags, dict) else None
+        matches = [item for item in models if isinstance(item, dict) and item.get("name") == self.model] if isinstance(models, list) else []
+        digest = matches[0].get("digest") if len(matches) == 1 else None
+        if not isinstance(digest, str) or digest.removeprefix("sha256:") != self.expected_digest:
+            raise EvaluationIdentityError(
+                "The local model identity is unavailable, ambiguous or its digest differs; "
+                "evaluation aborted without a result receipt.")
+        self.tag_digest_checks += 1
+
+    @property
+    def available(self):
+        self.verify_identity()
+        return True
+
+    def _checked_call(self, operation, **kwargs):
+        self.verify_identity()
+        self.request_attempts += 1
+        try:
+            return operation(**kwargs)
+        finally:
+            # Also verify failed requests before ordinary generation failures can
+            # become needs_attention or fall back to a first verified answer.
+            self.verify_identity()
+            self.verified_request_boundaries += 1
+
+    def generate(self, **kwargs):
+        return self._checked_call(super().generate, **kwargs)
+
+    def classify_source(self, **kwargs):
+        return self._checked_call(super().classify_source, **kwargs)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write-corpus", type=Path)
@@ -47,6 +95,8 @@ def main():
                 (directory / f"unit-{number:03d}.txt").write_text(text + "\n", encoding="utf-8")
         (args.write_corpus / "manifest.json").write_text(json.dumps({"suite": SUITE,
             "synthetic": True, "fingerprint": fingerprint(), "criterion": CRITERION,
+            "questions": [{"id": "follow_up", "text": FOLLOW_UP},
+                          {"id": "unsupported_premise", "text": UNSUPPORTED_QUESTION}],
             "sources": [asdict(case) for case in cases], "usefulness_rubric": USEFULNESS_RUBRIC}, indent=2) + "\n")
         print(f"Created {len(cases)} authored source cases; no model evaluation performed.")
         return
@@ -61,11 +111,9 @@ def main():
     if args.output.exists():
         parser.error("Choose a new receipt path; earlier results are never overwritten.")
     expected = args.expected_digest.removeprefix("sha256:")
-    tags = _bounded_json_get(args.endpoint.rstrip("/") + "/api/tags", timeout=5)
-    model = next((item for item in tags.get("models", []) if item.get("name") == args.model), None)
-    if not model or model.get("digest", "").removeprefix("sha256:") != expected:
-        parser.error("The explicit local model is unavailable or its digest differs; no evaluation performed.")
-    service = GroundedGenerationService(OllamaGenerator(args.endpoint, args.model, timeout=90))
+    client = DigestCheckedOllamaGenerator(args.endpoint, args.model, expected)
+    client.verify_identity()
+    service = GroundedGenerationService(client)
     rows, predictions = [], {}
     for case in cases:
         outcomes = []
@@ -100,10 +148,18 @@ def main():
     result = {"suite": SUITE, "synthetic": True, "public_revision": subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "working_tree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),
-        "fixture_fingerprint": fingerprint(), "model": args.model, "artifact_digest": expected,
+        "fixture_fingerprint": fingerprint(), "model": client.model, "artifact_digest": expected,
         "criterion": CRITERION, "evaluation_boundary": "Actual model with source-shaped authored packets and production grounding verifier; source labels aggregated from every unit. Not extraction, persistence, hierarchical synthesis, browser or model qualification.",
         "metrics": classification_metrics(predictions), "results": rows, "answers": answers,
         "semantic_review": {"status": "requires independent human rubric scoring", "rubric": USEFULNESS_RUBRIC}}
+    client.verify_identity()
+    result["model_verification"] = {
+        "method": "tag_digest_checks_before_and_after_each_request",
+        "tag_digest_checks": client.tag_digest_checks,
+        "request_attempts": client.request_attempts,
+        "verified_request_boundaries": client.verified_request_boundaries,
+        "limitation": "Tag snapshots are not immutable per-response attestation; keep the local model unchanged during the run. A change and reversion between checks cannot be ruled out.",
+    }
     with args.output.open("x", encoding="utf-8") as stream:
         json.dump(result, stream, indent=2)
         stream.write("\n")
@@ -111,4 +167,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except EvaluationIdentityError as exc:
+        raise SystemExit(str(exc)) from None

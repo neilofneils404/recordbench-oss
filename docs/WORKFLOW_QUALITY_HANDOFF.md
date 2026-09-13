@@ -46,7 +46,16 @@ handoff sources under six labeled conditions (baseline, identifier variation,
 paraphrase, transcript wording, placement on late pages, and repeated support).
 There are 24 gold-relevant cases and six unrelated controls. Each label has a
 written reason independent of the classifier. The suite fingerprint is
-`56a5bca6a2e7d7d9b05331b25e97432a854731d18cdb4c237b2bfca2366740aa`.
+`320926a4336789d175567ab597ee204a653662b9c2b7c8960651705e1bc80cfb`.
+It binds the suite ID, classification criterion, complete source content and
+gold labels, both evaluated questions in execution order, and all seven semantic
+rubric definitions. Dictionary ordering does not change the fingerprint.
+The earlier fingerprint
+`56a5bca6a2e7d7d9b05331b25e97432a854731d18cdb4c237b2bfca2366740aa`
+covered only the suite ID, criterion and source gold; it cannot establish which
+questions or rubric accompanied an old receipt. Retain those receipts as recorded
+and inspect their question/rubric content before comparing results. This hash
+correction does not change any source, question, gold label or rubric definition.
 
 This is a broader challenge matrix than the five-source acceptance case, but
 it is still variants of one matter. It is not a representative domain sample.
@@ -87,7 +96,7 @@ grounded-answer boundary but does not pretend to have transcribed a recording.
 On a prepared Linux development environment, run the unmodified tests:
 
 ```console
-PYTHONPATH=src python -m pytest -q tests/test_workflow_quality_handoff.py
+PYTHONPATH=src python -m pytest -q tests/test_workflow_quality_handoff.py tests/test_workflow_quality_evaluator.py
 PYTHONPATH=src python -m pytest -q tests/test_full_text_review.py tests/test_review_decision_conflicts.py tests/test_entity_discovery.py tests/test_generation.py tests/test_review_acceptance_pack.py
 ```
 
@@ -118,9 +127,31 @@ python scripts/evaluate-workflow-quality.py \
   --output /tmp/pump-cedar-model-results-new.json
 ```
 
-It never downloads or starts models. It uses the application classifier and
-grounding verifier on every authored packet, aggregates source outcomes, retains
-packet rationales and failures, and runs the supplied follow-up plus the
+It never downloads, copies, starts or changes models. It checks the expected tag
+digest during availability checks, before and after every classifier or answer
+request (including grounding repairs), and before writing a result receipt.
+A changed, missing, malformed or unavailable model identity aborts evaluation
+without a result receipt; it is not recorded as a source needing attention.
+These are tag snapshot checks, not immutable per-response attestation. Keep the
+local model unchanged throughout the run: a change and reversion between checks
+cannot be ruled out by the runner.
+The receipt records the verification method, successful tag checks, request
+attempts and verified request boundaries, including requests whose generation
+failed. These checks use the digest exposed by [Ollama's model inventory](https://docs.ollama.com/api/tags);
+the [chat response contract](https://docs.ollama.com/api/chat) provides a model
+name rather than an immutable response digest.
+
+The evaluator regressions call its entrypoint with the production classifier,
+answer verifier and repair logic, replacing only the model transport with
+synthetic responses. They demonstrate rejection of changed or unverifiable
+identity at request and receipt boundaries, and retain ordinary uncertainty
+when inference fails under a verified stable identity. They do not run a model
+or score its quality. Separate fingerprint mutation tests prove that changing
+either question or any rubric definition changes the recorded fixture identity.
+
+It uses the application classifier and grounding verifier on every authored
+packet, aggregates source outcomes, retains packet rationales and failures, and
+runs the supplied follow-up plus the
 unsupported purchase-order question. It records revision, dirty-tree status,
 model digest, fixture fingerprint and unscored semantic rubric. Its current
 boundary is authored packets, not a complete ingestion/browser/hierarchy run.

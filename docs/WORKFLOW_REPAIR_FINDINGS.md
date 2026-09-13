@@ -117,6 +117,42 @@ all 23 pass with the disclosed fixture accommodations. Compilation, Compose,
 publication content and independent secret scans also pass. This remains a
 bounded native comparison, not a green application gate.
 
+## Hosted validation and evaluation review corrections
+
+Public CI for `bbdaaef5a2a72183eef140b7c6541b5e5b751102` completed all six
+Quality gates successfully. Its unadapted Linux application run returned
+**3,011 passed, 9 skipped**. The [exact application job](https://github.com/neilofneils404/recordbench-oss/actions/runs/34732508452/job/103657780581)
+covers the complete candidate at that revision, including the Note-preview
+follow-up; it is separate from the earlier returned patch-only receipt.
+
+Hosted code review at that revision identified two evaluation-tool provenance
+gaps. The runner checked its mutable model tag only once, and the fixture
+fingerprint omitted the evaluated questions and semantic rubric. Synthetic
+transport reproduces a mid-run tag change that still writes the original
+digest on the old runner. The correction checks tag identity during availability,
+around every inference and repair request, and before receipt creation. A lost
+identity aborts without a scored receipt; a generation failure with verified
+identity retains its ordinary uncertainty outcome. Tag snapshots do not provide
+immutable per-response attestation, as the receipt and quality handoff explain.
+
+Both questions and every rubric definition now contribute to the fingerprint,
+and the authored corpus manifest includes these controls. Mutation tests fail
+against the previous fingerprint for both questions and all seven rubric
+definitions. Earlier receipts remain intact with their original, narrower hash.
+These corrections change no application workflow, source-support validator,
+model artifact or stored user work. Fresh CI and hosted review must cover the
+corrected commit; the successful checks above apply to their recorded revision.
+
+Local validation of these review corrections passed **103 focused checks**
+(100 workflow/evaluator cases and three frozen acceptance-pack checks) with the
+existing disclosed native PDF/media accommodations. The unadapted macOS suite
+returned **2,882 passed, 127 failed, 36 fixture errors and 9 skipped**. All 34
+added tests passed; every previously collected node retained its outcome, with
+identical failed/error node sets. This is still a bounded native comparison.
+All 194 transcription tests, compilation, Compose and publication content
+checks passed. No additional browser run is claimed for this evaluator-only
+follow-up; the existing workflow browser evidence above retains its scope.
+
 ## Compatibility and recovery
 
 Historical investigation counters are never clamped, inflated or rewritten.

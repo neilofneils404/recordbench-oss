@@ -58,7 +58,8 @@ PYTHONPATH=src CASE_INTELLIGENCE_STORAGE_RESERVE_GIB=0 .venv/bin/python -m pytes
   tests/test_saved_answer_report_support.py \
   tests/test_saved_answer_payload_budget.py \
   tests/test_saved_answer_note_preview.py \
-  tests/test_workflow_quality_handoff.py
+  tests/test_workflow_quality_handoff.py \
+  tests/test_workflow_quality_evaluator.py
 .venv/bin/python scripts/run-browser-acceptance.py --output /tmp/workflow-existing-browser-new
 ```
 
