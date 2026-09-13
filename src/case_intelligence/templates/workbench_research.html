@@ -116,7 +116,7 @@
               {% if step.get('retrieval_outcome') %}
               <p>
                 {% if step.retrieval_outcome == 'unavailable' %}<strong>Retrieval unavailable</strong> · hit count unknown.
-                {% else %}<strong>{{ 'No hits' if step.retrieval_outcome == 'zero_hits' else 'No new evidence' if step.retrieval_outcome == 'no_new_evidence' else 'New evidence' }}</strong> · {{ step.hit_count }} returned passages · {{ step.selected_passages }} selected passages.{% endif %}
+                {% else %}<strong>{{ 'No hits' if step.retrieval_outcome == 'zero_hits' else 'No new evidence' if step.retrieval_outcome == 'no_new_evidence' else 'New evidence' }}</strong> · {{ step.hit_count }} candidate passages · {{ step.selected_passages }} selected passages.{% endif %}
                 {% if step.retrieval_outcome != 'new_evidence' %}{{ step.text }}{% endif %}
               </p>
               {% endif %}

@@ -117,7 +117,7 @@ def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
     ]
     for label, key in (
         ("Search passes", "search_pass_count"),
-        ("Returned passages across passes (may repeat)", "candidate_passage_count"),
+        ("Candidate passages across passes (may repeat)", "candidate_passage_count"),
         ("Unique supporting passages", "evidence_passage_count"),
         ("Distinct supporting sources", "evidence_source_count"),
         ("Sources with searchable text", "searchable_count"),

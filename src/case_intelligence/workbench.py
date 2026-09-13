@@ -2795,6 +2795,7 @@ class CaseIntelligenceWorkbench:
         *,
         maximum: int = 12,
         required_kinds: Sequence[str] = (),
+        candidate_callback: Callable[[WorkbenchCitation], None] | None = None,
     ) -> tuple[WorkbenchCitation, ...]:
         """Diversify top anchors, then use remaining slots for media neighbors."""
 
@@ -2874,7 +2875,10 @@ class CaseIntelligenceWorkbench:
                     units[neighbor_index],
                     neighbor_index + 1,
                 )
-                append(self._citation(matter, candidate))
+                neighbor = self._citation(matter, candidate)
+                if candidate_callback is not None:
+                    candidate_callback(neighbor)
+                append(neighbor)
                 if len(selected) >= limit:
                     break
         return tuple(selected)
@@ -5227,19 +5231,30 @@ class CaseIntelligenceWorkbench:
             except RetrievalUnavailable:
                 retrieval_available = False
                 found = ()
-            candidate_count += len(found)
-            lifetime_candidates += len(found)
-            candidate_documents.update(item.document_id for item in found)
-            lifetime_documents.update(item.document_id for item in found)
             if adaptive and seed_search_pending and retrieval_available:
                 seed_search_pending = False
+            # Answer retrieval has already deduplicated primary and modality
+            # results. Selection may also inspect neighboring transcript units;
+            # account for those exact candidates before admission or truncation.
+            candidates = list(found)
+
+            def record_candidate(candidate: WorkbenchCitation) -> None:
+                if all(item.support_token != candidate.support_token for item in candidates):
+                    candidates.append(candidate)
+
             selectable = tuple(item for item in found if item.support_token not in seen_tokens) if adaptive else found
             selected = self._answer_evidence_citations(
                 matter,
                 selectable,
                 maximum=budget.selected_per_pass,
                 required_kinds=intent.required_evidence_kinds,
+                candidate_callback=record_candidate,
             )
+            found = tuple(candidates)
+            candidate_count += len(found)
+            lifetime_candidates += len(found)
+            candidate_documents.update(item.document_id for item in found)
+            lifetime_documents.update(item.document_id for item in found)
             new_selected = [item for item in selected if item.support_token not in seen_tokens]
             if adaptive:
                 selected = new_selected[:max(0, budget.unique_evidence - len(citations))]

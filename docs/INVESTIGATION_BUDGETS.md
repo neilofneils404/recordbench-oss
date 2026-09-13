@@ -20,9 +20,21 @@ results is rejected before retrieval; investigations request the supported 20.
 
 Requested and effective limits are saved separately and are equal for current
 runs. Fewer matches are actual results, not an undisclosed reduction in budget.
-Candidate occurrences count repeated returned passages. Adaptive investigations
-exclude already selected passages before selecting new generation inputs. Unique selected passages and candidate sources are deduplicated.
-Candidate sources means sources represented in returned results, not every source
+Candidate occurrences count passages returned by primary or requested-kind
+retrieval, plus adjacent transcript passages actually inspected during evidence
+selection. A support token counts once within a pass, including when a neighbor
+was already a retrieved anchor; the same passage can count again in a later pass.
+Both `hit_count` and `candidate_passages` describe that per-pass candidate
+population, not a corpus-wide match count. Source counts describe distinct sources
+in that same population. Selection and remaining-ledger-capacity limits are then
+applied: in adaptive investigations `selected_passages` and `new_evidence` count
+newly admitted passages, and `analyzed_units` counts those sent to that pass's
+generation packet. Historical fixed-query plans can select and analyze an
+already admitted passage again; their `new_evidence` still counts only new ledger
+admissions, so it can be lower than their `selected_passages`.
+Adaptive investigations exclude already selected anchors before selecting new
+generation inputs. Unique selected passages and candidate sources are deduplicated.
+Candidate sources means sources represented in these candidates, not every source
 in the searched index. Unavailable-source counts describe matter availability at
 run start; the existing completion coverage notice separately describes changes
 while the run executes. A source-set run can therefore have unavailable matter
@@ -71,6 +83,29 @@ export agreement, cancellation, recovery, compatibility, portable metadata, and
 SQLite online backup followed by clean restore and integrity checking. Existing
 research, generation, export, and changing-source coverage tests remain applicable.
 These local tests do not validate a Linux/GPU deployment or model throughput.
+
+`tests/test_investigation_candidate_accounting.py` adds the newly authored Pump
+Cedar corpus, a generated silent WAV and controlled transcription transport.
+The fixture explicitly continues past the recording check; it does not test ASR.
+The real answer retrieval and selection producers combine primary documents,
+missing-kind transcript retrieval, duplicate passages and adjacent moments.
+At public baseline `d43e142769b5d57a901fb58439bf841ed954b8b4`, its first pass saved
+three candidate passages but admitted five, so `_finish_research_job` rejected
+the completed synthesis with invalid search outcome counters. The repair counts
+the two actual adjacent candidates before admission; it does not infer counts
+from selected totals or relax export validation. Tests also cover overlapping
+anchor/neighbor candidates, duplicate-only, zero-hit and unavailable passes,
+bounded admission, interruption/resume, original-source resolution, investigation
+and Report exports, and changed transcript support rejection. Exact candidate
+counts across checkpoints, progress and exports do not measure recall or draft
+usefulness.
+
+Historical saved counts are not rewritten or reconstructed from selected totals.
+If a run saved before this correction fails checkpoint verification because its
+candidate counts are inconsistent, start a new investigation from the same
+question and source scope. Resume preserves its recorded passes and therefore
+does not repair that earlier accounting. Keep the original saved run for review
+history; changed-source evidence and inconsistent counters remain rejected.
 
 See [evidence-driven investigation](EVIDENCE_DRIVEN_INVESTIGATION.md) for the
 source-backed queue, checkpoint resumption, and explicit additional budgets.

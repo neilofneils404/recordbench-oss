@@ -103,8 +103,10 @@ revision, license, or deployment configuration is changed by this slice.
 
 Every completed pass records its query, reason, motivating support token when
 applicable, `hit_count`, `selected_passages`, and `retrieval_outcome` in the
-checkpoint and final result. The hit count describes returned passages within
-the retrieval budget, not the total number of matching chunks in a corpus.
+checkpoint and final result. The hit count describes retrieved candidates and
+adjacent transcript candidates actually inspected during selection, deduplicated
+within the pass; see [candidate accounting](INVESTIGATION_BUDGETS.md). It does
+not describe the total number of matching chunks in a corpus.
 A successful empty search records `hit_count: 0` and `zero_hits`. A search that
 returns only already-selected evidence records `no_new_evidence` and zero new
 selected passages. Unavailable retrieval records an unknown (`null`) hit count
