@@ -73,8 +73,24 @@ records exact nodes, commits and content hashes.
 
 No model revision, storage schema, source-token contract, authorization policy,
 or deployment behavior changes are included. No acceptance-pack files were
-changed. The Linux gate remains pending; see
-[Linux validation and feedback](WORKFLOW_LINUX_VALIDATION.md).
+changed.
+
+## Returned Linux validation
+
+The returned Linux package validates the exact four production-file changes on
+the same public baseline. Its patch and all nine artifact checksums were checked
+on receipt. The native Linux contributor gate reports **2,945 application tests
+passed, 9 skipped**, **194 transcription tests passed**, and successful
+compilation, Compose and publication checks. Its independently authored 25-case
+suite passed; both new browser workflows completed while the baseline reproduced
+both failures. The baseline full gate separately failed one unchanged
+timestamp-fixture precondition, which does not establish a workflow regression.
+
+Linux received the inline patch, not the local bundle or 43 new local tests.
+Do not attribute its results to the complete unpublished commit. The returned
+tests largely overlap the existing stronger regressions and support no additional
+production change. See the [returned evidence and precise limits](WORKFLOW_LINUX_FEEDBACK.md)
+and the [Linux validation handoff](WORKFLOW_LINUX_VALIDATION.md) for further runs.
 
 ## Compatibility and recovery
 

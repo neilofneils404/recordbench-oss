@@ -1,5 +1,23 @@
 # Linux validation and feedback handoff
 
+## Returned result
+
+Linux feedback has returned for the exact four-file production patch over
+`d43e142769b5d57a901fb58439bf841ed954b8b4`. The original local bundle was unavailable
+to the Linux task; it received the patch directly and authored separate synthetic
+tests. Its native contributor gate and 25 new checks passed, and its browser
+reproduced both baseline failures and verified both corrected workflows. All
+returned artifact hashes and production-file hashes match.
+
+See [the returned Linux receipt](WORKFLOW_LINUX_FEEDBACK.md) for commands, totals,
+the unrelated baseline fixture failure and remaining limits. This validates the
+production patch, not the complete local commit or its 43 new tests. No further
+production repair follows from these results. The steps below remain a handoff
+for validating the complete candidate when its bundle is actually available;
+do not assume access to a local artifact or unpublished Git revision.
+
+## Complete candidate transfer
+
 Validate the exact local review candidate named in the accompanying
 `candidate.json`, against public baseline
 `d43e142769b5d57a901fb58439bf841ed954b8b4`. The accompanying Git bundle preserves
