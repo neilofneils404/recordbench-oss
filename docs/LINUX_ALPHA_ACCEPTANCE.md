@@ -78,6 +78,9 @@ A new checkout on a warm engine is not a cold image build. Signed offline
 antivirus import can validate recovery, but does not prove first-download access
 or subsequent refresh. Do not delete unrelated Docker data to manufacture a cold
 run. Use a new disposable VM when an empty engine is required.
+If the default signature download is blocked, use the complete
+[signed CVD acquisition and import recipe](ANTIVIRUS_RECOVERY.md#obtain-a-complete-signed-bundle-on-a-donor)
+and record the import lane. Do not repeatedly retry an upstream cooldown.
 
 ## 2. Prepare, resume, and reach the first export
 
@@ -112,6 +115,8 @@ file option is supplied. It verifies TLS and the installed release before any
 browser writes. Its source SHA and the node's installed release ID are separate
 fields; retain both. See [Installed CPU browser acceptance](INSTALLED_CPU_ACCEPTANCE.md)
 for its exact contract and JSON failure codes.
+Compare the installed ID with the maintainer's ID calculated from a clean archive
+of this candidate. Local test caches are excluded from the capsule fingerprint.
 Its `phase_seconds` and `first_export_seconds` are measured from the runner's
 own monotonic clock. The first-export value includes browser setup/download and
 password waiting; separately record elapsed time before starting the runner to
@@ -128,12 +133,28 @@ reviewers with matching display names and checks this three-account boundary:
 | Selected reviewer | Matter and export return 200 after the grant; both return 404 in the same signed-in session after its last grant is removed. |
 | Unassigned reviewer | Matter and export return 404 while the other reviewer has access. |
 
+The runner starts the administrator first and uses at most two Chrome sessions
+at once. Each new reviewer signs in once and closes to become eligible for the
+case-team picker. The later access matrix uses fresh independent reviewer
+sessions: unassigned denial first, then selected access and revocation without
+signing that selected session in again.
+
 Retain the runner's JSON output. A nonzero exit, failed phase or unrun phase is
 not acceptance. Diagnose locally with [installation diagnostics](INSTALL_DIAGNOSTICS.md)
 and [antivirus recovery](ANTIVIRUS_RECOVERY.md); record each manual intervention.
 Do not weaken reserve, malware scanning, TLS, account checks or network isolation
 to get a passing result. A mirror or offline import changes the signature lane
 in the receipt and leaves cold default-download acceptance pending.
+
+After a failed attempt, use `--allow-previous-synthetic-runs` only when the node
+contains exclusively the runner's recognized synthetic accounts and matters.
+Manually created accounts or matters do not qualify. For a new acceptance run
+after manual experiments, use a fresh disposable node at the supplied candidate;
+preserve the previous node and its private failure evidence. Do not remove
+unknown work, disable accounts or loosen the empty-node check to force a rerun.
+Running only a newer browser helper against an older installed capsule is a
+useful diagnostic, but record both revisions and do not call it acceptance of
+the newer full candidate.
 
 Separately follow **Open it from your laptop** in the guide: verified SSH host,
 loopback forward, matching public-CA fingerprint, dedicated Firefox evaluation

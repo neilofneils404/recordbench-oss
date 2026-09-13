@@ -46,6 +46,47 @@ real Chrome sessions against a disposable application. Its HTTPS fixture tests
 check real certificate trust and refusal cases. The installed x86-64 gateway,
 Linux NSS integration and host browser policy remain external acceptance gates.
 
+## Follow-up candidate corrections
+
+Browser acceptance must not depend on starting all three Chrome sessions before
+administrator sign-in. The revised runner starts the administrator first,
+signs each new reviewer in once to register its principal and closes those
+browsers, then uses fresh independent sessions for the access matrix. It checks
+the unassigned account and closes that browser before opening the selected
+reviewer's browser. That selected session remains alive for both allowed access
+and revocation. Initially empty inputs no longer receive an unnecessary WebDriver
+clear command; focus and exact entered values remain checked. WebDriver failures
+report only allowlisted error, method and operation fields. These changes do not
+establish that memory pressure caused a particular browser failure, or turn an
+incomplete installed journey into a pass.
+The corrected installed/existing browser-runner suite passed 95 tests. A full
+local Chrome helper rehearsal passed all journey phases, including first-login
+registration and the final access matrix, while asserting five total profiles
+and at most two live browsers. The rehearsal used a disposable synthetic app;
+it does not establish installed Linux HTTPS, NSS or browser-sandbox acceptance.
+
+A separate clean-source comparison reproduced a capsule fingerprint mismatch:
+the installer hashed a nested pytest cache that its copy operation excluded.
+At `854ab326fdd7566614c8da37a8d1fe2302e56f3d`, the clean archive produces
+`0.1.0-alpha.2-b9fe419d710c`. That is the correct clean-source capsule for that
+revision. Hashing and copying now share the same cache filter. Synthetic tests
+cover nested caches, source changes and symbolic-link refusal even inside an
+excluded directory. Every later candidate needs its own clean-archive ID.
+The combined installer, first-run handoff, diagnostics, antivirus and evaluation
+TLS suite passed 589 tests after the cache correction.
+
+The antivirus guide now includes acquisition from an empty donor directory,
+complete signed CVDs, checksum transfer and the existing offline verification
+and import. A donor with working upstream access is still required. Success
+using imported signatures leaves the default first-download and future refresh
+lanes unproven on the target host.
+The documented donor FreshClam command was exercised with the pinned amd64 image
+under emulation: an empty directory downloaded all three complete CVDs and passed
+all three engine load tests in approximately 39 seconds. Network-disabled
+`sigtool` verification and signed-header freshness checks also passed. This is
+donor component evidence; cross-host SSH transfer and native installed acceptance
+remain separate checks.
+
 ## Antivirus engine evidence
 
 The existing pinned `clamav/clamav` image was exercised as linux/amd64 under
