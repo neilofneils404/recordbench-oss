@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Run synthetic People browser acceptance in an isolated loopback HTTPS node.
 
+The browser uses HTTPS on a random external port. The application receives a
+simulated HTTP backend scope with a portless Host, as behind TLS termination.
+This checks browser behavior; it does not run the installed gateway container.
+
 Requires this checkout's Python dependencies, Node, OpenSSL and Playwright with
 Chromium. Set PLAYWRIGHT_MODULE to an installed playwright package when it is
 not resolvable from the checkout. No existing node is contacted or modified.
@@ -58,10 +62,18 @@ def main() -> int:
         app = create_workbench_app(root / "runtime", generator=UnavailableGenerator(), auth_mode="local",
             secure_cookie=True, local_settings=LocalAccountSettings(repository.path, management_root=repository.path.parent),
             learned_retrieval=False, answer_workers=1)
+
+        async def backend_http_scope(scope, receive, send):
+            if scope["type"] == "http":
+                scope = {**scope, "scheme": "http",
+                    "headers": [(key, b"127.0.0.1" if key == b"host" else value)
+                                for key, value in scope["headers"]]}
+            await app(scope, receive, send)
+
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen(64)
-        server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False,
+        server = uvicorn.Server(uvicorn.Config(backend_http_scope, log_level="error", access_log=False,
             ssl_keyfile=str(key), ssl_certfile=str(cert)))
         thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
         thread.start()

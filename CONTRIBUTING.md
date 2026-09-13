@@ -50,6 +50,10 @@ make bootstrap
 make check
 ```
 
+To see the interface while developing, run `make dev` after bootstrap. It opens
+the separate [synthetic development preview](#open-the-synthetic-development-preview);
+you do not need to install an application node to make a UI or workflow contribution.
+
 Bootstrap creates `.venv`, installs the application and bundled transcription
 service together in editable mode (including test, PostgreSQL, and browser
 client dependencies), then runs `pip check`. Package installation requires access
@@ -98,6 +102,53 @@ GitHub Actions installs and reruns the same bootstrap, then runs application,
 transcription, sanitizer, compilation,
 standard Compose, Kerberos overlay, and non-interactive installer contracts. The
 workflow actions are pinned to reviewed commit SHAs.
+
+## Open the synthetic development preview
+
+```console
+make dev
+```
+
+Open the printed `http://127.0.0.1:8786` URL and choose **Taylor Morgan**.
+Use the [two supplied practice records](examples/synthetic-alpha/README.md)
+to create a matter, upload, search, read, save a note and export. If the port is
+busy, `make dev DEV_PORT=0` chooses a free loopback port and prints its URL.
+Stop with Ctrl-C. Each launch creates a fresh temporary runtime and removes
+it on exit; export anything you need before stopping. It does not reopen or
+modify an installed node.
+
+This is a synthetic developer tool. It uses the existing preview identities,
+HTTP on loopback, a zero storage reserve, and disabled malware scanning. It
+clears inherited RecordBench deployment configuration before importing the
+application and supplies an unavailable generator; it downloads no models and
+contacts no configured model/database services. Upload only invented practice
+files. It does not validate real sign-in, TLS, ClamAV or deployed-node behavior.
+Use the [Linux alpha guide](docs/TRY_RECORDBENCH.md) to test those boundaries.
+
+## Install the publication guard from a reviewed checkout
+
+The guard needs its own Python environment **outside** the checkout so a branch
+cannot replace the interpreter or scanner. The application `.venv` cannot serve
+that purpose. Run this from an unchanged, trusted reviewed checkout before
+making your first contribution, using Python 3.12 installed above:
+
+```console
+python3.12 -m venv "$HOME/.local/share/recordbench-publication-python"
+"$HOME/.local/share/recordbench-publication-python/bin/python" -m pip install 'pypdf>=6,<7'
+guard_revision=$(git rev-parse --short=12 HEAD)
+"$HOME/.local/share/recordbench-publication-python/bin/python" \
+  scripts/install-publication-hook.py \
+  "$HOME/.local/share/recordbench-publication-guard/reviewed-$guard_revision"
+git config --get core.hooksPath
+```
+
+Choose a fresh environment path if that name already contains another
+environment. A guard installation directory must be new; keep older reviewed
+installations when installing a later revision. Configure each publishing
+checkout separately, and inspect the printed hook path before the first push.
+See the [publication boundary](docs/PUBLIC_ALPHA.md#prevent-disclosure-before-publishing)
+for exact scope, attribution and review requirements. The hook cannot scan
+content posted through a website or API.
 
 ## Development model
 

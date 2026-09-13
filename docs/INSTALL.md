@@ -1,5 +1,13 @@
 # Installation playbook
 
+**First time here?** [Try RecordBench on Linux](TRY_RECORDBENCH.md) is the short
+CPU-only path from a fresh Ubuntu 24.04 host to your first exported synthetic
+matter. It includes the dedicated account, Docker access, protected HOME,
+browser TLS trust and SSH tunnel. This playbook is the operator reference for
+other profiles, existing nodes, storage, recovery and team access.
+Use [installation diagnostics](INSTALL_DIAGNOSTICS.md) for Docker access,
+storage ownership, resource checks and the shareable content-minimized receipt.
+
 See [Installation handoff and team setup](FIRST_RUN.md) for phase meanings,
 interrupted-run recovery, offline model reuse, and the first browser journey.
 
@@ -243,6 +251,11 @@ Keep the gateway on loopback HTTPS and companion services private.
 
 ## Startup troubleshooting
 
+For a read-only, content-minimized installation receipt, run
+`./install diagnostics --root /srv/recordbench`. Its JSON describes observed
+prerequisites and saved phase states; it does not replace live `doctor` checks.
+See [diagnostics and safe feedback](INSTALL_DIAGNOSTICS.md) before sharing it.
+
 A passing preflight is a point-in-time check. A completed CPU clean-host receipt
 on `ccba441` passed install/resume, doctor, synthetic team setup and encrypted
 backup/isolated restore after operator host corrections. It exposed these setup
@@ -264,24 +277,27 @@ Keep logs private; report only content-free symptoms. Use the node's additional
 Compose overlays/profiles when changing service state. The diagnostic commands
 above only read the base services.
 
-**ClamAV signatures:** the updater healthcheck requires a `daily.*` file larger than one byte
-in its shared `/var/lib/clamav` volume modified within 4,320 minutes (72 hours).
-Missing/stale daily signatures block scanner startup and can block app/gateway
-before the HTTP health loop is reachable. Startup-command failures and health
-timeouts now point to these checks. Inspect updater logs for DNS, TLS, timeouts,
-403/429, permissions and signature validation errors; also confirm clamd loads
-its databases. Do not touch file timestamps or disable scanning to pass health.
+**ClamAV signatures:** the installer gives signature preparation its own bounded
+stage before starting the scanner and application. The updater healthcheck
+requires a main database, a daily database whose header reports a build within
+72 hours (plus five minutes of clock tolerance), and no incomplete-import marker.
+Missing/stale signatures block readiness. Filesystem modification times do not
+establish freshness. Confirm that clamd loads its databases as well.
 
-FreshClam sends its ClamAV User-Agent. A generic curl/wget download is not an
-equivalent test; changing only the UA does not establish a supported updater.
-Datacenter/shared egress may encounter CDN blocks or rate limits. Follow the
-[FreshClam error guidance](https://docs.clamav.net/faq/faq-freshclam.html): check
-engine support, DNS/TLS and proxy behavior, honor cooldowns, and avoid tight retry
-loops. For managed mirroring use the upstream
-[FreshClam/CVDUpdate mirror procedure](https://docs.clamav.net/appendix/CvdPrivateMirror.html).
-Proxy/mirror configuration and persistent updater access remain operator work
-outside the portable tree; keep scanner/model networks private. Confirm a real
-signature refresh and healthy scanner before retrying acceptance.
+Follow [antivirus recovery](ANTIVIRUS_RECOVERY.md) for the supported
+`./install antivirus` mirror/proxy configuration and signed offline import.
+The command requires this node to be stopped; it prints the saved node's stop
+command if needed. Endpoint configuration remains outside the public checkout,
+and the scanner retains its private network. An offline import does not prove
+future updater access.
+
+Inspect updater logs locally for DNS, TLS, timeouts, 403/429, permissions and
+signature validation errors. Follow the
+[FreshClam error guidance](https://docs.clamav.net/faq/faq-freshclam.html): honor
+cooldowns and avoid tight retry loops. A generic curl/wget request is not a
+FreshClam test. Do not touch timestamps, remove cooldown metadata or disable
+scanning to pass health. Confirm a real refresh and healthy scanner before
+retrying fresh-download acceptance.
 
 **Build erodes reserve:** 112 GiB free can pass the 100 GiB check but fall below
 reserve during image construction, especially with `vfs`. The CPU 150 GiB target
@@ -378,11 +394,16 @@ incompatible, undersized or currently occupied selected GPU hardware. Use
 
 ## Unattended local-account example
 
-Passwords and Hugging Face tokens are read only from standard input, never a
-command argument. Because both are needed, use separate controlled staging
-steps rather than concatenating secrets into a shell history. The interactive
-installer is recommended for the initial release. Automation should invoke the
-same commands from a secret manager and inspect exit codes.
+CPU evaluation (`--models none`) needs only the initial local-administrator
+password. It needs no Hugging Face account or token. Follow the complete
+[protected-stdin prepare, resume and doctor example](TRY_RECORDBENCH.md#prepare-and-start-the-cpu-node)
+for a fresh CPU node with browser-managed accounts.
+
+Passwords and optional Hugging Face tokens are read only from standard input,
+never command arguments. A token is needed only for separately gated model
+staging; when both inputs are required, use separate controlled staging steps.
+Automation should invoke those commands from a secret manager and inspect exit
+codes. Keep credentials out of shell history and logs.
 
 ## Model staging
 
@@ -435,6 +456,13 @@ not fetch or merge source code: review and update the clone first, then run:
 ```bash
 ./install update --root /srv/recordbench
 ```
+
+The capsule fingerprint covers the paths and bytes of its allowlisted payload.
+The fingerprint and copy both exclude `__pycache__`, `.pytest_cache` and names
+ending in `.pyc`, including nested caches, so running tests does not change the
+release ID. Symbolic links remain forbidden, including within excluded caches.
+Record the source Git commit and the installed capsule ID separately: they
+identify the selected source revision and the packaged runtime content.
 
 An update requires a newly successful bundled encrypted backup unless no
 bundled backup is configured and the operator supplies `--no-backup`. Operators

@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ matter.name }} · Case Review Bench</title>
-  <link rel="icon" href="{{ url_for('static', path='/favicon.svg') }}?v=stacked-record-1" type="image/svg+xml">
-  <link rel="stylesheet" href="{{ url_for('static', path='/review-bench.css') }}">
-  <script src="{{ url_for('static', path='/review-bench.js') }}" defer></script>
+  <link rel="icon" href="{{ url_for('static', path='/favicon.svg').path }}?v=stacked-record-1" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', path='/review-bench.css').path }}">
+  <script src="{{ url_for('static', path='/review-bench.js').path }}" defer></script>
 </head>
 <body data-initial-seek="{{ '' if seek is none else seek }}">
   <header class="topbar">
@@ -151,7 +151,7 @@
             {% for height in [18,32,24,45,28,53,35,22,48,31,55,26,42,20,38,50,29,44,23,36,52,30,46,25,40,33] %}<i style="height:{{ height }}%"></i>{% endfor %}
           </div>
           <audio id="review-media" controls preload="metadata">
-            <source src="{{ url_for('static', path='/demo-audio.wav') }}" type="audio/wav">
+            <source src="{{ url_for('static', path='/demo-audio.wav').path }}" type="audio/wav">
           </audio>
         </div>
         <div class="transcript-header">

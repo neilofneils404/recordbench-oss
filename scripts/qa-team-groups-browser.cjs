@@ -10,7 +10,8 @@ const password = 'synthetic-browser-password';
   try {
     const options = {ignoreHTTPSErrors: true, viewport: {width: 1440, height: 1000}};
     const admin = await (await browser.newContext(options)).newPage();
-    const reviewer = await (await browser.newContext(options)).newPage();
+    const first = await (await browser.newContext(options)).newPage();
+    const second = await (await browser.newContext(options)).newPage();
     async function login(page, username) {
       await page.goto(origin + '/auth/login');
       await page.getByRole('textbox', {name: 'Username', exact: true}).fill(username);
@@ -19,14 +20,16 @@ const password = 'synthetic-browser-password';
       await page.waitForURL(url => !url.pathname.startsWith('/auth/'));
     }
     await login(admin, 'alice.admin');
-    await admin.goto(origin + '/admin/people');
-    await admin.getByLabel('Name shown in RecordBench').fill('Synthetic Reviewer');
-    await admin.getByLabel('Sign-in username', {exact: true}).fill('synthetic.reviewer');
-    await admin.getByLabel('Password', {exact: true}).fill(password);
-    await admin.getByLabel('Enter password again', {exact: true}).fill(password);
-    await admin.getByRole('button', {name: 'Create account', exact: true}).click();
-    await admin.waitForURL(url => url.pathname === '/admin/people/accounts/synthetic.reviewer');
-    await login(reviewer, 'synthetic.reviewer');
+    for (const [username, page] of [['first.reviewer', first], ['second.reviewer', second]]) {
+      await admin.goto(origin + '/admin/people');
+      await admin.getByLabel('Name shown in RecordBench').fill('Synthetic Reviewer');
+      await admin.getByLabel('Sign-in username', {exact: true}).fill(username);
+      await admin.getByLabel('Password', {exact: true}).fill(password);
+      await admin.getByLabel('Enter password again', {exact: true}).fill(password);
+      await admin.getByRole('button', {name: 'Create account', exact: true}).click();
+      await admin.waitForURL(url => url.pathname === '/admin/people/accounts/' + username);
+      await login(page, username);
+    }
     const slugs = [];
     for (const name of ['Synthetic Alpha', 'Synthetic Beta']) {
       await admin.goto(origin + '/matters/new');
@@ -35,17 +38,30 @@ const password = 'synthetic-browser-password';
       await admin.waitForURL(/\/matters\/[^/]+\/setup/);
       slugs.push(new URL(admin.url()).pathname.split('/')[2]);
     }
-    assert.equal((await reviewer.goto(origin + '/matters/' + slugs[0] + '/home')).status(), 404);
-    assert.equal((await reviewer.goto(origin + '/admin/groups')).status(), 403);
+    for (const page of [first, second]) {
+      assert.equal((await page.goto(origin + '/matters/' + slugs[0] + '/home')).status(), 404);
+      assert.equal((await page.goto(origin + '/admin/groups')).status(), 403);
+    }
     await admin.goto(origin + '/admin/groups');
     for (const name of ['Alpha team', 'Beta team']) {
       await admin.getByLabel('Group name', {exact: true}).fill(name);
       await admin.getByRole('button', {name: 'Create group', exact: true}).click();
       await admin.getByRole('heading', {name, exact: true}).waitFor();
     }
-    await admin.getByLabel('Add person to Alpha team', {exact: true}).selectOption({label: 'Synthetic Reviewer'});
+    const picker = admin.getByLabel('Add person to Alpha team', {exact: true});
+    assert.equal(await picker.inputValue(), '');
+    assert.equal(await picker.evaluate(element => element.checkValidity()), false);
     await admin.getByRole('button', {name: 'Add to Alpha team', exact: true}).click();
-    await admin.getByRole('button', {name: 'Remove Synthetic Reviewer', exact: true}).waitFor();
+    assert.equal(await picker.inputValue(), '');
+    const labels = (await picker.locator('option').allTextContents()).filter(label => label.startsWith('Synthetic Reviewer ('));
+    assert.deepEqual([...labels].sort(), ['Synthetic Reviewer (first.reviewer)', 'Synthetic Reviewer (second.reviewer)']);
+    const selectedLabel = labels[1];
+    const reviewer = selectedLabel.includes('(first.reviewer)') ? first : second;
+    const unassigned = reviewer === first ? second : first;
+    await picker.selectOption({label: selectedLabel});
+    await admin.getByRole('button', {name: 'Add to Alpha team', exact: true}).click();
+    await admin.getByText(selectedLabel + ' added to the group', {exact: true}).waitFor();
+    await admin.getByRole('button', {name: 'Remove ' + selectedLabel, exact: true}).waitFor();
     await admin.screenshot({path: path.join(process.env.RECORDBENCH_QA_ARTIFACTS, 'team-groups-desktop.png'), fullPage: true, animations: 'disabled'});
     await admin.setViewportSize({width: 390, height: 844});
     await admin.reload();
@@ -62,21 +78,25 @@ const password = 'synthetic-browser-password';
     assert.equal((await reviewer.goto(origin + '/matters/' + slugs[0] + '/home')).status(), 200);
     assert.equal((await reviewer.request.get(origin + '/matters/' + slugs[0] + '/notebook/export?format=markdown')).status(), 200);
     assert.equal((await reviewer.goto(origin + '/matters/' + slugs[1] + '/home')).status(), 404);
+    assert.equal((await unassigned.goto(origin + '/matters/' + slugs[0] + '/home')).status(), 404);
+    assert.equal((await unassigned.request.get(origin + '/matters/' + slugs[0] + '/notebook/export?format=markdown')).status(), 404);
     await admin.goto(origin + '/matters/' + slugs[0] + '/setup');
     await admin.getByText('Group: Alpha team', {exact: true}).waitFor();
-    await admin.getByLabel('Add a case team member').selectOption({label: 'Synthetic Reviewer'});
+    await admin.locator('.case-team-list').getByText(selectedLabel, {exact: true}).waitFor();
+    await admin.getByLabel('Add a case team member').selectOption({label: selectedLabel});
     await admin.getByRole('button', {name: 'Add member', exact: true}).click();
     await admin.getByText('Direct member; Group: Alpha team', {exact: true}).waitFor();
     await admin.screenshot({path: path.join(process.env.RECORDBENCH_QA_ARTIFACTS, 'matter-access-reasons.png'), fullPage: true, animations: 'disabled'});
     await admin.goto(origin + '/admin/groups');
-    await admin.getByRole('button', {name: 'Remove Synthetic Reviewer', exact: true}).click();
+    await admin.getByRole('button', {name: 'Remove ' + selectedLabel, exact: true}).click();
+    await admin.getByText(selectedLabel + ' removed from the group; other grants still apply', {exact: true}).waitFor();
     await admin.getByText('No members yet.').first().waitFor();
     assert.equal((await reviewer.goto(origin + '/matters/' + slugs[0] + '/home')).status(), 200);
     await admin.goto(origin + '/matters/' + slugs[0] + '/setup');
     await admin.getByRole('button', {name: 'Remove direct grant', exact: true}).click();
-    await admin.getByText('Direct grant removed for Synthetic Reviewer; any group grants still apply', {exact: true}).waitFor();
+    await admin.getByText('Direct grant removed for ' + selectedLabel + '; any group grants still apply', {exact: true}).waitFor();
     assert.equal((await reviewer.goto(origin + '/matters/' + slugs[0] + '/home')).status(), 404);
     assert.equal((await reviewer.request.get(origin + '/matters/' + slugs[0] + '/notebook/export?format=markdown')).status(), 404);
-    console.log(JSON.stringify({result: 'passed', checks: ['two independent local sign-ins', 'two groups and matters', 'group-only access', 'foreign matter refusal', 'administrator separation', 'mixed access reasons', 'direct grant survives group removal', 'last-grant revocation in open session', 'export access and revocation', 'desktop and mobile layout']}));
+    console.log(JSON.stringify({result: 'passed', checks: ['three independent local sign-ins', 'explicit duplicate-name selection', 'named group and matter receipts', 'two groups and matters', 'group-only access', 'unassigned and foreign matter refusal', 'administrator separation', 'mixed access reasons', 'direct grant survives group removal', 'last-grant revocation in open session', 'export access and revocation', 'desktop and mobile layout']}));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

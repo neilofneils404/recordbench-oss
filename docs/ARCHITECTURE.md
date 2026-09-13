@@ -30,6 +30,22 @@ matter source units. Candidate retrieval combines lexical and vector lanes,
 then a cross-encoder reranks a bounded set. The generator sees only the selected
 evidence; a separate deterministic verifier checks claims and citations.
 
+The installed CPU evaluation selects basic review explicitly. Health combines
+mandatory source review, storage and malware scanning with the selected optional
+capabilities; unselected models do not degrade a healthy basic-review node.
+Remote retrieval readiness is refreshed by one background probe every five
+seconds and expires after fifteen seconds; public health only reads the snapshot.
+Worker health responses are capped at 4 KiB.
+The running release capsule identifier is available in content-free health for
+[installed browser acceptance](INSTALLED_CPU_ACCEPTANCE.md).
+
+The installer prepares antivirus signatures before starting the private scanner.
+The updater has download access and verifies downloaded databases. An explicit
+[recovery command](ANTIVIRUS_RECOVERY.md) configures a private mirror/proxy or
+imports signed CVD databases into a stopped node with a networkless verification
+helper. Database header age and incomplete-import markers gate readiness;
+signature volumes remain rebuildable caches rather than matter storage.
+
 Loose-file selection first uses a matter-authorized, CSRF-protected metadata
 preflight. It returns one content-minimized row per selected file without
 copying bytes, reserving capacity, or creating an upload session; filename

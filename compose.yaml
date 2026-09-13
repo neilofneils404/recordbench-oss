@@ -70,19 +70,52 @@ services:
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
-    command: ["freshclam", "--daemon", "--foreground", "--stdout", "--checks=6", "--user=clamav"]
+    command: ["freshclam", "--config-file=/run/recordbench-freshclam.conf", "--daemon", "--foreground", "--stdout", "--checks=6", "--user=clamav"]
     volumes:
       - clamav-signatures:/var/lib/clamav
+      - type: bind
+        source: ./deploy/clamav
+        target: /opt/recordbench-antivirus
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${RECORDBENCH_CLAMAV_CONFIG:-./deploy/clamav/freshclam.conf}
+        target: /run/recordbench-freshclam.conf
+        read_only: true
+        bind: {create_host_path: false}
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
       - /run/clamav:rw,noexec,nosuid,nodev,size=16m
     networks: [updates]
     healthcheck:
-      test: ["CMD-SHELL", "find /var/lib/clamav -maxdepth 1 -type f -name 'daily.*' -mmin -4320 -size +1c | grep -q ."]
+      test: ["CMD", "sh", "/opt/recordbench-antivirus/signature-health.sh"]
       interval: 15s
       timeout: 5s
       retries: 40
       start_period: 30s
+
+  # An explicit stopped-node import validates signed databases and loads them
+  # without network access. This service is never part of ordinary startup.
+  clamav-import:
+    profiles: [tools]
+    image: clamav/clamav:stable@sha256:594d54aff5ad3b1a5211d67cdc6d49a9a332276da35d821c3dd4cf6c4cdf6237
+    entrypoint: ["sh", "/opt/recordbench-antivirus/import-signatures.sh"]
+    network_mode: none
+    cpus: "${RECORDBENCH_CLAMAV_CPUS:-4.0}"
+    mem_limit: ${RECORDBENCH_CLAMAV_MEMORY:-6g}
+    pids_limit: 128
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    volumes:
+      - clamav-signatures:/var/lib/clamav
+      - type: bind
+        source: ./deploy/clamav
+        target: /opt/recordbench-antivirus
+        read_only: true
+        bind: {create_host_path: false}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
 
   retrieval:
     profiles: [ai]
@@ -325,6 +358,7 @@ services:
       - ${RECORDBENCH_CONFIG_ROOT:?set RECORDBENCH_CONFIG_ROOT}/recordbench.env
     environment:
       RECORDBENCH_ALLOW_CONTAINER_BIND: "1"
+      CASE_INTELLIGENCE_RELEASE_ID: ${RECORDBENCH_RELEASE_ID:-dev}
       RECORDBENCH_BACKUP_STATUS_FILE: /var/lib/recordbench/state/backup-status.json
       CASE_INTELLIGENCE_POSTGRES_DSN_FILE: /run/recordbench-secrets/postgres-dsn
       CASE_INTELLIGENCE_CLAMAV_HOST: clamav

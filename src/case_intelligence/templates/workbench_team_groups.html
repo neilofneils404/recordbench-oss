@@ -3,6 +3,7 @@
 {% block body_class %}administrator-page people-page{% endblock %}
 {% block content %}
 <main class="administrator-main people-main">
+{% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
 <section class="page-heading"><p class="eyebrow">Administration</p><h1>Team groups</h1>
 <p>Reusable groups of people managed in RecordBench. These are separate from sign-in provider groups. A group has matter access only when explicitly granted on that matter’s Case team page.</p>
 <p>Adding or removing a person changes their access to every matter granted to that group. Separate direct grants and other groups remain effective.</p></section>
@@ -15,16 +16,17 @@
 <section class="administrator-panel" aria-labelledby="heading-{{ group.group_id }}">
 <h2 id="heading-{{ group.group_id }}">{{ group.name }}</h2>
 <ul>{% for member in group_members[group.group_id] %}<li>
-<strong>{{ member.display_name }}</strong>{% if member.principal_id not in enabled_principals %} (access disabled){% endif %}
+<strong>{{ member.display_name }} ({{ member.login_name }})</strong>{% if member.principal_id not in enabled_principals %} (access disabled){% endif %}
 <form method="post" action="/admin/groups/{{ group.group_id }}/members/{{ member.principal_id }}/remove">
 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-<button class="button button-secondary" type="submit">Remove {{ member.display_name }}</button></form>
+<button class="button button-secondary" type="submit">Remove {{ member.display_name }} ({{ member.login_name }})</button></form>
 </li>{% else %}<li>No members yet.</li>{% endfor %}</ul>
 <form method="post" action="/admin/groups/{{ group.group_id }}/members" class="people-form">
 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 <label for="person-{{ group.group_id }}">Add person to {{ group.name }}</label>
 <select id="person-{{ group.group_id }}" name="principal_id" required>
-{% for person in group_candidates %}<option value="{{ person.principal_id }}">{{ person.display_name }}</option>{% endfor %}</select>
+<option value="" selected disabled>Choose a person</option>
+{% for person in group_candidates %}<option value="{{ person.principal_id }}">{{ person.display_name }} ({{ person.login_name }})</option>{% endfor %}</select>
 <button class="button button-secondary" type="submit">Add to {{ group.name }}</button></form>
 </section>{% else %}<p>No reusable groups yet.</p>{% endfor %}
 </main>

@@ -24,6 +24,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import recordbench_antivirus
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -37,6 +38,7 @@ RELEASE_DIRECTORIES = (
     "config",
     "deploy",
     "docs",
+    "examples",
     "migrations",
     "schemas",
     "scripts",
@@ -182,7 +184,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("install", "preflight", "doctor", "update", "backup", "restore"),
+        choices=("install", "preflight", "diagnostics", "doctor", "update", "backup", "restore", "antivirus"),
         default="install",
     )
     parser.add_argument("--root", type=Path, help="exact installation state directory")
@@ -247,7 +249,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--json", action="store_true", help="emit a structured preflight result (preflight command only)")
+    parser.add_argument("--json", action="store_true", help="emit structured preflight output (diagnostics always emits JSON)")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--no-backup", action="store_true", help="allow an update without a configured recovery snapshot")
     parser.add_argument("--repository", type=Path, help="encrypted restic repository for backup initialization")
@@ -259,6 +261,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--schedule-backups", action="store_true")
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--antivirus-mirror", help="antivirus command: approved HTTP(S) private signature mirror")
+    parser.add_argument("--antivirus-proxy", help="antivirus command: approved HTTP proxy without credentials")
+    parser.add_argument("--reset-antivirus", action="store_true", help="antivirus command: restore the default FreshClam source")
+    parser.add_argument("--import-signatures", type=Path, help="antivirus command: protected directory with signed main/daily/bytecode CVDs")
     return parser
 
 
@@ -592,6 +598,11 @@ def _release_sources() -> tuple[Path, ...]:
     return tuple(sources)
 
 
+def _release_ignored_names(_directory: str, names: Iterable[str]) -> set[str]:
+    """Use the same cache exclusions for the fingerprint and copied payload."""
+    return {name for name in names if name in {"__pycache__", ".pytest_cache"} or name.endswith(".pyc")}
+
+
 def _release_digest() -> str:
     digest = hashlib.sha256()
     for source in _release_sources():
@@ -599,7 +610,7 @@ def _release_digest() -> str:
         for path in paths:
             if path.is_symlink():
                 raise RuntimeError(f"release source contains a symbolic link: {path}")
-            if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+            if not path.is_file() or _release_ignored_names("", path.relative_to(PROJECT).parts):
                 continue
             relative = path.relative_to(PROJECT).as_posix()
             digest.update(relative.encode("utf-8") + b"\0")
@@ -616,7 +627,7 @@ def _copy_release_entry(source: Path, destination: Path) -> None:
             source,
             destination,
             symlinks=False,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+            ignore=_release_ignored_names,
         )
     else:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1178,52 +1189,225 @@ def _probe(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
 
 
-def _storage_ancestors_safe(ancestor: Path) -> bool:
-    """Require a private creation point and a non-replaceable parent chain."""
+def _runtime_probe_status(command: Sequence[str]) -> str:
+    """Classify bounded diagnostics without returning their private output."""
+    try:
+        result = _probe(command)
+    except subprocess.TimeoutExpired:
+        return "timed-out"
+    except PermissionError:
+        return "client-permission"
+    except OSError:
+        return "unavailable"
+    if result.returncode == 0:
+        return "ready"
+    diagnostic = (result.stderr or "").casefold()
+    if "permission denied" in diagnostic or "access is denied" in diagnostic:
+        return "permission-denied"
+    if any(message in diagnostic for message in (
+        "cannot connect to the docker daemon", "connection refused", "is the docker daemon running",
+    )):
+        return "engine-unreachable"
+    return "unavailable"
+
+
+def _docker_engine_scope() -> str:
+    """A Unix endpoint suggests proximity, not shared host/cgroup capacity."""
+    endpoint = os.environ.get("DOCKER_HOST", "") if not os.environ.get("DOCKER_CONTEXT") else ""
+    if not endpoint:
+        try:
+            result = _probe(["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"])
+            endpoint = result.stdout.strip() if result.returncode == 0 else ""
+        except (OSError, subprocess.TimeoutExpired):
+            return "unknown"
+    if endpoint.startswith("unix:///"):
+        return "unix-socket"
+    if endpoint.startswith(("ssh://", "tcp://", "http://", "https://")):
+        return "remote-or-tcp"
+    return "unknown"
+
+
+def _bounded_system_text(path: Path) -> str:
+    with path.open(encoding="utf-8") as stream:
+        value = stream.read(262_145)
+    if len(value) > 262_144:
+        raise ValueError("system diagnostic exceeds limit")
+    return value
+
+
+def _cgroup_memory_bounds(proc: Path) -> tuple[list[tuple[int, int]], bool]:
+    """Read visible v1/v2 memory limits through the launcher's mounted hierarchy."""
+    memberships = {}
+    for line in _bounded_system_text(proc / "self/cgroup").splitlines():
+        _hierarchy, controllers, location = line.split(":", 2)
+        if not controllers or "memory" in controllers.split(","):
+            membership = Path(location)
+            if not membership.is_absolute() or ".." in membership.parts:
+                raise ValueError("invalid memory hierarchy")
+            memberships["v2" if not controllers else "v1"] = membership
+    bounds = []
+    observed = False
+    for line in _bounded_system_text(proc / "self/mountinfo").splitlines():
+        before, after = line.split(" - ", 1)
+        mount, filesystem = before.split(), after.split()
+        version = ("v2" if filesystem[0] == "cgroup2" else
+                   "v1" if filesystem[0] == "cgroup" and "memory" in filesystem[2].split(",") else None)
+        if version not in memberships:
+            continue
+        unescape = lambda value: re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), value)
+        mounted_root, mountpoint = (Path(unescape(value)) for value in mount[3:5])
+        membership = memberships[version]
+        if membership.is_relative_to(mounted_root):
+            relative = membership.relative_to(mounted_root)
+        elif membership == Path("/"):
+            # A cgroup namespace may expose its own root inside a subtree mount.
+            relative = Path(".")
+        else:
+            continue
+        if not mountpoint.is_absolute() or ".." in mountpoint.parts:
+            raise ValueError("invalid memory mount")
+        directory = mountpoint / relative
+        limit_name, usage_name = (("memory.max", "memory.current") if version == "v2" else
+                                  ("memory.limit_in_bytes", "memory.usage_in_bytes"))
+        while True:
+            limit_text = _bounded_system_text(directory / limit_name).strip()
+            if limit_text != "max":
+                limit = int(limit_text)
+                if limit < 0:
+                    raise ValueError("invalid memory limit")
+                # Linux v1 uses a page-aligned near-LONG_MAX value for unlimited.
+                if limit < 2 ** 60:
+                    usage = int(_bounded_system_text(directory / usage_name).strip())
+                    if usage < 0:
+                        raise ValueError("invalid memory usage")
+                    bounds.append((limit, max(0, limit - usage)))
+            observed = True
+            if directory == mountpoint:
+                break
+            directory = directory.parent
+    return bounds, observed
+
+
+def _memory_snapshot(proc: Path = Path("/proc")) -> tuple[int, int, str] | None:
+    """Return numeric process-visible capacity; never assume it describes Docker."""
+    try:
+        memory = {}
+        for line in _bounded_system_text(proc / "meminfo").splitlines():
+            match = re.fullmatch(r"(MemTotal|MemAvailable):\s+(\d+)\s+kB", line)
+            if match:
+                memory[match[1]] = int(match[2]) * 1024
+        total, available = memory["MemTotal"], memory["MemAvailable"]
+        if total <= 0 or available > total:
+            return None
+    except (OSError, ValueError, KeyError, UnicodeError):
+        return None
+    try:
+        bounds, observed = _cgroup_memory_bounds(proc)
+        for limit, remaining in bounds:
+            total, available = min(total, limit), min(available, remaining)
+        cgroup = "limited" if bounds else "unlimited" if observed else "unknown"
+    except (OSError, ValueError, IndexError, UnicodeError):
+        cgroup = "unknown"
+    return total, available, cgroup
+
+
+def _memory_advisory(models: str, scope: str) -> PreflightCheck:
+    target = {"none": 16, "review": 32, "transcription": 64, "all": 64}[models]
+    snapshot = _memory_snapshot()
+    observed = "Installer process memory is unavailable"
+    state = "unknown"
+    if snapshot is not None:
+        total, available, cgroup = snapshot
+        observed = f"Installer process view: {available / 1024 ** 3:.1f} GiB available of {total / 1024 ** 3:.1f} GiB; cgroup limits {cgroup}"
+        if scope == "unix-socket" and cgroup != "unknown":
+            # The table is an advisory allocation target, not tested admission.
+            state = "pass" if total >= target * 1024 ** 3 and available >= target * 1024 ** 3 / 2 else "fail"
+    if scope == "remote-or-tcp":
+        observed += "; remote/TCP engine capacity was not measured"
+    elif scope == "unknown":
+        observed += "; Docker engine location is unverified"
+    return PreflightCheck("memory", state, observed, "Leave RAM headroom for builds, scanning and source preparation", False,
+        f"The profile planning target is {target} GiB RAM; less than half currently available warrants attention. Check memory and visible cgroup limits on the Docker engine host, which may differ from this installer process even with a Unix socket. Coordinate other workloads before installation; no services are stopped automatically. These figures are advisory, not validated minimums. See docs/INSTALL_DIAGNOSTICS.md.")
+
+
+def _storage_ancestor_issue(ancestor: Path) -> str | None:
+    """Explain the protected boundary using fixed categories, never host paths."""
     uid = os.geteuid()
     # The portable no-follow descriptor walk opens directories read-only, so
     # check its read/search requirements before reporting a usable path.
     if not os.access(ancestor, os.R_OK | os.X_OK):
-        return False
+        return "creation-access"
     creation = ancestor.stat()
-    if not stat.S_ISDIR(creation.st_mode) or creation.st_uid != uid or creation.st_mode & 0o022:
-        return False
+    if not stat.S_ISDIR(creation.st_mode):
+        return "creation-type"
+    if creation.st_uid != uid:
+        return "creation-owner"
+    if creation.st_mode & 0o022:
+        return "creation-permissions"
     for parent in ancestor.parents:
         if not os.access(parent, os.R_OK | os.X_OK):
-            return False
+            return "ancestor-access"
         metadata = parent.stat()
-        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid not in {0, uid}:
-            return False
+        if not stat.S_ISDIR(metadata.st_mode):
+            return "ancestor-type"
+        if metadata.st_uid not in {0, uid}:
+            return "ancestor-owner"
         # A trusted sticky system directory protects each owned child from
         # replacement, e.g. an existing private test directory beneath /tmp.
         # It is never itself accepted as the writable creation point above.
         if metadata.st_mode & 0o022 and not metadata.st_mode & stat.S_ISVTX:
-            return False
-    return True
+            return "ancestor-permissions"
+    return None
 
 
-def _storage_path_status(path: Path) -> tuple[Path, Path, bool]:
+def _storage_ancestors_safe(ancestor: Path) -> bool:
+    return _storage_ancestor_issue(ancestor) is None
+
+
+def _storage_path_inspection(path: Path) -> tuple[Path, Path, str | None]:
     """Check the entered and canonical path without issuing runtime commands."""
     entered_path = path.expanduser()
     if not _storage_path_text_valid(entered_path):
         raise RuntimeError("storage paths cannot contain control characters")
     lexical_path = Path(os.path.abspath(entered_path))
-    safe = entered_path.is_absolute() and not any(
+    issue = None if entered_path.is_absolute() else "relative-path"
+    if any(
         part.is_symlink()
         for part in (entered_path, *entered_path.parents, lexical_path, *lexical_path.parents)
-    )
+    ):
+        issue = issue or "symlink"
     path = entered_path.resolve(strict=False)
     # HOME may be inherited through sudo; also consult the effective account.
     import pwd
     effective_home = Path(pwd.getpwuid(os.geteuid()).pw_dir).resolve(strict=False)
-    safe = safe and path not in {Path("/"), Path.home().resolve(strict=False), effective_home}
+    if path in {Path("/"), Path.home().resolve(strict=False), effective_home}:
+        issue = issue or "reserved-root"
     ancestor = path
     while not ancestor.exists() and ancestor != ancestor.parent:
         ancestor = ancestor.parent
-    safe = safe and _storage_ancestors_safe(ancestor)
-    if path.exists():
-        safe = safe and path.is_dir() and path.stat().st_uid == os.geteuid()
-    return path, ancestor, safe
+    issue = issue or _storage_ancestor_issue(ancestor)
+    return path, ancestor, issue
+
+
+def _storage_path_status(path: Path) -> tuple[Path, Path, bool]:
+    canonical, ancestor, issue = _storage_path_inspection(path)
+    return canonical, ancestor, issue is None
+
+
+_STORAGE_ISSUES = {
+    "relative-path": "Storage path is relative; an absolute path is required",
+    "symlink": "Storage path or an ancestor is a symbolic link",
+    "reserved-root": "Storage path is a home directory or filesystem root",
+    "creation-access": "Existing creation directory lacks read or search access",
+    "creation-type": "Existing creation point is not a directory",
+    "creation-owner": "Existing creation directory is not owned by the service account",
+    "creation-permissions": "Existing creation directory permits group or other writes",
+    "creation-write": "Existing creation directory is not writable by the service account",
+    "ancestor-access": "A protected ancestor lacks read or search access",
+    "ancestor-type": "A protected ancestor is not a directory",
+    "ancestor-owner": "A protected ancestor is owned by neither root nor the service account",
+    "ancestor-permissions": "A protected ancestor permits replacement through group or other writes",
+}
 
 
 def _existing_storage_path(path: Path) -> Path:
@@ -1469,11 +1653,18 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
         if not docker:
             checks.append(PreflightCheck(name, "unknown", "Docker CLI is required to check this", capability, True, remedy))
             continue
-        try:
-            passed = _probe(command).returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            passed = False
-        add(name, passed, "Available" if passed else "Unavailable or diagnostic timed out", capability, remedy)
+        status = _runtime_probe_status(command)
+        observation = {
+            "ready": "Available", "timed-out": "Diagnostic timed out",
+            "client-permission": "The service account cannot execute the diagnostic client",
+            "permission-denied": "Docker diagnostic reported permission denied",
+            "engine-unreachable": "Docker engine connection is unavailable",
+            "unavailable": "Diagnostic unavailable or failed without a recognized cause",
+        }[status]
+        if name == "docker-access" and status == "permission-denied":
+            remedy = ("Use the dedicated service-account login session. Have an administrator verify its approved access to the selected Docker endpoint; for a Unix socket check its group or ACL, then start a fresh login session after membership changes. Do not assume a group named docker or change socket permissions. See docs/INSTALL_DIAGNOSTICS.md.")
+        add(name, status == "ready", observation, capability, remedy)
+    checks.append(_memory_advisory(models, _docker_engine_scope() if docker else "unknown"))
     if docker:
         try:
             driver_probe = _probe(["docker", "info", "--format", "{{.Driver}}"])
@@ -1619,7 +1810,8 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
             "Use the default matter-storage directory, a separate dedicated directory, or a custom child outside config, secrets, runtime, transcription, state, models, tls, accounts, releases, compose.env and installation.json. Matter storage cannot equal or contain the node root.")
         for name, path in (("node-storage", args.root), ("matter-storage", storage_root)):
             try:
-                path, ancestor, safe = _storage_path_status(path)
+                path, ancestor, issue = _storage_path_inspection(path)
+                safe = issue is None
                 writable = safe and os.access(ancestor, os.W_OK | os.X_OK)
                 if name == "node-storage" and safe and path.is_dir():
                     empty_or_resume = existing_resume or not any(path.iterdir())
@@ -1627,9 +1819,9 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
                         "Existing root can be prepared" if empty_or_resume else "Installation root already contains files",
                         "Prepare a dedicated installation root",
                         "Choose a new empty node directory. Use --resume only when this directory belongs to the RecordBench node being resumed.")
-                add(name, writable, "Directory access checks pass (no write attempted)" if writable else "Unsafe path, ownership, or directory access",
+                add(name, writable, "Directory access checks pass (no write attempted)" if writable else _STORAGE_ISSUES[issue or "creation-write"],
                     "Create private application state" if name == "node-storage" else "Store and process admitted sources",
-                    "Choose a dedicated absolute directory without symlinks or control characters, owned by the service account. Use an existing service-owned creation directory without group or other write access, beneath root-owned or service-owned protected parents. The service account needs read and search access to every ancestor; do not use a home directory or shared export root.")
+                    "Choose a dedicated absolute directory without symlinks or control characters, owned by the service account. Use an existing service-owned creation directory without group or other write access, beneath root-owned or service-owned protected parents. The service account needs read and search access to every ancestor; do not use a home directory or shared export root. For a local ancestor inspection see docs/INSTALL_DIAGNOSTICS.md.")
                 if name == "matter-storage" and writable:
                     layout_ok = _matter_storage_layout_valid(path)
                     add("matter-storage-layout", layout_ok,
@@ -2025,6 +2217,7 @@ def _configure(
     }
     app_values: dict[str, object] = {
         "CASE_INTELLIGENCE_AUTH_MODE": auth,
+        "CASE_INTELLIGENCE_MODEL_PROFILE": models,
         "CASE_INTELLIGENCE_SECURE_COOKIE": 1,
         "CASE_INTELLIGENCE_GENERATOR_BACKEND": "openai" if models in {"all", "review"} else "",
         "CASE_INTELLIGENCE_GENERATOR_URL": "http://generator:8000",
@@ -2566,6 +2759,7 @@ def _provision(
     if not args.dry_run:
         _install_phase(root, "running", "checking")
     try:
+        recordbench_antivirus.prepare(console, root, runtime_compose, sys.modules[__name__], dry_run=args.dry_run)
         _run(console, [*runtime_compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
     except subprocess.CalledProcessError as exc:
         raise RuntimeError("Service startup failed. " + _STARTUP_REMEDY) from exc
@@ -2638,8 +2832,12 @@ def _wait_health(console: Console, root: Path) -> None:
             _install_phase(root, "selected_capabilities", "complete" if selected_ready else "incomplete")
             if selected_ready and login_ready:
                 console.ok("Application health, selected capabilities and sign-in endpoint passed")
-                if payload.get("status") == "degraded":
-                    console.warn("Basic review is available; an unselected optional capability remains unavailable")
+                models = str(settings.get("models", "none"))
+                if models == "none":
+                    console.note("CPU evaluation is ready. Generated answers and transcription were not selected.")
+                elif models != "all":
+                    console.note("Transcription was not selected for this installation." if models == "review" else
+                                 "Generated answers and meaning search were not selected for this installation.")
                 return
             last = "selected capabilities are incomplete" if base_ready else "basic review needs attention"
             if isinstance(storage, dict) and storage.get("reserve_satisfied") is False:
@@ -2717,7 +2915,7 @@ def _restore_model_options(
         raise RuntimeError("installed GPU capacity settings are invalid") from exc
 
 
-def _saved_node_arguments(args: argparse.Namespace, root: Path) -> tuple[dict[str, object], Path]:
+def _saved_node_arguments(args: argparse.Namespace, root: Path, *, validate_antivirus: bool = True) -> tuple[dict[str, object], Path]:
     """Restore actual saved coordinates and check all mounts before any Compose call."""
     canonical = _existing_storage_path(args.root if args.root is not None else root)
     if canonical != root:
@@ -2789,6 +2987,8 @@ def _saved_node_arguments(args: argparse.Namespace, root: Path) -> tuple[dict[st
     if not args.tls_cert.is_absolute() or not args.tls_key.is_absolute():
         raise RuntimeError("saved HTTPS certificate paths must be absolute")
     _restore_model_options(args, installation, compose_env, transcription_env)
+    if validate_antivirus:
+        recordbench_antivirus.validate_saved(root, compose_env, sys.modules[__name__])
     return installation, release
 
 
@@ -3060,6 +3260,7 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
         return
     old_installation_text = (root / "installation.json").read_text(encoding="utf-8")
     old_compose_text = (root / "compose.env").read_text(encoding="utf-8")
+    old_application_text = (root / "config" / "recordbench.env").read_text(encoding="utf-8")
     updated = dict(installation)
     updated.update(
         {
@@ -3078,6 +3279,8 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
     compose = _compose(root, profiles, release=release, auth=auth)
     console.phase(4, "FORGE REPLACEMENT RUNTIME", "Building versioned images without overwriting the rollback image set")
     try:
+        if not args.dry_run:
+            _replace_env(root / "config" / "recordbench.env", "CASE_INTELLIGENCE_MODEL_PROFILE", models)
         _run(console, [*compose, "build", *_build_targets(auth, models)], dry_run=args.dry_run)
         _run(console, [*compose, "config", "--quiet"], dry_run=args.dry_run)
         console.phase(5, "ATOMIC NODE SWAP", "Starting the new capsule and waiting for application and storage consensus")
@@ -3091,6 +3294,7 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
                 # its scoped stop, competing allocations remain in this probe.
                 _preflight(console, models=models, dry_run=False, model_args=args,
                            needs_model_staging=False)
+        recordbench_antivirus.prepare(console, root, compose, sys.modules[__name__], dry_run=args.dry_run)
         _run(console, [*compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
         if not args.dry_run:
             _wait_health(console, root)
@@ -3106,6 +3310,7 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
             try:
                 _atomic_private_write(root / "compose.env", old_compose_text)
                 _atomic_private_write(root / "installation.json", old_installation_text)
+                _atomic_private_write(root / "config" / "recordbench.env", old_application_text)
                 rollback = _compose(root, profiles, release=old_release, auth=auth)
                 _run(console, [*rollback, "up", "-d", "--remove-orphans"])
                 _wait_health(console, root)
@@ -3120,35 +3325,73 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
         raise RuntimeError(f"update failed and rollback was attempted: {update_error}") from update_error
 
 
+def _diagnostic_receipt(result: PreflightResult, installation: Mapping[str, object] | None,
+                        root: Path, *, saved_state: str) -> dict[str, object]:
+    """Project only fixed categories and narrowly typed release metadata for sharing."""
+    saved: dict[str, object] = {"state": saved_state}
+    phases = {phase: "not-verified" for phase in INSTALL_PHASES}
+    phase_state = "unavailable"
+    if installation is not None and saved_state == "validated":
+        release_id = installation.get("release_id")
+        saved["release_id"] = (release_id if isinstance(release_id, str) and
+                               re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?:-(?:alpha|beta|rc)\.[0-9]{1,4})?-[a-f0-9]{12}", release_id)
+                               else "unavailable")
+        for field, allowed in (("auth", {"local", "oidc", "kerberos"}),
+                               ("models", {"none", "review", "transcription", "all"})):
+            value = installation.get(field)
+            saved[field] = value if isinstance(value, str) and value in allowed else "unavailable"
+        try:
+            progress = _install_progress(root)["phases"]
+            phases = {phase: progress.get(phase, "not-verified") for phase in INSTALL_PHASES}
+            phase_state = "historical-not-refreshed"
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+            pass
+    return {
+        "schema_version": 1, "product": "RecordBench", "kind": "installation-diagnostics",
+        "launcher_version": VERSION, "preflight": result.payload(), "installation": saved,
+        "saved_phases_state": phase_state, "saved_phases": phases,
+        "live_health": "not-probed", "model_bytes": "not-verified", "browser_sign_in": "not-verified",
+    }
+
+
 def main() -> int:
     args = _parser().parse_args()
-    if args.enable_account_management and (args.command not in {"install", "preflight"} or args.auth != "local"):
-        _parser().error("--enable-account-management requires install or preflight with explicit --auth local; existing nodes retain their saved account configuration")
+    if args.command != "antivirus" and (args.antivirus_mirror or args.antivirus_proxy or args.reset_antivirus or args.import_signatures):
+        _parser().error("antivirus options require the antivirus command")
+    if args.enable_account_management and (args.command not in {"install", "preflight", "diagnostics"} or args.auth != "local"):
+        _parser().error("--enable-account-management requires install, preflight or diagnostics with explicit --auth local; existing nodes retain their saved account configuration")
     console = Console(
         color=sys.stdout.isatty() and not args.no_color and os.getenv("NO_COLOR") is None,
         quiet=args.quiet,
     )
-    if args.json and args.command != "preflight":
-        _parser().error("--json is only supported by the preflight command")
-    if args.command == "preflight":
+    if args.json and args.command not in {"preflight", "diagnostics"}:
+        _parser().error("--json is only supported by preflight and diagnostics")
+    if args.command in {"preflight", "diagnostics"}:
         args.root = (args.root or Path("/srv/recordbench")).expanduser()
+        installation = None
+        saved_state = "not-found"
         try:
             needs_model_staging = True
-            if args.resume and (args.root / "installation.json").is_file():
+            if (args.resume or args.command == "diagnostics") and (args.root / "installation.json").is_file():
                 root = args.root.resolve(strict=False)
                 installation, release = _saved_node_arguments(args, root)
+                saved_state = "validated"
                 args.admin_username = args.admin_username or installation.get("initial_administrator")
                 args.admin_display_name = args.admin_display_name or installation.get("initial_administrator_display_name")
-                needs_model_staging = not _saved_models_verified(args, root, release)
+                needs_model_staging = (not _saved_models_verified(args, root, release)
+                                       if args.command == "preflight" else False)
             result = _collect_preflight(args.models or "none", args,
                                         needs_model_staging=needs_model_staging)
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+            saved_state = "unavailable-or-unsafe"
             result = PreflightResult((PreflightCheck(
                 "saved-node", "fail", "Saved node configuration or storage coordinates are unavailable or unsafe",
                 "Inspect the existing node using its canonical account, storage and model configuration", True,
                 "Restore a valid installation record, saved configuration and accessible protected mounts before resuming. Preflight does not change the saved account mode or paths.",
             ),))
-        if args.json:
+        if args.command == "diagnostics":
+            print(json.dumps(_diagnostic_receipt(result, installation, args.root, saved_state=saved_state), indent=2))
+        elif args.json:
             print(json.dumps(result.payload(), indent=2))
         else:
             _render_preflight(console, result)
@@ -3167,6 +3410,9 @@ def main() -> int:
         if not _storage_path_text_valid(args.root):
             raise RuntimeError("installation root cannot contain control characters")
         root = args.root.expanduser().resolve(strict=False)
+        if args.command == "antivirus":
+            recordbench_antivirus.run(console, args, root, sys.modules[__name__])
+            return 0
         if args.command == "doctor":
             _doctor(console, args, root)
             _handoff(console, root, dry_run=args.dry_run)

@@ -144,11 +144,21 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 7 | Slice **17** — entity discovery and reviewer reconciliation | Done (#79) |
 | 8 | Slice **18** — evidence-backed relationships and events | Done (#82) |
 | 9 | Slice **19** — first substep: synthesize one terminal full-text run for its criterion | Done — first adapter only (#85) |
+| 10 | Linux alpha onboarding — browser origins, first-install guide, antivirus recovery, diagnostics, explicit people selection and installed acceptance | **Next** |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
-No further product step is selected. Later slice-19 work and other proposals
-require a separate explicit cruise update. Existing holds and parallel
-release-readiness requirements remain unchanged.
+The [Linux alpha onboarding brief](LINUX_ALPHA_ONBOARDING_PLAN.md) defines step
+10. Its independently reviewable substeps are browser asset origins, the
+evaluator guide, antivirus preparation/recovery, installer diagnostics,
+selected-capability health, explicit people selection, installed CPU acceptance,
+and the contributor development path. Keep each behavioral concern in a focused
+change. Implementation and local regression results do not replace a new
+unfamiliar-operator Linux receipt. Prebuilt image distribution remains a separate
+release scope under the existing release-readiness requirements.
+
+Later slice-19 work and other product proposals require a separate explicit
+cruise update. Existing holds and parallel release-readiness requirements remain
+unchanged.
 
 Slice **12** needed no further product PR. **Review all extracted text** is
 already on `main` from [#59](https://github.com/neilofneils404/recordbench-oss/pull/59)

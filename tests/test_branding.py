@@ -53,4 +53,4 @@ def test_recordbench_identity_is_consistent_across_health_login_and_mark(tmp_pat
             assert "product_name" in title, path.name
 
     workbench_base = (TEMPLATES / "workbench_base.html").read_text(encoding="utf-8")
-    assert workbench_base.count("favicon.svg') }}?v=stacked-record-1") == 2
+    assert workbench_base.count("favicon.svg').path }}?v=stacked-record-1") == 2

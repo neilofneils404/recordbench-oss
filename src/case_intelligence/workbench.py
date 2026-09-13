@@ -1,6 +1,7 @@
 """Milestone A staff workbench: matters, uploads, retrieval, generation, support."""
 from __future__ import annotations
 
+from .readiness import CachedReadiness
 from .review_budget import DEFAULT_REVIEW_BUDGET, ReviewBudget, validate_primary_limit
 from .investigation_planner import PLANNER_VERSION, initial_query, propose_searches, query_key, validate_proposal
 from time import monotonic
@@ -909,6 +910,13 @@ class CaseIntelligenceWorkbench:
             )
         except ValueError:
             generation_concurrency = 2
+        model_profile = os.getenv("CASE_INTELLIGENCE_MODEL_PROFILE", "").strip().casefold()
+        if model_profile not in {"", "none", "review", "transcription", "all"}:
+            raise RuntimeError("CASE_INTELLIGENCE_MODEL_PROFILE is invalid")
+        self._generation_selected = bool(
+            generator is not None or model_profile in {"review", "all"}
+            or os.getenv("CASE_INTELLIGENCE_GENERATOR_BACKEND", "").strip()
+        )
         self.generator = GroundedGenerationService(
             generator or generator_from_environment(),
             maximum_active=generation_concurrency,
@@ -924,11 +932,20 @@ class CaseIntelligenceWorkbench:
             self._owns_postgres = self.postgres_connection is not None
         self.embedding = embedding
         self.reranker = reranker
+        worker_url = os.getenv("CASE_INTELLIGENCE_RETRIEVAL_WORKER_URL", "").strip()
+        self._retrieval_selected = bool(
+            learned_retrieval is True or model_profile in {"review", "all"}
+            or (not model_profile and learned_retrieval is not False and worker_url)
+        )
+        self._remote_retrieval_url = ""
+        self._remote_retrieval_readiness = None
         worker_ready = False
         if self.embedding is None or self.reranker is None:
-            worker_url = os.getenv("CASE_INTELLIGENCE_RETRIEVAL_WORKER_URL", "").strip()
             worker_ready = self._retrieval_worker_ready(worker_url) if worker_url else False
             if worker_ready:
+                self._remote_retrieval_url = worker_url
+                self._remote_retrieval_readiness = CachedReadiness(
+                    lambda: self._retrieval_worker_ready(worker_url), initial=True)
                 self.embedding = RemoteEmbeddingAdapter(worker_url)
                 self.reranker = RemoteRerankerAdapter(worker_url)
         if self.embedding is None:
@@ -962,6 +979,10 @@ class CaseIntelligenceWorkbench:
                 workers=ingestion_workers,
             )
         configured_processor = media_processor or TranscriptionV2Client.from_environment()
+        self._transcription_selected = bool(
+            media_processor is not None or model_profile in {"transcription", "all"}
+            or os.getenv("CASE_INTELLIGENCE_TRANSCRIPTION_URL", "").strip()
+        )
         self.media = MediaCoordinator(
             self.workspace,
             configured_processor,
@@ -1100,7 +1121,10 @@ class CaseIntelligenceWorkbench:
             return False
         try:
             with urllib.request.urlopen(endpoint + "/health", timeout=2) as response:
-                payload = json.load(response)
+                data = response.read(4097)
+                if len(data) > 4096:
+                    return False
+                payload = json.loads(data)
             return bool(
                 isinstance(payload, dict)
                 and payload.get("status") == "ok"
@@ -1111,6 +1135,8 @@ class CaseIntelligenceWorkbench:
             return False
 
     def close(self) -> None:
+        if self._remote_retrieval_readiness is not None:
+            self._remote_retrieval_readiness.close()
         if self.maintenance is not None:
             self.maintenance.close()
         if getattr(self, "report_compilation", None) is not None:
@@ -5864,9 +5890,18 @@ class CaseIntelligenceWorkbench:
     def capabilities(self) -> dict[str, str]:
         storage = self.storage_capacity_projection(include_managed_usage=False)
         malware = scanner_status(self.malware_scanner)
+        retrieval_ready = bool(
+            self.learned_retrieval and self.postgres_ready
+            and self.postgres_connection is not None
+            and (not self._remote_retrieval_url or (self._remote_retrieval_readiness is not None
+                and self._remote_retrieval_readiness.ready()))
+        )
         return {
-            "search": "word + meaning" if self.learned_retrieval else "word search only",
-            "answering": "ready" if self.generator.available else "temporarily unavailable",
+            "search": "word + meaning" if retrieval_ready else "word search only",
+            "meaning_search": ("ready" if retrieval_ready else
+                               "temporarily unavailable" if self._retrieval_selected else "not selected"),
+            "answering": ("ready" if self.generator.available else
+                          "temporarily unavailable" if self._generation_selected else "not selected"),
             "source_review": "ready",
             "ingestion": "background queue" if self.background_ingestion else "request-bound",
             "ocr": os.getenv("CASE_INTELLIGENCE_OCR_MODE", "off") or "off",
@@ -5882,7 +5917,7 @@ class CaseIntelligenceWorkbench:
             "transcription": (
                 "local WhisperX v2"
                 if self.media is not None and self.media.available
-                else "temporarily unavailable"
+                else "temporarily unavailable" if self._transcription_selected else "not selected"
             ),
             "storage": "ready" if storage["ready"] else "capacity attention required",
         }
@@ -5891,6 +5926,13 @@ class CaseIntelligenceWorkbench:
 def _query_url(path: str, **values: str) -> str:
     filtered = {key: value for key, value in values.items() if value}
     return path + (("?" + urlencode(filtered)) if filtered else "")
+
+
+def _health_release_id() -> str:
+    value = os.getenv("CASE_INTELLIGENCE_RELEASE_ID", "")
+    return value if re.fullmatch(
+        r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?:-(?:alpha|beta|rc)\.[0-9]{1,4})?-[a-f0-9]{12}", value
+    ) else "development"
 
 
 def _entity_context_href(href: str, origin: str = "") -> str:
@@ -7613,12 +7655,23 @@ def create_workbench_app(
         return {
             "status": (
                 "ok"
-                if capabilities["answering"] == "ready" and storage["ready"]
+                if (storage["ready"]
+                    and capabilities["source_review"] == "ready"
+                    and capabilities["malware_scan"] in {"ready", "not required"}
+                    and capabilities["answering"] in {"ready", "not selected"}
+                    and capabilities["meaning_search"] in {"ready", "not selected"}
+                    and capabilities["transcription"] in {"local WhisperX v2", "not selected"})
                 else "degraded"
             ),
             "product": PRODUCT_NAME,
+            "release_id": _health_release_id(),
             "data": "private RecordBench node",
             "capabilities": capabilities,
+            "selected_capabilities": {
+                "answering": bench._generation_selected,
+                "meaning_search": bench._retrieval_selected,
+                "transcription": bench._transcription_selected,
+            },
             "ingest_jobs": bench.workspace.ingest_counts(),
             "media_jobs": bench.workspace.media_job_counts(),
             "media_summaries": bench.workspace.media_summary_counts(),
@@ -8709,7 +8762,7 @@ def create_workbench_app(
         page: int = Query(1, ge=1, le=100_000),
         page_size: int = Query(50, ge=1, le=100),
         receipt_page: int = Query(1, ge=1, le=100_000),
-        notice: str = Query("", max_length=240),
+        notice: str = Query("", max_length=800),
         error: str = Query("", max_length=240),
     ):
         context = auth_context(request)
@@ -9164,7 +9217,7 @@ def create_workbench_app(
         return RedirectResponse(
             _query_url(
                 f"/matters/{slug}/setup",
-                notice=f"{membership.display_name} added to the case team",
+                notice=f"{membership.display_name} ({membership.login_name}) added to the case team",
             ),
             status_code=303,
         )
@@ -9214,7 +9267,7 @@ def create_workbench_app(
         return RedirectResponse(
             _query_url(
                 f"/matters/{slug}/setup",
-                notice=f"Direct grant removed for {target.display_name}; any group grants still apply",
+                notice=f"Direct grant removed for {target.display_name} ({target.login_name}); any group grants still apply",
             ),
             status_code=303,
         )
