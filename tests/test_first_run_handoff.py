@@ -16,6 +16,12 @@ ROOT = Path(__file__).parents[1]
 PASSWORD = "synthetic-handoff-password"
 
 
+@pytest.fixture(autouse=True)
+def simulated_antivirus_stage(monkeypatch):
+    # Handoff tests simulate all service operations; antivirus has a separate suite.
+    monkeypatch.setattr(installer.recordbench_antivirus, "prepare", lambda *a, **kw: None)
+
+
 def configured_node(tmp_path, *, storage_root=None):
     root = tmp_path / "Synthetic Node"
     console = installer.Console(color=False)

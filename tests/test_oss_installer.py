@@ -15,6 +15,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import recordbench_install as installer  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def simulated_antivirus_stage(monkeypatch):
+    # These installer tests simulate service commands. The antivirus stage and
+    # its failure/verification behavior are exercised in test_antivirus_recovery.
+    monkeypatch.setattr(installer.recordbench_antivirus, "prepare", lambda *a, **kw: None)
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 def test_account_management_configuration_and_update_overlay(tmp_path, enabled):
     args = installer._parser().parse_args(["install", "--auth", "local", "--models", "none", "--non-interactive"] + (["--enable-account-management"] if enabled else []))
@@ -473,15 +480,16 @@ def test_clamav_retains_only_capabilities_needed_by_upstream_entrypoint() -> Non
     clamav = compose.split("\n  clamav:\n", 1)[1].split("\n  retrieval:\n", 1)[0]
     assert "cap_drop: [ALL]" in clamav
     assert "cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]" in clamav
-    assert "read_only: true" not in clamav
+    assert "\n    read_only: true" not in clamav
     assert "clamav-signatures:/var/lib/clamav" in clamav
     assert 'CLAMAV_NO_FRESHCLAMD: "true"' in clamav
     assert "clamav-updater: {condition: service_healthy}" in clamav
     assert "networks: [services]" in clamav
     updater = clamav.split("\n  clamav-updater:\n", 1)[1]
     assert "networks: [updates]" in updater
-    assert 'command: ["freshclam", "--daemon", "--foreground"' in updater
-    assert "-mmin -4320" in updater
+    assert 'command: ["freshclam", "--config-file=/run/recordbench-freshclam.conf", "--daemon"' in updater
+    assert "/opt/recordbench-antivirus/signature-health.sh" in updater
+    assert "-mmin" not in updater
 
 
 def test_read_only_gateway_has_a_narrow_runtime_configuration_tmpfs() -> None:
@@ -1779,6 +1787,7 @@ def test_live_gpu_update_checks_freed_capacity_after_own_runtime_stops(tmp_path,
     assert events.index("build-new") < events.index("config-new") < events.index("stop-old")
     assert events.index("stop-old") < events.index("probe-stopped") < events.index("up-new")
     assert json.loads((root / "installation.json").read_text())["release_id"] == "synthetic-new"
+    assert installer._dotenv(root / "config" / "recordbench.env")["CASE_INTELLIGENCE_MODEL_PROFILE"] == args.models
 
 @pytest.mark.parametrize("after_free,utilization", [(1000, "0.72"), (35000, "0.72"), (43000, "0.90"), (None, "0.72")])
 def test_live_update_preserves_competing_usage_and_rolls_back(tmp_path, request, monkeypatch, after_free, utilization):

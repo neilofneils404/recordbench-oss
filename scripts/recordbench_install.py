@@ -24,6 +24,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import recordbench_antivirus
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -37,6 +38,7 @@ RELEASE_DIRECTORIES = (
     "config",
     "deploy",
     "docs",
+    "examples",
     "migrations",
     "schemas",
     "scripts",
@@ -182,7 +184,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("install", "preflight", "diagnostics", "doctor", "update", "backup", "restore"),
+        choices=("install", "preflight", "diagnostics", "doctor", "update", "backup", "restore", "antivirus"),
         default="install",
     )
     parser.add_argument("--root", type=Path, help="exact installation state directory")
@@ -259,6 +261,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--schedule-backups", action="store_true")
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--antivirus-mirror", help="antivirus command: approved HTTP(S) private signature mirror")
+    parser.add_argument("--antivirus-proxy", help="antivirus command: approved HTTP proxy without credentials")
+    parser.add_argument("--reset-antivirus", action="store_true", help="antivirus command: restore the default FreshClam source")
+    parser.add_argument("--import-signatures", type=Path, help="antivirus command: protected directory with signed main/daily/bytecode CVDs")
     return parser
 
 
@@ -2748,6 +2754,7 @@ def _provision(
     if not args.dry_run:
         _install_phase(root, "running", "checking")
     try:
+        recordbench_antivirus.prepare(console, root, runtime_compose, sys.modules[__name__], dry_run=args.dry_run)
         _run(console, [*runtime_compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
     except subprocess.CalledProcessError as exc:
         raise RuntimeError("Service startup failed. " + _STARTUP_REMEDY) from exc
@@ -2903,7 +2910,7 @@ def _restore_model_options(
         raise RuntimeError("installed GPU capacity settings are invalid") from exc
 
 
-def _saved_node_arguments(args: argparse.Namespace, root: Path) -> tuple[dict[str, object], Path]:
+def _saved_node_arguments(args: argparse.Namespace, root: Path, *, validate_antivirus: bool = True) -> tuple[dict[str, object], Path]:
     """Restore actual saved coordinates and check all mounts before any Compose call."""
     canonical = _existing_storage_path(args.root if args.root is not None else root)
     if canonical != root:
@@ -2975,6 +2982,8 @@ def _saved_node_arguments(args: argparse.Namespace, root: Path) -> tuple[dict[st
     if not args.tls_cert.is_absolute() or not args.tls_key.is_absolute():
         raise RuntimeError("saved HTTPS certificate paths must be absolute")
     _restore_model_options(args, installation, compose_env, transcription_env)
+    if validate_antivirus:
+        recordbench_antivirus.validate_saved(root, compose_env, sys.modules[__name__])
     return installation, release
 
 
@@ -3280,6 +3289,7 @@ def _update(console: Console, args: argparse.Namespace, root: Path) -> None:
                 # its scoped stop, competing allocations remain in this probe.
                 _preflight(console, models=models, dry_run=False, model_args=args,
                            needs_model_staging=False)
+        recordbench_antivirus.prepare(console, root, compose, sys.modules[__name__], dry_run=args.dry_run)
         _run(console, [*compose, "up", "-d", "--remove-orphans"], dry_run=args.dry_run)
         if not args.dry_run:
             _wait_health(console, root)
@@ -3341,6 +3351,8 @@ def _diagnostic_receipt(result: PreflightResult, installation: Mapping[str, obje
 
 def main() -> int:
     args = _parser().parse_args()
+    if args.command != "antivirus" and (args.antivirus_mirror or args.antivirus_proxy or args.reset_antivirus or args.import_signatures):
+        _parser().error("antivirus options require the antivirus command")
     if args.enable_account_management and (args.command not in {"install", "preflight", "diagnostics"} or args.auth != "local"):
         _parser().error("--enable-account-management requires install, preflight or diagnostics with explicit --auth local; existing nodes retain their saved account configuration")
     console = Console(
@@ -3393,6 +3405,9 @@ def main() -> int:
         if not _storage_path_text_valid(args.root):
             raise RuntimeError("installation root cannot contain control characters")
         root = args.root.expanduser().resolve(strict=False)
+        if args.command == "antivirus":
+            recordbench_antivirus.run(console, args, root, sys.modules[__name__])
+            return 0
         if args.command == "doctor":
             _doctor(console, args, root)
             _handoff(console, root, dry_run=args.dry_run)
