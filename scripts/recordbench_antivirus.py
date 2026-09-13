@@ -212,7 +212,7 @@ def _run_locked(console, args, root: Path, installer) -> None:
         console.note("Configure the node's signature updater; scanner network isolation is unchanged")
         if not args.dry_run:
             installer._atomic_private_write(root / "config" / CONFIG_NAME, prepared)
-            installer._replace_env(root / "compose.env", CONFIG_KEY, root / "config" / CONFIG_NAME)
+            installer._replace_env(root / "compose.env", CONFIG_KEY, str(root / "config" / CONFIG_NAME))
         console.ok("Antivirus configuration prepared; resume the node to verify a real update and scanner health")
         return
     if args.dry_run:

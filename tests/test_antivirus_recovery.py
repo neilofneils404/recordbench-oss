@@ -36,6 +36,38 @@ def test_configuration_roundtrip_is_canonical_and_never_disables_verification(tm
     assert "Password" not in text
 
 
+@pytest.mark.parametrize("selection", [
+    ["--antivirus-mirror", "https://mirror.example.test/signatures"],
+    ["--antivirus-proxy", "http://proxy.example.test:3128"],
+    ["--antivirus-mirror", "https://mirror.example.test/signatures",
+     "--antivirus-proxy", "http://proxy.example.test:3128"],
+    ["--reset-antivirus"],
+])
+@pytest.mark.parametrize("existing", [False, True])
+def test_configuration_command_persists_selection_for_resume(tmp_path, monkeypatch, selection, existing):
+    root = tmp_path / "synthetic node"
+    (root / "config").mkdir(parents=True, mode=0o700)
+    (root / "state").mkdir(mode=0o700)
+    environment = root / "compose.env"
+    environment.write_text('COMPOSE_PROJECT_NAME="synthetic"\n' + (
+        f'{antivirus.CONFIG_KEY}="old-selection"\n' if existing else ""))
+    environment.chmod(0o600)
+    args = installer._parser().parse_args(["antivirus", "--root", str(root), *selection])
+    monkeypatch.setattr(installer, "_saved_node_arguments", lambda *a, **kw: ({"profiles": []}, ROOT))
+    monkeypatch.setattr(installer, "_compose", lambda *a, **kw: ["docker", "compose"])
+    monkeypatch.setattr(installer, "_run", lambda *a, **kw: SimpleNamespace(stdout='[{"State": "exited"}]'))
+
+    antivirus.run(installer.Console(color=False, quiet=True), args, root, installer)
+
+    saved = installer._dotenv(environment)
+    path = root / "config" / antivirus.CONFIG_NAME
+    assert saved == {"COMPOSE_PROJECT_NAME": "synthetic", antivirus.CONFIG_KEY: str(path)}
+    assert path.read_text() == antivirus.configuration(args.antivirus_mirror, args.antivirus_proxy)
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert environment.stat().st_mode & 0o777 == 0o600
+    antivirus.validate_saved(root, saved, installer)
+
+
 @pytest.mark.parametrize("value", ["https://user:password@mirror.example.test", "https://mirror.example.test\nOnUpdateExecute bad",
     "file:///tmp/source", "https://mirror.example.test/#bad", "https://mirror.example.test/?token=bad", "https://mirror.example.test/$(bad)",
     "https://mirror.example.test:65536", "http://mirror.example.test\\bad"])

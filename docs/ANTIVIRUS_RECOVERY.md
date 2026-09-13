@@ -237,6 +237,8 @@ receipt rather than describing a seeded import as a clean download.
 Synthetic regressions cover unsafe source files and configuration, stale headers
 with fresh filesystem timestamps, incomplete imports, signature-verification
 failure before replacement, refusal to mutate a running node, and bounded
-startup failure reporting without copying raw logs into errors. Installed-node
-acceptance additionally needs a real successful update, scanner health and
-synthetic upload on the intended Linux host.
+startup failure reporting without copying raw logs into errors. Mirror, proxy,
+combined and reset commands also exercise real configuration/environment writes,
+including replacement of an existing selection and canonical validation for
+resume. Installed-node acceptance additionally needs a real successful update,
+scanner health and synthetic upload on the intended Linux host.
