@@ -8648,7 +8648,7 @@ def create_workbench_app(
         page: int = Query(1, ge=1, le=100_000),
         page_size: int = Query(50, ge=1, le=100),
         receipt_page: int = Query(1, ge=1, le=100_000),
-        notice: str = Query("", max_length=240),
+        notice: str = Query("", max_length=800),
         error: str = Query("", max_length=240),
     ):
         context = auth_context(request)
@@ -9103,7 +9103,7 @@ def create_workbench_app(
         return RedirectResponse(
             _query_url(
                 f"/matters/{slug}/setup",
-                notice=f"{membership.display_name} added to the case team",
+                notice=f"{membership.display_name} ({membership.login_name}) added to the case team",
             ),
             status_code=303,
         )
@@ -9153,7 +9153,7 @@ def create_workbench_app(
         return RedirectResponse(
             _query_url(
                 f"/matters/{slug}/setup",
-                notice=f"Direct grant removed for {target.display_name}; any group grants still apply",
+                notice=f"Direct grant removed for {target.display_name} ({target.login_name}); any group grants still apply",
             ),
             status_code=303,
         )

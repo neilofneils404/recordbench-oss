@@ -334,7 +334,7 @@
         {% for member in members %}
         <div class="case-team-member">
           <span class="identity-avatar" aria-hidden="true">{{ member.display_name.split()[0][0] }}{{ member.display_name.split()[-1][0] }}</span>
-          <span><strong>{{ member.display_name }}</strong><small>{{ access_reasons[member.principal_id]|join('; ') }}</small></span>
+          <span><strong>{{ member.display_name }} ({{ member.login_name }})</strong><small>{{ access_reasons[member.principal_id]|join('; ') }}</small></span>
           {% if can_manage_members and 'Direct member' in access_reasons[member.principal_id] %}
           <form method="post" action="/matters/{{ matter.slug }}/members/{{ member.principal_id }}/remove">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -348,7 +348,7 @@
       <h3>Retained grants without active access</h3>
       <p>These people cannot currently access the matter. Remove a direct grant here to prevent it restoring access if the account is enabled again.</p>
       {% for member in inactive_direct_grants %}<div class="case-team-member">
-      <span><strong>{{ member.display_name }}</strong><small>{{ 'Owner' if member.role == 'owner' else 'Direct member' }} · access disabled</small></span>
+      <span><strong>{{ member.display_name }} ({{ member.login_name }})</strong><small>{{ 'Owner' if member.role == 'owner' else 'Direct member' }} · access disabled</small></span>
       {% if member.role != 'owner' %}<form method="post" action="/matters/{{ matter.slug }}/members/{{ member.principal_id }}/remove">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="remove-action" type="submit">Remove retained direct grant</button></form>{% endif %}
       </div>{% endfor %}{% endif %}
@@ -358,7 +358,8 @@
         <label for="new-member">Add a case team member</label>
         <div>
           <select id="new-member" name="principal_id" required>
-            {% for principal in available_principals %}<option value="{{ principal.principal_id }}">{{ principal.display_name }}</option>{% endfor %}
+            <option value="" selected disabled>Choose a person</option>
+            {% for principal in available_principals %}<option value="{{ principal.principal_id }}">{{ principal.display_name }} ({{ principal.login_name }})</option>{% endfor %}
           </select>
           <button class="button button-secondary" type="submit">Add member</button>
         </div>

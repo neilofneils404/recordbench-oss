@@ -1,5 +1,7 @@
 """Application-managed reusable groups, separate from provider admission groups."""
-from fastapi import Depends, Form, HTTPException, Request
+from urllib.parse import urlencode
+
+from fastapi import Depends, Form, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from .workspace_store import WorkspaceProblem
@@ -32,13 +34,14 @@ def register_team_group_routes(app, *, identity, bench, templates, auth_context,
             raise HTTPException(403, str(exc)) from exc
 
     @app.get("/admin/groups", include_in_schema=False)
-    def groups_page(request: Request):
+    def groups_page(request: Request, notice: str = Query("", max_length=800)):
         administrator(request)
         return templates.TemplateResponse(request=request, name="workbench_team_groups.html", context={
             **base_context(request), "team_groups": store.team_groups(),
             "group_members": {g["group_id"]: store.team_group_members(g["group_id"]) for g in store.team_groups()},
             "group_candidates": identity.membership_candidates(),
             "enabled_principals": {p.principal_id for p in identity.membership_candidates()},
+            "notice": notice,
         }, headers={"Cache-Control": "no-store"})
 
     @app.post("/admin/groups", dependencies=[Depends(require_csrf)])
@@ -55,14 +58,18 @@ def register_team_group_routes(app, *, identity, bench, templates, auth_context,
             raise HTTPException(403, "That identity cannot be added.")
         mutation(request, store.set_team_group_member, group_id, principal_id, context.principal_id,
                  present=True, **attribution(request, context))
-        return RedirectResponse("/admin/groups", status_code=303)
+        target = mutation(request, store.get_principal, principal_id)
+        return RedirectResponse("/admin/groups?" + urlencode({"notice":
+            f"{target.display_name} ({target.login_name}) added to the group"}), status_code=303)
 
     @app.post("/admin/groups/{group_id}/members/{principal_id}/remove", dependencies=[Depends(require_csrf)])
     def remove_group_member(request: Request, group_id: str, principal_id: str):
         context = administrator(request)
         mutation(request, store.set_team_group_member, group_id, principal_id, context.principal_id,
                  present=False, **attribution(request, context))
-        return RedirectResponse("/admin/groups", status_code=303)
+        target = mutation(request, store.get_principal, principal_id)
+        return RedirectResponse("/admin/groups?" + urlencode({"notice":
+            f"{target.display_name} ({target.login_name}) removed from the group; other grants still apply"}), status_code=303)
 
     @app.post("/matters/{slug}/groups", dependencies=[Depends(require_csrf)])
     def grant_group(request: Request, slug: str, group_id: str = Form(..., max_length=100)):
