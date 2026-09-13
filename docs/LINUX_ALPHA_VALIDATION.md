@@ -110,6 +110,13 @@ installed-node recovery still need target-host evidence.
 
 ## Remaining acceptance
 
+The Linux installed-browser runner now uses its private temporary directory
+for Chromium shared-memory backing and retains four fixed vendor crash statuses
+in ordinary JSON receipts. This is a bounded portability and diagnostic change;
+the previous failed receipt remains failed until the updated journey is run.
+VM-based component and browser checks do not establish a real-world stranger
+install. A fresh, unfamiliar Linux user's complete install remains unverified.
+
 Follow [the Linux-agent handoff](LINUX_ALPHA_ACCEPTANCE.md) at the full candidate
 commit. Record cold/cache state, normal storage reserves, prepare/resume,
 trusted browser/export/access checks, restart and encrypted backup/restore.

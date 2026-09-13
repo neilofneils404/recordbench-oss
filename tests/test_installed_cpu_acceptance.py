@@ -196,6 +196,7 @@ def test_private_ca_import_changes_only_temporary_nss_db(runner, tmp_path, monke
     environment = runner.browser_environment(scratch, snapshot)
     assert (scratch / "acceptance-ca.crt").read_bytes() == snapshot
     assert environment["HOME"] == str(scratch / "home")
+    assert environment["TMPDIR"] == str(scratch)
     assert len(run.call_args_list) == 2
     first, second = [call.args[0] for call in run.call_args_list]
     assert first == ["certutil", "-N", "--empty-password", "-d", "sql:" + str(scratch / "home/.local/share/pki/nssdb")]
@@ -204,7 +205,9 @@ def test_private_ca_import_changes_only_temporary_nss_db(runner, tmp_path, monke
     assert "CASE_INTELLIGENCE_STORAGE_RESERVE_GIB" not in environment
 
 
-def test_browser_uses_normal_tls_and_sandbox_with_private_profile(runner, tmp_path, monkeypatch):
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_browser_uses_private_linux_shared_memory_without_changing_tls_or_sandbox(runner, tmp_path, monkeypatch, platform):
+    monkeypatch.setattr(runner.sys, "platform", platform)
     commands = []
     def command(browser, method, path, payload=None):
         commands.append((method, path, payload))
@@ -215,15 +218,26 @@ def test_browser_uses_normal_tls_and_sandbox_with_private_profile(runner, tmp_pa
         return None
     monkeypatch.setattr(runner.Browser, "command", command)
     process = Mock()
-    monkeypatch.setattr(runner.subprocess, "Popen", Mock(return_value=process))
+    popen = Mock(return_value=process)
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
     tools = Mock()
-    browser = runner.Browser(tmp_path / "chrome", tmp_path / "driver", tmp_path / "private-profile",
-                             {"HOME": str(tmp_path)}, "https://synthetic.example.test", tools)
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir(mode=0o700)
+    environment = runner.browser_environment(scratch, None)
+    profile = scratch / "private-profile"
+    browser = runner.Browser(tmp_path / "chrome", tmp_path / "driver", profile,
+                             environment, "https://synthetic.example.test", tools)
     capabilities = next(payload for _, path, payload in commands if path == "/session")["capabilities"]["alwaysMatch"]
     assert capabilities["acceptInsecureCerts"] is False
     arguments = capabilities["goog:chromeOptions"]["args"]
-    assert "--user-data-dir=" + str(tmp_path / "private-profile") in arguments
-    assert not any("ignore-certificate" in argument or "no-sandbox" in argument for argument in arguments)
+    assert "--user-data-dir=" + str(profile) in arguments
+    assert arguments.count("--disable-dev-shm-usage") == (1 if platform == "linux" else 0)
+    assert not any("ignore-certificate" in argument or "sandbox" in argument for argument in arguments)
+    assert capabilities["goog:chromeOptions"]["binary"] == str(tmp_path / "chrome")
+    assert popen.call_args.kwargs["env"] == environment
+    assert popen.call_args.kwargs["env"]["TMPDIR"] == str(scratch)
+    assert scratch.stat().st_mode & 0o777 == 0o700
+    assert popen.call_args.kwargs["start_new_session"] is True
     browser.close()
     tools.terminate_group.assert_called_once_with(process)
 
@@ -278,8 +292,15 @@ def test_fill_preserves_clear_error_without_fallback_typing(runner):
 
 
 @pytest.mark.parametrize("error,expected", [("invalid element state", "invalid element state"),
-    ("unknown error", "unknown error"), ("Synthetic private account/path details", "unrecognized_error")])
-def test_http_webdriver_errors_keep_only_fixed_code_method_and_operation(runner, error, expected):
+    ("unknown error", "unknown error"), ("tab crashed", "tab crashed"),
+    ("disconnected", "disconnected"), ("chrome not reachable", "chrome not reachable"),
+    ("target frame detached", "target frame detached"),
+    ("Synthetic private account/path details", "unrecognized_error")])
+@pytest.mark.parametrize("path,operation", [
+    ("/session/synthetic-private-session/element/synthetic-private-element/clear", "element_clear"),
+    ("/session/synthetic-private-session/url", "navigate"),
+])
+def test_http_webdriver_errors_keep_only_fixed_code_method_and_operation(runner, error, expected, path, operation):
     browser = object.__new__(runner.Browser)
     browser.endpoint = "http://127.0.0.1:12345"
     body = json.dumps({"value": {"error": error, "message": "Synthetic private password and account details",
@@ -288,8 +309,8 @@ def test_http_webdriver_errors_keep_only_fixed_code_method_and_operation(runner,
     browser.opener = Mock()
     browser.opener.open.side_effect = response
     with pytest.raises(runner.BrowserCommandError) as failure:
-        browser.command("POST", "/session/synthetic-private-session/element/synthetic-private-element/clear", {})
-    assert failure.value.diagnostic == {"error": expected, "method": "POST", "operation": "element_clear"}
+        browser.command("POST", path, {})
+    assert failure.value.diagnostic == {"error": expected, "method": "POST", "operation": operation}
     assert "private" not in json.dumps(failure.value.diagnostic)
     assert str(failure.value) == "browser_command_failed"
 
@@ -543,7 +564,9 @@ def test_phase_timings_use_monotonic_clock_and_first_verified_export(runner, mon
     assert receipt["passed"] is True
 
 
-def test_receipt_contains_only_sanitized_webdriver_diagnostics(runner, monkeypatch, capsys, tmp_path):
+@pytest.mark.parametrize("error_name,expected", [("Synthetic private driver error", "unrecognized_error"),
+                                              ("tab crashed", "tab crashed")])
+def test_receipt_contains_only_sanitized_webdriver_diagnostics(runner, monkeypatch, capsys, tmp_path, error_name, expected):
     monkeypatch.setattr(runner.os, "geteuid", lambda: 1000)
     monkeypatch.setattr(runner, "fixture_paths", lambda *_: [])
     monkeypatch.setattr(runner.getpass, "getpass", lambda _: "synthetic-password-only")
@@ -552,12 +575,12 @@ def test_receipt_contains_only_sanitized_webdriver_diagnostics(runner, monkeypat
     tools.host_platform.return_value = "linux64"
     tools.install_browser.return_value = (tmp_path / "chrome", tmp_path / "driver", "1.2.3.4")
     monkeypatch.setattr(runner, "browser_tools", lambda: tools)
-    error = runner.BrowserCommandError("Synthetic private driver error", "POST", "/session/private-session/element/private-element/clear")
+    error = runner.BrowserCommandError(error_name, "POST", "/session/private-session/url")
     monkeypatch.setattr(runner, "Browser", Mock(side_effect=error))
     assert runner.main(["--url", "https://synthetic.example.test", "--admin-username", "synthetic.admin",
         "--expected-release-id", "0.1.0-alpha.2-" + "a" * 12, "--acknowledge-synthetic-evaluation"]) == 1
     rendered = capsys.readouterr().out
     receipt = json.loads(rendered)
     assert receipt["phases"]["browser"] == "failed"
-    assert receipt["webdriver"] == {"error": "unrecognized_error", "method": "POST", "operation": "element_clear"}
+    assert receipt["webdriver"] == {"error": expected, "method": "POST", "operation": "navigate"}
     assert "private" not in rendered and "synthetic-password-only" not in rendered

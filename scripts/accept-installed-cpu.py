@@ -50,7 +50,8 @@ WEBDRIVER_ERRORS = frozenset({"element click intercepted", "element not interact
     "invalid argument", "invalid element state", "invalid selector", "invalid session id", "javascript error",
     "no such element", "no such frame", "no such window", "script timeout", "session not created",
     "stale element reference", "timeout", "unexpected alert open", "unknown command", "unknown error",
-    "unsupported operation", "transport_error", "invalid_response", "response_too_large", "unrecognized_error"})
+    "unsupported operation", "transport_error", "invalid_response", "response_too_large", "unrecognized_error",
+    "tab crashed", "disconnected", "chrome not reachable", "target frame detached"})
 FAILURE_CODES = frozenset({
     "invalid_arguments", "https_origin_required", "unsafe_input_file", "input_file_unavailable",
     "invalid_installed_release", "expected_release_conflict", "expected_release_required",
@@ -285,11 +286,15 @@ class Browser:
             self.process = subprocess.Popen([str(driver), f"--port={port}", "--allowed-ips=127.0.0.1"],
                 env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             self.wait(lambda: self.command("GET", "/status").get("ready") is True, seconds=20)
+            arguments = ["--headless=new", "--window-size=1440,1000", "--no-first-run",
+                "--no-default-browser-check", "--disable-background-networking", "--disable-component-update",
+                "--disable-sync", "--no-proxy-server", "--password-store=basic", "--user-data-dir=" + str(profile)]
+            if sys.platform == "linux":
+                # Chromium uses our private TMPDIR instead of a container's small
+                # /dev/shm mount. This does not disable its sandbox or TLS checks.
+                arguments.append("--disable-dev-shm-usage")
             capabilities = {"browserName": "chrome", "acceptInsecureCerts": False,
-                "goog:chromeOptions": {"binary": str(chrome), "args": ["--headless=new",
-                    "--window-size=1440,1000", "--no-first-run", "--no-default-browser-check",
-                    "--disable-background-networking", "--disable-component-update", "--disable-sync",
-                    "--no-proxy-server", "--password-store=basic", "--user-data-dir=" + str(profile)]}}
+                "goog:chromeOptions": {"binary": str(chrome), "args": arguments}}
             self.session = self.command("POST", "/session", {"capabilities": {"alwaysMatch": capabilities}})["sessionId"]
             self.call("POST", "/timeouts", {"implicit": 0, "pageLoad": 30000, "script": 30000})
         except BaseException:

@@ -21,6 +21,14 @@ an unprivileged user, with the normal browser sandbox enabled. The Linux x86_64
 path is the installed-node acceptance target; a local Mac browser rehearsal does
 not establish Linux installation success.
 
+On Linux, Chrome uses `--disable-dev-shm-usage` to place shared-memory backing
+files in the runner's private temporary directory. This avoids depending on a
+container's small `/dev/shm` mount. The [pinned Chromium implementation](https://github.com/chromium/chromium/blob/153.0.8010.36/base/files/file_util_posix.cc)
+honors the runner's isolated `TMPDIR`; normal sandbox and TLS checks remain
+enabled. This still requires available memory and temporary storage and does
+not diagnose the cause of a previous crash. Other platforms retain their
+existing browser options.
+
 ## Start a check
 
 Use the same reviewed checkout as the installation, with browser account
@@ -116,6 +124,9 @@ When a WebDriver command fails, `webdriver` adds only an allowlisted protocol
 error, HTTP method and command operation such as `element_clear` or
 `element_type`. Unknown error text becomes `unrecognized_error`; response
 messages, stack traces, selectors and session/element identifiers are omitted.
+The fixed vendor statuses `tab crashed`, `disconnected`, `chrome not reachable`
+and `target frame detached` are retained directly, without an external wrapper.
+A `tab crashed` result identifies a browser failure, not its underlying cause.
 Input failures remain failures; the runner does not retry typing or submit a
 form after a failed clear, focus or value check.
 `phase_seconds` records monotonic elapsed seconds for each attempted phase;
