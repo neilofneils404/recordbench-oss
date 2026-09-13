@@ -1,11 +1,15 @@
 PYTHON ?= .venv/bin/python
 SYSTEM_PYTHON ?= python3.12
+DEV_PORT ?= 8786
 .DEFAULT_GOAL := test
 
-.PHONY: bootstrap check compile compose-check publication-check test test-transcription
+.PHONY: bootstrap dev check compile compose-check publication-check test test-transcription
 
 bootstrap:
 	"$(SYSTEM_PYTHON)" scripts/bootstrap-dev.py
+
+dev:
+	"$(PYTHON)" scripts/dev-server.py --port "$(DEV_PORT)"
 
 test:
 	"$(PYTHON)" -m pytest -q

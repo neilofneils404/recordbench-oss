@@ -1,5 +1,12 @@
 # Installation handoff and team setup
 
+For your first installation, use [Try RecordBench](TRY_RECORDBENCH.md).
+Start alone with the [two synthetic practice records](../examples/synthetic-alpha/README.md):
+create a matter, upload, find **lantern**, read both originals, save a case note,
+and verify that note in a downloaded bundle. **Work product → Export matter
+bundle** exports without closing the matter. Team invitations can wait until
+that first review works.
+
 The installer ends with the configured HTTPS sign-in URL, authentication mode,
 initial local administrator username when recorded, observed preparation and
 runtime states, and the next incomplete step. It never treats a prepared node
@@ -76,9 +83,17 @@ be reported separately. `./install doctor --root /srv/recordbench` repeats the
 live checks and prints the handoff. A failure retains node state and reports the
 next unverified phase for recovery.
 
+`./install diagnostics --root /srv/recordbench` produces a read-only,
+content-minimized JSON receipt for installation feedback. Saved phases remain
+historical observations; rerun doctor for live readiness. See
+[installation diagnostics](INSTALL_DIAGNOSTICS.md) for what can be shared.
+
 The local loopback probe does not validate the certificate trust store on the
 operator's browser or a teammate's device. A generated smoke certificate remains
-for isolated loopback testing. Arrange the matching hostname and trusted TLS
+for isolated loopback testing. The [evaluation browser recipe](TRY_RECORDBENCH.md#open-it-from-your-laptop)
+uses a separate 30-day evaluation CA and explicit trust in a dedicated browser
+profile; it does not turn a smoke certificate into a trusted staff certificate.
+Arrange the matching hostname and trusted TLS
 through the operator before team access; do not bypass browser protection.
 
 Receipts are derived and are not a new account or source store. Existing nodes

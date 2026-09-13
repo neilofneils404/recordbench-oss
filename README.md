@@ -23,6 +23,18 @@ workflows use local models for retrieval, answers, and media transcription.
 > See [release readiness](docs/RELEASE_READINESS.md) for the validation still
 > ahead.
 
+## Start here
+
+| I want to… | Start with | What you need |
+| --- | --- | --- |
+| **Try the Linux alpha** | [Install the CPU evaluation profile](docs/TRY_RECORDBENCH.md) and review two supplied practice records | An x86-64 Linux box, Docker Compose, and space for the application; no GPU, model download or model-hub account |
+| **Help build it** | [Prepare a contributor checkout](CONTRIBUTING.md#set-up-a-development-checkout), then run `make dev` | Python 3.12; a disposable synthetic browser preview and tests; no deployed node or AI models |
+
+The CPU evaluation path supports uploading, extracting, finding and reading
+records, saving case notes, and exporting your work. Generated answers and
+transcription are optional later steps. Installation feedback and clear
+synthetic bug reports are contributions too.
+
 ## RecordBench in 51 seconds
 
 https://github.com/user-attachments/assets/d60d5c9e-0942-441e-988e-7109b9de8406
@@ -242,20 +254,14 @@ their cited sources.
 
 ## Quick start
 
-The lowest-barrier path is the CPU evaluation profile on a Linux host with
-Docker Compose:
-
-```bash
-git clone https://github.com/neilofneils404/recordbench-oss.git recordbench
-cd recordbench
-./install --help
-./install
-```
-
-The installer defaults to CPU evaluation, loopback-only HTTPS, and local
-accounts. NVIDIA Container Toolkit is required only when selecting a GPU
-profile. Read the complete [installation playbook](docs/INSTALL.md) before an
-installation intended for staff access.
+For a fresh Linux machine, follow [Try RecordBench](docs/TRY_RECORDBENCH.md).
+It includes Docker and service-account preparation, a complete CPU install,
+secure browser access from your laptop, two practice records, and recovery.
+The guide supplies the complete commands, including protected password input,
+`--prepare-only`, `--resume` and `doctor`. CPU evaluation uses loopback-only HTTPS
+and local accounts. Browser certificate trust still needs the guide's steps;
+an installer health check cannot establish it. Read the full
+[installation playbook](docs/INSTALL.md) for staff access or optional AI profiles.
 
 The installer also provides commands for node diagnostics, optional encrypted
 backup, isolated restore testing, and versioned updates. Operators can use
