@@ -15,6 +15,27 @@ OIDC, and Kerberos modes require secure cookies and trusted TLS. Real secrets
 are file-backed and excluded from Git. The installer never prints or retains a
 Hugging Face token.
 
+Browser assets use same-origin paths, retaining the external TLS origin and port
+without expanding trust in forwarded headers. Account pickers require a deliberate
+selection and show the sign-in username alongside the display name; stable
+principal IDs and server-side eligibility checks still authorize changes.
+
+[Antivirus recovery](ANTIVIRUS_RECOVERY.md) accepts only typed mirror/proxy
+configuration, never arbitrary FreshClam directives or credential-bearing URLs.
+Offline imports snapshot protected signed CVD inputs, verify signatures and load
+the pinned engine with no network before replacement. The node must be stopped;
+a private lock serializes supported antivirus commands and a durable pending
+marker blocks readiness after interrupted replacement. The daily header's reported
+build age is checked independently of filesystem timestamps. Offline freshness
+cannot prove that no newer upstream database exists.
+
+The short evaluator guide creates temporary localhost TLS outside the checkout
+and trusts its public CA only in a separate browser profile. The contributor
+`make dev` command instead opens a disposable synthetic preview on loopback with
+no authentication credentials or malware scanning; it is not an installed node.
+[Diagnostic receipts](INSTALL_DIAGNOSTICS.md) and the installed browser runner
+emit fixed, content-minimized fields rather than raw exceptions, logs or identities.
+
 The publication gate scans both the working tree and available Git history for
 private addresses, personal paths, credential material, secret-shaped literals,
 and operator-supplied internal deny terms. It also inspects extracted PDF
