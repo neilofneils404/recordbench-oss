@@ -3167,6 +3167,35 @@ class CaseIntelligenceWorkbench:
         *,
         citation_index: int | None = None,
     ) -> tuple[NotebookItemRecord, bool]:
+        self.workspace.membership(matter.matter_id, actor_id)
+        with self.source_store(matter).mutation_guard(), self.workspace._lock:
+            self.workspace.membership(matter.matter_id, actor_id)
+            return self._save_answer_to_notebook(matter, actor_id, conversation_id,
+                message_id, claim_index, citation_index=citation_index)
+
+    def _saved_answer_references(
+        self, matter: MatterRecord, citations: Sequence[Mapping[str, object]],
+    ) -> tuple[dict[str, object], ...]:
+        from .report_materials import resolve_saved_answer_references
+
+        values = []
+        for citation in citations:
+            token = self._citation_support_token(citation)
+            if citation.get("support_token") not in (None, "", token):
+                raise WorkspaceProblem("The saved answer has conflicting source support. Ask the question again in a new conversation.")
+            values.append({**citation, "support_token": token})
+        return resolve_saved_answer_references(self, matter, values)
+
+    def _save_answer_to_notebook(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        conversation_id: str,
+        message_id: str,
+        claim_index: int,
+        *,
+        citation_index: int | None = None,
+    ) -> tuple[NotebookItemRecord, bool]:
         messages = self.workspace.messages(matter.matter_id, conversation_id)
         message = next(
             (
@@ -3189,6 +3218,7 @@ class CaseIntelligenceWorkbench:
             raise WorkspaceProblem("That answer passage no longer has source support.")
         if citation_index is None:
             selected_citations = citations[:12]
+            references = self._saved_answer_references(matter, selected_citations)
             body = str(claim["text"])
             title = self._notebook_title(body)
             status = "suggested"
@@ -3199,8 +3229,8 @@ class CaseIntelligenceWorkbench:
             if not 0 <= citation_index < len(citations):
                 raise KeyError(str(citation_index))
             selected_citations = [citations[citation_index]]
-            token = self._citation_support_token(selected_citations[0])
-            reference = self.notebook_reference_from_support(matter, token)
+            references = self._saved_answer_references(matter, selected_citations)
+            reference = references[0]
             body = str(reference["excerpt"])
             title = self._notebook_title(
                 f"{reference['source_name']} · {reference['location']}"
@@ -3209,12 +3239,6 @@ class CaseIntelligenceWorkbench:
             origin = "citation"
             dedupe = f"citation:{message_id}:{claim_index}:{citation_index}"
             item_type = "note"
-        references = tuple(
-            self.notebook_reference_from_support(
-                matter, self._citation_support_token(citation)
-            )
-            for citation in selected_citations
-        )
         return self.workspace.create_notebook_item(
             matter.matter_id,
             actor_id,
@@ -3948,6 +3972,21 @@ class CaseIntelligenceWorkbench:
         message_id: str,
         *, expected_status: str,
     ):
+        self.workspace.membership(matter.matter_id, actor_id)
+        with self.source_store(matter).mutation_guard(), self.workspace._lock:
+            self.workspace.membership(matter.matter_id, actor_id)
+            return self._add_answer_to_report(matter, actor_id, report_id,
+                conversation_id, message_id, expected_status=expected_status)
+
+    def _add_answer_to_report(
+        self,
+        matter: MatterRecord,
+        actor_id: str,
+        report_id: str,
+        conversation_id: str,
+        message_id: str,
+        *, expected_status: str,
+    ):
         conversation = self.workspace.get_conversation(
             matter.matter_id, conversation_id
         )
@@ -3962,7 +4001,7 @@ class CaseIntelligenceWorkbench:
         )
         if answer is None:
             raise KeyError(message_id)
-        support_tokens: list[str] = []
+        saved_citations = []
         payload = answer.payload
         claims = payload.get("claims")
         if isinstance(claims, list):
@@ -3973,27 +4012,17 @@ class CaseIntelligenceWorkbench:
                 if not isinstance(citations, list):
                     continue
                 for citation in citations:
-                    try:
-                        token = self._citation_support_token(citation)
-                    except KeyError:
-                        continue
-                    if token not in support_tokens:
-                        support_tokens.append(token)
-        references = tuple(
-            self.notebook_reference_from_support(matter, token)
-            for token in support_tokens[:100]
-        )
-        citations = []
-        for reference in references:
-            document = self.source_store(matter).get(str(reference["document_id"]))
-            citations.append(
-                {
-                    "kind": (
-                        "transcript" if is_media_type(document.media_type) else "source"
-                    ),
-                    **reference,
-                }
-            )
+                    saved_citations.append(citation)
+        source_limitation = (payload.get("source_limitation")
+            if "source_limitation" in payload else
+            payload.get("limitation") if not payload.get("verification_notice") else None)
+        if isinstance(source_limitation, Mapping):
+            limitation_citations = source_limitation.get("citations")
+            if isinstance(limitation_citations, list):
+                saved_citations.extend(limitation_citations)
+        references = self._saved_answer_references(matter, saved_citations)
+        # Validate every supplied copy before deduplicating rendered passages.
+        citations = tuple({value["support_token"]: value for value in references}.values())[:100]
         question = next(
             (
                 item.content
@@ -4011,7 +4040,7 @@ class CaseIntelligenceWorkbench:
             body=answer.content,
             origin="answer",
             origin_id=answer.message_id,
-            citations=tuple(citations),
+            citations=citations,
         )
 
     def _index_document(self, matter: MatterRecord, document: PilotDocument) -> None:
@@ -4305,15 +4334,27 @@ class CaseIntelligenceWorkbench:
         return "\n".join(lines)
 
     @staticmethod
+    def _saved_answer_citation_payload(citation: WorkbenchCitation) -> dict[str, object]:
+        """Bind the complete source text without repeating it in every claim."""
+        payload = CaseIntelligenceWorkbench._workflow_citation_payload(citation)
+        # Existing saved-work validation compares this full-unit digest with
+        # current exact text. Repeated full excerpts could exceed the bounded
+        # conversation payload; omitting them does not shorten the text basis.
+        del payload["excerpt"]
+        return payload
+
+    @staticmethod
     def _answer_payload(
         answer: VerifiedAnswer,
         evidence: Mapping[str, WorkbenchCitation],
     ) -> dict[str, object]:
+        # This is persisted work, so display-only staff payloads are insufficient:
+        # transcript moment links intentionally survive text corrections.
         def claim_payload(claim) -> dict[str, object]:
             return {
                 "text": claim.text,
                 "citations": [
-                    evidence[identifier].staff_payload()
+                    CaseIntelligenceWorkbench._saved_answer_citation_payload(evidence[identifier])
                     for identifier in claim.evidence_ids
                     if identifier in evidence
                 ],
@@ -4343,7 +4384,8 @@ class CaseIntelligenceWorkbench:
             payload["evidence_notice"] = answer.evidence_notice
         if not answer.answerable and evidence:
             payload["source_matches"] = [
-                citation.staff_payload() for citation in evidence.values()
+                CaseIntelligenceWorkbench._saved_answer_citation_payload(citation)
+                for citation in evidence.values()
             ]
         return payload
 

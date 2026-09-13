@@ -66,6 +66,38 @@ units up to 6,000 characters can be preserved even when the prior notebook showe
 only a shorter excerpt; the frozen digest must match. Larger units fail rather
 than silently losing the end of their support.
 
+Saved focused-answer citations retain their matter, source identity/version,
+location and the digest of the complete exact source text when the answer is
+saved. Both the foreground and queued answer paths use the existing workflow citation format,
+including cited qualifications and unverified source matches. Full excerpts
+are not repeated in every claim, preserving the bounded conversation payload;
+the digest remains bound to the complete source unit. This lets an
+unchanged PDF/transcript conversation compile without reconstructing the text
+that the answer originally used. Copying a saved answer or its cited passage to
+a note or directly into a Report applies the same exact-support validation under
+the source mutation guard; copying cannot silently refresh stale transcript text.
+
+For older persisted conversations, document tokens and legacy transcript tokens
+that bind the text digest can still resolve their exact unchanged source text.
+A current transcript moment token also needs a saved full-text digest or an exact
+saved excerpt. The moment token intentionally survives transcript correction,
+so a working playback link alone cannot upgrade an older citation that lacks
+both. Such work remains readable but is rejected for compilation or copying.
+After reviewing the original, ask the question again in a **new conversation**
+and select that new conversation, or create and review a new note directly from
+the source. Merely reopening the old answer does not supply the missing basis;
+the original answer and review history remain unchanged. Correcting transcript
+text also makes previously compiled Report exports fail source validation until
+the reviewer builds new supported work from the current source.
+
+`tests/test_saved_answer_report_support.py` creates a fresh Pump Cedar PDF and
+synthetic PCM carrier with a deterministic transcript. It checks synchronous and
+queued answer persistence, PDF-only/transcript-only/mixed compilation, original
+source locations, Word/Markdown citation content, supported transcript correction,
+stale copying, safe/unsafe legacy compatibility, and explicit recovery. Its
+processor and source-echo generation isolate provenance handling; they do not
+qualify speech recognition or semantic answer quality.
+
 The UI uses the shared server policy, with configurable positive integers
 `CASE_INTELLIGENCE_REPORT_MAX_MATERIALS`, `CASE_INTELLIGENCE_REPORT_MAX_MODEL_CALLS`,
 `CASE_INTELLIGENCE_REPORT_MAX_SECTIONS`, and `CASE_INTELLIGENCE_REPORT_WORKERS`.

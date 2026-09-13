@@ -37,8 +37,24 @@ MAX_SOURCE_SCAN_UNITS = 100_000
 MAX_SOURCE_SCAN_SERIALIZED_CHARS = 64_000_000
 MAX_SOURCE_SCAN_RECORD_CHARS = 8_000_000
 MAX_SOURCE_SCAN_SECONDS = 5.0
-_STALE = "Some selected source support changed or lacks an exact saved text version. Reopen that saved work before compiling a report."
+_STALE = (
+    "Some selected source support changed or lacks an exact saved text version. "
+    "Review the original source, then ask the question again in a new conversation "
+    "and select that new answer or a newly reviewed source note. Merely reopening "
+    "the old answer does not refresh its saved support."
+)
 _SCAN_LIMIT = "The selected saved work exceeds the report source-validation limit. Choose fewer or smaller sources; no report was saved."
+
+
+def resolve_saved_answer_references(bench, matter, references):
+    """Verify saved answer support before capture, under caller-owned guards.
+
+    Reuse Report compilation's exact-text and legacy-token rules so a note or
+    direct Report section cannot silently refresh a stale answer's citations.
+    """
+    resolver = _References(bench, matter)
+    resolver.prepare(references)
+    return tuple(resolver.resolve(value) for value in references)
 
 
 def _decision_review_status(machine, human):
