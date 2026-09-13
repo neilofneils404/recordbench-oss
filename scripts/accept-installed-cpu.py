@@ -46,6 +46,11 @@ ELEMENT = "element-6066-11e4-a52e-4f735466cecf"
 MAX_RESPONSE = 4 * 1024 * 1024
 MAX_EXPORT = 2 * 1024 * 1024
 INTERRUPTED = False
+WEBDRIVER_ERRORS = frozenset({"element click intercepted", "element not interactable", "insecure certificate",
+    "invalid argument", "invalid element state", "invalid selector", "invalid session id", "javascript error",
+    "no such element", "no such frame", "no such window", "script timeout", "session not created",
+    "stale element reference", "timeout", "unexpected alert open", "unknown command", "unknown error",
+    "unsupported operation", "transport_error", "invalid_response", "response_too_large", "unrecognized_error"})
 FAILURE_CODES = frozenset({
     "invalid_arguments", "https_origin_required", "unsafe_input_file", "input_file_unavailable",
     "invalid_installed_release", "expected_release_conflict", "expected_release_required",
@@ -53,6 +58,7 @@ FAILURE_CODES = frozenset({
     "unexpected_product", "installed_release_mismatch", "basic_review_not_ready", "cpu_profile_required",
     "linux_nss_tools_required_for_private_ca", "single_ca_certificate_required", "private_ca_import_failed",
     "browser_response_too_large", "browser_command_failed", "browser_phase_timeout",
+    "browser_input_not_ready", "browser_input_value_mismatch",
     "browser_left_expected_origin", "unexpected_navigation", "browser_fetch_failed", "local_login_form_required",
     "populated_node_refused", "browser_account_management_required", "same_origin_assets_failed",
     "matter_export_failed", "export_too_large", "saved_note_missing_from_export", "invalid_matter_export",
@@ -65,6 +71,34 @@ FAILURE_CODES = frozenset({
 
 class AcceptanceError(Exception):
     """Only a fixed code crosses the public receipt boundary."""
+
+
+class BrowserCommandError(AcceptanceError):
+    def __init__(self, code, method, path):
+        super().__init__("browser_command_failed")
+        self.diagnostic = {
+            "error": code if isinstance(code, str) and code in WEBDRIVER_ERRORS else "unrecognized_error",
+            "method": method if method in {"GET", "POST", "DELETE"} else "UNKNOWN",
+            "operation": webdriver_operation(method, path),
+        }
+
+
+def webdriver_operation(method, path):
+    if path == "/status":
+        return "status"
+    if path == "/session":
+        return "session_start"
+    if re.fullmatch(r"/session/[^/]+", path):
+        return "session_close" if method == "DELETE" else "unknown"
+    route = re.sub(r"^/session/[^/]+", "", path)
+    if route == "/url":
+        return "navigate" if method == "POST" else "current_url"
+    routes = {"/element": "element_find", "/execute/sync": "execute_script",
+              "/execute/async": "execute_async", "/timeouts": "timeouts"}
+    if route in routes:
+        return routes[route]
+    match = re.fullmatch(r"/element/[^/]+/(clear|value|click)", route)
+    return {"clear": "element_clear", "value": "element_type", "click": "element_click"}[match[1]] if match else "unknown"
 
 
 class Parser(argparse.ArgumentParser):
@@ -267,16 +301,23 @@ class Browser:
         request = urllib.request.Request(self.endpoint + path, data=data, method=method,
                                         headers={"Content-Type": "application/json"})
         try:
-            with self.opener.open(request, timeout=35) as response:
+            failed_http = False
+            try:
+                response = self.opener.open(request, timeout=35)
+            except urllib.error.HTTPError as error:
+                response, failed_http = error, True
+            with response:
                 body = response.read(MAX_RESPONSE + 1)
             if len(body) > MAX_RESPONSE:
-                raise AcceptanceError("browser_response_too_large")
+                raise BrowserCommandError("response_too_large", method, path)
             value = json.loads(body)["value"]
-            if isinstance(value, dict) and value.get("error"):
-                raise AcceptanceError("browser_command_failed")
+            if failed_http or (isinstance(value, dict) and value.get("error")):
+                raise BrowserCommandError(value.get("error") if isinstance(value, dict) else None, method, path)
             return value
-        except (OSError, ValueError, KeyError, urllib.error.URLError):
-            raise AcceptanceError("browser_command_failed") from None
+        except (ValueError, KeyError, TypeError):
+            raise BrowserCommandError("invalid_response", method, path) from None
+        except (OSError, urllib.error.URLError):
+            raise BrowserCommandError("transport_error", method, path) from None
 
     def call(self, method, path, payload=None):
         return self.command(method, "/session/" + self.session + path, payload)
@@ -286,15 +327,21 @@ class Browser:
 
     def wait(self, predicate, seconds=30):
         deadline = time.monotonic() + seconds
+        last_error = None
         while time.monotonic() < deadline:
             try:
                 result = predicate()
                 if result:
                     return result
             except AcceptanceError as exc:
-                if str(exc) != "browser_command_failed":
+                if not isinstance(exc, BrowserCommandError) or not (
+                        exc.diagnostic["error"] in {"no such element", "stale element reference"}
+                        or (exc.diagnostic["error"] == "transport_error" and exc.diagnostic["operation"] == "status")):
                     raise
+                last_error = exc
             time.sleep(0.2)
+        if last_error is not None:
+            raise last_error
         raise AcceptanceError("browser_phase_timeout")
 
     def require_origin(self):
@@ -314,9 +361,22 @@ class Browser:
 
     def fill(self, selector, text):
         element = self.element(selector)
-        if selector != "#source-files":
+        reference = {ELEMENT: element}
+        if selector == "#source-files":
+            self.call("POST", f"/element/{element}/value", {"text": text})
+            return
+        state = self.execute("""const input = arguments[0]; const rect = input.getBoundingClientRect();
+            const editable = (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)
+              && input.isConnected && !input.disabled && !input.readOnly && rect.width > 0 && rect.height > 0;
+            if (editable) { input.scrollIntoView({block: 'center', behavior: 'instant'}); input.focus({preventScroll: true}); }
+            return {ready: editable && document.activeElement === input, empty: input.value === ''};""", reference)
+        require(isinstance(state, dict) and state.get("ready") is True, "browser_input_not_ready")
+        if state.get("empty") is not True:
             self.call("POST", f"/element/{element}/clear", {})
+            require(self.execute("arguments[0].focus({preventScroll: true}); return document.activeElement === arguments[0] && arguments[0].value === '';",
+                                 reference), "browser_input_not_ready")
         self.call("POST", f"/element/{element}/value", {"text": text})
+        require(self.execute("return arguments[0].value === arguments[1];", reference, text), "browser_input_value_mismatch")
 
     def click(self, selector):
         element = self.element(selector)
@@ -353,6 +413,7 @@ class Browser:
             if self.process:
                 self.tools.terminate_group(self.process)
                 self.process = None
+            self.session = None
 
 
 def require(condition, code):
@@ -419,8 +480,24 @@ def check_export(result):
         raise AcceptanceError("invalid_matter_export") from None
 
 
-def run_journey(browsers, username, password, fixtures, allow_previous, phase):
-    admin, first, second = browsers
+def create_reviewers(admin, open_browser, names, password, display):
+    for name in names:
+        admin.go("/admin/people")
+        for selector, value in (("#new-display-name", display), ("#new-username", name),
+                                ("#new-password", password), ("#new-password-confirm", password)):
+            admin.fill(selector, value)
+        admin.click("#add-person button[type=submit]")
+        admin.wait(lambda: admin.execute("return location.pathname === arguments[0];", "/admin/people/accounts/" + name))
+        # Local accounts enter the team picker after their first real sign-in.
+        # Register one at a time; matrix sessions below use fresh profiles.
+        reviewer = open_browser()
+        try:
+            login(reviewer, name, password)
+        finally:
+            reviewer.close()
+
+
+def run_journey(admin, open_browser, username, password, fixtures, allow_previous, phase):
     phase("administrator_login", lambda: login(admin, username, password))
     phase("synthetic_node", lambda: check_node(admin, username, allow_previous))
     phase("assets", lambda: check_assets(admin))
@@ -428,17 +505,7 @@ def run_journey(browsers, username, password, fixtures, allow_previous, phase):
     reviewer_names = [f"rb-synthetic-{run_id}-{suffix}" for suffix in ("a", "b")]
     reviewer_password = secrets.token_urlsafe(24)
     display = "Synthetic CPU Reviewer"
-
-    def accounts():
-        for name, browser in zip(reviewer_names, (first, second)):
-            admin.go("/admin/people")
-            for selector, value in (("#new-display-name", display), ("#new-username", name),
-                                    ("#new-password", reviewer_password), ("#new-password-confirm", reviewer_password)):
-                admin.fill(selector, value)
-            admin.click("#add-person button[type=submit]")
-            admin.wait(lambda: admin.execute("return location.pathname === arguments[0];", "/admin/people/accounts/" + name))
-            login(browser, name, reviewer_password)
-    phase("reviewer_accounts", accounts)
+    phase("reviewer_accounts", lambda: create_reviewers(admin, open_browser, reviewer_names, reviewer_password, display))
     def matter():
         admin.go("/matters/new")
         admin.fill("#matter-name", "Synthetic CPU acceptance " + run_id)
@@ -504,6 +571,11 @@ def run_journey(browsers, username, password, fixtures, allow_previous, phase):
         check_export(admin.fetch(export_path, content=True))
     phase("note_and_export", note_export)
 
+    check_team_access(admin, open_browser, prefix, reviewer_names, reviewer_password, display, phase)
+
+
+def check_team_access(admin, open_browser, prefix, reviewer_names, reviewer_password, display, phase):
+
     selected = None
     def named_grant():
         nonlocal selected
@@ -514,27 +586,37 @@ def run_journey(browsers, username, password, fixtures, allow_previous, phase):
         choices = [choice for choice in choices if choice.get("label") in expected]
         require(len(choices) == 2 and {item["label"] for item in choices} == set(expected), "ambiguous_person_choices")
         choice = choices[1]
-        selected = first if choice["label"] == expected[0] else second
+        selected = reviewer_names[0] if choice["label"] == expected[0] else reviewer_names[1]
         admin.execute("const select = document.querySelector('#new-member'); select.value = arguments[0]; select.dispatchEvent(new Event('change', {bubbles: true}));", choice["value"])
         admin.click("form[action$='/members'] button[type=submit]")
         admin.wait(lambda: admin.execute("return Array.from(document.querySelectorAll('.case-team-list strong')).some(e => e.textContent === arguments[0]);", choice["label"]))
         require(admin.execute("return Array.from(document.querySelectorAll('.notice-success')).some(e => e.textContent.includes(arguments[0]));", choice["label"] + " added to the case team"), "ambiguous_person_choices")
-        selected.go(prefix + "/home")
-        require(selected.fetch(prefix + "/home")["status"] == 200, "selected_account_denied")
-        require(selected.fetch(prefix + "/notebook/export?format=markdown")["status"] == 200, "selected_export_denied")
     phase("named_grant", named_grant)
 
     def denied():
-        unassigned = second if selected is first else first
-        for path in (prefix + "/home", prefix + "/notebook/export?format=markdown"):
-            require(unassigned.fetch(path)["status"] == 404, "unassigned_account_allowed")
+        unassigned = open_browser()
+        try:
+            name = next(name for name in reviewer_names if name != selected)
+            login(unassigned, name, reviewer_password)
+            for path in (prefix + "/home", prefix + "/notebook/export?format=markdown"):
+                require(unassigned.fetch(path)["status"] == 404, "unassigned_account_allowed")
+        finally:
+            unassigned.close()
     phase("unassigned_denial", denied)
 
     def revoke():
-        admin.click(".case-team-list form[action$='/remove'] button")
-        admin.wait(lambda: admin.execute("return document.querySelectorAll('.case-team-list form[action$=\"/remove\"]').length === 0;"))
-        for path in (prefix + "/home", prefix + "/notebook/export?format=markdown"):
-            require(selected.fetch(path)["status"] == 404, "revoked_session_allowed")
+        reviewer = open_browser()
+        try:
+            login(reviewer, selected, reviewer_password)
+            reviewer.go(prefix + "/home")
+            require(reviewer.fetch(prefix + "/home")["status"] == 200, "selected_account_denied")
+            require(reviewer.fetch(prefix + "/notebook/export?format=markdown")["status"] == 200, "selected_export_denied")
+            admin.click(".case-team-list form[action$='/remove'] button")
+            admin.wait(lambda: admin.execute("return document.querySelectorAll('.case-team-list form[action$=\"/remove\"]').length === 0;"))
+            for path in (prefix + "/home", prefix + "/notebook/export?format=markdown"):
+                require(reviewer.fetch(path)["status"] == 404, "revoked_session_allowed")
+        finally:
+            reviewer.close()
     phase("live_revocation", revoke)
 
 
@@ -607,20 +689,24 @@ def run(argv=None):
                 directory.mkdir()
                 chrome, driver, version = tools.install_browser(directory, platform_name, args.archives)
                 receipt.update(browser_version=version, browser_platform=platform_name)
-                browsers = []
-                for number in range(3):
+                number = 0
+                def open_browser():
+                    nonlocal number
                     browser = Browser(chrome, driver, scratch / f"profile-{number}", environment, target, tools)
                     stack.callback(browser.close)
-                    browsers.append(browser)
-                return browsers, fixtures
-            browsers, fixtures = phase("browser", prepare_browser)
-            run_journey(browsers, args.admin_username, password, fixtures, args.allow_previous_synthetic_runs, phase)
+                    number += 1
+                    return browser
+                return open_browser(), open_browser, fixtures
+            admin, open_browser, fixtures = phase("browser", prepare_browser)
+            run_journey(admin, open_browser, args.admin_username, password, fixtures, args.allow_previous_synthetic_runs, phase)
             receipt["counts"] = {"uploaded_sources": 2, "created_reviewers": 2}
             receipt["passed"] = all(value == "passed" for value in receipt["phases"].values())
     except AcceptanceError as exc:
         receipt["passed"] = False
         receipt["phases"][active_phase] = "failed"
         receipt["failure_code"] = str(exc) if str(exc) in FAILURE_CODES else "acceptance_interrupted_or_unavailable"
+        if isinstance(exc, BrowserCommandError):
+            receipt["webdriver"] = exc.diagnostic
     except (Exception, KeyboardInterrupt):
         receipt["passed"] = False
         receipt["phases"][active_phase] = "failed"

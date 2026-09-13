@@ -237,6 +237,140 @@ def test_browser_refuses_cross_origin_before_typing_credentials(runner):
     browser.call.assert_called_once_with("GET", "/url")
 
 
+@pytest.mark.parametrize("empty", [True, False])
+def test_fill_skips_empty_clear_and_verifies_focused_input_value(runner, empty):
+    browser = object.__new__(runner.Browser)
+    browser.element = Mock(return_value="synthetic-element")
+    browser.execute = Mock(side_effect=[{"ready": True, "empty": empty}] + ([True] if not empty else []) + [True])
+    browser.call = Mock()
+    browser.fill("#local-password", "synthetic-password-only")
+    calls = [(call.args[0], call.args[1]) for call in browser.call.call_args_list]
+    assert calls == ([] if empty else [("POST", "/element/synthetic-element/clear")]) + [
+        ("POST", "/element/synthetic-element/value")]
+    assert "document.activeElement === input" in browser.execute.call_args_list[0].args[0]
+    assert browser.execute.call_args.args[1:] == ({runner.ELEMENT: "synthetic-element"}, "synthetic-password-only")
+
+
+@pytest.mark.parametrize("state,results,code", [
+    ({"ready": False, "empty": True}, [], "browser_input_not_ready"),
+    ({"ready": True, "empty": False}, [False], "browser_input_not_ready"),
+    ({"ready": True, "empty": True}, [False], "browser_input_value_mismatch"),
+])
+def test_fill_refuses_unready_or_inexact_control_without_retry(runner, state, results, code):
+    browser = object.__new__(runner.Browser)
+    browser.element = Mock(return_value="synthetic-element")
+    browser.execute = Mock(side_effect=[state, *results])
+    browser.call = Mock()
+    with pytest.raises(runner.AcceptanceError, match=code):
+        browser.fill("#local-password", "synthetic-password-only")
+    assert browser.call.call_count <= 1
+
+
+def test_fill_preserves_clear_error_without_fallback_typing(runner):
+    browser = object.__new__(runner.Browser)
+    browser.element = Mock(return_value="synthetic-element")
+    browser.execute = Mock(return_value={"ready": True, "empty": False})
+    browser.call = Mock(side_effect=runner.BrowserCommandError("invalid element state", "POST", "/session/synthetic/element/synthetic/clear"))
+    with pytest.raises(runner.BrowserCommandError) as failure:
+        browser.fill("#local-password", "synthetic-password-only")
+    assert failure.value.diagnostic["operation"] == "element_clear"
+    browser.call.assert_called_once_with("POST", "/element/synthetic-element/clear", {})
+
+
+@pytest.mark.parametrize("error,expected", [("invalid element state", "invalid element state"),
+    ("unknown error", "unknown error"), ("Synthetic private account/path details", "unrecognized_error")])
+def test_http_webdriver_errors_keep_only_fixed_code_method_and_operation(runner, error, expected):
+    browser = object.__new__(runner.Browser)
+    browser.endpoint = "http://127.0.0.1:12345"
+    body = json.dumps({"value": {"error": error, "message": "Synthetic private password and account details",
+                                "stacktrace": "Synthetic private path"}}).encode()
+    response = runner.urllib.error.HTTPError(browser.endpoint, 500, "Synthetic private reason", {}, io.BytesIO(body))
+    browser.opener = Mock()
+    browser.opener.open.side_effect = response
+    with pytest.raises(runner.BrowserCommandError) as failure:
+        browser.command("POST", "/session/synthetic-private-session/element/synthetic-private-element/clear", {})
+    assert failure.value.diagnostic == {"error": expected, "method": "POST", "operation": "element_clear"}
+    assert "private" not in json.dumps(failure.value.diagnostic)
+    assert str(failure.value) == "browser_command_failed"
+
+
+@pytest.mark.parametrize("body,code", [(b"Synthetic non-JSON response", "invalid_response"),
+    (b"x" * (4 * 1024 * 1024 + 1), "response_too_large")])
+def test_webdriver_error_payloads_are_bounded_and_never_echoed(runner, body, code):
+    browser = object.__new__(runner.Browser)
+    browser.endpoint = "http://127.0.0.1:12345"
+    browser.opener = Mock()
+    browser.opener.open.side_effect = runner.urllib.error.HTTPError(browser.endpoint, 500, "private", {}, io.BytesIO(body))
+    with pytest.raises(runner.BrowserCommandError) as failure:
+        browser.command("POST", "/session/synthetic/element/synthetic/value", {"text": "synthetic-password-only"})
+    assert failure.value.diagnostic == {"error": code, "method": "POST", "operation": "element_type"}
+
+
+def test_wait_does_not_swallow_real_webdriver_failure(runner):
+    browser = object.__new__(runner.Browser)
+    error = runner.BrowserCommandError("unknown error", "POST", "/session/synthetic/execute/sync")
+    predicate = Mock(side_effect=error)
+    with pytest.raises(runner.BrowserCommandError) as failure:
+        browser.wait(predicate)
+    assert failure.value is error
+    predicate.assert_called_once_with()
+
+
+@pytest.mark.parametrize("reverse_choices", [True, False])
+def test_registration_and_access_matrix_keep_only_one_reviewer_open(runner, monkeypatch, reverse_choices):
+    names, display = ["rb-synthetic-aaaaaaaaaaaa-a", "rb-synthetic-aaaaaaaaaaaa-b"], "Synthetic CPU Reviewer"
+    options = [{"value": f"synthetic-{number}", "label": f"{display} ({name})"} for number, name in enumerate(names)]
+    if reverse_choices:
+        options.reverse()
+    selected_name = names[0] if reverse_choices else names[1]
+    events, opened, active = [], [], []
+    revoked = False
+    admin = Mock()
+    admin.execute.side_effect = lambda script, *_: options if "#new-member option" in script else True
+    admin.wait.side_effect = lambda predicate: predicate()
+    def click(selector):
+        nonlocal revoked
+        if selector.startswith(".case-team-list"):
+            revoked = True
+    admin.click.side_effect = click
+    class Reviewer:
+        name = None
+        def go(self, _path):
+            pass
+        def fetch(self, path):
+            assert self in active
+            status = 200 if self.name == selected_name and not revoked else 404
+            events.append((self, "fetch", status, path))
+            return {"status": status}
+        def close(self):
+            events.append((self, "close"))
+            active.remove(self)
+    def open_browser():
+        assert not active, "The unassigned session must close before the selected session opens"
+        browser = Reviewer()
+        opened.append(browser)
+        active.append(browser)
+        return browser
+    def login(browser, name, _password):
+        assert browser.name is None, "The revocation check must not sign in again"
+        browser.name = name
+        events.append((browser, "login", name))
+    monkeypatch.setattr(runner, "login", login)
+    runner.create_reviewers(admin, open_browser, names, "synthetic-password-only", display)
+    assert len(opened) == 2 and {browser.name for browser in opened} == set(names) and not active
+    phases = []
+    def phase(name, function):
+        function()
+        phases.append(name)
+    runner.check_team_access(admin, open_browser, "/matters/synthetic", names, "synthetic-password-only", display, phase)
+    assert phases == ["named_grant", "unassigned_denial", "live_revocation"]
+    assert len(opened) == 4 and not active
+    assert opened[2].name != selected_name and opened[3].name == selected_name
+    assert [event[2] for event in events if event[0] is opened[2] and event[1] == "fetch"] == [404, 404]
+    assert [event[2] for event in events if event[0] is opened[3] and event[1] == "fetch"] == [200, 200, 404, 404]
+    assert sum(event[1] == "login" for event in events) == 4
+
+
 @pytest.mark.parametrize("matters,accounts,allow,accepted", [
     ([], ["synthetic.admin"], False, True),
     (["Unrelated synthetic matter"], ["synthetic.admin"], True, False),
@@ -341,7 +475,8 @@ class SyntheticBrowser(runner.Browser):
     def call(self, *_args):
         raise AssertionError("Interrupted cleanup must terminate without a WebDriver timeout")
 runner.Browser = SyntheticBrowser
-def pause(*_args):
+def pause(_admin, open_browser, *_args):
+    open_browser()
     Path(sys.argv[2]).write_text(json.dumps({"pids": [item.process.pid for item in instances],
         "scratch": str(instances[0].profile.parent)}))
     time.sleep(120)
@@ -358,6 +493,7 @@ raise SystemExit(runner.main(["--url", "https://synthetic.example.test", "--admi
             time.sleep(0.02)
         assert state_file.exists(), "Synthetic harness did not reach the interruption point"
         state = json.loads(state_file.read_text())
+        assert len(state["pids"]) == 2
         child.send_signal(signum)
         output, errors = child.communicate(timeout=10)
         assert child.returncode == 1 and errors == ""
@@ -389,8 +525,10 @@ def test_phase_timings_use_monotonic_clock_and_first_verified_export(runner, mon
     tools.host_platform.return_value = "linux64"
     tools.install_browser.return_value = (tmp_path / "chrome", tmp_path / "driver", "1.2.3.4")
     monkeypatch.setattr(runner, "browser_tools", lambda: tools)
-    monkeypatch.setattr(runner, "Browser", Mock())
-    def journey(_browsers, _admin, _password, _fixtures, _previous, phase):
+    browser_constructor = Mock()
+    monkeypatch.setattr(runner, "Browser", browser_constructor)
+    def journey(_admin, _open_browser, _username, _password, _fixtures, _previous, phase):
+        assert browser_constructor.call_count == 1
         for name in runner.PHASES[3:]:
             phase(name, lambda: None)
     monkeypatch.setattr(runner, "run_journey", journey)
@@ -403,3 +541,23 @@ def test_phase_timings_use_monotonic_clock_and_first_verified_export(runner, mon
     assert all(value == 1 for value in receipt["phase_seconds"].values())
     assert receipt["first_export_seconds"] == 26
     assert receipt["passed"] is True
+
+
+def test_receipt_contains_only_sanitized_webdriver_diagnostics(runner, monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(runner.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(runner, "fixture_paths", lambda *_: [])
+    monkeypatch.setattr(runner.getpass, "getpass", lambda _: "synthetic-password-only")
+    monkeypatch.setattr(runner, "tls_health", lambda _target, _ca, expected: expected)
+    tools = Mock()
+    tools.host_platform.return_value = "linux64"
+    tools.install_browser.return_value = (tmp_path / "chrome", tmp_path / "driver", "1.2.3.4")
+    monkeypatch.setattr(runner, "browser_tools", lambda: tools)
+    error = runner.BrowserCommandError("Synthetic private driver error", "POST", "/session/private-session/element/private-element/clear")
+    monkeypatch.setattr(runner, "Browser", Mock(side_effect=error))
+    assert runner.main(["--url", "https://synthetic.example.test", "--admin-username", "synthetic.admin",
+        "--expected-release-id", "0.1.0-alpha.2-" + "a" * 12, "--acknowledge-synthetic-evaluation"]) == 1
+    rendered = capsys.readouterr().out
+    receipt = json.loads(rendered)
+    assert receipt["phases"]["browser"] == "failed"
+    assert receipt["webdriver"] == {"error": "unrecognized_error", "method": "POST", "operation": "element_clear"}
+    assert "private" not in rendered and "synthetic-password-only" not in rendered

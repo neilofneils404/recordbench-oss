@@ -2,7 +2,14 @@
 
 Run `scripts/accept-installed-cpu.py` against a new **synthetic-only** CPU
 evaluation node after installation has finished. It exercises the actual HTTPS
-gateway and application using three independent browser sessions. This is
+gateway and application using three independent accounts in isolated browser
+sessions, with at most two browsers running together. The administrator completes
+the main workflow alone, apart from sequential first sign-ins that register each
+new reviewer in the team picker. Each registration browser closes immediately.
+The unassigned reviewer later signs into a fresh browser for denial checks and
+closes before the selected reviewer opens; the selected reviewer remains in
+the same fresh session for both permitted access and denial after revocation.
+There are five browser launches in total. This is
 separate from the disposable application browser tests and from cold-install,
 resume, backup and clean-restore checks.
 
@@ -75,7 +82,9 @@ The fixed phase list covers:
 - TLS verification and exact installed release readback, overall healthy status,
   ready storage/source review/malware scanning, and all three optional model
   capabilities explicitly unselected for the CPU profile.
-- Real local sign-in forms, including their normal login challenge.
+- Real local sign-in forms, including their normal login challenge. The runner
+  focuses an editable input, clears it only when nonempty, types through
+  WebDriver and verifies the resulting value without recording that value.
 - An empty synthetic node, loaded same-origin styles and a working Activity drawer.
 - Two new reviewers with the same display name and distinct sign-in usernames.
 - Upload of the two exact bundled files in `examples/synthetic-alpha/`, ordinary
@@ -103,6 +112,12 @@ fixed failure code. Null counts mean the corresponding creation/upload phase
 did not finish verification; partial synthetic work may remain on a failed run.
 The receipt contains no URL, hostname, account names, password, cookie, source
 text, exported note, filesystem path or raw exception.
+When a WebDriver command fails, `webdriver` adds only an allowlisted protocol
+error, HTTP method and command operation such as `element_clear` or
+`element_type`. Unknown error text becomes `unrecognized_error`; response
+messages, stack traces, selectors and session/element identifiers are omitted.
+Input failures remain failures; the runner does not retry typing or submit a
+form after a failed clear, focus or value check.
 `phase_seconds` records monotonic elapsed seconds for each attempted phase;
 unattempted phases remain null. `first_export_seconds` measures from runner start
 through verification of the saved note in the ZIP, including password entry and
@@ -133,6 +148,9 @@ protected password files, fixed source hashes, a real local TLS server with
 trusted/untrusted/mismatched-host certificates, redirect refusal, temporary CA
 import, populated-node refusal, bounded export validation and content-free
 failure receipts, monotonic timing, and real signal/child-process cleanup.
+Session-lifecycle regressions check the two-browser limit, independent reviewer
+logins and revocation in the same selected session; input and protocol tests
+cover empty-field handling and redaction of WebDriver HTTP error responses.
 Browser helper rehearsal on a disposable app is additional
 evidence. The final installed Linux receipt must come from the actual x86_64
 host, after its normal cold-install and recovery gates.
