@@ -457,6 +457,13 @@ not fetch or merge source code: review and update the clone first, then run:
 ./install update --root /srv/recordbench
 ```
 
+The capsule fingerprint covers the paths and bytes of its allowlisted payload.
+The fingerprint and copy both exclude `__pycache__`, `.pytest_cache` and names
+ending in `.pyc`, including nested caches, so running tests does not change the
+release ID. Symbolic links remain forbidden, including within excluded caches.
+Record the source Git commit and the installed capsule ID separately: they
+identify the selected source revision and the packaged runtime content.
+
 An update requires a newly successful bundled encrypted backup unless no
 bundled backup is configured and the operator supplies `--no-backup`. Operators
 using their own backup method can use that flag after verifying their external

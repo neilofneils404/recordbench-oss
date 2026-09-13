@@ -410,6 +410,54 @@ def test_release_capsule_is_content_addressed_and_allowlisted(tmp_path) -> None:
     assert not (release / "tests").exists()
 
 
+def test_release_fingerprint_matches_payload_despite_nested_test_caches(tmp_path, monkeypatch):
+    project = tmp_path / "source"
+    source = project / "services" / "synthetic"
+    source.mkdir(parents=True)
+    (source / "app.py").write_text("# Synthetic application version one\n")
+    (project / "compose.yaml").write_text("services: {}\n")
+    monkeypatch.setattr(installer, "PROJECT", project)
+    monkeypatch.setattr(installer, "RELEASE_DIRECTORIES", ("services",))
+    monkeypatch.setattr(installer, "RELEASE_FILES", ("compose.yaml",))
+    clean_digest = installer._release_digest()
+    for cache in (".pytest_cache/v/cache", "__pycache__", "generated.pyc/nested"):
+        directory = source / cache
+        directory.mkdir(parents=True)
+        (directory / "synthetic-cache").write_text("synthetic transient state")
+    (source / "module.pyc").write_bytes(b"synthetic bytecode")
+    assert installer._release_digest() == clean_digest
+
+    node = tmp_path / "node"
+    node.mkdir(mode=0o700)
+    console = installer.Console(color=False, quiet=True)
+    release_id, release = installer._stage_release(console, node, dry_run=False)
+    assert release_id == f"{installer.VERSION}-{clean_digest[:12]}"
+    copied = {path.relative_to(release).as_posix() for path in release.rglob("*") if path.is_file()}
+    assert copied == {"services/synthetic/app.py", "compose.yaml", "RELEASE_MANIFEST.json"}
+    (source / ".pytest_cache/v/cache/synthetic-cache").write_text("changed synthetic cache")
+    assert installer._stage_release(console, node, dry_run=False) == (release_id, release)
+
+    (source / "app.py").write_text("# Synthetic application version two\n")
+    assert installer._release_digest() != clean_digest
+    replacement_id, replacement = installer._stage_release(console, node, dry_run=False)
+    assert replacement_id != release_id
+    assert (replacement / "services/synthetic/app.py").read_text() != (release / "services/synthetic/app.py").read_text()
+
+
+@pytest.mark.parametrize("cache", [".pytest_cache", "__pycache__", "generated.pyc"])
+def test_release_cache_exclusions_do_not_hide_symbolic_links(tmp_path, monkeypatch, cache):
+    project = tmp_path / "source"
+    (project / "services" / cache).mkdir(parents=True)
+    target = tmp_path / "synthetic-target"
+    target.write_text("synthetic external bytes")
+    (project / "services" / cache / "link").symlink_to(target)
+    monkeypatch.setattr(installer, "PROJECT", project)
+    monkeypatch.setattr(installer, "RELEASE_DIRECTORIES", ("services",))
+    monkeypatch.setattr(installer, "RELEASE_FILES", ())
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        installer._release_digest()
+
+
 def test_generated_environment_is_quoted_and_rejects_line_injection() -> None:
     text = installer._env_text(
         {"RECORDBENCH_PATH": "/srv/Record Bench", "RECORDBENCH_VALUE": 7},

@@ -598,6 +598,11 @@ def _release_sources() -> tuple[Path, ...]:
     return tuple(sources)
 
 
+def _release_ignored_names(_directory: str, names: Iterable[str]) -> set[str]:
+    """Use the same cache exclusions for the fingerprint and copied payload."""
+    return {name for name in names if name in {"__pycache__", ".pytest_cache"} or name.endswith(".pyc")}
+
+
 def _release_digest() -> str:
     digest = hashlib.sha256()
     for source in _release_sources():
@@ -605,7 +610,7 @@ def _release_digest() -> str:
         for path in paths:
             if path.is_symlink():
                 raise RuntimeError(f"release source contains a symbolic link: {path}")
-            if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+            if not path.is_file() or _release_ignored_names("", path.relative_to(PROJECT).parts):
                 continue
             relative = path.relative_to(PROJECT).as_posix()
             digest.update(relative.encode("utf-8") + b"\0")
@@ -622,7 +627,7 @@ def _copy_release_entry(source: Path, destination: Path) -> None:
             source,
             destination,
             symlinks=False,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+            ignore=_release_ignored_names,
         )
     else:
         destination.parent.mkdir(parents=True, exist_ok=True)
