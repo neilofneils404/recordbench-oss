@@ -25,6 +25,7 @@ MAX_SELECTIONS = 20
 MAX_MATERIALS = 500
 MAX_REFERENCES = 10_000
 MAX_CITATION_CHARS = MAX_REPORT_CITATION_EXCERPT_CHARS
+MAX_NOTEBOOK_PREVIEW_CHARS = 6_000
 # Bound the canonical snapshot before hashing or serialization. Reserve half
 # the export capacity for report prose, headings, attribution and generated
 # findings. The final rendered report must also respect the export limit.
@@ -37,8 +38,26 @@ MAX_SOURCE_SCAN_UNITS = 100_000
 MAX_SOURCE_SCAN_SERIALIZED_CHARS = 64_000_000
 MAX_SOURCE_SCAN_RECORD_CHARS = 8_000_000
 MAX_SOURCE_SCAN_SECONDS = 5.0
-_STALE = "Some selected source support changed or lacks an exact saved text version. Reopen that saved work before compiling a report."
+_STALE = (
+    "Some selected source support changed or lacks an exact saved text version. "
+    "Review the original source, then ask the question again in a new conversation "
+    "and select that new answer or a newly reviewed source note. Merely reopening "
+    "the old answer does not refresh its saved support."
+)
 _SCAN_LIMIT = "The selected saved work exceeds the report source-validation limit. Choose fewer or smaller sources; no report was saved."
+
+
+def resolve_saved_answer_references(bench, matter, references, *, notebook_preview=False):
+    """Verify saved answer support before capture, under caller-owned guards.
+
+    Reuse Report compilation's exact-text and legacy-token rules so a note or
+    direct Report section cannot silently refresh a stale answer's citations.
+    Notes retain their bounded display preview and the complete unit's digest;
+    their preview is cut only after all saved support has been validated.
+    """
+    resolver = _References(bench, matter, notebook_preview=notebook_preview)
+    resolver.prepare(references)
+    return tuple(resolver.resolve(value) for value in references)
 
 
 def _decision_review_status(machine, human):
@@ -51,8 +70,9 @@ def _decision_review_status(machine, human):
 
 
 class _References:
-    def __init__(self, bench, matter):
+    def __init__(self, bench, matter, *, notebook_preview=False):
         self.bench, self.matter = bench, matter
+        self.notebook_preview = notebook_preview
         self.store = bench.source_store(matter)
         self.documents = {}
         self.resolved = {}
@@ -121,10 +141,12 @@ class _References:
                     candidate = self.bench._candidate(self.matter, document, unit, ordinal)
                     for token in self.bench._support_tokens(candidate) & pending:
                         if token not in self.resolved:
-                            if len(unit.text) > MAX_CITATION_CHARS:
+                            if not self.notebook_preview and len(unit.text) > MAX_CITATION_CHARS:
                                 raise WorkspaceProblem("A selected source passage exceeds the 6,000-character report limit. Choose a smaller supported passage.")
                             # Charge rendered occurrences, including ledger checks.
-                            self.citation_chars += len(unit.text) * self.reference_counts[token]
+                            rendered_chars = (min(len(unit.text), MAX_NOTEBOOK_PREVIEW_CHARS)
+                                if self.notebook_preview else len(unit.text))
+                            self.citation_chars += rendered_chars * self.reference_counts[token]
                             if self.citation_chars > MAX_TOTAL_CITATION_CHARS:
                                 raise WorkspaceProblem("The selected source passages exceed the report's total citation-text limit. Choose fewer items of saved work; source passages cannot be shortened safely.")
                             self.resolved[token] = (document, unit, candidate)
@@ -231,7 +253,11 @@ class _References:
             # Legacy digest-bound tokens remain valid only for their exact text.
             if value["support_token"] != self.bench._legacy_support_token(candidate):
                 raise WorkspaceProblem(_STALE)
-        if len(unit.text) > MAX_CITATION_CHARS:
+        if self.notebook_preview:
+            # The digest and locator above still bind the complete unit, including
+            # text after this display prefix. Report callers never use this mode.
+            canonical["excerpt"] = unit.text[:MAX_NOTEBOOK_PREVIEW_CHARS]
+        elif len(unit.text) > MAX_CITATION_CHARS:
             raise WorkspaceProblem("A selected source passage exceeds the 6,000-character report limit. Choose a smaller supported passage.")
         return canonical
 
