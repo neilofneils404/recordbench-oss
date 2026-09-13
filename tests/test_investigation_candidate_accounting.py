@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import threading
 import time
 from types import SimpleNamespace
 import wave
@@ -19,6 +20,7 @@ from case_intelligence.review_budget import ReviewBudget
 from case_intelligence.workbench import create_workbench_app
 from case_intelligence.work_product_exports import ExportProblem, validate_research_basis
 from case_intelligence.workflow_jobs import WorkflowFailure
+from case_intelligence.workspace_store import WorkspaceStore
 from tests.test_matter_media_workflow import ImmediateMediaProcessor
 
 
@@ -129,7 +131,13 @@ def cedar(tmp_path, monkeypatch):
         while time.monotonic() < deadline:
             documents = {item.display_name: item for item in store.documents.values()}
             media = documents[audio.name]
-            if media.state == "ready":
+            readiness = bench.workspace.matter_readiness(matter.matter_id)
+            # Transcript projection precedes the durable media completion. The
+            # real matter gate must be open before manually starting research.
+            if (len(documents) == len(DOCUMENTS) + 1
+                    and all(document.state == "ready" for document in documents.values())
+                    and readiness.can_query
+                    and readiness.searchable_count == len(documents)):
                 break
             media_job = bench.workspace.media_job(matter.matter_id, media.document_id, media.version_id)
             if (media.state == "needs_review" and media_job
@@ -144,7 +152,12 @@ def cedar(tmp_path, monkeypatch):
                 assert response.status_code == 303
                 continued = True
             time.sleep(0.01)
-        assert media.state == "ready", media.message
+        assert (len(documents) == len(DOCUMENTS) + 1
+                and all(document.state == "ready" for document in documents.values())
+                and readiness.can_query and readiness.searchable_count == len(documents)), (
+            [(document.display_name, document.state, document.message) for document in documents.values()],
+            readiness,
+        )
         citations = {
             name: tuple(bench._citation(matter, bench._candidate(matter, document, unit, index))
                         for index, unit in enumerate(document.parsed_units(), 1))
@@ -189,6 +202,38 @@ def _run(cedar, *, unique_evidence=72):
     claimed = bench.workspace.set_research_plan(job.job_id, plan, 7)
     result = bench._process_research_job(claimed, lambda: False)
     return claimed, result
+
+
+def test_fixture_waits_for_committed_media_job_before_research(request, monkeypatch):
+    projected = threading.Event()
+    release = threading.Event()
+    observed = []
+    delete = CedarMediaProcessor.delete
+    matter_readiness = WorkspaceStore.matter_readiness
+
+    def hold_after_projection(processor, *args, **kwargs):
+        delete(processor, *args, **kwargs)
+        projected.set()
+        assert release.wait(10), "Fixture never observed the pending media commit"
+
+    def readiness_before_commit(workspace, matter_id):
+        readiness = matter_readiness(workspace, matter_id)
+        if projected.is_set() and not release.is_set():
+            observed.append(readiness)
+            release.set()
+        return readiness
+
+    monkeypatch.setattr(CedarMediaProcessor, "delete", hold_after_projection)
+    monkeypatch.setattr(WorkspaceStore, "matter_readiness", readiness_before_commit)
+    try:
+        fixture = request.getfixturevalue("cedar")
+        bench, _, _, _, *_ = fixture
+        claimed, result = _run(fixture)
+        assert bench._finish_research_job(claimed, result).state == "succeeded"
+        assert projected.is_set() and len(observed) == 1
+        assert observed[0].transcribing_count == 1 and not observed[0].can_query
+    finally:
+        release.set()
 
 
 def test_primary_supplemental_and_neighbor_candidates_finish_with_exact_counts(cedar):

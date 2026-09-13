@@ -153,6 +153,46 @@ All 194 transcription tests, compilation, Compose and publication content
 checks passed. No additional browser run is claimed for this evaluator-only
 follow-up; the existing workflow browser evidence above retains its scope.
 
+## Fixture readiness correction
+
+At `0251b3093b4bfc25c3d160c0df9c00ccba6dc0a9`, the pull-request application
+job passed **3,045 tests with 9 skips**, while the separate push application
+job failed two investigation tests and three Report fixture setups. Both jobs
+tested the same source tree. The [failed run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34758515661)
+remains part of the evidence; the passing run does not erase its fixture races.
+
+The investigation fixture treated a ready source document as permission to
+query, although the media worker had not yet finished its durable ingestion job.
+The Report fixture could submit the recording-check Continue action twice:
+the document still showed needs-review after the first action had queued its
+job. The second action correctly received a conflict response. These failures
+occurred during fixture setup/readiness, before the intended workflow checks;
+they do not establish product source-verification or investigation defects.
+
+The fixtures now wait for the application's canonical matter readiness and
+all expected searchable sources. Recording decisions require the committed
+cancelled preflight state and are submitted only once per inspection. Real
+workers and HTTP recording decisions remain active. Deterministic event-gated
+regressions hold the affected publication transitions so that both old races
+can be tested without relying on scheduler timing or increasing sleep delays.
+No production code or validation contract changes in this correction.
+
+Both new regressions fail on the old fixtures with the original readiness
+rejection and HTTP 409, then pass with the correction. Both affected test files
+pass all 36 cases, and the two boundary tests pass in five separate pytest
+processes (10 passes). The combined workflow/evaluator and frozen-pack run passes
+105 checks; all 194 transcription tests also pass. These local fixture runs use
+the previously disclosed native media/PDF accommodations. The Linux handoff's
+existing file-level commands automatically include the new cases.
+
+The unadapted macOS full suite returned **2,883 passed, 128 failed, 36 fixture
+errors and 9 skipped**. Every existing node kept its previous outcome. The new
+investigation boundary test passed; the new Report boundary test encountered
+the same native recording-inspection HTTP 400 already reported by that fixture.
+Both boundary tests pass with the disclosed native tool accommodations.
+Compilation, Compose and publication checks passed. This bounded native
+comparison requires fresh unadapted Linux CI for the corrected commit.
+
 ## Compatibility and recovery
 
 Historical investigation counters are never clamped, inflated or rewritten.

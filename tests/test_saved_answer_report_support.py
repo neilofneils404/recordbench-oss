@@ -7,6 +7,7 @@ qualify exact support persistence rather than model quality.
 from __future__ import annotations
 
 import io
+import threading
 import time
 import wave
 import zipfile
@@ -97,21 +98,31 @@ def cedar(tmp_path, monkeypatch):
             assert uploaded.status_code == 303, uploaded.text
         store = bench.source_store(matter)
         deadline = time.monotonic() + 8
+        continued_inspections = set()
         while time.monotonic() < deadline:
             documents = tuple(store.documents.values())
             for document in documents:
                 if document.media_type == "audio/wav" and document.state == "needs_review":
                     job = bench.workspace.media_job(matter.matter_id, document.document_id, document.version_id)
-                    if job and job.preflight.get("inspection_id"):
+                    inspection_id = job.preflight.get("inspection_id") if job else None
+                    if (job and job.state == "cancelled" and inspection_id
+                            and inspection_id not in continued_inspections):
                         # The silent PCM carrier deliberately needs the supported
-                        # human decision before deterministic transcription.
+                        # human decision once its durable inspection is held.
+                        # The source can still say needs_review after requeue.
                         response = client.post(f"/matters/{matter.slug}/sources/{store.action_token(document)}/recording-check",
-                            data={"action": "continue", "inspection_id": job.preflight["inspection_id"]}, follow_redirects=False)
+                            data={"action": "continue", "inspection_id": inspection_id}, follow_redirects=False)
                         assert response.status_code == 303, response.text
-            if len(documents) == 2 and all(document.state == "ready" for document in documents):
+                        continued_inspections.add(inspection_id)
+            readiness = bench.workspace.matter_readiness(matter.matter_id)
+            if (len(documents) == 2 and all(document.state == "ready" for document in documents)
+                    and readiness.can_query and readiness.searchable_count == 2):
                 break
             time.sleep(.01)
-        assert len(documents) == 2 and all(document.state == "ready" for document in documents), [(d.display_name, d.state, d.message) for d in documents]
+        assert (len(documents) == 2 and all(document.state == "ready" for document in documents)
+                and readiness.can_query and readiness.searchable_count == 2), (
+            [(d.display_name, d.state, d.message) for d in documents], readiness,
+        )
         documents = {"transcript" if doc.media_type == "audio/wav" else "pdf": doc for doc in documents}
         assert "18 psi" in documents["pdf"].parsed_units()[0].text
         assert RECOLLECTION in documents["transcript"].parsed_units()[0].text
@@ -137,6 +148,47 @@ def save_answer(cedar, monkeypatch, kinds, *, queued=False):
     assert message.payload["kind"] == "generated"
     assert len(message.payload["claims"]) == len(kinds)
     return conversation, message, citations
+
+
+def test_fixture_continues_each_recording_check_only_once(request, monkeypatch):
+    continued = threading.Event()
+    release = threading.Event()
+    observed = []
+    decisions = []
+    claim = WorkspaceStore.claim_media_job
+    media_job = WorkspaceStore.media_job
+    decide = WorkspaceStore.decide_media_preflight
+
+    def hold_requeued_worker(workspace, *args, **kwargs):
+        if continued.is_set() and not release.is_set():
+            return None
+        return claim(workspace, *args, **kwargs)
+
+    def continue_once(workspace, *args, **kwargs):
+        continued.set()
+        job = decide(workspace, *args, **kwargs)
+        decisions.append(job.media_job_id)
+        return job
+
+    def observe_queued_decision(workspace, *args, **kwargs):
+        job = media_job(workspace, *args, **kwargs)
+        if (continued.is_set() and not release.is_set()
+                and job is not None and job.state == "queued"):
+            observed.append(job)
+            release.set()
+        return job
+
+    monkeypatch.setattr(WorkspaceStore, "claim_media_job", hold_requeued_worker)
+    monkeypatch.setattr(WorkspaceStore, "decide_media_preflight", continue_once)
+    monkeypatch.setattr(WorkspaceStore, "media_job", observe_queued_decision)
+    try:
+        _, bench, matter, documents = request.getfixturevalue("cedar")
+        assert len(decisions) == len(observed) == 1
+        assert observed[0].preflight["continued"] is True
+        assert documents["transcript"].state == "ready"
+        assert bench.workspace.matter_readiness(matter.matter_id).can_query
+    finally:
+        release.set()
 
 
 @pytest.mark.parametrize("kinds,queued", [(("pdf",), False), (("transcript",), False),
