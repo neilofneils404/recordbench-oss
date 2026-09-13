@@ -3175,6 +3175,7 @@ class CaseIntelligenceWorkbench:
 
     def _saved_answer_references(
         self, matter: MatterRecord, citations: Sequence[Mapping[str, object]],
+        *, notebook_preview: bool = False,
     ) -> tuple[dict[str, object], ...]:
         from .report_materials import resolve_saved_answer_references
 
@@ -3184,7 +3185,8 @@ class CaseIntelligenceWorkbench:
             if citation.get("support_token") not in (None, "", token):
                 raise WorkspaceProblem("The saved answer has conflicting source support. Ask the question again in a new conversation.")
             values.append({**citation, "support_token": token})
-        return resolve_saved_answer_references(self, matter, values)
+        return resolve_saved_answer_references(self, matter, values,
+            notebook_preview=notebook_preview)
 
     def _save_answer_to_notebook(
         self,
@@ -3218,7 +3220,8 @@ class CaseIntelligenceWorkbench:
             raise WorkspaceProblem("That answer passage no longer has source support.")
         if citation_index is None:
             selected_citations = citations[:12]
-            references = self._saved_answer_references(matter, selected_citations)
+            references = self._saved_answer_references(matter, selected_citations,
+                notebook_preview=True)
             body = str(claim["text"])
             title = self._notebook_title(body)
             status = "suggested"
@@ -3229,7 +3232,8 @@ class CaseIntelligenceWorkbench:
             if not 0 <= citation_index < len(citations):
                 raise KeyError(str(citation_index))
             selected_citations = [citations[citation_index]]
-            references = self._saved_answer_references(matter, selected_citations)
+            references = self._saved_answer_references(matter, selected_citations,
+                notebook_preview=True)
             reference = references[0]
             body = str(reference["excerpt"])
             title = self._notebook_title(

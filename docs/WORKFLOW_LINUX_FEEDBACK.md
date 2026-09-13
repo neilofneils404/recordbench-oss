@@ -121,3 +121,11 @@ errors and 9 skipped, with the same failure/error nodes as the prior native
 candidate run. This remains the documented platform limitation, not a green
 local application gate. Transcription tests, compilation, Compose validation,
 publication content checks and documentation-link checks passed.
+
+During subsequent preparation for public review, an independent local review
+found that reusing the Report resolver also imposed its full-unit size limit on
+Note capture. A separate correction retains the existing bounded Note preview
+after full-source verification while keeping Report limits strict. The hashes
+and Linux results above describe the originally returned patch, not that later
+correction. Validate the current PR head and its new long-source regression
+separately before accepting the complete candidate.

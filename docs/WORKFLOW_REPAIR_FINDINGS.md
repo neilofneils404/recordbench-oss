@@ -3,8 +3,8 @@
 Public baseline tested: `d43e142769b5d57a901fb58439bf841ed954b8b4`.
 The fetched public `main` matched that revision at the start of this investigation.
 All reproductions use newly generated fictional Pump Cedar material. Historical
-audit totals are not included in the results below. Changes are local review
-candidates; no deployment, public upload, or external environment was changed.
+audit totals are not included in the results below. Changes are review candidates;
+no deployment or external application environment was changed.
 
 ## Findings and changes
 
@@ -91,6 +91,31 @@ Do not attribute its results to the complete unpublished commit. The returned
 tests largely overlap the existing stronger regressions and support no additional
 production change. See the [returned evidence and precise limits](WORKFLOW_LINUX_FEEDBACK.md)
 and the [Linux validation handoff](WORKFLOW_LINUX_VALIDATION.md) for further runs.
+
+Final preparation for public review found a separate regression in the candidate:
+the shared Report resolver applied its 6,000-character full-unit limit to saving
+Notes. The public baseline could save a longer unchanged source unit as a bounded
+preview with its full-unit digest. The follow-up preserves that Note behavior
+through explicit preview handling after full identity and text-basis validation.
+Direct and compiled Reports retain their existing full-unit limit. This follow-up
+is not covered by the earlier four-file Linux hashes; its regression and current
+PR checks are separate evidence.
+
+The follow-up's four HTTP Note-capture cases pass on the public baseline, fail on
+the former candidate, and pass after correction. Its 23 new cases also exercise
+changes beyond the preview, forged saved support, unchanged Report limits and
+complete source-scan budgets. All 66 focused workflow cases and 194 transcription
+tests pass on the corrected candidate. The generated-speech Chrome journey also
+passes with the disclosed native accommodations. These are separate from the
+earlier Linux receipt and do not replace current-head Linux CI or hosted review.
+
+The corrected candidate's unadapted macOS full application run returned
+2,848 passed, 127 failed, 36 fixture errors and 9 skipped. Every previously
+collected node retained its outcome. The new test file adds 13 native passes and
+10 transcript-fixture errors from the documented native media prerequisites;
+all 23 pass with the disclosed fixture accommodations. Compilation, Compose,
+publication content and independent secret scans also pass. This remains a
+bounded native comparison, not a green application gate.
 
 ## Compatibility and recovery
 

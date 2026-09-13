@@ -77,6 +77,15 @@ that the answer originally used. Copying a saved answer or its cited passage to
 a note or directly into a Report applies the same exact-support validation under
 the source mutation guard; copying cannot silently refresh stale transcript text.
 
+Notes retain their existing 6,000-character display preview even when the cited
+source unit is longer. Capturing an answer as a Note first verifies the complete
+source text against its saved digest, identity, version and location, then stores
+the bounded preview with that full-unit digest. Source-scan limits still apply.
+This does not make an overlarge source unit eligible for a Report: direct Report
+copying and compilation continue to reject full units over 6,000 characters.
+`tests/test_saved_answer_note_preview.py` covers this separation and stale support
+rejection with newly authored long-source fixtures.
+
 For older persisted conversations, document tokens and legacy transcript tokens
 that bind the text digest can still resolve their exact unchanged source text.
 A current transcript moment token also needs a saved full-text digest or an exact

@@ -12,34 +12,34 @@ returned artifact hashes and production-file hashes match.
 See [the returned Linux receipt](WORKFLOW_LINUX_FEEDBACK.md) for commands, totals,
 the unrelated baseline fixture failure and remaining limits. This validates the
 production patch, not the complete local commit or its 43 new tests. No further
-production repair follows from these results. The steps below remain a handoff
-for validating the complete candidate when its bundle is actually available;
-do not assume access to a local artifact or unpublished Git revision.
+production repair followed from those Linux results. Subsequent local review
+found and corrected a separate Note-preview limit regression; the earlier
+four-file hashes do not validate that follow-up. The steps below validate the
+complete current review candidate, including its long-source Note regression.
 
 ## Complete candidate transfer
 
-Validate the exact local review candidate named in the accompanying
-`candidate.json`, against public baseline
-`d43e142769b5d57a901fb58439bf841ed954b8b4`. The accompanying Git bundle preserves
-the reviewed commit identities. It is a transfer artifact, not a release or
+Validate the exact full candidate revision shown by the public workflow-repair
+pull request against public baseline
+`d43e142769b5d57a901fb58439bf841ed954b8b4`. A pull request is not a release or
 deployment instruction. Do not replace an existing application or import its
 database/configuration. Use disposable checkouts, runtime directories and the
 new synthetic fixtures only.
 
 ## Prepare isolated public-source checkouts
 
-Inspect the bundle and its checksum from the delivery manifest. In a public OSS
-clone containing the baseline, import its candidate branch locally and create
-two new worktrees. Replace the artifact and directory placeholders deliberately:
+In a public OSS clone, fetch the review branch and create two new worktrees.
+Use fresh paths and compare the fetched full SHA with the PR head before running
+tests. Stop if they differ; do not silently substitute another candidate:
 
 ```console
-git bundle verify /path/to/recordbench-workflow-repairs.bundle
-git fetch /path/to/recordbench-workflow-repairs.bundle refs/heads/codex/workflow-handoff-20260912:refs/heads/validation/workflow-handoff
+git fetch origin refs/heads/codex/workflow-handoff-20260912
+git rev-parse FETCH_HEAD
 git worktree add --detach /path/to/new-baseline d43e142769b5d57a901fb58439bf841ed954b8b4
-git worktree add --detach /path/to/new-candidate validation/workflow-handoff
+git worktree add --detach /path/to/new-candidate FETCH_HEAD
 ```
 
-Verify `git rev-parse HEAD` in the candidate against `candidate.json`. Do not
+Verify `git rev-parse HEAD` in the candidate against the PR's full head SHA. Do not
 silently substitute a later public head. Use Ubuntu 24.04/Python 3.12 and the
 contributor prerequisites in `CONTRIBUTING.md`, including Docker Compose,
 FFmpeg/FFprobe and PDF extraction tools. The new spoken browser fixture also
@@ -57,6 +57,7 @@ PYTHONPATH=src CASE_INTELLIGENCE_STORAGE_RESERVE_GIB=0 .venv/bin/python -m pytes
   tests/test_investigation_candidate_accounting.py \
   tests/test_saved_answer_report_support.py \
   tests/test_saved_answer_payload_budget.py \
+  tests/test_saved_answer_note_preview.py \
   tests/test_workflow_quality_handoff.py
 .venv/bin/python scripts/run-browser-acceptance.py --output /tmp/workflow-existing-browser-new
 ```
@@ -134,7 +135,7 @@ Return a sanitized report with these fields. Supply newly authored reproduction
 text only; no original environment evidence or access is needed.
 
 ```text
-Candidate SHA and bundle SHA-256:
+Candidate SHA and public PR URL (or supplied bundle SHA-256):
 Baseline SHA:
 OS distribution/version, CPU architecture, Python and browser versions:
 Synthetic fixture/evaluator fingerprint:
