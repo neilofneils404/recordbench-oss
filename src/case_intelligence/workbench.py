@@ -1,6 +1,7 @@
 """Milestone A staff workbench: matters, uploads, retrieval, generation, support."""
 from __future__ import annotations
 
+from .readiness import CachedReadiness
 from .review_budget import DEFAULT_REVIEW_BUDGET, ReviewBudget, validate_primary_limit
 from .investigation_planner import PLANNER_VERSION, initial_query, propose_searches, query_key, validate_proposal
 from time import monotonic
@@ -937,11 +938,14 @@ class CaseIntelligenceWorkbench:
             or (not model_profile and learned_retrieval is not False and worker_url)
         )
         self._remote_retrieval_url = ""
+        self._remote_retrieval_readiness = None
         worker_ready = False
         if self.embedding is None or self.reranker is None:
             worker_ready = self._retrieval_worker_ready(worker_url) if worker_url else False
             if worker_ready:
                 self._remote_retrieval_url = worker_url
+                self._remote_retrieval_readiness = CachedReadiness(
+                    lambda: self._retrieval_worker_ready(worker_url), initial=True)
                 self.embedding = RemoteEmbeddingAdapter(worker_url)
                 self.reranker = RemoteRerankerAdapter(worker_url)
         if self.embedding is None:
@@ -1117,7 +1121,10 @@ class CaseIntelligenceWorkbench:
             return False
         try:
             with urllib.request.urlopen(endpoint + "/health", timeout=2) as response:
-                payload = json.load(response)
+                data = response.read(4097)
+                if len(data) > 4096:
+                    return False
+                payload = json.loads(data)
             return bool(
                 isinstance(payload, dict)
                 and payload.get("status") == "ok"
@@ -1128,6 +1135,8 @@ class CaseIntelligenceWorkbench:
             return False
 
     def close(self) -> None:
+        if self._remote_retrieval_readiness is not None:
+            self._remote_retrieval_readiness.close()
         if self.maintenance is not None:
             self.maintenance.close()
         if getattr(self, "report_compilation", None) is not None:
@@ -5884,7 +5893,8 @@ class CaseIntelligenceWorkbench:
         retrieval_ready = bool(
             self.learned_retrieval and self.postgres_ready
             and self.postgres_connection is not None
-            and (not self._remote_retrieval_url or self._retrieval_worker_ready(self._remote_retrieval_url))
+            and (not self._remote_retrieval_url or (self._remote_retrieval_readiness is not None
+                and self._remote_retrieval_readiness.ready()))
         )
         return {
             "search": "word + meaning" if retrieval_ready else "word search only",

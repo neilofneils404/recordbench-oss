@@ -274,6 +274,13 @@ def browser_tools():
     return module
 
 
+def owned_driver_handler(process):
+    spec = importlib.util.spec_from_file_location("recordbench_owned_webdriver", ROOT / "scripts/owned_webdriver.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.OwnedDriverHandler(process)
+
+
 class Browser:
     def __init__(self, chrome: Path, driver: Path, profile: Path, environment: dict, target: str, tools):
         self.target, self.tools, self.session, self.process = target, tools, None, None
@@ -281,10 +288,11 @@ class Browser:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         self.endpoint = f"http://127.0.0.1:{port}"
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects())
         try:
             self.process = subprocess.Popen([str(driver), f"--port={port}", "--allowed-ips=127.0.0.1"],
                 env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                owned_driver_handler(self.process), NoRedirects())
             self.wait(lambda: self.command("GET", "/status").get("ready") is True, seconds=20)
             arguments = ["--headless=new", "--window-size=1440,1000", "--no-first-run",
                 "--no-default-browser-check", "--disable-background-networking", "--disable-component-update",
@@ -704,6 +712,7 @@ def run(argv=None):
                 return open_browser(), open_browser, fixtures
             admin, open_browser, fixtures = phase("browser", prepare_browser)
             run_journey(admin, open_browser, args.admin_username, password, fixtures, args.allow_previous_synthetic_runs, phase)
+            receipt["observed_release_id"] = phase("tls_and_release", lambda: tls_health(target, certificate, expected))
             receipt["counts"] = {"uploaded_sources": 2, "created_reviewers": 2}
             receipt["passed"] = all(value == "passed" for value in receipt["phases"].values())
     except AcceptanceError as exc:

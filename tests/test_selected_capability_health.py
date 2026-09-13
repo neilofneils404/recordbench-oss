@@ -11,6 +11,9 @@ from case_intelligence.malware_scan import MalwareScannerStatus
 from case_intelligence.managed_storage import StoragePolicy
 
 
+_worker_probe = workbench.CaseIntelligenceWorkbench._retrieval_worker_ready
+
+
 class SyntheticScanner:
     state = "ready"
 
@@ -135,16 +138,16 @@ def test_selected_retrieval_tracks_database_and_current_remote_worker_readiness(
         bench.postgres_connection = SimpleNamespace(close=lambda: None)
         bench.postgres_ready = True
         bench._remote_retrieval_url = "http://retrieval:8787"
-        monkeypatch.setattr(bench, "_retrieval_worker_ready", lambda url: True)
+        bench._remote_retrieval_readiness = SimpleNamespace(ready=lambda: True, close=lambda: None)
         healthy = client.get("/health").json()
         assert healthy["status"] == "ok"
         assert healthy["capabilities"]["search"] == "word + meaning"
-        monkeypatch.setattr(bench, "_retrieval_worker_ready", lambda url: False)
+        bench._remote_retrieval_readiness = SimpleNamespace(ready=lambda: False, close=lambda: None)
         failed = client.get("/health").json()
         assert failed["status"] == "degraded"
         assert failed["capabilities"]["meaning_search"] == "temporarily unavailable"
         assert failed["capabilities"]["search"] == "word search only"
-        monkeypatch.setattr(bench, "_retrieval_worker_ready", lambda url: True)
+        bench._remote_retrieval_readiness = SimpleNamespace(ready=lambda: True, close=lambda: None)
         bench.postgres_ready = False
         assert client.get("/health").json()["status"] == "degraded"
 
@@ -182,3 +185,28 @@ def test_storage_attention_degrades_the_selected_cpu_set(tmp_path, monkeypatch):
         assert failed["status"] == "degraded"
         assert failed["storage"]["reserve_satisfied"] is False
         assert failed["capabilities"]["answering"] == "not selected"
+
+
+def test_public_health_reads_snapshot_without_worker_requests(tmp_path, monkeypatch):
+    app = application(tmp_path, learned_retrieval=True)
+    bench = app.state.workbench
+    with TestClient(app) as client:
+        bench.learned_retrieval = True
+        bench.postgres_connection = SimpleNamespace(close=lambda: None)
+        bench.postgres_ready = True
+        bench._remote_retrieval_url = "http://retrieval:8787"
+        bench._remote_retrieval_readiness = SimpleNamespace(ready=lambda: True, close=lambda: None)
+        monkeypatch.setattr(bench, "_retrieval_worker_ready", lambda _: pytest.fail("health issued worker request"))
+        for _ in range(20):
+            assert client.get("/health").json()["status"] == "ok"
+
+
+def test_worker_probe_bounds_response(monkeypatch):
+    from contextlib import nullcontext
+    from unittest.mock import Mock
+    response = Mock()
+    response.read.return_value = b"x" * 4097
+    monkeypatch.setattr(workbench, "validate_service_endpoint", lambda *a, **kw: "http://retrieval:8787")
+    monkeypatch.setattr(workbench.urllib.request, "urlopen", lambda *a, **kw: nullcontext(response))
+    assert not _worker_probe("http://retrieval:8787")
+    response.read.assert_called_once_with(4097)

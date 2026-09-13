@@ -89,6 +89,7 @@ def test_saved_configuration_cannot_add_executable_directives(tmp_path):
 @pytest.mark.parametrize("age,expected", [(0, 0), (72 * 3600 + 60, 1), (-600, 1)])
 def test_signature_health_uses_database_age_not_mtime(tmp_path, age, expected):
     (tmp_path / "main.cvd").write_bytes(cvd_header())
+    (tmp_path / "bytecode.cvd").write_bytes(cvd_header())
     daily = tmp_path / "daily.cvd"
     daily.write_bytes(cvd_header(int(time.time()) - age))
     os.utime(daily, None)  # Copying/touching old databases cannot make them fresh.
@@ -232,3 +233,27 @@ def test_antivirus_flags_cannot_silently_change_install_or_resume(tmp_path):
     assert result.returncode != 0
     assert "require the antivirus command" in result.stderr
     assert not (tmp_path / "new").exists()
+
+
+@pytest.mark.parametrize("name", ["main", "bytecode"])
+@pytest.mark.parametrize("state", ["missing", "empty", "symlink", "directory", "writable", "cvd", "cld"])
+def test_signature_health_requires_complete_regular_database_set(tmp_path, name, state):
+    for database in antivirus.DATABASES:
+        (tmp_path / database).write_bytes(cvd_header())
+    path = tmp_path / (name + ".cvd")
+    path.unlink()
+    if state == "empty":
+        path.touch()
+    elif state == "writable":
+        path.write_bytes(cvd_header())
+        path.chmod(0o666)
+    elif state == "directory":
+        path.mkdir()
+    elif state == "symlink":
+        path.symlink_to(tmp_path / "daily.cvd")
+    elif state in {"cvd", "cld"}:
+        (tmp_path / (name + "." + state)).write_bytes(cvd_header())
+    result = subprocess.run(["sh", str(ROOT / "deploy/clamav/signature-health.sh")],
+        env={**os.environ, "RECORDBENCH_SIGNATURE_DIR": str(tmp_path)}, capture_output=True, text=True)
+    assert (result.returncode == 0) == (state in {"cvd", "cld"})
+    assert result.stdout.strip() == ("signatures-fresh" if state in {"cvd", "cld"} else f"signature-{name}-missing")

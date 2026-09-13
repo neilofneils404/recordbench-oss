@@ -33,6 +33,9 @@ evidence; a separate deterministic verifier checks claims and citations.
 The installed CPU evaluation selects basic review explicitly. Health combines
 mandatory source review, storage and malware scanning with the selected optional
 capabilities; unselected models do not degrade a healthy basic-review node.
+Remote retrieval readiness is refreshed by one background probe every five
+seconds and expires after fifteen seconds; public health only reads the snapshot.
+Worker health responses are capped at 4 KiB.
 The running release capsule identifier is available in content-free health for
 [installed browser acceptance](INSTALLED_CPU_ACCEPTANCE.md).
 

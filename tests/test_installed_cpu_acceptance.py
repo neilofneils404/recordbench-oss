@@ -537,11 +537,18 @@ raise SystemExit(runner.main(["--url", "https://synthetic.example.test", "--admi
                     pass
 
 
-def test_phase_timings_use_monotonic_clock_and_first_verified_export(runner, monkeypatch, capsys, tmp_path):
+@pytest.mark.parametrize("final_failure", [None, "installed_release_mismatch", "tls_or_health_unavailable"])
+def test_phase_timings_use_monotonic_clock_and_first_verified_export(runner, monkeypatch, capsys, tmp_path, final_failure):
     monkeypatch.setattr(runner.os, "geteuid", lambda: 1000)
     monkeypatch.setattr(runner, "fixture_paths", lambda *_: [])
     monkeypatch.setattr(runner.getpass, "getpass", lambda _: "synthetic-password-only")
-    monkeypatch.setattr(runner, "tls_health", lambda _target, _ca, expected: expected)
+    health_calls = []
+    def health(_target, _ca, expected):
+        health_calls.append(expected)
+        if len(health_calls) == 2 and final_failure:
+            raise runner.AcceptanceError(final_failure)
+        return expected
+    monkeypatch.setattr(runner, "tls_health", health)
     tools = Mock()
     tools.host_platform.return_value = "linux64"
     tools.install_browser.return_value = (tmp_path / "chrome", tmp_path / "driver", "1.2.3.4")
@@ -556,12 +563,16 @@ def test_phase_timings_use_monotonic_clock_and_first_verified_export(runner, mon
     values = iter(range(200))
     monkeypatch.setattr(runner.time, "monotonic", lambda: next(values))
     assert runner.main(["--url", "https://synthetic.example.test", "--admin-username", "synthetic.admin",
-        "--expected-release-id", "0.1.0-alpha.2-" + "a" * 12, "--acknowledge-synthetic-evaluation"]) == 0
+        "--expected-release-id", "0.1.0-alpha.2-" + "a" * 12, "--acknowledge-synthetic-evaluation"]) == (1 if final_failure else 0)
     receipt = json.loads(capsys.readouterr().out)
     assert set(receipt["phase_seconds"]) == set(runner.PHASES)
     assert all(value == 1 for value in receipt["phase_seconds"].values())
     assert receipt["first_export_seconds"] == 26
-    assert receipt["passed"] is True
+    assert len(health_calls) == 2
+    assert receipt["passed"] is (final_failure is None)
+    if final_failure:
+        assert receipt["failure_code"] == final_failure
+        assert receipt["phases"]["tls_and_release"] == "failed"
 
 
 @pytest.mark.parametrize("error_name,expected", [("Synthetic private driver error", "unrecognized_error"),

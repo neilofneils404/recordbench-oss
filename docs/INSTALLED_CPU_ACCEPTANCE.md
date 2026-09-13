@@ -165,3 +165,19 @@ cover empty-field handling and redaction of WebDriver HTTP error responses.
 Browser helper rehearsal on a disposable app is additional
 evidence. The final installed Linux receipt must come from the actual x86_64
 host, after its normal cold-install and recovery gates.
+
+### Control connection and final revision check
+
+Before sending any WebDriver HTTP bytes, the runner verifies that the connected
+TCP peer belongs to its own ChromeDriver child using kernel socket ownership
+(`/proc` on Linux, the system `lsof` on macOS). Every new connection repeats the
+check; unavailable evidence or an exited driver fails closed. A replacement
+listener cannot inherit an established connection. This authenticates the server
+against local port impersonation; use the dedicated trusted service account and
+host, since root or processes able to control that account remain trusted.
+
+After the complete browser journey, the runner repeats verified HTTPS health,
+readiness and the exact expected release comparison before reporting success.
+A changed release or unavailable health makes the receipt fail. The before/after
+checks detect a changed final revision; they are not continuous attestation of
+every request or proof that no transient update and rollback occurred.

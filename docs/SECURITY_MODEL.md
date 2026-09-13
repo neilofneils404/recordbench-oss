@@ -185,3 +185,15 @@ results may retain their historical human-decision context; historical source
 identity never grants current access. Quarantined-source exports fail closed.
 Active synthesis uses existing research-job close/backup guards; matter purge
 removes the jobs, receipts and nodes, and late workers cannot recreate them.
+
+## Bounded readiness and installed acceptance
+
+Public health reads an expiring remote-retrieval snapshot and does not issue
+worker requests. One background probe owns refreshes; a slow or failed worker
+cannot fan out probes through unauthenticated health requests. Antivirus
+readiness requires protected, nonempty main, daily and bytecode databases.
+The installed acceptance runner authenticates each connected WebDriver server
+against its owned child before transmitting HTTP data and repeats verified HTTPS
+release/readiness checks after the browser journey. These checks retain the
+trusted host/service-account boundary and do not claim continuous revision
+attestation; see [installed acceptance](INSTALLED_CPU_ACCEPTANCE.md).
