@@ -163,7 +163,8 @@ def test_media_and_passage_links_keep_library_context(tmp_path):
         assert client.get(f'/matters/{foreign}/sources/{token}/content').status_code == 404
 
 
-def test_transcript_filter_clear_and_pages_preserve_search_return(tmp_path):
+@pytest.mark.parametrize('context', ['kind=AUDIO&sort=name', ''])
+def test_transcript_filter_clear_and_pages_preserve_search_return(tmp_path, context):
     from tests.test_matter_media_workflow import ImmediateMediaProcessor, _upload_and_wait
     class PagedProcessor(ImmediateMediaProcessor):
         def transcript(self, owner, external_job_id):
@@ -177,7 +178,6 @@ def test_transcript_filter_clear_and_pages_preserve_search_return(tmp_path):
     with TestClient(app) as client:
         slug = _matter(client)
         _, token = _upload_and_wait(client, slug)
-        context = 'kind=AUDIO&sort=name'
         origin = f'/matters/{slug}/exact-search?words=red'
         path = f'/matters/{slug}/sources/{token}'
         opened = client.get(path, params={'browse': context, 'entity_return_to': origin})
@@ -185,18 +185,23 @@ def test_transcript_filter_clear_and_pages_preserve_search_return(tmp_path):
         fields = dict((name, html.unescape(value)) for name, value in re.findall(r'name="([^"]+)" value="([^"]*)"', form))
         fields['q'] = 'red'
         assert fields['entity_return_to'] == origin
+        assert bool(fields['browse']) == bool(context)
         filtered = client.get(path, params=fields)
         clear = html.unescape(re.search(r'href="([^"]+)">Clear</a>', filtered.text)[1])
         pagination = re.search(r'<nav class="source-pagination transcript-pagination".*?</nav>', filtered.text, re.S)[0]
         next_page = links(pagination)[0]
         for url in (clear, next_page):
             assert parse_qs(urlsplit(url).query)['entity_return_to'] == [origin]
+            assert bool(parse_qs(urlsplit(url).query).get('browse')) == bool(context)
             target = path + url if url.startswith('?') else url
             returned = client.get(target)
             assert returned.status_code == 200 and 'Return to review context' in returned.text
+            continuation = html.unescape(re.search(r'action="([^"]+/review-next[^"]*)"', returned.text)[1])
+            assert bool(parse_qs(urlsplit(continuation).query).get('browse')) == bool(context)
         second = client.get(path + next_page)
         previous = links(re.search(r'<nav class="source-pagination transcript-pagination".*?</nav>', second.text, re.S)[0])[0]
         assert parse_qs(urlsplit(previous).query)['entity_return_to'] == [origin]
+        assert bool(parse_qs(urlsplit(previous).query).get('browse')) == bool(context)
 
 
 @pytest.mark.parametrize('restrict_collection', [False, True])
@@ -231,7 +236,8 @@ def test_content_search_preserves_cross_collection_source_set(tmp_path, restrict
         assert 'Outside.txt' not in results.text
 
 
-def test_document_passages_and_unauthorized_viewer(tmp_path):
+@pytest.mark.parametrize('browse', [True, False])
+def test_document_passages_and_unauthorized_viewer(tmp_path, browse):
     app = create_workbench_app(tmp_path / 'runtime', generator=UnavailableGenerator(),
         auth_mode='test', background_ingestion=False)
     with TestClient(app) as client:
@@ -246,12 +252,16 @@ def test_document_passages_and_unauthorized_viewer(tmp_path):
         matter = bench.matter(slug, ACTOR)
         document = next(iter(bench.source_store(matter).documents.values()))
         token = bench.source_store(matter).action_token(document)
-        context = urlencode({'kind': 'PDF', 'sort': 'name'})
+        context = urlencode({'kind': 'PDF', 'sort': 'name'}) if browse else ''
         page = client.get(f'/matters/{slug}/sources/{token}', params={'browse': context})
         next_passage = next(url for url in links(page.text) if 'unit=2' in url)
-        assert parse_qs(parse_qs(urlsplit(next_passage).query)['browse'][0])['kind'] == ['PDF']
+        assert bool(parse_qs(urlsplit(next_passage).query).get('browse')) == browse
+        if browse:
+            assert parse_qs(parse_qs(urlsplit(next_passage).query)['browse'][0])['kind'] == ['PDF']
         second = client.get(next_passage)
         assert 'Page 2 of 3' in second.text and 'aria-current="page"' in sidebar(second.text)
+        continuation = html.unescape(re.search(r'action="([^"]+/review-next[^"]*)"', second.text)[1])
+        assert bool(parse_qs(urlsplit(continuation).query).get('browse')) == browse
         other = 'generated-browsing-foreign-owner'
         bench.workspace.upsert_principal('test', other, 'Synthetic foreign owner', other, preferred_principal_id=other)
         foreign = bench.create_matter('Synthetic inaccessible browsing', '', other)

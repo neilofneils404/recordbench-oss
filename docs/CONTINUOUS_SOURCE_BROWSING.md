@@ -82,3 +82,7 @@ External and cross-matter return values are discarded.
 Transcript filters, clearing and page links preserve both browsing and validated
 Search-return context. Content Search launched from an active library view retains
 its collection and saved source-set scope, including sets spanning collections.
+
+Passage and transcript controls preserve whether a filtered browser context was
+provided; using these controls from a direct link retains unreviewed-queue
+continuation.

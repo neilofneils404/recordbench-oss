@@ -63,8 +63,8 @@
         <h2 id="extracted-reader-heading">{{ source.position_label }}</h2>
       </div>
       <nav class="reader-pagination" aria-label="Source section navigation">
-        {% if source.previous_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.previous_href, request.query_params.get('entity_return_to', '')), source_sequence.context) }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
-        {% if source.next_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.next_href, request.query_params.get('entity_return_to', '')), source_sequence.context) }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
+        {% if source.previous_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.previous_href, request.query_params.get('entity_return_to', '')), source_sequence.context if request.query_params.get('browse') else '') }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
+        {% if source.next_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.next_href, request.query_params.get('entity_return_to', '')), source_sequence.context if request.query_params.get('browse') else '') }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
       </nav>
     </header>
     {% if source.unit %}
