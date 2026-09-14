@@ -200,6 +200,7 @@ def test_nonmember_admin_reads_ledger_as_self_after_owner_loses_access(tmp_path,
         page = client.get(base + "/text", headers=_headers(ADMIN))
         assert page.status_code == 200 and "Text-analysis coverage" in page.text
         assert "read-only review" in page.text
+        assert "New run or edit rule" not in page.text
         assert f'action="{base}/cancel"' not in page.text
         assert f'action="{base}/retry"' not in page.text
         exported = client.get(base + "/text/export", headers=_headers(ADMIN))

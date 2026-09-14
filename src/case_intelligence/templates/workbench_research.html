@@ -38,7 +38,7 @@
       <div class="workflow-library-heading"><div><p class="eyebrow">Saved work</p><h2>Investigations</h2></div><span>{{ research_jobs|length }}</span></div>
       <nav>
         {% for item in research_jobs %}
-        <a class="workflow-run-link {% if active_research and item.job_id == active_research.job_id %}selected{% endif %}" href="/matters/{{ matter.slug }}/research?job={{ item.job_id }}">
+        <a class="workflow-run-link {% if active_research and item.job_id == active_research.job_id %}selected{% endif %}" href="{{ entity_context_href('/matters/' ~ matter.slug ~ '/research?job=' ~ item.job_id, review_return) }}">
           <span class="workflow-state-dot state-{{ item.state }}" aria-hidden="true"></span>
           <span><strong>{{ item.title }}</strong><small>{{ item.state|replace('_',' ')|title }} · {{ item.created_at[5:10] }}</small></span>
         </a>
@@ -61,9 +61,9 @@
         <p class="workflow-caution" data-workflow-budget>{{ active_research.review_budget_description }}</p>
         <div class="run-counts"><span><strong data-workflow-candidates>{{ active_research.candidate_count }}</strong> Passages considered</span><span><strong data-workflow-evidence>{{ active_research.evidence_count }}</strong> Supporting passages</span></div>
         {% if active_research.state in ('queued','running') %}
-        <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Cancel safely</button></form>
+        <form method="post" action="{{ entity_context_href('/matters/' ~ matter.slug ~ '/research/' ~ active_research.job_id ~ '/cancel', review_return) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Cancel safely</button></form>
         {% elif active_research.state in ('failed','cancelled') and not research_stale %}
-        <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">{{ 'Resume synthesis' if full_text_synthesis else 'Resume investigation' }}</button></form>
+        <form method="post" action="{{ entity_context_href('/matters/' ~ matter.slug ~ '/research/' ~ active_research.job_id ~ '/retry', review_return) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit">{{ 'Resume synthesis' if full_text_synthesis else 'Resume investigation' }}</button></form>
         {% endif %}
       </article>
 
@@ -75,7 +75,7 @@
       <p class="workflow-caution">Sources changed. Saved findings and search proposals are no longer current and are hidden. Rebuild the checkpoint with available search budget, or start a new investigation.</p>
       {% endif %}
       {% if active_research.state in ('succeeded','failed','cancelled') and rebuild_options %}
-      <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry">
+      <form method="post" action="{{ entity_context_href('/matters/' ~ matter.slug ~ '/research/' ~ active_research.job_id ~ '/retry', review_return) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="expected_passes" value="{{ active_research.review_budget.effective.passes }}">
         <label for="rebuild-budget">Search budget for rebuild</label>
@@ -122,7 +122,7 @@
               </p>
               {% endif %}
               {% for evidence in active_research.result.get('evidence', []) if evidence.support_token == step.get('motivating_support_token') %}
-              <a href="{{ citation_href(evidence, matter.slug) }}">{{ evidence.source_name }} · {{ evidence.location }}</a>
+              <a href="{{ citation_href(evidence, matter.slug, entity_return_to=review_return) }}">{{ evidence.source_name }} · {{ evidence.location }}</a>
               {% endfor %}
             </li>
             {% endfor %}
@@ -137,7 +137,7 @@
             <li>
               <strong>{{ step.query }}</strong> — {{ step.reason }}
               {% for evidence in active_research.result.get('evidence', []) if evidence.support_token == step.support_token %}
-              <p><a href="{{ citation_href(evidence, matter.slug) }}">{{ evidence.source_name }} · {{ evidence.location }}</a></p>
+              <p><a href="{{ citation_href(evidence, matter.slug, entity_return_to=review_return) }}">{{ evidence.source_name }} · {{ evidence.location }}</a></p>
               {% endfor %}
             </li>
             {% endfor %}
@@ -145,7 +145,7 @@
         </details>
         {% endif %}
         {% if (pending or active_research.result.get('seed_search_pending')) and active_research.state in ('succeeded', 'failed', 'cancelled') and active_research.review_budget.effective.passes < 15 %}
-        <form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/retry">
+        <form method="post" action="{{ entity_context_href('/matters/' ~ matter.slug ~ '/research/' ~ active_research.job_id ~ '/retry', review_return) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="expected_passes" value="{{ active_research.review_budget.effective.passes }}">
           <label for="additional-passes">Additional search budget</label>
@@ -162,7 +162,7 @@
           <p>Run state: {{ active_research.state }}. {{ synthesis.requests_spent }} of {{ synthesis.policy.generation_requests }} generation requests charged. {{ synthesis.policy.wall_seconds }} seconds from first synthesis start, including restart downtime; {{ synthesis.policy.output_tokens_per_call }} output tokens per call. Last synthesis checkpoint: {{ synthesis.stop_reason|replace('_', ' ') }}. Interrupted requests remain charged.{% if full_text_synthesis %} Each request includes the generator’s existing bounded verification repair, when needed.{% endif %}</p>
           <p>Omitted groups: {{ synthesis.omitted_groups|join(', ') or 'None' }}. Intermediate summaries are not evidence sources.</p>
           {% for level in ['issue', 'matter'] %}{% for node in synthesis[level] %}
-          <article><h3>{{ level|title }} section {{ loop.index }} · {{ node.state }}</h3>{% for claim in node.claims %}<p>{{ claim.text }}</p><ul>{% for evidence in active_research.result.evidence %}{% if evidence.support_token in claim.support_tokens %}<li><a href="{{ citation_href(evidence, matter.slug) }}">{{ evidence.source_name }} — {{ evidence.location }}</a></li>{% endif %}{% endfor %}</ul>{% endfor %}</article>
+          <article><h3>{{ level|title }} section {{ loop.index }} · {{ node.state }}</h3>{% for claim in node.claims %}<p>{{ claim.text }}</p><ul>{% for evidence in active_research.result.evidence %}{% if evidence.support_token in claim.support_tokens %}<li><a href="{{ citation_href(evidence, matter.slug, entity_return_to=review_return) }}">{{ evidence.source_name }} — {{ evidence.location }}</a></li>{% endif %}{% endfor %}</ul>{% endfor %}</article>
           {% endfor %}{% endfor %}
         </details>
         {% endif %}
@@ -175,7 +175,7 @@
           {% if not full_text_synthesis %}<a href="/matters/{{ matter.slug }}/reports/new?from=research:{{ active_research.job_id }}">Make report</a>
           <details><summary>Save complete review record</summary><form method="post" action="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/report"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Copy investigation to report</button></form></details>{% endif %}
           <details><summary>Export</summary><div><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=docx" data-download>Word</a><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=markdown" data-download>Markdown</a><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=json" data-download>JSON</a></div></details>
-          <a href="/matters/{{ matter.slug }}{% if active_research.conversation_id %}?conversation={{ active_research.conversation_id }}{% endif %}#evidence-conversation">Return to conversation</a>
+          <a href="{{ entity_context_href('/matters/' ~ matter.slug ~ ('?conversation=' ~ active_research.conversation_id if active_research.conversation_id else '') ~ '#evidence-conversation', review_return) }}">Return to conversation</a>
         </nav>
         <div class="research-summary prose">{{ active_research.result.summary }}</div>
         {% if active_research.result.get('answer', {}).get('evidence_notice') %}<p class="workflow-caution" role="note">{{ active_research.result.answer.evidence_notice }}</p>{% endif %}
@@ -189,7 +189,7 @@
         <p class="workflow-caution">{{ coverage.notice }}</p>
         <div class="research-two-column">
           <section><div class="workflow-section-heading"><div><p class="eyebrow">{{ "Saved finding record" if full_text_synthesis else "Search record" }}</p><h3>Findings and gaps</h3></div></div>{% for pass in active_research.result.passes %}<article class="research-finding state-{{ pass.status }}"><header><span>{{ loop.index|string }} </span><div><strong>{{ pass.query }}</strong><small>{{ pass.candidate_sources }} source{% if pass.candidate_sources != 1 %}s{% endif %} considered · {{ pass.status|replace('_',' ') }}</small></div></header><p>{{ pass.text }}</p></article>{% endfor %}</section>
-          <aside id="research-support"><div class="workflow-section-heading"><div><p class="eyebrow">Cited support</p><h3>Evidence record</h3></div><span>{{ active_research.result.evidence|length }}</span></div><div class="evidence-ledger">{% for evidence in active_research.result.evidence %}<a href="{{ citation_href(evidence, matter.slug) }}"><span>{{ loop.index }}</span><span><strong>{{ evidence.source_name }}</strong><small>{{ evidence.location }}</small></span></a>{% endfor %}</div></aside>
+          <aside id="research-support"><div class="workflow-section-heading"><div><p class="eyebrow">Cited support</p><h3>Evidence record</h3></div><span>{{ active_research.result.evidence|length }}</span></div><div class="evidence-ledger">{% for evidence in active_research.result.evidence %}<a href="{{ citation_href(evidence, matter.slug, entity_return_to=review_return) }}"><span>{{ loop.index }}</span><span><strong>{{ evidence.source_name }}</strong><small>{{ evidence.location }}</small></span></a>{% endfor %}</div></aside>
         </div>
       </section>
       {% endif %}
@@ -198,7 +198,7 @@
       <section class="research-new-panel" id="new-research">
         <div class="research-composer-title"><span class="workflow-orbit" aria-hidden="true">⌁</span><div><p class="eyebrow">Continue in Case conversation</p><h2>Ask, investigate, and refine in one conversation.</h2></div></div>
         <p>Start broader work from the Case conversation composer. Its cited result returns to that conversation, ready for follow-up questions.</p>
-        <a class="button button-primary" href="/matters/{{ matter.slug }}#matter-question">Open case conversation</a>
+        <a class="button button-primary" href="{{ entity_context_href('/matters/' ~ matter.slug ~ '#matter-question', review_return) }}">Open case conversation</a>
       </section>
     </section>
   </div>
