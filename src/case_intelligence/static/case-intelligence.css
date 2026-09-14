@@ -8112,3 +8112,23 @@ body.activity-open .activity-drawer { transform: translateX(0); }
 .text-review-page .text-review-ledger td:first-child { min-width: 12rem; overflow-wrap: anywhere; }
 .text-review-page .text-review-ledger td:last-child { min-width: 16rem; overflow-wrap: anywhere; }
 .text-review-page .criterion-card > nav { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+
+/* Continuous inspection uses the existing library, with a bounded source page. */
+.source-browser-layout { display: grid; grid-template-columns: minmax(220px, 290px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.source-browser-viewer { min-width: 0; }
+.source-browser { position: sticky; top: 80px; max-height: calc(100vh - 100px); overflow: auto; padding: 16px; border: 1px solid currentColor; border-radius: 12px; overflow-wrap: anywhere; }
+.source-browser h2 { font-size: 1.1rem; margin-top: 0; }
+.source-browser p, .source-browser small { font-size: .8rem; }
+.source-browser ul { list-style: none; margin: 12px 0; padding: 0; }
+.source-browser li a { display: block; padding: 10px; border: 2px solid transparent; border-radius: 6px; }
+.source-browser li small { display: block; }
+.source-browser a[aria-current="page"] { border-color: currentColor; font-weight: bold; }
+.source-browser a:focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }
+@media (max-width: 900px) {
+  .source-browser-layout { grid-template-columns: minmax(0, 1fr); }
+  .source-browser { position: static; max-height: 320px; }
+  .source-browser h2 { margin-bottom: 6px; }
+  .source-browser p { margin: 4px 0; }
+  .source-browser li a { padding: 6px; }
+  .source-browser #source-browser-keys { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+}

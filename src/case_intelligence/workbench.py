@@ -5893,6 +5893,15 @@ def _query_url(path: str, **values: str) -> str:
     return path + (("?" + urlencode(filtered)) if filtered else "")
 
 
+def _source_browse_href(href: str, browse: str) -> str:
+    if not href:
+        return href
+    parsed = urlparse(href)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query["browse"] = [browse]
+    return parsed._replace(query=urlencode(query, doseq=True)).geturl()
+
+
 def _entity_context_href(href: str, origin: str = "") -> str:
     """Carry source-review origin through existing document/section links."""
     if not origin:
@@ -6039,6 +6048,7 @@ def create_workbench_app(
         product_tagline=PRODUCT_TAGLINE,
         citation_href=_workspace_citation_href,
         entity_context_href=_entity_context_href,
+        source_browse_href=_source_browse_href,
         source_review_return_href=_source_review_return_href,
     )
     app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
@@ -7413,27 +7423,68 @@ def create_workbench_app(
             "action_token": row.action_token,
         }
 
-    def source_sequence_projection(
-        matter: MatterRecord, document_id: str
-    ) -> dict[str, object]:
-        previous = bench.workspace.source_catalog_neighbor(
-            matter.matter_id, document_id, "previous"
-        )
-        following = bench.workspace.source_catalog_neighbor(
-            matter.matter_id, document_id, "next"
-        )
-        return {
-            "previous": (
-                source_catalog_projection(matter, previous)
-                if previous is not None
-                else None
-            ),
-            "next": (
-                source_catalog_projection(matter, following)
-                if following is not None
-                else None
-            ),
-        }
+    def source_browser_projection(matter, document_id: str, browse: str):
+        # Context is data, never a redirect URL; only library filters are accepted.
+        try:
+            parsed = parse_qs(browse, max_num_fields=20)
+            values = {key: items[0] for key, items in parsed.items() if key in {
+                "q", "status", "kind", "review", "collection", "source_set", "folder",
+                "same_content", "matching_only", "sort", "page_size", "page", "folder_page"}}
+            page = min(max(int(values.get("page", "1")), 1), 100_000)
+            size = int(values.get("page_size", "50"))
+            folder_page = min(max(int(values.get("folder_page", "1")), 1), 100_000)
+        except ValueError as exc:
+            raise HTTPException(400, "Invalid source browsing context") from exc
+        options = dict(view="list", query=values.get("q", ""), status=values.get("status", ""),
+            kind=values.get("kind", ""), review=values.get("review", ""),
+            collection_id=values.get("collection", ""), source_set_id=values.get("source_set", ""),
+            folder=values.get("folder", ""), same_content=values.get("same_content", ""),
+            matching_only=values.get("matching_only", "").lower() in {"true", "1"},
+            sort=values.get("sort", "oldest"), page_size=size)
+        library = bench.source_library(matter, page=page, **options)
+        position = bench.workspace.source_catalog_position(matter.matter_id, document_id,
+            query_key=library.query.casefold(), tone=library.status, kind=library.kind,
+            review_state=library.review, collection_id=library.collection_id,
+            source_set_id=library.source_set_id, folder=library.folder,
+            same_content=library.same_content, matching_only=library.matching_only, sort=library.sort)
+        if position is not None and (position - 1) // library.page_size + 1 != library.page:
+            library = bench.source_library(matter, page=(position - 1) // library.page_size + 1, **options)
+        values = dict(view="list", page=str(library.page), page_size=str(library.page_size),
+            folder_page=str(folder_page), sort=library.sort, q=library.query,
+            status=library.status, kind=library.kind, review=library.review,
+            collection=library.collection_id, source_set=library.source_set_id, folder=library.folder,
+            same_content=library.same_content, matching_only="true" if library.matching_only else "")
+        values = {key: value for key, value in values.items() if value}
+        encoded = urlencode(values)
+        def item(row, target_page):
+            context = urlencode({**values, "page": str(target_page)})
+            return dict(title=row.name, token=row.action_token, path=row.relative_path,
+                href=_query_url(f"/matters/{matter.slug}/sources/{row.action_token}", browse=context))
+        items = [item(row, library.page) for row in library.items]
+        index = next((i for i, row in enumerate(library.items) if row.document_id == document_id), None)
+        previous = following = None
+        if index is not None:
+            if index:
+                previous = items[index - 1]
+            elif library.page > 1:
+                adjacent = bench.source_library(matter, page=library.page - 1, **options)
+                if adjacent.items:
+                    previous = item(adjacent.items[-1], adjacent.page)
+            if index + 1 < len(items):
+                following = items[index + 1]
+            elif library.page < library.total_pages:
+                adjacent = bench.source_library(matter, page=library.page + 1, **options)
+                if adjacent.items:
+                    following = item(adjacent.items[0], adjacent.page)
+        scope_labels = [label for label in (library.status, library.kind, library.review) if label]
+        if library.collection_id:
+            scope_labels.insert(0, bench.workspace.source_collection(matter.matter_id, library.collection_id).name)
+        if library.source_set_id:
+            scope_labels.append(bench.workspace.source_set(matter.matter_id, library.source_set_id).name)
+        return dict(items=items, previous=previous, next=following, library=library,
+            scope_labels=scope_labels,
+            context=encoded, position=position,
+            library_href=_query_url(f"/matters/{matter.slug}/setup", **values) + "#source-library")
 
     def matter_resume_projection(
         matter: MatterRecord, context: AuthContext
@@ -8830,7 +8881,7 @@ def create_workbench_app(
                     ),
                 },
                 "library_url": library_url,
-                "source_return_query": urlparse(library_url(1, view="list")).query,
+                "source_return_query": urlparse(library_url(library.page, view="list", folder_page=str(folder_page))).query,
                 "source_folders": folders,
                 "folder_page": folder_page,
                 "folder_pages": folder_pages,
@@ -11993,6 +12044,7 @@ def create_workbench_app(
         request: Request,
         slug: str,
         token: str,
+        browse: str = Query("", max_length=8192),
         unit: int | None = Query(None, ge=1, le=100_000),
         start_ms: int = Query(0, ge=0, le=43_202_000),
         segment: str = Query("", max_length=100),
@@ -12012,8 +12064,8 @@ def create_workbench_app(
                 == matter.matter_id
             )
             document = bench.source_store(matter).get_by_action_token(token)
-            source_sequence = source_sequence_projection(
-                matter, document.document_id
+            source_sequence = source_browser_projection(
+                matter, document.document_id, browse
             )
             if is_media_type(document.media_type):
                 media = bench.media_review(
@@ -12126,6 +12178,8 @@ def create_workbench_app(
                 )
         except (KeyError, StopIteration) as exc:
             raise HTTPException(404, "Source not found") from exc
+        except WorkspaceProblem as exc:
+            raise HTTPException(400, str(exc)) from exc
         audit(
             request,
             "source.review_open",
@@ -12746,6 +12800,7 @@ def create_workbench_app(
         slug: str,
         token: str,
         state: str = Form(..., max_length=20),
+        browse: str = Query("", max_length=8192),
     ):
         context = auth_context(request)
         try:
@@ -12762,7 +12817,7 @@ def create_workbench_app(
         except WorkspaceProblem as exc:
             return RedirectResponse(
                 _query_url(
-                    f"/matters/{slug}/sources/{token}", error=str(exc)
+                    f"/matters/{slug}/sources/{token}", error=str(exc), browse=browse
                 ),
                 status_code=303,
             )
@@ -12777,7 +12832,7 @@ def create_workbench_app(
         return RedirectResponse(
             _query_url(
                 f"/matters/{slug}/sources/{token}",
-                notice=f"Source marked {state}",
+                notice=f"Source marked {state}", browse=browse,
             ),
             status_code=303,
         )
@@ -12786,11 +12841,13 @@ def create_workbench_app(
         "/matters/{slug}/sources/{token}/review-next",
         dependencies=[Depends(require_csrf)],
     )
-    def review_source_and_continue(request: Request, slug: str, token: str):
+    def review_source_and_continue(request: Request, slug: str, token: str,
+                                   browse: str = Query("", max_length=8192)):
         context = auth_context(request)
         try:
             matter = authorized_matter(request, slug)
             document = bench.source_store(matter).get_by_action_token(token)
+            browser = source_browser_projection(matter, document.document_id, browse) if browse else None
             bench.workspace.update_source_review_state(
                 matter.matter_id,
                 (document.document_id,),
@@ -12821,6 +12878,11 @@ def create_workbench_app(
             object_id=document.document_id,
             details={"count": 1, "state": "reviewed"},
         )
+        if browser is not None:
+            return RedirectResponse(
+                browser["next"]["href"] if browser["next"] else browser["library_href"],
+                status_code=303,
+            )
         if remaining.items:
             following = remaining.items[0]
             return RedirectResponse(

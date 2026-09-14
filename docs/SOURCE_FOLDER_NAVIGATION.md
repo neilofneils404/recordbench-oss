@@ -32,6 +32,8 @@ multiple groups per source and bulk creation/addition. Browsing a folder does no
 change membership or set the sources assigned to a question or review task.
 Use the existing source-set actions to save a focused review population.
 
+Source links retain these filters in [continuous source inspection](CONTINUOUS_SOURCE_BROWSING.md), with a bounded list beside the viewer.
+
 Source links still open the exact existing source. Same basenames in different
 folders and separate upload occurrences retain their identities. Navigation does
 not rename, relocate or write external originals. Matter authorization, audited

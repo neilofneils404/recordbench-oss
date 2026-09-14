@@ -19,6 +19,7 @@ from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
@@ -182,6 +183,42 @@ def main():
             assert query['source_set'] == [group.source_set_id] and query['status'] == ['ready']
             assert len(rows()) == 2 and bench.workspace.source_set(matter.matter_id, group.source_set_id).source_count == 2
             checked('Existing bulk source-set creation and Apply preserve folder, source set and status')
+
+            click('.source-open-action')
+            source_links = driver.find_elements(By.CSS_SELECTOR, '[data-source-browser] li a')
+            assert len(source_links) == 2
+            assert source_links[0].get_attribute('aria-current') == 'page'
+            source_links[0].send_keys(Keys.ARROW_DOWN)
+            assert driver.switch_to.active_element == source_links[1]
+            source_links[1].send_keys(Keys.HOME)
+            assert driver.switch_to.active_element == source_links[0]
+            source_links[0].send_keys(Keys.END)
+            assert driver.switch_to.active_element == source_links[1]
+            old = driver.find_element(By.TAG_NAME, 'html')
+            driver.switch_to.active_element.send_keys(Keys.ENTER)
+            wait.until(lambda _: detached(old))
+            ready()
+            assert 'nested northern interview notes' in driver.find_element(By.TAG_NAME, 'body').text
+            assert driver.find_element(By.CSS_SELECTOR, '[data-source-browser] a[aria-current]').text.startswith('notes.txt')
+            assert driver.find_element(By.CSS_SELECTOR, '.review-sequence .next.disabled').is_displayed()
+            for width in (1440, 390):
+                driver.set_window_size(width, 1000)
+                if width == 390 and driver.find_element(By.CSS_SELECTOR, '[data-rail-toggle]').get_attribute('aria-expanded') == 'true':
+                    click('[data-rail-toggle]', False)
+                wait.until(lambda d: not d.execute_script('return document.getAnimations().some(a => a.playState === "running")'))
+                panel = driver.find_element(By.CSS_SELECTOR, '[data-source-browser]')
+                driver.execute_script('arguments[0].scrollIntoView({block:"start",behavior:"instant"});window.scrollBy(0,-75);', panel)
+                assert driver.execute_script('return document.documentElement.scrollWidth <= innerWidth')
+                driver.save_screenshot(str(output / f'synthetic-continuous-{width}.png'))
+            driver.set_window_size(1440, 1000)
+            click('.review-sequence .previous')
+            assert 'north vehicle arrived at noon' in driver.find_element(By.TAG_NAME, 'body').text
+            click('[data-source-browser] > a')
+            query = parse_qs(urlparse(driver.current_url).query)
+            assert query['folder'] == ['Generated collection/North']
+            assert query['source_set'] == [group.source_set_id] and query['status'] == ['ready']
+            assert query['sort'] == ['name'] and len(rows()) == 2
+            checked('Continuous source list, keyboard focus and Enter, previous/next boundaries, retained filters and responsive viewer')
 
             for width in (1440, 390):
                 driver.set_window_size(width, 1000)

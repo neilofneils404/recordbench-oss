@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep a bounded source list beside document and recording inspection, with
+  library-scoped previous/next, keyboard navigation and retained folder/filter
+  context. Clarify the existing folder entry point; see
+  [continuous browsing](docs/CONTINUOUS_SOURCE_BROWSING.md).
+
 - 2026-09-09: Assemble selected final-acceptance contributions: export readiness,
   preserved Report review basis, explicit investigation accounting, exact-search
   grammar/corpus, contributor briefs and isolated candidate-history validation.

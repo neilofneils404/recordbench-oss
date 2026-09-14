@@ -1,0 +1,19 @@
+<aside class="source-browser" aria-label="Sources in this view" data-source-browser>
+  <h2>Sources in this view</h2>
+  <a href="{{ source_sequence.library_href }}">Browse collections, folders and filters</a>
+  <p>{{ source_sequence.library.folder or 'All folders' }} · {{ source_sequence.library.total }} sources</p>
+  {% if source_sequence.scope_labels %}<p>{{ source_sequence.scope_labels|join(" · ") }}</p>{% endif %}
+  {% if source_sequence.library.query %}<p>Filename or folder: {{ source_sequence.library.query }}</p>{% endif %}
+  <p>Page {{ source_sequence.library.page }} of {{ source_sequence.library.total_pages }} · {{ source_sequence.library.sort }}</p>
+  {% if source_sequence.position is none %}<p role="status">This source is outside the current filters. Choose a source below or change filters.</p>{% endif %}
+  <p id="source-browser-keys">In this list, use Up/Down, Home/End to focus a source, then Enter to open it.</p>
+  <nav aria-label="Source list" aria-describedby="source-browser-keys">
+    <ul>
+    {% set current_token = media.row.action_token if media is defined else source.row.action_token %}
+    {% for item in source_sequence['items'] %}
+      <li><a href="{{ item.href }}" {% if item.token == current_token %}aria-current="page"{% endif %}><strong>{{ item.title.rsplit("/", 1)[-1] }}</strong><small>{{ item.path }}</small></a></li>
+    {% else %}<li>No sources match these filters.</li>{% endfor %}
+    </ul>
+  </nav>
+  <a href="{{ source_sequence.library_href }}">All source pages and folders</a>
+</aside>

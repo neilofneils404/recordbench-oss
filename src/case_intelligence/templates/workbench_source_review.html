@@ -7,7 +7,7 @@
 <main class="source-review-main">
   <header class="source-review-heading">
     <div>
-      <a class="back-link" href="/matters/{{ matter.slug }}/setup?view=list&amp;collection={{ source.row.collection_id }}#source-library">← Review sources</a>
+      <a class="back-link" href="{{ source_sequence.library_href }}">← Review sources</a>
       {% set review_return = source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) %}{% if review_return %}<a class="back-link" href="{{ review_return }}">Return to review context</a>{% endif %}
       <p class="eyebrow">{{ source.row.collection_name }} · {{ source.row.kind }}</p>
       <h1>{{ source.row.name }}</h1>
@@ -18,12 +18,12 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="button button-ink" type="submit" {% if source.document.state != 'ready' %}disabled{% endif %}>Ask using this source</button>
       </form>
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state?browse={{ source_sequence.context|urlencode }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="state" value="{{ 'unreviewed' if source.row.review_state == 'reviewed' else 'reviewed' }}">
         <button class="button button-secondary" type="submit">{{ 'Mark unreviewed' if source.row.review_state == 'reviewed' else 'Mark reviewed' }}</button>
       </form>
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state?browse={{ source_sequence.context|urlencode }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="state" value="flagged">
         <button class="button button-secondary" type="submit">{{ 'Flagged' if source.row.review_state == 'flagged' else 'Flag for follow-up' }}</button>
@@ -33,6 +33,9 @@
   </header>
   {% with active='sources' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   {% include "workbench_retention_notice.html" %}
+  <div class="source-browser-layout">
+  {% include "workbench_source_browser.html" %}
+  <div class="source-browser-viewer">
   {% include "workbench_review_sequence.html" %}
 
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
@@ -60,8 +63,8 @@
         <h2 id="extracted-reader-heading">{{ source.position_label }}</h2>
       </div>
       <nav class="reader-pagination" aria-label="Source section navigation">
-        {% if source.previous_href %}<a class="button button-secondary" href="{{ entity_context_href(source.previous_href, request.query_params.get('entity_return_to', '')) }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
-        {% if source.next_href %}<a class="button button-secondary" href="{{ entity_context_href(source.next_href, request.query_params.get('entity_return_to', '')) }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
+        {% if source.previous_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.previous_href, request.query_params.get('entity_return_to', '')), source_sequence.context) }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
+        {% if source.next_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.next_href, request.query_params.get('entity_return_to', '')), source_sequence.context) }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
       </nav>
     </header>
     {% if source.unit %}
@@ -74,5 +77,7 @@
     </div>
     {% endif %}
   </section>
+  </div>
+  </div>
 </main>
 {% endblock %}

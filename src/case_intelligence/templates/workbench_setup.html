@@ -205,7 +205,7 @@
 
       {% if source_folders.total or source_library.folder or source_library.same_content or source_library.matching_only %}
       <nav class="source-folder-nav" data-source-folder-nav aria-label="Source folders">
-        <div class="source-subheading"><h3>Folders</h3><small>Sources in the current view</small></div>
+        <div class="source-subheading"><h3>Browse collections and folders</h3><small>Open a folder to narrow the source list</small></div>
         {% if source_library.folder %}
         <p class="source-folder-current"><a href="{{ library_url(1, view='list', folder='') }}">All folders</a><span aria-hidden="true"> / </span><strong>{{ source_library.folder }}</strong></p>
         <a class="source-folder-parent" href="{{ library_url(1, view='list', folder=folder_parent) }}">Up one folder</a>
@@ -280,12 +280,12 @@
         {% for source in sources %}
         <div class="source-table-row" role="row">
           <span class="source-select-cell" role="cell"><input type="checkbox" name="selected" value="{{ source.action_token }}" form="source-bulk-form" aria-label="Select {{ source.name }}" data-source-select></span>
-          <span class="source-name-cell" role="cell"><span class="file-mark file-{{ source.kind|lower }}">{{ source.kind }}</span><a href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}"><strong>{{ source.name }}</strong>{% if '/' in source.relative_path %}<small>{{ source.relative_path.rsplit('/', 1)[0] }}</small>{% endif %}</a></span>
+          <span class="source-name-cell" role="cell"><span class="file-mark file-{{ source.kind|lower }}">{{ source.kind }}</span><a href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}?browse={{ source_return_query|urlencode }}"><strong>{{ source.name }}</strong>{% if '/' in source.relative_path %}<small>{{ source.relative_path.rsplit('/', 1)[0] }}</small>{% endif %}</a></span>
           <span class="source-collection-cell" role="cell"><a href="{{ library_url(1, view='list', collection=source.collection_id, source_set='') }}">{{ source.collection_name }}</a><small>{{ source.kind }}</small>{% if source.byte_match_count > 1 %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;same_content={{ source.action_token }}" data-source-byte-matches>{{ source.byte_match_count }} files with identical bytes</a>{% endif %}</span>
           <span class="source-review-cell" role="cell"><span class="review-badge review-{{ source.review_state }}">{{ source.review_state|replace('_', ' ')|title }}</span><span class="source-state state-{{ source.tone }}"><i aria-hidden="true"></i>{{ source.state }}</span></span>
           <span class="source-count" role="cell">{{ source.count_label }}</span>
           <span class="row-actions" role="cell">
-            <a class="source-open-action" href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}">{% if source.kind == 'VIDEO' %}Play video{% elif source.kind == 'AUDIO' %}Play audio{% elif source.kind == 'PDF' %}Open PDF{% elif source.kind == 'IMAGE' %}View image{% else %}Read document{% endif %}</a>
+            <a class="source-open-action" href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}?browse={{ source_return_query|urlencode }}">{% if source.kind == 'VIDEO' %}Play video{% elif source.kind == 'AUDIO' %}Play audio{% elif source.kind == 'PDF' %}Open PDF{% elif source.kind == 'IMAGE' %}View image{% else %}Read document{% endif %}</a>
             {% if source.retryable %}
             <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Try again</button></form>
             {% endif %}

@@ -103,3 +103,9 @@ Check `summary.json` first, then the failed journey's log and screenshot. A
 receipt proves only the generated steps recorded in its `checks` array. CI
 application/transcription tests, final-commit code/security reviews and the
 maintainer merge gate remain separate requirements.
+
+The additional `browser-accept-source-folders.py` journey also checks continuous
+source inspection, list-only keyboard navigation, retained library filters, and
+screenshots at 1440 and 390 pixels. See
+[the browsing contract](CONTINUOUS_SOURCE_BROWSING.md) for scope and boundaries.
+Run this journey separately with the same pinned Chrome and ChromeDriver.

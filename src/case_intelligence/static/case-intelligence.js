@@ -3625,3 +3625,21 @@
     workflowTimers.forEach((timer) => window.clearTimeout(timer));
   });
 })();
+
+// List-only shortcuts never intercept typing, media controls, or reader keys.
+document.querySelectorAll('[data-source-browser] nav').forEach((nav) => {
+  nav.addEventListener('keydown', (event) => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const links = Array.from(nav.querySelectorAll('li a'));
+    const index = links.indexOf(event.target);
+    if (index < 0) return;
+    let target;
+    if (event.key === 'ArrowDown') target = Math.min(index + 1, links.length - 1);
+    else if (event.key === 'ArrowUp') target = Math.max(index - 1, 0);
+    else if (event.key === 'Home') target = 0;
+    else if (event.key === 'End') target = links.length - 1;
+    else return;
+    event.preventDefault();
+    links[target].focus();
+  });
+});

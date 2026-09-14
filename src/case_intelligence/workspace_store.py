@@ -5896,6 +5896,38 @@ class WorkspaceStore:
                     digest.update(row["document_id"].encode("ascii") + b"\n")
         return digest.hexdigest()
 
+    @staticmethod
+    def _source_catalog_order(sort: str) -> str:
+        return {
+            "newest": "COALESCE(o.added_at,c.cataloged_at) DESC,c.document_id DESC",
+            "oldest": "COALESCE(o.added_at,c.cataloged_at),c.document_id",
+            "name": "c.display_name_key,c.document_id",
+            "name_desc": "c.display_name_key DESC,c.document_id DESC",
+            "status": (
+                "CASE c.tone WHEN 'attention' THEN 0 WHEN 'processing' THEN 1 ELSE 2 END,"
+                "c.display_name_key,c.document_id"
+            ),
+        }.get(sort, "COALESCE(o.added_at,c.cataloged_at) DESC,c.document_id DESC")
+
+    def source_catalog_position(self, matter_id: str, document_id: str, *,
+                                sort: str = "newest", **filters) -> int | None:
+        """Find the current source in library order without loading the catalog."""
+        predicate, parameters = self._source_catalog_filter(matter_id, **filters)
+        with self._lock:
+            self._active_matter_locked(matter_id)
+            row = self.connection.execute(
+                "SELECT position FROM (SELECT c.document_id, ROW_NUMBER() OVER (ORDER BY "
+                + self._source_catalog_order(sort)
+                + ") AS position FROM workbench_source_catalog c "
+                "LEFT JOIN workbench_source_organization o "
+                "ON o.matter_id=c.matter_id AND o.document_id=c.document_id "
+                "LEFT JOIN workbench_source_collection sc "
+                "ON sc.matter_id=o.matter_id AND sc.collection_id=o.collection_id "
+                + predicate + ") ranked WHERE document_id=?",
+                (*parameters, self._source_document_id(document_id)),
+            ).fetchone()
+        return int(row["position"]) if row is not None else None
+
     def source_catalog_page(
         self,
         matter_id: str,
@@ -5922,16 +5954,7 @@ class WorkspaceStore:
             source_set_id=source_set_id, folder=folder,
             same_content=same_content, matching_only=matching_only,
         )
-        order = {
-            "newest": "COALESCE(o.added_at,c.cataloged_at) DESC,c.document_id DESC",
-            "oldest": "COALESCE(o.added_at,c.cataloged_at),c.document_id",
-            "name": "c.display_name_key,c.document_id",
-            "name_desc": "c.display_name_key DESC,c.document_id DESC",
-            "status": (
-                "CASE c.tone WHEN 'attention' THEN 0 WHEN 'processing' THEN 1 ELSE 2 END,"
-                "c.display_name_key,c.document_id"
-            ),
-        }.get(sort, "COALESCE(o.added_at,c.cataloged_at) DESC,c.document_id DESC")
+        order = self._source_catalog_order(sort)
         base_join = (
             " FROM workbench_source_catalog c "
             "LEFT JOIN workbench_source_organization o "

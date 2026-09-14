@@ -7,7 +7,7 @@
 <main class="source-review-main media-review-main" data-media-review data-start-ms="{{ media.start_ms }}" data-transcript-page="{{ segment_page }}" data-transcript-pages="{{ segment_pages }}" data-transcript-filtered="{{ 'true' if transcript_query or transcript_speaker or transcript_flag else 'false' }}" data-media-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status" data-media-resume-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/resume" data-media-job-state="{{ media.job.display_state if media.job else 'unavailable' }}" data-playback-state="{{ media.document.playback_state or 'unknown' }}" data-summary-state="{{ media.summary.state if media.summary else 'not_created' }}">
   <header class="source-review-heading media-review-heading">
     <div>
-      <a class="back-link" href="/matters/{{ matter.slug }}/setup?view=list&amp;collection={{ media.row.collection_id }}#source-library">← Review sources</a>
+      <a class="back-link" href="{{ source_sequence.library_href }}">← Review sources</a>
       <p class="eyebrow">{{ media.row.collection_name }} · {{ media.row.kind }} · {{ format_timestamp(media.document.duration_ms) }}</p>
       <h1>{{ media.row.name }}</h1>
       <p>{{ media.row.state }}{% if media.transcript %} · {{ media.transcript.segment_count }} transcript passage{% if media.transcript.segment_count != 1 %}s{% endif %} · {{ 'Reviewed transcript' if media.transcript.review_state == 'human_reviewed' else 'Draft transcript' }}{% endif %}</p>
@@ -17,12 +17,12 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="button button-ink" type="submit" {% if media.document.state != 'ready' %}disabled{% endif %}>Ask using this source</button>
       </form>
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/review-state">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/review-state?browse={{ source_sequence.context|urlencode }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="state" value="{{ 'unreviewed' if media.row.review_state == 'reviewed' else 'reviewed' }}">
         <button class="button button-secondary" type="submit">{{ 'Mark unreviewed' if media.row.review_state == 'reviewed' else 'Mark reviewed' }}</button>
       </form>
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/review-state">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/review-state?browse={{ source_sequence.context|urlencode }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="state" value="flagged">
         <button class="button button-secondary" type="submit">{{ 'Flagged' if media.row.review_state == 'flagged' else 'Flag for follow-up' }}</button>
@@ -31,6 +31,9 @@
   </header>
   {% with active='sources' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   {% include "workbench_retention_notice.html" %}
+  <div class="source-browser-layout">
+  {% include "workbench_source_browser.html" %}
+  <div class="source-browser-viewer">
   {% include "workbench_review_sequence.html" %}
 
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
@@ -244,11 +247,12 @@
         </div>
       </details>
       <form class="transcript-filters" method="get" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}">
+        <input type="hidden" name="browse" value="{{ source_sequence.context }}">
         <label><span>Find in transcript</span><input type="search" name="q" value="{{ transcript_query }}" maxlength="240" placeholder="Words or speaker…"></label>
         <label><span>Speaker</span><select name="speaker"><option value="">All speakers</option>{% for mapping in media.speakers %}<option value="{{ mapping.speaker_cluster }}" data-speaker-label="{{ mapping.speaker_cluster }}" {% if transcript_speaker == mapping.speaker_cluster %}selected{% endif %}>{{ speaker_labels[mapping.speaker_cluster] }}</option>{% endfor %}</select></label>
         <label><span>Review signal</span><select name="flag"><option value="">All passages</option><option value="low" {% if transcript_flag == 'low' %}selected{% endif %}>Low confidence</option><option value="overlap" {% if transcript_flag == 'overlap' %}selected{% endif %}>Overlapping speech</option><option value="edited" {% if transcript_flag == 'edited' %}selected{% endif %}>Human corrected</option></select></label>
         <button class="button button-secondary" type="submit">Apply</button>
-        {% if transcript_query or transcript_speaker or transcript_flag %}<a href="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}">Clear</a>{% endif %}
+        {% if transcript_query or transcript_speaker or transcript_flag %}<a href="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}?browse={{ source_sequence.context|urlencode }}">Clear</a>{% endif %}
       </form>
       <div class="transcript-list" data-transcript-list>
         {% for segment in segments %}
@@ -266,15 +270,17 @@
       </div>
       {% if segment_pages > 1 %}
       <nav class="source-pagination transcript-pagination" aria-label="Transcript pages">
-        {% if segment_page > 1 %}<a class="button button-secondary" href="?page={{ segment_page - 1 }}&amp;q={{ transcript_query|urlencode }}&amp;speaker={{ transcript_speaker|urlencode }}&amp;flag={{ transcript_flag|urlencode }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
+        {% if segment_page > 1 %}<a class="button button-secondary" href="?browse={{ source_sequence.context|urlencode }}&amp;page={{ segment_page - 1 }}&amp;q={{ transcript_query|urlencode }}&amp;speaker={{ transcript_speaker|urlencode }}&amp;flag={{ transcript_flag|urlencode }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
         <span>Page {{ segment_page }} of {{ segment_pages }}</span>
-        {% if segment_page < segment_pages %}<a class="button button-secondary" href="?page={{ segment_page + 1 }}&amp;q={{ transcript_query|urlencode }}&amp;speaker={{ transcript_speaker|urlencode }}&amp;flag={{ transcript_flag|urlencode }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
+        {% if segment_page < segment_pages %}<a class="button button-secondary" href="?browse={{ source_sequence.context|urlencode }}&amp;page={{ segment_page + 1 }}&amp;q={{ transcript_query|urlencode }}&amp;speaker={{ transcript_speaker|urlencode }}&amp;flag={{ transcript_flag|urlencode }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
       </nav>
       {% endif %}
       {% else %}
       <div class="reader-empty transcript-empty"><strong>{{ media.document.processing_stage or 'Transcript is not ready yet.' }}</strong><span>{{ media.document.message or 'The durable transcription queue will update this review page.' }}</span><span>You can still play and review the uploaded recording on the left.</span></div>
       {% endif %}
     </section>
+  </div>
+  </div>
   </div>
 </main>
 {% endblock %}
