@@ -81,11 +81,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                  support: str = Query('', max_length=40), return_to: str = Query('', max_length=4000)):
         return render(request, slug, entity_id=entity_id, q=q, page=page, review_page=review_page, candidate_page=candidate_page, support=support, return_to=return_to)
 
-    @app.get('/matters/{slug}/entity-discovery/{run_id}', response_class=HTMLResponse)
-    def discovery_coverage(request: Request, slug: str, run_id: str,
-                           page: int = Query(1, ge=1, le=100_000),
-                           source_page: int = Query(1, ge=1, le=100_000),
-                           q: str = Query('', max_length=200), return_to: str = Query('', max_length=4000)):
+    def render_discovery(request, slug, run_id, *, page=1, source_page=1, q='', return_to='', error=''):
         matter = authorized_matter(request, slug)
         actor = auth_context(request).principal_id
         try:
@@ -98,10 +94,17 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                 page=target_page, source_page=target_source_page, q=q, return_to=return_to))
         return templates.TemplateResponse(request=request, name='workbench_entity_discovery.html', context={
             **base_context(request, matter), 'matter': matter, 'coverage': coverage,
-            'q': q, 'return_to': return_to, 'coverage_url': coverage_url,
+            'q': q, 'return_to': return_to, 'coverage_url': coverage_url, 'error': error,
             'entities_url': f'/matters/{slug}/entities?' + urlencode(dict(q=q, return_to=return_to)),
             'show_assistant_dock': False,
-        }, headers={'Cache-Control': 'no-store'})
+        }, status_code=400 if error else 200, headers={'Cache-Control': 'no-store'})
+
+    @app.get('/matters/{slug}/entity-discovery/{run_id}', response_class=HTMLResponse)
+    def discovery_coverage(request: Request, slug: str, run_id: str,
+                           page: int = Query(1, ge=1, le=100_000),
+                           source_page: int = Query(1, ge=1, le=100_000),
+                           q: str = Query('', max_length=200), return_to: str = Query('', max_length=4000)):
+        return render_discovery(request, slug, run_id, page=page, source_page=source_page, q=q, return_to=return_to)
 
     @app.post('/matters/{slug}/entities/actions', dependencies=[Depends(require_csrf)])
     def entity_action(request: Request, slug: str, action: str = Form(..., max_length=24),
@@ -158,6 +161,9 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                     pass
             except KeyError as denied:
                 raise HTTPException(404, 'Entity or matter is no longer available') from denied
+            if action in ('discover', 'retry_discovery'):
+                return render_discovery(request, slug, run_id, q=q, return_to=return_to,
+                    error=str(exc) if isinstance(exc, WorkspaceProblem) else 'The frozen review is unavailable. Open full-text coverage to choose a current run.')
             error = str(exc) if isinstance(exc, WorkspaceProblem) else 'The entity, note, or original passage changed or is unavailable. Your submitted text is preserved below.'
             try:
                 return render(request, slug, entity_id=entity_id, q=q, support=support, return_to=return_to,
@@ -170,7 +176,8 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                               error=error, draft=dict(fields, action=action if action in ('merge','split','alias','reject') else 'create', entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id), status_code=409)
         audit(request, 'entity.' + action, 'success', context=auth_context(request), matter=matter,
               object_type='entity', object_id=entity_id or deleted_entity_id or matter.matter_id)
-        path = f'/matters/{slug}/entities' + ('/' + entity_id if entity_id else '')
+        path = (f'/matters/{slug}/entity-discovery/{run_id}' if action in ('discover', 'retry_discovery')
+                else f'/matters/{slug}/entities' + ('/' + entity_id if entity_id else ''))
         return RedirectResponse(path + '?' + urlencode(dict(q=q, return_to=return_path(slug, return_to))), status_code=303)
 
     @app.get('/matters/{slug}/entities/{entity_id}/export', dependencies=[Depends(require_response_lease)])

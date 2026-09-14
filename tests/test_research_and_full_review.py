@@ -1133,7 +1133,7 @@ def test_review_workspace_runs_exports_and_final_bundle_include_new_work_product
         quick = client.get(f"/matters/{slug}")
         assert "Review" in quick.text
         assert "Investigate more deeply" in quick.text
-        assert "Check every source" in quick.text
+        assert "Document review" in quick.text
         assert "Quick answer" not in quick.text
         assert "Deep research" not in quick.text
 

@@ -7,7 +7,7 @@
     <header class="assistant-header">
       <div><span>Ask RecordBench</span><strong>{{ assistant.display_label }}</strong></div>
       <div>
-        <a href="{{ assistant.open_url }}" aria-label="Open Review and manage conversations">Full conversation</a>
+        <a href="{{ assistant.open_url }}" aria-label="Open case conversation and manage conversations">Full conversation</a>
         <button type="button" data-assistant-collapse aria-label="Collapse Ask RecordBench">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 6-6 6 6 6"/></svg>
         </button>
@@ -20,7 +20,7 @@
         {% for item in assistant.conversation_choices %}
         <option value="{{ item.conversation_id }}" {% if item.conversation_id == assistant.conversation.conversation_id %}selected{% endif %}>{{ 'Pinned · ' if item.is_pinned else '' }}{{ item.title }} · {{ item.message_count }} {{ 'message' if item.message_count == 1 else 'messages' }}</option>
         {% endfor %}
-        {% if assistant.conversation_total > assistant.conversation_choices|length %}<option value="" disabled>More conversations are available in Review</option>{% endif %}
+        {% if assistant.conversation_total > assistant.conversation_choices|length %}<option value="" disabled>More conversations are available in Case conversation</option>{% endif %}
       </select>
       <button type="button" data-assistant-new-chat aria-label="Start a new chat">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>

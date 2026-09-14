@@ -20,6 +20,10 @@
   <p class="intake-receipt-transfer">{{ receipt.counts.received }} received · {{ receipt.counts.partial }} partly received · {{ receipt.counts.not_received }} included files not received</p>
   <p>{{ receipt.counts.searchable }} searchable · {{ receipt.counts.processing }} uploading or processing · {{ receipt.counts.playback_only }} playback only · {{ receipt.counts.needs_review }} need review · {{ receipt.counts.failed }} failed or cancelled · {{ receipt.counts.unavailable }} unavailable · {{ receipt.counts.not_started }} not started</p>
   <p class="intake-receipt-boundary">This receipt lists files supplied by your browser. Empty folders are not listed. Received files may still need processing.</p>
+  <section class="notice notice-neutral" aria-label="Next step: suggested findings">
+    <strong>Continue from processing to suggested findings</strong>
+    <p>Received files may still be processing. Searchable text can still have missing OCR, transcription or other extraction gaps. Check the statuses above, then <a href="/matters/{{ matter.slug }}/entities?return_to={{ ('/matters/' + matter.slug + '/intake/' + receipt.receipt_id)|urlencode }}">check readiness for suggested people, things and dates</a>. Choose a frozen matter review and inspect its source coverage; it is not automatically limited to this collection. Discovery runs only on your request and suggestions need human acceptance.</p>
+  </section>
   <div class="intake-receipt-actions">
     <a class="button button-primary" href="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}/export?format=csv" data-download>Download receipt</a>
     <a href="/matters/{{ matter.slug }}/intake/{{ receipt.receipt_id }}/export?format=markdown" data-download>Text version</a>

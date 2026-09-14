@@ -121,7 +121,16 @@ def _network_urls(driver: webdriver.Chrome) -> list[str]:
     return urls
 
 
+def _name_collection(driver: webdriver.Chrome) -> None:
+    field = driver.find_element(By.CSS_SELECTOR, "[data-upload-collection-name]")
+    if not field.get_attribute("value").strip():
+        previous_focus = driver.switch_to.active_element
+        field.send_keys("Synthetic preflight collection")
+        driver.execute_script("arguments[0].focus({preventScroll:true});", previous_focus)
+
+
 def _select(input_element, files: list[Path]) -> None:
+    _name_collection(input_element.parent)
     input_element.send_keys("\n".join(str(path.resolve()) for path in files))
 
 
@@ -143,6 +152,7 @@ def _synthetic_selection(
     oversized_first_duplicate: bool = False,
     capacity_gap: bool = False,
 ) -> dict[str, int]:
+    _name_collection(driver)
     return driver.execute_script(
         """
         const input = arguments[0];
@@ -404,14 +414,14 @@ def main() -> int:
                 and folder_input.get_attribute("hidden") is None
                 and folder_input.get_attribute("disabled") is None
                 and folder_input.get_attribute("tabindex") is None
-                and folder_chooser.get_attribute("for") == "source-folder"
-                and driver.execute_script(
-                    "return arguments[0].control === arguments[1];",
-                    folder_chooser,
-                    folder_input,
-                ),
+                and folder_chooser.tag_name == "button"
+                and folder_chooser.is_enabled(),
                 "JavaScript did not expose an accessible folder chooser",
             )
+            driver.execute_script("window.syntheticFolderClick=false; arguments[0].click=() => {window.syntheticFolderClick=true;};", folder_input)
+            folder_chooser.send_keys(Keys.ENTER)
+            _require(driver.execute_script("return window.syntheticFolderClick"), "Keyboard folder action did not open its picker")
+            driver.execute_script("delete arguments[0].click;", folder_input)
 
             file_input = driver.find_element(By.CSS_SELECTOR, "[data-file-input]")
             panel = driver.find_element(By.CSS_SELECTOR, "[data-upload-preflight]")

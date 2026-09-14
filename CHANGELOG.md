@@ -7,6 +7,13 @@
   context. Clarify the existing folder entry point; see
   [continuous browsing](docs/CONTINUOUS_SOURCE_BROWSING.md).
 
+- Expose matter content Search, retain search context through source inspection and scoped questions, and place full-text review controls and coverage before long source lists.
+
+- Require an explicitly entered collection name in browser intake, make file and
+  folder selection equally visible, and allow pending selection review to be
+  cancelled without changing saved receipts or upload recovery. Preserve entered
+  names in direct uploads and pending selections during ingestion refresh.
+
 - 2026-09-09: Assemble selected final-acceptance contributions: export readiness,
   preserved Report review basis, explicit investigation accounting, exact-search
   grammar/corpus, contributor briefs and isolated candidate-history validation.

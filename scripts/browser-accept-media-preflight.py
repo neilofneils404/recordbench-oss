@@ -96,6 +96,9 @@ def main():
                 collapses = driver.find_elements(By.CSS_SELECTOR, "[data-assistant-collapse]")
                 if collapses and collapses[0].is_displayed():
                     collapses[0].click()
+                collection_name = driver.find_element(By.CSS_SELECTOR, "[data-upload-collection-name]")
+                collection_name.clear()
+                collection_name.send_keys("Synthetic media-preflight collection")
                 driver.find_element(By.ID, "source-files").send_keys(str(path))
                 wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-upload-preflight-confirm]").is_enabled())
                 click("[data-upload-preflight-confirm]")

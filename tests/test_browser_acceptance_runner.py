@@ -202,7 +202,7 @@ def test_existing_output_is_preserved_and_no_journey_runs(runner, tmp_path, monk
 
 
 @pytest.mark.parametrize('failure', ['exit', 'timeout', 'missing', 'failed', 'none'])
-def test_both_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_path, monkeypatch, failure):
+def test_all_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_path, monkeypatch, failure):
     scratch, output = tmp_path / 'scratch', tmp_path / 'output'
     scratch.mkdir()
     output.mkdir()
@@ -224,10 +224,11 @@ def test_both_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_p
 
     monkeypatch.setattr(runner, 'run_process', run)
     results = runner.run_journeys(Path('/generated/chrome'), Path('/generated/driver'), scratch, output, 1)
-    assert len(commands) == 2
-    assert '--verify-readiness' in commands[1]
+    assert len(commands) == 3
+    assert '--verify-readiness' in commands[2]
+    assert 'browser-accept-dusk.py' in commands[1][1]
     assert results[0]['passed'] is (failure == 'none')
-    assert results[1]['passed'] is True
+    assert all(result['passed'] for result in results[1:])
     assert json.loads((output / 'journeys.json').read_text()) == results
 
 
@@ -313,11 +314,34 @@ def test_mismatched_driver_version_pin_is_rejected(runner, tmp_path, monkeypatch
         runner.browser_pins('linux64')
 
 
-@pytest.mark.parametrize('outcomes,code', [([True, False], 1), ([True, True], 0), ([], 1)])
-def test_main_requires_both_journeys_to_pass(runner, tmp_path, monkeypatch, outcomes, code):
+@pytest.mark.parametrize('outcomes,code', [([True, False, True], 1), ([True, True, False], 1), ([True, True, True], 0), ([True, True], 1), ([], 1)])
+def test_main_requires_all_journeys_to_pass(runner, tmp_path, monkeypatch, outcomes, code):
     monkeypatch.setattr(runner, 'install_browser', lambda *_: (Path('/generated/chrome'), Path('/generated/driver'), '1.2.3.4'))
     monkeypatch.setattr(runner, 'host_platform', lambda: 'linux64')
     monkeypatch.setattr(runner, 'run_journeys', lambda *_: [{'passed': passed} for passed in outcomes])
     output = tmp_path / 'output'
     assert runner.main(['--output', str(output)]) == code
     assert json.loads((output / 'summary.json').read_text())['passed'] is (code == 0)
+
+
+@pytest.mark.parametrize("suffix", [".zip", ".docx"])
+def test_report_download_waits_for_completed_archive(tmp_path, suffix):
+    spec = importlib.util.spec_from_file_location("browser_reports", ROOT / "scripts/browser-accept-reports-bundle.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    previous = tmp_path / ("previous" + suffix)
+    with zipfile.ZipFile(previous, "w") as archive:
+        archive.writestr("synthetic.txt", "Previous synthetic download")
+    before = {previous}
+    target = tmp_path / ("current" + suffix)
+    target.touch()  # Chrome can reserve the final name before finishing transfer.
+    assert module.completed_download(tmp_path, before, suffix) is None
+    target.write_bytes(b"PK\x03\x04incomplete synthetic archive")
+    assert module.completed_download(tmp_path, before, suffix) is None
+    with zipfile.ZipFile(target, "w") as archive:
+        archive.writestr("synthetic.txt", "Complete synthetic download")
+    pending = tmp_path / "current.crdownload"
+    pending.touch()
+    assert module.completed_download(tmp_path, before, suffix) is None
+    pending.unlink()
+    assert module.completed_download(tmp_path, before, suffix) == target

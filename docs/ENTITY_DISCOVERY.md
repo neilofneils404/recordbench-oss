@@ -1,11 +1,39 @@
 # Entity discovery and reviewer reconciliation
 
-Slice 17 builds on the manual entity workspace. Open **People, places & things**
-and expand a text-review run under **Discover supported mentions**. **Discover
-next 10 units** extracts up to ten pending units from that run's sealed slice-12
-inventory. Each unit commits separately; stopping between requests preserves
-progress. Resume the text review to inventory remaining sources, then continue
-entity discovery. No model or background entity worker is required.
+Open **People, places & things → Suggested findings: guided discovery** and
+choose **Check readiness and discover suggestions** for a frozen text review.
+The selected-file receipt links to readiness while preserving its return path;
+the reviewer must check the frozen matter population because discovery is not
+automatically scoped to that receipt or collection. The full-text coverage page
+links directly to the same guide. First check intake,
+processing and extraction coverage; a searchable source is not evidence of
+complete extraction. If there is no frozen review, the empty state links to the
+existing explicit text-review workflow. That workflow may require the configured
+model; opening discovery never starts it or changes model settings.
+
+The guide separates readiness, bounded discovery and human review. **Discover
+next 10 units** visits up to ten pending sealed units; **Retry failed discovery**
+visits only failed units. Both return to the same run's coverage with the source
+review context and search preserved. During submission the page announces the
+batch and disables repeated clicks. There is no automatic continuation or live
+per-unit estimate; saved counts appear when the request returns. Each unit saves
+independently. A capacity error stays on the guide with retained coverage and
+operator guidance. Missing/changed sources need source repair or a current-source
+review; retry cannot update the frozen population.
+
+After a batch, **Review people, things and date candidates** opens the existing
+paginated identity list. Extracted records and mentions remain **Suggested** until
+an explicit reviewer decision. Open the original citation, then save identity
+and mention statuses separately. **Create event or assertion with this passage**
+carries the selected citation into the existing manual event form. Merely opening
+it creates nothing, and date ambiguity and timezone must be reviewed by a human.
+Recognition does not establish an event, identity equivalence or a person's role.
+
+This guidance changes no discovery rules, frozen-inventory semantics, model,
+schema or storage. Global navigation and full-review action placement, intake
+selection controls and the persistent source viewer are separate integration
+points. The change is based directly on main and does not depend on the intake
+selection PR.
 
 The coverage panel distinguishes processed, pending, failed and changed units.
 Sources without a sealed inventory remain visibly unprocessed; unavailable
@@ -173,3 +201,9 @@ Discovery remains scoped to recognized occurrences and reviewer reconciliation.
 [first full-text synthesis adapter](FULL_TEXT_SYNTHESIS.md) are separate landed
 features with their own contracts. Background material, matter memory, greater
 capacity, held Mac work and deployment remain outside this discovery contract.
+
+Guided-flow regressions: `tests/test_guided_discovery.py` exercises synthetic
+person/date evidence, partial inventory, failed-only retry, retained capacity
+errors, cited event handoff and separate human acceptance. The pinned
+`browser-accept-entity-discovery.py` journey covers the guide at desktop and
+390-pixel widths and confirms that opening a dated event form creates no event.

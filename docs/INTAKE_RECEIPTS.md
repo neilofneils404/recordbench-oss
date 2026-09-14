@@ -215,3 +215,40 @@ requested written-only question and checks every matching call's evidence kind;
 answer/citation coverage is unchanged. The frozen acceptance pack records the
 changed test and file digests without changing its cases or fixtures. The full
 gate was rerun after this correction.
+
+## Deliberate browser selection
+
+The upload form starts with an empty required collection name. Enter a name for
+this group before confirming its selected-file receipt. File and folder pickers
+are equally prominent buttons. The no-JavaScript direct-upload form also retains
+the submitted name; older API callers that omit it retain their compatibility
+default.
+
+**Cancel selection** clears pending files and folder inputs, aborts selection
+review, and ignores any late review response. It creates no receipt or upload
+session. The same files can be selected again. Previously saved receipts and
+upload recovery checkpoints remain available. During confirmation and transfer,
+file/folder inputs, picker buttons, collection naming, retry, and selection
+cancellation are disabled until the browser finishes handling the response; **Cancel upload** retains its existing
+semantics for a transfer already underway. Unrelated ingestion refresh waits
+while the user has an unconfirmed selection or a nonblank edited collection name,
+including a name entered before picking files. Once a receipt saves the name, it
+no longer counts as an unsaved draft. Clearing the draft allows refresh again.
+
+Synthetic browser acceptance covers blank/whitespace names, both pickers,
+cancellation during review and after folder review, same-file reselection, and
+late response rejection alongside existing lost-response and receipt recovery.
+HTTP regression covers named direct uploads and whitespace rejection before
+source storage. No schema, model, or deployment change is required.
+
+The browser regression holds a terminal upload response after the server finishes
+processing. Controls must remain disabled during that gap and become available
+when the response is released; the next selection then creates its own receipt.
+Server-side job completion alone is not a browser-ready signal.
+
+All browser upload journeys explicitly name their synthetic collections. The
+extended acceptance checks cover assertions, entities, entity discovery, matter
+renaming, notebook/Report/review-decision conflicts, folder navigation, media
+preflight, email coverage, and loose-file preflight in addition to the regular
+intake and Report-bundle CI journeys. The refresh regression verifies both
+name-before-selection preservation and renewed refresh after clearing the draft.

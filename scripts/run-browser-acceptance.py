@@ -28,10 +28,13 @@ MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 MAX_LOG_BYTES = 256 * 1024
 JOURNEYS = (
     ('intake', 'browser-accept-intake-receipts.py', 'receipt-browser-result.json', 11, ()),
+    ('dusk', 'browser-accept-dusk.py', 'receipt.json', 12, ()),
     ('reports', 'browser-accept-reports-bundle.py', 'receipt.json', 12, ('--verify-readiness',)),
 )
 ARTIFACT_NAMES = (
     'receipt-browser-result.json', 'receipt.json', 'failure.png', 'failure.html',
+    'dusk-status.png', 'dusk-filters.png', 'dusk-bulk.png', 'dusk-focus.png',
+    'dusk-bulk-active.png', 'dusk-mobile.png',
     'browser-errors.json', 'reports-desktop.png', 'reports-mobile.png',
     'export-ready-1440.png', 'export-ready-430.png', 'export-needs-attention.png',
     'readiness-failed-close-1440.png', 'readiness-failed-close-430.png',
@@ -271,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
             chrome, driver, version = install_browser(scratch, name, args.archives)
             summary.update(platform=name, browser_version=version)
             results = run_journeys(chrome, driver, scratch, output, args.timeout_seconds)
-            summary['passed'] = len(results) == len(JOURNEYS) == 2 and all(result['passed'] for result in results)
+            summary['passed'] = len(results) == len(JOURNEYS) and all(result['passed'] for result in results)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as exc:
         summary['error'] = str(exc)[:500]
     finally:

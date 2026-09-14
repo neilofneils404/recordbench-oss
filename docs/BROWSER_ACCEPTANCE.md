@@ -1,13 +1,13 @@
 # Synthetic browser acceptance
 
 The `synthetic-browser` job in the quality workflow runs the existing intake
-receipt and Report bundle journeys on Ubuntu 24.04 and Python 3.12. Reports
-always include `--verify-readiness`: the browser checks export preview, missing
+receipt, Dusk readability and Report bundle journeys on Ubuntu 24.04 and Python
+3.12. Reports always include `--verify-readiness`: the browser checks export preview, missing
 source repair, cross-matter denial and interrupted-close recovery as well as
 Markdown/Word downloads. The Report script enters the visible reading/editor
 views and expands the blank-document and written-section controls before editing.
 
-Both applications are generated for the run and listen on ephemeral loopback
+All applications are generated for the run and listen on ephemeral loopback
 ports. They use the unavailable generator and synthetic text fixtures. This is
 not a model-quality, media-codec, live PostgreSQL or deployed-node acceptance
 check. No model weights or external evidence are downloaded. Production resource
@@ -37,7 +37,7 @@ success, failure, timeout, SIGINT or SIGTERM the runner terminates that process
 group, gives it a short grace period, kills remaining members and reaps the
 leader. A nonzero child exit fails even if it left a success receipt. Missing,
 malformed, failed, nonsynthetic or incomplete receipts also fail. An ordinary
-journey failure still runs the other journey; interruption stops the run. The
+journey failure still runs the remaining journeys; interruption stops the run. The
 runner tests exercise these failure contracts with generated subprocesses and
 receipts, without downloading or opening a browser.
 
@@ -69,7 +69,7 @@ To update the browser intentionally:
    Chrome and ChromeDriver archives for each supported platform.
 2. Compute each SHA-256 locally, update the version, URLs and hashes together,
    and inspect that all URLs identify the same exact release.
-3. Run the runner tests and both real journeys. Require the actual hosted
+3. Run the runner tests and all real journeys. Require the actual hosted
    `synthetic-browser` PR job to pass, and review its bounded receipts and
    screenshots before accepting the update. A unit-test pass alone does not
    qualify a browser update.
@@ -109,3 +109,36 @@ source inspection, list-only keyboard navigation, retained library filters, and
 screenshots at 1440 and 390 pixels. See
 [the browsing contract](CONTINUOUS_SOURCE_BROWSING.md) for scope and boundaries.
 Run this journey separately with the same pinned Chrome and ChromeDriver.
+
+The additional `browser-accept-exact-search.py` and
+`browser-accept-full-text-review.py` journeys accept the same explicit verified
+Chrome and ChromeDriver binaries. They cover matter Search navigation, source
+inspection and scoped-question returns to paginated results, and desktop/mobile
+full-review controls ahead of the decision list. These additional journeys are
+separate from the two default hosted journeys. See
+[search and review navigation](SEARCH_REVIEW_NAVIGATION.md).
+
+Report downloads wait for Chrome's temporary download to disappear, a nonempty
+final file, and a readable ZIP container for ZIP/Word outputs before inspecting
+contents. A reserved filename alone is not completion. Synthetic regressions
+cover empty placeholders, partial archives, and completed archives while retaining
+the existing bounded browser wait.
+
+## Dusk source readability
+
+The pinned runner also runs a disposable source-library theme journey with 26
+synthetic text sources and a generated collection. It checks rendered text and
+placeholder contrast of at least 4.5:1 for status cards (idle, hover and selected),
+collection chips, filters, bulk actions, and disabled controls, including paged
+navigation. Disabled text uses the same readability target even though inactive
+controls are exempt from WCAG text contrast requirements. The contrast calculation
+composites ancestor backgrounds and opacity. Keyboard traversal checks a solid
+focus outline of at least 2px and 3:1 against the control and its parent surface.
+The journey also checks mobile filters and a Light theme round trip.
+
+The `dusk` artifact directory contains bounded synthetic screenshots of status
+cards, filters, disabled and enabled bulk actions, keyboard focus and mobile
+layout. These checks cover source-library controls, not every Dusk screen or
+native operating-system select popup. Dusk overrides use existing theme tokens;
+Light styles and source workflows are unchanged. This journey is independent of
+the intake-selection acceptance and does not require changes to its runner steps.
