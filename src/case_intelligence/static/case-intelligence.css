@@ -8130,7 +8130,7 @@ html[data-theme="dusk"] :is(.source-library-filters, .source-bulk-toolbar) input
 html[data-theme="dusk"] :is(.source-library-filters, .source-results-heading) > a {
   color: var(--blue-action);
 }
-html[data-theme="dusk"] :is(.button:disabled, .button.disabled) {
+html[data-theme="dusk"] .source-library :is(.button:disabled, .button.disabled) {
   background: var(--surface-strong);
   border-color: var(--line-strong);
   color: var(--ink-soft);
@@ -8143,7 +8143,7 @@ html[data-theme="dusk"] :is(.source-library-filters, .source-bulk-toolbar) :is(i
   cursor: not-allowed;
 }
 /* Opaque token outline stays legible alongside both canvas and raised controls. */
-html[data-theme="dusk"] :focus-visible {
+html[data-theme="dusk"] .source-library :focus-visible {
   outline: 2px solid var(--blue-action);
   outline-offset: 2px;
 }
