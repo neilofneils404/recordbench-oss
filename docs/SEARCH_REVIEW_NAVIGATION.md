@@ -49,3 +49,8 @@ the two affected test-file digests and the resulting content fingerprint.
 Only navigation label assertions changed, to Case conversation and Document
 review. The question,
 workflow behavior, fixtures, case membership and acceptance criteria are retained.
+
+Search returns also survive completed-answer citations, investigation details,
+and source review-state changes. Read-only administrators see inspection links
+without unavailable question actions. Matter tabs scroll whenever their content
+exceeds the available pane, including intermediate desktop widths.

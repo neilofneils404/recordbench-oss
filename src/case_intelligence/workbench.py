@@ -12821,6 +12821,7 @@ def create_workbench_app(
         state: str = Form(..., max_length=20),
         browse: str = Query("", max_length=8192),
     ):
+        origin = _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
         context = auth_context(request)
         try:
             matter = authorized_matter(request, slug)
@@ -12837,7 +12838,7 @@ def create_workbench_app(
             return RedirectResponse(
                 _query_url(
                     f"/matters/{slug}/sources/{token}", error=str(exc), browse=browse,
-                    entity_return_to=_source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
+                    entity_return_to=origin
                 ),
                 status_code=303,
             )
@@ -12853,7 +12854,7 @@ def create_workbench_app(
             _query_url(
                 f"/matters/{slug}/sources/{token}",
                 notice=f"Source marked {state}", browse=browse,
-                entity_return_to=_source_review_return_href(slug, request.query_params.get("entity_return_to", "")),
+                entity_return_to=origin,
             ),
             status_code=303,
         )

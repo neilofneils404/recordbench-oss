@@ -1787,6 +1787,9 @@ textarea::placeholder,
 }
 
 .matter-section-tabs {
+  overflow-x: auto;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: stretch;
   gap: 4px;
@@ -1795,6 +1798,8 @@ textarea::placeholder,
 }
 
 .matter-section-tabs a {
+  flex-shrink: 0;
+  white-space: nowrap;
   position: relative;
   display: inline-flex;
   min-height: 46px;

@@ -85,7 +85,9 @@
             {% if item.matching_unit_count > 3 %}<p>Open the source to review every matching {% if item.media_type.startswith("audio/") or item.media_type.startswith("video/") %}transcript passage{% else %}page or section{% endif %}.</p>{% endif %}
           </details>{% endif %}
         {% else %}<p class="find-excerpt">This source matched because a word, phrase, or combination excluded by the search was absent.</p>{% endif %}
+{% if not administrator_view %}
         <form method="post" action="/matters/{{ matter.slug }}/sources/{{ item.source_token }}/ask?entity_return_to={{ search_return|urlencode }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Ask using this source</button></form>
+{% endif %}
       </div>
     </article>
     {% else %}<div class="find-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><h3>No sources found</h3><p>Try a shorter name or fewer words.{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %} You can also clear your filters to look more broadly.{% endif %}</p>{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<a class="button button-secondary" href="{{ clear_refinements_url }}">Search without filters</a>{% endif %}</div>{% endfor %}

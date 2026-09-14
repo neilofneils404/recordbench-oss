@@ -117,6 +117,12 @@ def main():
             wait.until(lambda d: d.current_url == path)
             assert driver.find_element(By.CSS_SELECTOR, '.matter-section-tabs [aria-current="page"]').text == "Search"
             assert not driver.find_element(By.ID, "find-query").is_displayed()
+            for width in (901, 960, 1000):
+                screenshot(f"exact-search-tabs-{width}", width)
+                tabs = driver.find_element(By.CSS_SELECTOR, ".matter-section-tabs")
+                last = tabs.find_elements(By.CSS_SELECTOR, "a")[-1]
+                driver.execute_script("arguments[0].scrollIntoView({block:'nearest',inline:'end'})", last)
+                assert driver.execute_script("const a=arguments[0].getBoundingClientRect(), b=arguments[1].getBoundingClientRect(); return a.left >= b.left-1 && a.right <= b.right+1", last, tabs)
             screenshot("exact-search-first-use", 1440)
             click(driver.find_element(By.CSS_SELECTOR, ".find-refinements > summary"))
             collection = Select(driver.find_element(By.ID, "find-collection"))
