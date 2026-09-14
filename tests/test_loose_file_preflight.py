@@ -929,7 +929,11 @@ def test_setup_exposes_review_before_upload_and_no_script_fallback(tmp_path):
     assert " hidden" in folder_input_markup
     assert " disabled" in folder_input_markup
     assert 'tabindex="-1"' in folder_input_markup
-    assert 'class="choose-folder-action" data-folder-chooser hidden' in response.text
+    assert 'class="button button-primary" data-folder-chooser hidden' in response.text
+    assert 'data-upload-preflight-cancel>Cancel selection' in response.text
+    collection_input = re.search(r'<input\b[^>]*\bid="upload-collection-name"[^>]*>', response.text).group(0)
+    assert " required" in collection_input
+    assert 'value="Uploaded sources"' not in collection_input
     assert "Review selected files" in response.text
     assert "Upload 0 ready files" in response.text
     assert "Without JavaScript, the retained direct upload is limited to 1–10 files per request." in response.text
@@ -967,3 +971,28 @@ def test_no_script_direct_upload_rejects_eleven_files_without_durable_state(tmp_
         assert bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR) == before_sessions
         assert bench.workspace.pending_upload_bytes(matter.matter_id) == before_reserved
         assert scanner.scan_calls == 0
+
+
+def test_direct_upload_preserves_explicit_collection_name(tmp_path):
+    app = _app(tmp_path, UnavailableCountingScanner())
+    with TestClient(app) as client:
+        slug = _matter(client)
+        response = client.post(f"/matters/{slug}/uploads",
+            data={"collection_name": "Synthetic named collection"},
+            files={"files": ("synthetic.txt", b"Synthetic source", "text/plain")},
+            follow_redirects=False)
+        assert response.status_code == 303
+        page = client.get(response.headers["location"])
+        assert "Synthetic named collection" in page.text
+
+
+def test_direct_upload_rejects_whitespace_collection_before_storage(tmp_path):
+    app = _app(tmp_path, UnavailableCountingScanner())
+    with TestClient(app) as client:
+        slug = _matter(client)
+        response = client.post(f"/matters/{slug}/uploads",
+            data={"collection_name": "   "},
+            files={"files": ("synthetic.txt", b"Synthetic source", "text/plain")})
+        assert response.status_code == 400
+        matter = app.state.workbench.workspace.get_active_matter(slug)
+        assert not app.state.workbench.workspace.source_collections(matter.matter_id)

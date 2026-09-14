@@ -122,6 +122,7 @@ def main():
             prefix = f"/matters/{slug}"
             click("[data-assistant-collapse]")
             # Real selection, preflight, and confirmed browser upload.
+            fill("[data-upload-collection-name]", "Synthetic report sources")
             driver.find_element(By.ID, "source-files").send_keys(str(original))
             wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-upload-preflight-confirm]").is_enabled())
             click("[data-upload-preflight-confirm]")

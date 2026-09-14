@@ -302,6 +302,8 @@
   const uploadDrop = document.querySelector("[data-upload-drop]");
   const fileInput = document.querySelector("[data-file-input]");
   const folderInput = document.querySelector("[data-folder-input]");
+  const fileChooser = document.querySelector("[data-file-chooser]");
+  if (fileChooser) fileChooser.hidden = false;
   const folderChooser = document.querySelector("[data-folder-chooser]");
   const fileSummary = document.querySelector("[data-file-summary]");
   const uploadCollectionName = document.querySelector("[data-upload-collection-name]");
@@ -320,6 +322,8 @@
   const uploadPreflightCounts = document.querySelector("[data-upload-preflight-counts]");
   const uploadPreflightItems = document.querySelector("[data-upload-preflight-items]");
   const uploadPreflightConfirm = document.querySelector("[data-upload-preflight-confirm]");
+  const uploadPreflightCancel = document.querySelector("[data-upload-preflight-cancel]");
+  let confirmingUploadPreflight = false;
   const uploadPreflightRetry = document.querySelector("[data-upload-preflight-retry]");
   const uploadSessionKey = uploadForm?.dataset.matterSlug
     ? `case-intelligence:upload:${uploadForm.dataset.matterSlug}`
@@ -1055,7 +1059,7 @@
   };
 
   const previewSelectedFiles = async (files) => {
-    if (!uploadForm?.dataset.preflightUrl || !uploadPreflight) return;
+    if (!uploadForm?.dataset.preflightUrl || !uploadPreflight || confirmingUploadPreflight) return;
     const priorReceiptLink = document.querySelector('[data-intake-receipt-link]');
     if (priorReceiptLink) priorReceiptLink.hidden = true;
     document.querySelector('[data-intake-receipt-open]')?.removeAttribute('href');
@@ -1781,6 +1785,11 @@
   };
 
   const confirmUploadPreflight = async () => {
+    if (confirmingUploadPreflight) return;
+    if (uploadCollectionName) {
+      uploadCollectionName.value = uploadCollectionName.value.trim();
+      if (!uploadCollectionName.reportValidity()) return;
+    }
     const preview = activePreflight;
     const files = preflightFiles.slice();
     const version = preflightVersion;
@@ -1790,6 +1799,8 @@
       previewSelectedFiles(files);
       return;
     }
+    confirmingUploadPreflight = true;
+    if (uploadPreflightCancel) uploadPreflightCancel.disabled = true;
     if (uploadPreflightConfirm) uploadPreflightConfirm.disabled = true;
     if (uploadPreflightState) uploadPreflightState.textContent = "Saving selected-file receipt";
     try {
@@ -1808,8 +1819,39 @@
       if (uploadPreflightState) uploadPreflightState.textContent = "Selection receipt paused";
       if (uploadPreflightStatus) uploadPreflightStatus.textContent = `${error.message} Your selection is still here. Try confirming again, or reselect the same files to resume.`;
       if (uploadPreflightConfirm) uploadPreflightConfirm.disabled = false;
+    } finally {
+      confirmingUploadPreflight = false;
+      if (uploadPreflightCancel) uploadPreflightCancel.disabled = false;
     }
   };
+
+  fileChooser?.addEventListener("click", () => {
+    if (!confirmingUploadPreflight) fileInput?.click();
+  });
+  folderChooser?.addEventListener("click", () => {
+    if (!confirmingUploadPreflight) folderInput?.click();
+  });
+  uploadPreflightCancel?.addEventListener("click", () => {
+    if (confirmingUploadPreflight) return;
+    preflightVersion += 1;
+    preflightAbortController?.abort();
+    preflightAbortController = null;
+    preflightFiles = [];
+    activePreflight = null;
+    if (fileInput) fileInput.value = "";
+    if (folderInput) folderInput.value = "";
+    uploadPreflightCounts?.replaceChildren();
+    uploadPreflightItems?.replaceChildren();
+    if (uploadPreflight) {
+      uploadPreflight.hidden = true;
+      uploadPreflight.removeAttribute("aria-busy");
+    }
+    if (uploadPreflightConfirm) uploadPreflightConfirm.disabled = true;
+    if (uploadPreflightRetry) uploadPreflightRetry.hidden = true;
+    uploadDrop?.classList.remove("upload-error");
+    if (fileSummary) fileSummary.textContent = "Selection cleared. Previously saved uploads and receipts are unchanged.";
+    fileChooser?.focus();
+  });
 
   uploadForm?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1858,7 +1900,10 @@
 
   if (document.querySelector("[data-ingestion-active]")) {
     const refreshIngestion = () => {
-      if (uploadForm?.getAttribute("aria-busy") === "true") {
+      if (confirmingUploadPreflight
+          || (preflightFiles.length && (!activePreflight || !uploadPreflightConfirm?.disabled))
+          || uploadPreflight?.getAttribute("aria-busy") === "true"
+          || uploadForm?.getAttribute("aria-busy") === "true") {
         window.setTimeout(refreshIngestion, 3000);
         return;
       }
