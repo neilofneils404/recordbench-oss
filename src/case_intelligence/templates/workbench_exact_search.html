@@ -3,7 +3,7 @@
 {% block body_class %}workflow-page exact-search-page{% endblock %}
 {% block content %}
 <main class="workflow-shell find-sources-shell">
-  {% set search_return = request.url.path ~ '?' ~ request.url.query %}
+  {% set search_return = links.get('current', '') %}
   <header class="find-sources-heading">
     <div><a class="find-matter-link" href="/matters/{{ matter.slug }}">{{ matter.display_name }}</a>
       <h1>Search</h1><p>Search document contents across this matter.</p></div>
