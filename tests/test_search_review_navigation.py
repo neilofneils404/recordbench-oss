@@ -20,6 +20,27 @@ class SyntheticAnswerGenerator:
             for item in evidence[:1]], 'limitation': None, 'missing_information': ''}
 
 
+def test_first_search_page_return_detects_changed_population(tmp_path):
+    app = create_workbench_app(tmp_path / 'runtime', auth_mode='test', background_ingestion=False)
+    with TestClient(app) as client:
+        created = client.post('/matters', data={'name': 'Synthetic search population'}, follow_redirects=False)
+        slug = created.headers['location'].split('/')[2]
+        bench = app.state.workbench
+        matter = bench.matter(slug, 'development-taylor-morgan')
+        store = bench.source_store(matter)
+        store.store_stream('First.txt', 'text/plain', io.BytesIO(b'An amber bicycle arrived.'))
+        results = client.get(f'/matters/{slug}/exact-search?words=amber')
+        link = html.unescape(re.search(r'class="find-open-source" href="([^"]+)"', results.text)[1])
+        origin = parse_qs(urlsplit(link).query)['entity_return_to'][0]
+        assert parse_qs(urlsplit(origin).query)['fingerprint']
+        assert client.get(link).status_code == 200
+        assert client.get(origin).status_code == 200
+        store.store_stream('Later.txt', 'text/plain', io.BytesIO(b'Another amber bicycle arrived.'))
+        changed = client.get(origin)
+        assert changed.status_code == 409
+        assert 'Your sources changed' in changed.text
+
+
 @pytest.mark.parametrize('origin', ['search', 'https://example.com/', '/matters/another/exact-search', '/matters/{slug}/../another'])
 def test_search_inspection_and_question_return_is_matter_local(tmp_path, origin):
     app = create_workbench_app(tmp_path / 'runtime', auth_mode='test', background_ingestion=False,
@@ -34,7 +55,9 @@ def test_search_inspection_and_question_return_is_matter_local(tmp_path, origin)
         results = client.get(search)
         assert '1 source found' in results.text
         link = html.unescape(re.search(r'class="find-open-source" href="([^"]+)"', results.text)[1])
-        assert parse_qs(urlsplit(link).query)['entity_return_to'] == [search]
+        search = parse_qs(urlsplit(link).query)['entity_return_to'][0]
+        assert parse_qs(urlsplit(search).query)['fingerprint']
+        assert parse_qs(urlsplit(search).query)['words'] == ['amber']
         source = client.get(link)
         assert html.escape(search, quote=True) in source.text
         action = html.unescape(re.search(r'<form method="post" action="([^"]+/ask[^\"]*)"', source.text)[1])

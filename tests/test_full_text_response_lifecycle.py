@@ -1,3 +1,4 @@
+from dataclasses import replace
 """Synthetic ledger download, administrator-read and response-lifecycle races."""
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -167,8 +168,9 @@ def test_unknown_ledger_releases_untransferred_lease(workspace):
     assert bench._active_matter_response_count(matter.matter_id) == 0
 
 
+@pytest.mark.parametrize("run_state", ["running", "cancelled"])
 @pytest.mark.parametrize("owner_change", ["inactive", "revoked"])
-def test_nonmember_admin_reads_ledger_as_self_after_owner_loses_access(tmp_path, monkeypatch, owner_change):
+def test_nonmember_admin_reads_ledger_as_self_after_owner_loses_access(tmp_path, monkeypatch, owner_change, run_state):
     monkeypatch.setenv("CASE_INTELLIGENCE_STORAGE_RESERVE_GIB", "0")
     with TestClient(_app(tmp_path), base_url="https://recordbench.example.test") as client:
         assert client.get("/auth/login", headers=_headers(OWNER), follow_redirects=False).status_code == 303
@@ -191,12 +193,15 @@ def test_nonmember_admin_reads_ledger_as_self_after_owner_loses_access(tmp_path,
         original = bench.workspace.review_run
         def checked(matter_id, actor_id, run_id, **kwargs):
             seen.append((actor_id, kwargs.get("administrator_override", False)))
-            return original(matter_id, actor_id, run_id, **kwargs)
+            return replace(original(matter_id, actor_id, run_id, **kwargs), state=run_state)
         monkeypatch.setattr(bench.workspace, "review_run", checked)
         base = f"/matters/{matter.slug}/full-review/{run.run_id}"
         assert client.get(base + "/status", headers=_headers(ADMIN)).status_code == 200
         page = client.get(base + "/text", headers=_headers(ADMIN))
         assert page.status_code == 200 and "Text-analysis coverage" in page.text
+        assert "read-only review" in page.text
+        assert f'action="{base}/cancel"' not in page.text
+        assert f'action="{base}/retry"' not in page.text
         exported = client.get(base + "/text/export", headers=_headers(ADMIN))
         assert exported.status_code == 200 and exported.json()["records"]
         assert seen and all(actor == admin_id and override for actor, override in seen)
