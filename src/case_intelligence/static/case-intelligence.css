@@ -8112,3 +8112,37 @@ body.activity-open .activity-drawer { transform: translateX(0); }
 .text-review-page .text-review-ledger td:first-child { min-width: 12rem; overflow-wrap: anywhere; }
 .text-review-page .text-review-ledger td:last-child { min-width: 16rem; overflow-wrap: anywhere; }
 .text-review-page .criterion-card > nav { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+
+/* Dusk source controls pair pale ink with theme surfaces, including idle states. */
+html[data-theme="dusk"] :is(.source-stat-card, .source-chip, .source-bulk-toolbar),
+html[data-theme="dusk"] :is(.source-library-filters, .source-bulk-toolbar) :is(input, select) {
+  background: var(--surface-lifted);
+  color: var(--ink);
+}
+html[data-theme="dusk"] :is(.source-stat-card, .source-chip):is(:hover, .selected) {
+  background: var(--surface-strong);
+}
+html[data-theme="dusk"] :is(.source-library-filters, .source-bulk-toolbar) input::placeholder {
+  color: var(--ink-soft);
+  opacity: 1;
+}
+html[data-theme="dusk"] :is(.source-library-filters, .source-results-heading) > a {
+  color: var(--blue-action);
+}
+html[data-theme="dusk"] :is(.button:disabled, .button.disabled) {
+  background: var(--surface-strong);
+  border-color: var(--line-strong);
+  color: var(--ink-soft);
+  opacity: 1;
+}
+html[data-theme="dusk"] :is(.source-library-filters, .source-bulk-toolbar) :is(input, select):disabled {
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+  opacity: 1;
+  cursor: not-allowed;
+}
+/* Opaque token outline stays legible alongside both canvas and raised controls. */
+html[data-theme="dusk"] :focus-visible {
+  outline: 2px solid var(--blue-action);
+  outline-offset: 2px;
+}
