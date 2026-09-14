@@ -85,10 +85,12 @@ def main():
                             raise
                         return True
                 return check
-            def click(selector):
+            def click(selector, navigation=True):
                 element = driver.find_element(By.CSS_SELECTOR, selector)
                 driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", element)
                 element.click()
+                if not navigation:
+                    return
                 wait.until(detached(element))
                 wait.until(lambda d: d.execute_script('return document.readyState') == 'complete')
             def body():
@@ -99,6 +101,9 @@ def main():
             slug = urlparse(driver.current_url).path.split('/')[2]
             prefix = f'/matters/{slug}'
             driver.find_element(By.CSS_SELECTOR, '[data-assistant-collapse]').click()
+            collection_name = driver.find_element(By.CSS_SELECTOR, "[data-upload-collection-name]")
+            collection_name.clear()
+            collection_name.send_keys("Synthetic entity-discovery collection")
             driver.find_element(By.ID, 'source-files').send_keys('\n'.join(str(path) for path in originals))
             wait.until(lambda d: d.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').is_enabled())
             confirm = driver.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]')
@@ -258,9 +263,7 @@ def main():
             click('.notebook-item-form button')
             target = next(row for row in rows if not row['extractor_version'] and row['display_name'] == 'Alex Example')
             target = bench.entity_service(matter).detail(matter.matter_id, ACTOR, target['entity_id'])[0]
-            summary = driver.find_element(By.CSS_SELECTOR, 'details:has(select[name=mention_id]) summary')
-            driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", summary)
-            summary.click()
+            click('details:has(select[name=mention_id]) summary', navigation=False)
             fill('input[name=target_id]', target['entity_id'])
             fill('input[name=target_revision]', str(target['revision']))
             Select(driver.find_element(By.CSS_SELECTOR, 'select[name=action]')).select_by_value('alias')

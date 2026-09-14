@@ -118,6 +118,9 @@ def main():
             slug = urlparse(owner.current_url).path.split('/')[2]
             prefix = f'/matters/{slug}'
             owner.find_element(By.CSS_SELECTOR, '[data-assistant-collapse]').click()
+            collection_name = owner.find_element(By.CSS_SELECTOR, "[data-upload-collection-name]")
+            collection_name.clear()
+            collection_name.send_keys("Synthetic review-decision-conflicts collection")
             owner.find_element(By.ID, 'source-files').send_keys(str(original))
             wait.until(lambda d: d.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').is_enabled())
             click(owner, '[data-upload-preflight-confirm]')

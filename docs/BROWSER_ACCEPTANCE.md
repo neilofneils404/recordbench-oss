@@ -103,3 +103,9 @@ Check `summary.json` first, then the failed journey's log and screenshot. A
 receipt proves only the generated steps recorded in its `checks` array. CI
 application/transcription tests, final-commit code/security reviews and the
 maintainer merge gate remain separate requirements.
+
+Report downloads wait for Chrome's temporary download to disappear, a nonempty
+final file, and a readable ZIP container for ZIP/Word outputs before inspecting
+contents. A reserved filename alone is not completion. Synthetic regressions
+cover empty placeholders, partial archives, and completed archives while retaining
+the existing bounded browser wait.
