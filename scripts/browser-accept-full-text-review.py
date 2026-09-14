@@ -87,6 +87,8 @@ def main():
             assert '1 unit with failed ranges' in driver.find_element(By.ID, 'review-coverage').text
             for width in (1440, 390):
                 driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', {'width': width, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
+                if width < 901:
+                    wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
                 assert driver.execute_script("return document.querySelector('#review-controls').getBoundingClientRect().top < document.querySelector('#decision-ledger').getBoundingClientRect().top")
                 assert driver.execute_script("return document.querySelector('#review-coverage').getBoundingClientRect().top < document.querySelector('#decision-ledger').getBoundingClientRect().top")
                 driver.execute_script("document.querySelector('#review-controls').scrollIntoView({block:'start',behavior:'instant'})")
