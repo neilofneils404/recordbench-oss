@@ -105,4 +105,3 @@ def test_guided_partial_discovery_retry_and_explicit_acceptance(tmp_path, monkey
         assert 'value="retry_discovery"' not in changed.text
         assert 'new current-source review' in changed.text
         assert service.detail(matter.matter_id, WEB_ACTOR, person['entity_id'])[0]['status'] == 'confirmed'
-
