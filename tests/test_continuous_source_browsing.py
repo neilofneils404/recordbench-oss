@@ -1,5 +1,6 @@
 """Synthetic continuous inspection uses precisely the existing library order."""
 import html
+import io
 import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -19,6 +20,46 @@ def links(text):
 
 def sidebar(text):
     return re.search(r'<aside class="source-browser".*?</aside>', text, re.S).group()
+
+
+@pytest.mark.parametrize('return_kind', ['search', 'external', 'foreign'])
+def test_search_return_survives_source_list_and_review_actions(tmp_path, return_kind):
+    app = create_workbench_app(tmp_path / 'runtime', generator=UnavailableGenerator(),
+        auth_mode='test', background_ingestion=False)
+    with TestClient(app) as client:
+        slug = _matter(client)
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        store = bench.source_store(matter)
+        for name in ('First.txt', 'Second.txt'):
+            store.store_stream(name, 'text/plain', io.BytesIO(b'A synthetic amber bicycle.'))
+        results = client.get(f'/matters/{slug}/exact-search?words=amber')
+        hit = html.unescape(re.search(r'class="find-open-source" href="([^"]+)"', results.text)[1])
+        origin = parse_qs(urlsplit(hit).query)['entity_return_to'][0]
+        if return_kind != 'search':
+            origin = 'https://example.com/' if return_kind == 'external' else '/matters/another/exact-search'
+        opened = client.get(urlsplit(hit).path, params={'entity_return_to': origin, 'browse': 'sort=name'})
+        expected = [origin] if return_kind == 'search' else []
+        source_links = [url for url in links(sidebar(opened.text)) if '/sources/' in urlsplit(url).path]
+        assert len(source_links) == 2
+        sequence = re.search(r'<nav class="review-sequence".*?</nav>', opened.text, re.S)[0]
+        for url in source_links + links(sequence):
+            assert parse_qs(urlsplit(url).query).get('entity_return_to', []) == expected
+            page = client.get(url)
+            assert ('Return to review context' in page.text) == bool(expected)
+        for suffix, data in [('review-state', {'state': 'flagged'}), ('review-next', {})]:
+            action = html.unescape(re.search(r'action="([^"]+/' + suffix + r'[^\"]*)"', opened.text)[1])
+            response = client.post(action, data=data, follow_redirects=False)
+            assert response.status_code == 303
+            assert parse_qs(urlsplit(response.headers['location']).query).get('entity_return_to', []) == expected
+        last = client.get(source_links[-1])
+        action = html.unescape(re.search(r'action="([^"]+/review-next[^"]*)"', last.text)[1])
+        completed = client.post(action, follow_redirects=False)
+        assert completed.status_code == 303
+        if expected:
+            assert completed.headers['location'] == origin
+        else:
+            assert '/setup?' in completed.headers['location']
 
 
 @pytest.mark.parametrize('sort', ['name', 'name_desc', 'oldest', 'newest', 'status'])

@@ -73,3 +73,8 @@ return to filters, and desktop/narrow screenshots. It remains a separate journey
 from the default intake/report runner; run it with the browser binaries verified
 against `config/browser-testing.json`. All generated runtime state and screenshots
 belong outside the repository.
+
+When inspection starts from content Search, sidebar and previous/next source links
+retain the validated matter-local Search return, alongside library filters.
+Marking a source reviewed or flagged and continuing also retains that return.
+External and cross-matter return values are discarded.

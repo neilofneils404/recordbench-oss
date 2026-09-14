@@ -7423,7 +7423,8 @@ def create_workbench_app(
             "action_token": row.action_token,
         }
 
-    def source_browser_projection(matter, document_id: str, browse: str):
+    def source_browser_projection(matter, document_id: str, browse: str, origin: str = ""):
+        origin = _source_review_return_href(matter.slug, origin)
         # Context is data, never a redirect URL; only library filters are accepted.
         try:
             parsed = parse_qs(browse, max_num_fields=20)
@@ -7459,7 +7460,7 @@ def create_workbench_app(
         def item(row, target_page):
             context = urlencode({**values, "page": str(target_page)})
             return dict(title=row.name, token=row.action_token, path=row.relative_path,
-                href=_query_url(f"/matters/{matter.slug}/sources/{row.action_token}", browse=context))
+                href=_query_url(f"/matters/{matter.slug}/sources/{row.action_token}", browse=context, entity_return_to=origin))
         items = [item(row, library.page) for row in library.items]
         index = next((i for i, row in enumerate(library.items) if row.document_id == document_id), None)
         previous = following = None
@@ -12077,7 +12078,8 @@ def create_workbench_app(
             )
             document = bench.source_store(matter).get_by_action_token(token)
             source_sequence = source_browser_projection(
-                matter, document.document_id, browse
+                matter, document.document_id, browse,
+                _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
             )
             if is_media_type(document.media_type):
                 media = bench.media_review(
@@ -12829,7 +12831,8 @@ def create_workbench_app(
         except WorkspaceProblem as exc:
             return RedirectResponse(
                 _query_url(
-                    f"/matters/{slug}/sources/{token}", error=str(exc), browse=browse
+                    f"/matters/{slug}/sources/{token}", error=str(exc), browse=browse,
+                    entity_return_to=_source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
                 ),
                 status_code=303,
             )
@@ -12845,6 +12848,7 @@ def create_workbench_app(
             _query_url(
                 f"/matters/{slug}/sources/{token}",
                 notice=f"Source marked {state}", browse=browse,
+                entity_return_to=_source_review_return_href(slug, request.query_params.get("entity_return_to", "")),
             ),
             status_code=303,
         )
@@ -12856,10 +12860,12 @@ def create_workbench_app(
     def review_source_and_continue(request: Request, slug: str, token: str,
                                    browse: str = Query("", max_length=8192)):
         context = auth_context(request)
+        origin = _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
         try:
             matter = authorized_matter(request, slug)
             document = bench.source_store(matter).get_by_action_token(token)
-            browser = source_browser_projection(matter, document.document_id, browse) if browse else None
+            browser = source_browser_projection(matter, document.document_id, browse,
+                _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))) if browse else None
             bench.workspace.update_source_review_state(
                 matter.matter_id,
                 (document.document_id,),
@@ -12877,7 +12883,7 @@ def create_workbench_app(
             raise HTTPException(404, "Source not found") from exc
         except WorkspaceProblem as exc:
             return RedirectResponse(
-                _query_url(f"/matters/{slug}/sources/{token}", error=str(exc)),
+                _query_url(f"/matters/{slug}/sources/{token}", error=str(exc), browse=browse, entity_return_to=origin),
                 status_code=303,
             )
         audit(
@@ -12892,7 +12898,7 @@ def create_workbench_app(
         )
         if browser is not None:
             return RedirectResponse(
-                browser["next"]["href"] if browser["next"] else browser["library_href"],
+                browser["next"]["href"] if browser["next"] else (origin or browser["library_href"]),
                 status_code=303,
             )
         if remaining.items:
@@ -12900,10 +12906,12 @@ def create_workbench_app(
             return RedirectResponse(
                 _query_url(
                     source_catalog_href(matter, following),
-                    notice="Source reviewed · next item opened",
+                    notice="Source reviewed · next item opened", entity_return_to=origin,
                 ),
                 status_code=303,
             )
+        if origin:
+            return RedirectResponse(origin, status_code=303)
         return RedirectResponse(
             _query_url(
                 f"/matters/{matter.slug}/home",

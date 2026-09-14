@@ -18,12 +18,12 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="button button-ink" type="submit" {% if source.document.state != 'ready' %}disabled{% endif %}>Ask using this source</button>
       </form>
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state?browse={{ source_sequence.context|urlencode }}">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state?browse={{ source_sequence.context|urlencode }}&amp;entity_return_to={{ source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))|urlencode }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="state" value="{{ 'unreviewed' if source.row.review_state == 'reviewed' else 'reviewed' }}">
         <button class="button button-secondary" type="submit">{{ 'Mark unreviewed' if source.row.review_state == 'reviewed' else 'Mark reviewed' }}</button>
       </form>
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state?browse={{ source_sequence.context|urlencode }}">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state?browse={{ source_sequence.context|urlencode }}&amp;entity_return_to={{ source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))|urlencode }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="state" value="flagged">
         <button class="button button-secondary" type="submit">{{ 'Flagged' if source.row.review_state == 'flagged' else 'Flag for follow-up' }}</button>

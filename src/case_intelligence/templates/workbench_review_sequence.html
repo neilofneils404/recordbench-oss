@@ -5,7 +5,7 @@
   {% else %}
   <span class="review-sequence-neighbor previous disabled" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg><span><small>Previous source</small><strong>Start of this view</strong></span></span>
   {% endif %}
-  <form method="post" action="/matters/{{ matter.slug }}/sources/{{ current_token }}/review-next{% if request.query_params.get("browse") %}?browse={{ source_sequence.context|urlencode }}{% endif %}">
+  <form method="post" action="/matters/{{ matter.slug }}/sources/{{ current_token }}/review-next?entity_return_to={{ source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))|urlencode }}{% if request.query_params.get("browse") %}&amp;browse={{ source_sequence.context|urlencode }}{% endif %}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="button button-primary" type="submit">Mark reviewed and continue</button>
   </form>
