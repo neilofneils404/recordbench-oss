@@ -42,6 +42,14 @@ def test_guided_partial_discovery_retry_and_explicit_acceptance(tmp_path, monkey
         assert '1 not yet inventoried' in page.text and 'Discover next 10 units' in page.text
         assert service.list(matter.matter_id, WEB_ACTOR)[1] == 0
         assert path in client.get(prefix + '/full-review/' + run.run_id + '/text').text
+        # A newer criterion must not make the resume link select the wrong rule.
+        store.create_review_criterion(matter.matter_id, WEB_ACTOR,
+            title='Another synthetic criterion', instructions='A separate review.')
+        import html
+        import re
+        resume_url = html.unescape(re.search(r'href="([^"]+)">Resume or start a text review', page.text)[1])
+        assert 'criterion=' + run.criterion_id in resume_url
+        assert client.get(resume_url).status_code == 200
 
         class Failing(DeterministicEntityExtractor):
             def extract(self, text):

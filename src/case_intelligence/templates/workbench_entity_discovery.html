@@ -11,7 +11,7 @@
   <h2 id="readiness-heading">1. Check readiness</h2>
   <p>Intake and processing make extracted text available. Discovery uses only the sealed units in this frozen review; later uploads are not added to it.</p>
   <p>{{ coverage.source_total }} frozen sources · {{ coverage.uninventoried }} not yet inventoried · {{ coverage.source_counts.get('unavailable', 0) }} unavailable · {{ coverage.source_counts.get('invalidated', 0) }} changed.</p>
-  <p><a href="/matters/{{ matter.slug }}/full-review/{{ coverage.run_id }}/text">Inspect full-text and extraction coverage</a> · <a href="/matters/{{ matter.slug }}/full-review?run={{ coverage.run_id }}">Resume or start a text review</a> · <a href="{{ return_to }}">Return to the previous workflow</a></p>
+  <p><a href="/matters/{{ matter.slug }}/full-review/{{ coverage.run_id }}/text">Inspect full-text and extraction coverage</a> · <a href="/matters/{{ matter.slug }}/full-review?criterion={{ coverage.criterion_id }}&amp;run={{ coverage.run_id }}">Resume or start a text review</a> · <a href="{{ return_to }}">Return to the previous workflow</a></p>
   <p>For missing inventories, inspect the text review and resume it when available. For missing extraction, repair source processing first. Changed sources require a new current-source review; retrying discovery cannot repair extraction or update a frozen population. Text review may use the configured model and remains a separate explicit action.</p>
   </section>
   <section class="notebook-tool-card" aria-labelledby="batch-heading">
