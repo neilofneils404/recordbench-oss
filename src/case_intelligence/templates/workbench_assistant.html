@@ -106,7 +106,7 @@
       </div>
     </div>
 
-    <form class="assistant-composer" method="post" action="/matters/{{ matter.slug }}/ask" data-assistant-question-form data-sources-ready="{{ 'true' if assistant.matter_ready else 'false' }}">
+    <form class="assistant-composer" method="post" action="{{ entity_context_href('/matters/' ~ matter.slug ~ '/ask', source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))) }}" data-assistant-question-form data-sources-ready="{{ 'true' if assistant.matter_ready else 'false' }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="conversation" value="{{ assistant.conversation.conversation_id }}">
       <input type="hidden" name="request_key" value="{{ assistant.request_key }}" data-assistant-request-key>

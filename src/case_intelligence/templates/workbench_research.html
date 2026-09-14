@@ -12,6 +12,7 @@
   {% with active='review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   {% include "workbench_review_modes.html" %}
   {% include "workbench_retention_notice.html" %}
+  {% set review_return = source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) %}{% if review_return %}<a class="back-link" href="{{ review_return }}">Return to review context</a>{% endif %}
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
 
@@ -47,7 +48,7 @@
 
     <section class="workflow-canvas">
       {% if active_research %}
-      <article class="workflow-run-card" data-workflow-monitor data-status-url="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/status" data-terminal="{{ 'true' if active_research.state in ('succeeded','failed','cancelled') else 'false' }}" aria-live="polite">
+      <article class="workflow-run-card" data-workflow-monitor data-status-url="{{ entity_context_href('/matters/' ~ matter.slug ~ '/research/' ~ active_research.job_id ~ '/status', review_return) }}" data-terminal="{{ 'true' if active_research.state in ('succeeded','failed','cancelled') else 'false' }}" aria-live="polite">
         <header class="workflow-run-header">
           <div><p class="eyebrow">{{ 'Full-text synthesis' if full_text_synthesis else 'Broader investigation' }}</p><h2>{{ active_research.title }}</h2><p>{{ active_research.question }}</p></div>
           <span class="workflow-state-badge state-{{ active_research.state }}" data-workflow-state>{{ active_research.state|replace('_',' ')|title }}</span>

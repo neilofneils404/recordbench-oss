@@ -271,7 +271,7 @@
           </header>
 
           {% if active_research %}
-          <article class="conversation-research-progress workflow-run-card" data-workflow-monitor data-status-url="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/status" data-terminal="false" aria-live="polite">
+          <article class="conversation-research-progress workflow-run-card" data-workflow-monitor data-status-url="{{ entity_context_href('/matters/' ~ matter.slug ~ '/research/' ~ active_research.job_id ~ '/status', source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))) }}" data-terminal="false" aria-live="polite">
             <header class="workflow-run-header">
               <div><p class="eyebrow">Broader investigation</p><h3>{{ active_research.title }}</h3><p>This saved work will return here with citations when it is ready.</p></div>
               <span class="workflow-state-badge state-{{ active_research.state }}" data-workflow-state>{{ active_research.state|replace('_',' ')|title }}</span>
@@ -282,7 +282,7 @@
               <small class="workflow-eta" data-workflow-eta>{% if active_research.state == 'queued' %}Waiting for earlier saved work to finish.{% else %}Calculating remaining time…{% endif %}</small>
             </div>
             <div class="run-counts"><span><strong>{{ active_research.candidate_count }}</strong> Passages considered</span><span><strong>{{ active_research.evidence_count }}</strong> Supporting passages</span></div>
-            <a class="conversation-research-details" href="/matters/{{ matter.slug }}/research?job={{ active_research.job_id }}">Open progress and coverage details</a>
+            <a class="conversation-research-details" href="{{ entity_context_href('/matters/' ~ matter.slug ~ '/research?job=' ~ active_research.job_id, source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))) }}">Open progress and coverage details</a>
           </article>
           {% endif %}
 
@@ -484,7 +484,7 @@
           <p class="answer-wait-note">This request is saved. You can leave this page and return to the conversation.</p>
         </div>
       </div>
-      <form class="question-composer" method="post" action="/matters/{{ matter.slug }}/ask" data-question-form data-sources-ready="{{ 'true' if readiness.can_query else 'false' }}" data-review-work-active="{{ 'true' if active_research else 'false' }}">
+      <form class="question-composer" method="post" action="{{ entity_context_href('/matters/' ~ matter.slug ~ '/ask', source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))) }}" data-question-form data-sources-ready="{{ 'true' if readiness.can_query else 'false' }}" data-review-work-active="{{ 'true' if active_research else 'false' }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="conversation" value="{{ conversation.conversation_id }}">
         <input type="hidden" name="request_key" value="{{ answer_request_key }}" data-answer-request-key>
