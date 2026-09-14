@@ -163,6 +163,74 @@ def test_media_and_passage_links_keep_library_context(tmp_path):
         assert client.get(f'/matters/{foreign}/sources/{token}/content').status_code == 404
 
 
+def test_transcript_filter_clear_and_pages_preserve_search_return(tmp_path):
+    from tests.test_matter_media_workflow import ImmediateMediaProcessor, _upload_and_wait
+    class PagedProcessor(ImmediateMediaProcessor):
+        def transcript(self, owner, external_job_id):
+            payload = super().transcript(owner, external_job_id)
+            seed = payload['segments'][0]
+            payload['segments'] = [dict(seed, id=f'synthetic-{i}', segment_id=f'synthetic-{i}',
+                start=i / 100, end=(i + 1) / 100) for i in range(201)]
+            return payload
+    app = create_workbench_app(tmp_path / 'runtime', generator=UnavailableGenerator(),
+        auth_mode='test', media_processor=PagedProcessor(), background_ingestion=False)
+    with TestClient(app) as client:
+        slug = _matter(client)
+        _, token = _upload_and_wait(client, slug)
+        context = 'kind=AUDIO&sort=name'
+        origin = f'/matters/{slug}/exact-search?words=red'
+        path = f'/matters/{slug}/sources/{token}'
+        opened = client.get(path, params={'browse': context, 'entity_return_to': origin})
+        form = re.search(r'<form class="transcript-filters".*?</form>', opened.text, re.S)[0]
+        fields = dict((name, html.unescape(value)) for name, value in re.findall(r'name="([^"]+)" value="([^"]*)"', form))
+        fields['q'] = 'red'
+        assert fields['entity_return_to'] == origin
+        filtered = client.get(path, params=fields)
+        clear = html.unescape(re.search(r'href="([^"]+)">Clear</a>', filtered.text)[1])
+        pagination = re.search(r'<nav class="source-pagination transcript-pagination".*?</nav>', filtered.text, re.S)[0]
+        next_page = links(pagination)[0]
+        for url in (clear, next_page):
+            assert parse_qs(urlsplit(url).query)['entity_return_to'] == [origin]
+            target = path + url if url.startswith('?') else url
+            returned = client.get(target)
+            assert returned.status_code == 200 and 'Return to review context' in returned.text
+        second = client.get(path + next_page)
+        previous = links(re.search(r'<nav class="source-pagination transcript-pagination".*?</nav>', second.text, re.S)[0])[0]
+        assert parse_qs(urlsplit(previous).query)['entity_return_to'] == [origin]
+
+
+@pytest.mark.parametrize('restrict_collection', [False, True])
+def test_content_search_preserves_cross_collection_source_set(tmp_path, restrict_collection):
+    app = create_workbench_app(tmp_path / 'runtime', generator=UnavailableGenerator(),
+        auth_mode='test', background_ingestion=False)
+    with TestClient(app) as client:
+        slug = _matter(client)
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        store = bench.source_store(matter)
+        docs = [store.store_stream(name, 'text/plain', io.BytesIO(b'Synthetic amber bicycle.'))[0]
+                for name in ('Selected A.txt', 'Selected B.txt', 'Outside.txt')]
+        bench._sync_source_catalog(matter, list(store.documents.values()))
+        bench.workspace.reconcile_source_organizations(matter.matter_id,
+            tuple((d.document_id, 'upload', d.display_name) for d in docs))
+        first = bench.workspace.create_source_collection(matter.matter_id, 'Synthetic A', 'upload', ACTOR)
+        second = bench.workspace.create_source_collection(matter.matter_id, 'Synthetic B', 'upload', ACTOR)
+        bench.workspace.move_sources_to_collection(matter.matter_id, [docs[0].document_id, docs[2].document_id], first.collection_id, ACTOR)
+        bench.workspace.move_sources_to_collection(matter.matter_id, [docs[1].document_id], second.collection_id, ACTOR)
+        group = bench.workspace.create_source_set(matter.matter_id, 'Synthetic cross-collection set', [d.document_id for d in docs[:2]], ACTOR)
+        scope = {'source_set': group.source_set_id}
+        if restrict_collection:
+            scope['collection'] = first.collection_id
+        page = client.get(f'/matters/{slug}/sources/{store.action_token(docs[0])}', params={'browse': urlencode(scope)})
+        search = html.unescape(re.search(r'href="([^"]+)">Search document contents</a>', page.text)[1])
+        query = parse_qs(urlsplit(search).query)
+        assert query['source_set'] == [group.source_set_id]
+        assert query.get('collection', []) == ([first.collection_id] if restrict_collection else [])
+        results = client.get(search + '&words=amber')
+        assert ('1 source found' if restrict_collection else '2 sources found') in results.text
+        assert 'Outside.txt' not in results.text
+
+
 def test_document_passages_and_unauthorized_viewer(tmp_path):
     app = create_workbench_app(tmp_path / 'runtime', generator=UnavailableGenerator(),
         auth_mode='test', background_ingestion=False)
@@ -188,3 +256,26 @@ def test_document_passages_and_unauthorized_viewer(tmp_path):
         bench.workspace.upsert_principal('test', other, 'Synthetic foreign owner', other, preferred_principal_id=other)
         foreign = bench.create_matter('Synthetic inaccessible browsing', '', other)
         assert client.get(f'/matters/{foreign.slug}/sources/{token}', params={'browse': context}).status_code == 404
+
+
+def test_direct_link_state_change_retains_unreviewed_queue(tmp_path):
+    app = create_workbench_app(tmp_path / 'runtime', generator=UnavailableGenerator(),
+        auth_mode='test', background_ingestion=False)
+    with TestClient(app) as client:
+        slug = _matter(client)
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        store = bench.source_store(matter)
+        docs = [store.store_stream(name, 'text/plain', io.BytesIO(('Synthetic queue ' + name).encode()))[0]
+                for name in ('First.txt', 'Already reviewed.txt', 'Next.txt')]
+        bench._sync_source_catalog(matter, list(store.documents.values()))
+        bench.workspace.reconcile_source_organizations(matter.matter_id, tuple((d.document_id, 'upload', d.display_name) for d in docs))
+        bench.workspace.update_source_review_state(matter.matter_id, [docs[1].document_id], 'reviewed', ACTOR)
+        opened = client.get(f'/matters/{slug}/sources/{store.action_token(docs[0])}')
+        action = html.unescape(re.search(r'action="([^"]+/review-state[^"]*)"', opened.text)[1])
+        changed = client.post(action, data={'state': 'flagged'}, follow_redirects=False)
+        assert not parse_qs(urlsplit(changed.headers['location']).query).get('browse')
+        page = client.get(changed.headers['location'])
+        action = html.unescape(re.search(r'action="([^"]+/review-next[^"]*)"', page.text)[1])
+        continued = client.post(action, follow_redirects=False)
+        assert store.action_token(docs[2]) in continued.headers['location']
