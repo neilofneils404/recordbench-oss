@@ -768,7 +768,7 @@ def test_media_timestamp_links_and_partial_page_warning_are_visible(tmp_path):
         assert result.status_code == 200 and "1 source found" in result.text
         assert "have incomplete page coverage and were left out" in result.text
         match = re.search(r'<a class="find-location" href="([^"]+)">', result.text)
-        assert match and match.group(1).endswith("?start_ms=45000&amp;unit=2#segment-2")
+        assert match and match.group(1).endswith("&amp;start_ms=45000&amp;unit=2#segment-2")
         assert "00:45–00:46" in result.text and "Lines 45000" not in result.text
 
 
@@ -930,11 +930,12 @@ def test_legacy_media_result_links_seek_to_offset_and_extracted_position(tmp_pat
         assert result.status_code == 200 and '1 source found' in result.text
         links = re.findall(r'<a class="find-location" href="([^"]+)">', result.text)
         assert len(links) == 2
-        assert links[0].endswith(f'?start_ms={offset}&amp;unit=2#segment-2')
-        assert links[1].endswith('?start_ms=50000&amp;unit=3#segment-3')
+        assert links[0].endswith(f'&amp;start_ms={offset}&amp;unit=2#segment-2')
+        assert links[1].endswith('&amp;start_ms=50000&amp;unit=3#segment-3')
         opened = client.get(html.unescape(links[0]))
         assert opened.status_code == 200
         assert f'data-media-review data-start-ms="{offset}"' in opened.text
+        assert 'Return to review context' in opened.text
 
 
 @pytest.mark.parametrize('query', ['cancelled', 'neutral NOT cancelled'])
@@ -993,6 +994,7 @@ def test_media_search_links_open_matching_page_despite_overlapping_segments(tmp_
             assert f'id="segment-{ordinal}"' in opened.text
             assert 'id="segment-1"' not in opened.text
             assert f'data-media-review data-start-ms="{offset}"' in opened.text
+        assert 'Return to review context' in opened.text
 
 
 @pytest.mark.parametrize('query', ['cancelled', 'neutral NOT cancelled'])

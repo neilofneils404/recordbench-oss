@@ -37,7 +37,7 @@ def test_matter_home_explains_review_and_specialized_source_tasks(tmp_path):
         for label in (
             "Ask a focused question",
             "Investigate a topic",
-            "Check every source",
+            "Document review",
             "Review records manually",
         ):
             assert label in page.text

@@ -104,6 +104,20 @@ receipt proves only the generated steps recorded in its `checks` array. CI
 application/transcription tests, final-commit code/security reviews and the
 maintainer merge gate remain separate requirements.
 
+The additional `browser-accept-exact-search.py` and
+`browser-accept-full-text-review.py` journeys accept the same explicit verified
+Chrome and ChromeDriver binaries. They cover matter Search navigation, source
+inspection and scoped-question returns to paginated results, and desktop/mobile
+full-review controls ahead of the decision list. These additional journeys are
+separate from the two default hosted journeys. See
+[search and review navigation](SEARCH_REVIEW_NAVIGATION.md).
+
+Report downloads wait for Chrome's temporary download to disappear, a nonempty
+final file, and a readable ZIP container for ZIP/Word outputs before inspecting
+contents. A reserved filename alone is not completion. Synthetic regressions
+cover empty placeholders, partial archives, and completed archives while retaining
+the existing bounded browser wait.
+
 ## Dusk source readability
 
 The pinned runner also runs a disposable source-library theme journey with 26

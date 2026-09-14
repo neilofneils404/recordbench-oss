@@ -8,12 +8,13 @@
   <header class="source-review-heading media-review-heading">
     <div>
       <a class="back-link" href="/matters/{{ matter.slug }}/setup?view=list&amp;collection={{ media.row.collection_id }}#source-library">← Review sources</a>
+      {% set review_return = source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) %}{% if review_return %}<a class="back-link" href="{{ review_return }}">Return to review context</a>{% endif %}
       <p class="eyebrow">{{ media.row.collection_name }} · {{ media.row.kind }} · {{ format_timestamp(media.document.duration_ms) }}</p>
       <h1>{{ media.row.name }}</h1>
       <p>{{ media.row.state }}{% if media.transcript %} · {{ media.transcript.segment_count }} transcript passage{% if media.transcript.segment_count != 1 %}s{% endif %} · {{ 'Reviewed transcript' if media.transcript.review_state == 'human_reviewed' else 'Draft transcript' }}{% endif %}</p>
     </div>
     <div class="source-review-actions">
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/ask">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/ask?entity_return_to={{ request.query_params.get('entity_return_to', '')|urlencode }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="button button-ink" type="submit" {% if media.document.state != 'ready' %}disabled{% endif %}>Ask using this source</button>
       </form>

@@ -23,13 +23,14 @@
         <a class="button button-secondary" href="/matters/{{ matter.slug }}/settings">Matter settings</a>
         <a class="button button-ink" href="/matters/{{ matter.slug }}/exact-search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
-          Find sources
+          Search document contents
         </a>
         {% if can_close_matter %}<a class="button close-matter-link" href="/matters/{{ matter.slug }}/close">Close matter</a>{% endif %}
       </div>
     </header>
     {% with active='review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
     {% include "workbench_review_modes.html" %}
+    {% set review_return = source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) %}{% if review_return %}<a class="back-link" href="{{ review_return }}">Return to review context</a>{% endif %}
     {% include "workbench_retention_notice.html" %}
 
     {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
@@ -137,7 +138,7 @@
     <section class="conversation-region" id="evidence-conversation" aria-labelledby="conversation-heading">
       <div class="conversation-heading-row">
         <div>
-          <h2 id="conversation-heading">Review the record</h2>
+          <h2 id="conversation-heading">Case conversation</h2>
           <p>Ask a focused question or investigate more deeply here. Results and cited passages return to this conversation so you can refine them without starting over.</p>
         </div>
         <form method="post" action="/matters/{{ matter.slug }}/conversations">

@@ -237,6 +237,9 @@ class EntityRepository:
 
     def discovery_coverage(self, matter_id, run_id, version, *, page=1, source_page=1, limit=50):
         self.require_discovery_run(matter_id, run_id)
+        criterion_id = self.connection.execute(
+            'SELECT criterion_id FROM workbench_review_run WHERE matter_id=? AND run_id=?',
+            (matter_id, run_id)).fetchone()[0]
         current = "(s.state!='invalidated' AND c.source_state='ready' AND c.version_id=s.source_version_id AND c.content_basis_digest=s.source_basis_digest)"
         source_from = (' FROM workbench_text_review_source s LEFT JOIN workbench_source_catalog c '
                        'ON c.document_id=s.document_id AND c.matter_id=? WHERE s.run_id=?')
@@ -268,7 +271,7 @@ class EntityRepository:
         units = [dict(row) for row in self.connection.execute(
             cte + 'SELECT * FROM coverage ORDER BY document_id,unit_ordinal LIMIT ? OFFSET ?',
             (*params, limit, (page - 1) * 50))] if limit else []
-        return dict(run_id=run_id, extractor_version=version, units=units, sources=sources, counts=counts,
+        return dict(run_id=run_id, criterion_id=criterion_id, extractor_version=version, units=units, sources=sources, counts=counts,
             unit_total=sum(counts.values()), source_total=sum(source_counts.values()),
             source_counts=source_counts, uninventoried=uninventoried, page=page, source_page=source_page)
 

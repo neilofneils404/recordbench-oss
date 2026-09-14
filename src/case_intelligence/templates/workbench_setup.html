@@ -35,19 +35,19 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="upload-collection-name">
         <label for="upload-collection-name">Collection name</label>
-        <input id="upload-collection-name" name="collection_name" type="text" maxlength="160" value="Uploaded sources" autocomplete="off" data-upload-collection-name>
-        <span>Keep a production, witness packet, or review batch together.</span>
+        <input id="upload-collection-name" name="collection_name" type="text" maxlength="160" required pattern=".*\S.*" aria-describedby="upload-collection-help" autocomplete="off" data-upload-collection-name>
+        <span id="upload-collection-help">Name this group of uploads so your team can find and review it together.</span>
       </div>
       <input id="source-files" class="visually-hidden" name="files" type="file" multiple required accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tif,.tiff,.eml,.csv,.tsv,.xlsx,.wav,.mp3,.m4a,.ogg,.opus,.mp4,.mov,.webm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,message/rfc822,text/plain,text/csv,text/tab-separated-values,image/*,audio/*,video/*" data-file-input>
       <input id="source-folder" class="visually-hidden" type="file" multiple hidden disabled tabindex="-1" webkitdirectory directory accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tif,.tiff,.eml,.csv,.tsv,.xlsx,.wav,.mp3,.m4a,.ogg,.opus,.mp4,.mov,.webm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,message/rfc822,text/plain,text/csv,text/tab-separated-values,image/*,audio/*,video/*" data-folder-input>
-      <label for="source-files" class="upload-drop" data-upload-drop>
+      <div class="upload-drop" data-upload-drop>
         <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 22V6m0 0-6 6m6-6 6 6M7 19v5.5A2.5 2.5 0 0 0 9.5 27h13a2.5 2.5 0 0 0 2.5-2.5V19"/></svg>
         <strong>Drop files here</strong>
         <span>Documents, images, email, spreadsheets, audio, and video · up to {{ upload_limits.item_label }} selected records, saved in resumable {{ upload_limits.batch_item_label }}-item batches</span>
-        <span class="button button-primary choose-files">Choose files</span>
+        <div class="upload-picker-actions"><button type="button" class="button button-primary" data-file-chooser hidden>Choose files</button><button type="button" class="button button-primary" data-folder-chooser hidden>Choose a folder</button></div>
+        <noscript><label for="source-files" class="button button-primary">Choose files</label></noscript>
         <small data-file-summary>Only records you deliberately select are copied into this temporary matter.</small>
-      </label>
-      <label for="source-folder" class="choose-folder-action" data-folder-chooser hidden>Choose a folder instead</label>
+      </div>
       <section class="upload-preflight" data-upload-preflight hidden aria-labelledby="upload-preflight-title">
         <div class="upload-preflight-heading">
           <div>
@@ -63,6 +63,7 @@
         <div class="upload-preflight-actions">
           <button class="button button-primary" type="button" data-upload-preflight-confirm disabled>Upload 0 ready files</button>
           <button class="button button-secondary" type="button" data-upload-preflight-retry hidden>Retry selection review</button>
+          <button class="button button-secondary" type="button" data-upload-preflight-cancel>Cancel selection</button>
         </div>
       </section>
       <p data-intake-receipt-link hidden><a class="button button-secondary" data-intake-receipt-open>View selected-file receipt</a></p>
@@ -226,6 +227,7 @@
       {% if source_library.same_content %}
       <p data-source-byte-comparison>{% if source_library.comparison_available %}Files with identical bytes to the selected source. Each source keeps its own collection and source references.{% else %}This comparison is unavailable. The source may have been removed or changed.{% endif %} <a href="{{ library_url(1, same_content='') }}">Leave comparison</a></p>
       {% endif %}
+      <section class="notice" aria-label="Search and document review"><p><a href="/matters/{{ matter.slug }}/exact-search?collection={{ source_library.collection_id|urlencode }}&amp;source_set={{ source_library.source_set_id|urlencode }}">Search document contents</a> across this selection. The filter below matches filenames and folders.</p><p><a class="button button-secondary" href="/matters/{{ matter.slug }}/full-review#review-controls">Review all extracted text</a> Save a criterion, review a frozen population, and inspect progress, missing extraction and safe resume controls in Document review.</p></section>
       <form class="source-library-filters" method="get" action="/matters/{{ matter.slug }}/setup">
         <input type="hidden" name="view" value="list">
         <input type="hidden" name="page_size" value="100">
@@ -233,7 +235,7 @@
         <input type="hidden" name="folder" value="{{ source_library.folder }}">
         <input type="hidden" name="source_set" value="{{ source_library.source_set_id }}">
         <input type="hidden" name="status" value="{{ source_library.status }}">
-        <label><span>Find a source</span><input type="search" name="q" value="{{ source_library.query }}" maxlength="240" placeholder="Filename or folder…"></label>
+        <label><span>Filter filenames or folders</span><input type="search" name="q" value="{{ source_library.query }}" maxlength="240" placeholder="Filename or folder…"></label>
         <label><span>Collection</span><select name="collection"><option value="">All collections</option>{% for collection in source_collections %}<option value="{{ collection.collection_id }}" {% if source_library.collection_id == collection.collection_id %}selected{% endif %}>{{ collection.name }} ({{ collection.source_count }})</option>{% endfor %}</select></label>
         <label><span>Type</span><select name="kind"><option value="">All types</option>{% for value, label in [('PDF', 'PDF'), ('DOCX', 'Word'), ('TXT', 'Text'), ('IMAGE', 'Image'), ('EMAIL', 'Email'), ('SPREADSHEET', 'Spreadsheet'), ('AUDIO', 'Audio'), ('VIDEO', 'Video')] %}<option value="{{ value }}" {% if source_library.kind == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         <label><span>Review</span><select name="review"><option value="">Any review state</option><option value="unreviewed" {% if source_library.review == 'unreviewed' %}selected{% endif %}>Unreviewed</option><option value="reviewed" {% if source_library.review == 'reviewed' %}selected{% endif %}>Reviewed</option><option value="flagged" {% if source_library.review == 'flagged' %}selected{% endif %}>Flagged</option></select></label>

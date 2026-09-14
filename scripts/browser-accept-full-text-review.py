@@ -83,6 +83,15 @@ def main():
             run = bench.workspace.review_runs(matter.matter_id, actor)[0]
             wait.until(lambda _: bench.workspace.review_run(matter.matter_id, actor, run.run_id).state == 'succeeded')
             driver.get(base + f'/matters/{matter.slug}/full-review?criterion={criterion.criterion_id}&run={run.run_id}&source={document.document_id}')
+            assert 'Coverage gaps remain' in driver.find_element(By.ID, 'review-coverage').text
+            assert '1 unit with failed ranges' in driver.find_element(By.ID, 'review-coverage').text
+            for width in (1440, 390):
+                driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', {'width': width, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
+                assert driver.execute_script("return document.querySelector('#review-controls').getBoundingClientRect().top < document.querySelector('#decision-ledger').getBoundingClientRect().top")
+                assert driver.execute_script("return document.querySelector('#review-coverage').getBoundingClientRect().top < document.querySelector('#decision-ledger').getBoundingClientRect().top")
+                driver.execute_script("document.querySelector('#review-controls').scrollIntoView({block:'start',behavior:'instant'})")
+                driver.save_screenshot(str(args.output / f'full-review-controls-{width}.png'))
+            driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride', {})
             support = driver.find_element(By.CSS_SELECTOR, '#decision-inspector .decision-citations p')
             assert support.text == 'The amber bicycle arrived at noon.'
             retained = bench.workspace.review_decision(matter.matter_id, actor, run.run_id, document.document_id)
@@ -146,7 +155,22 @@ def main():
             wait.until(lambda _: bool(list(downloads.glob('*.md'))))
             report_text = next(downloads.glob('*.md')).read_text()
             assert 'The amber bicycle arrived at noon.' in report_text and 'not the complete range ledger' in report_text
-            receipt = {'provenance': 'synthetic', 'checks': ['explicit full-text launch', 'decision inspector shows exact support without persisting excerpts', 'late fifteenth-unit finding', 'separate failed-unit coverage', 'desktop and mobile without page overflow', 'complete JSON download', 'saved full-text run copied to readable Report', 'bounded full-text scope and source citation retained', 'Report desktop and mobile without overflow', 'Report Markdown download']}
+            bench.full_review.close()
+            # Stop the worker so cancellation/resume state is deterministic.
+            saved = bench.workspace.review_run(matter.matter_id, actor, run.run_id)
+            queued = bench.workspace.queue_review_run(matter.matter_id, actor, saved.criterion_version_id, run_kind='full', review_mode='full_text')
+            driver.get(base + f'/matters/{matter.slug}/full-review/{queued.run_id}/text')
+            cancel = driver.find_element(By.CSS_SELECTOR, f'form[action$="/{queued.run_id}/cancel"] button')
+            driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", cancel)
+            cancel.click()
+            wait.until(lambda _: bench.workspace.review_run(matter.matter_id, actor, queued.run_id).state == 'cancelled')
+            driver.get(base + f'/matters/{matter.slug}/full-review/{queued.run_id}/text')
+            resume = driver.find_element(By.CSS_SELECTOR, f'form[action$="/{queued.run_id}/retry"] button')
+            driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", resume)
+            driver.save_screenshot(str(args.output / 'full-review-resume.png'))
+            resume.click()
+            wait.until(lambda _: bench.workspace.review_run(matter.matter_id, actor, queued.run_id).state == 'queued')
+            receipt = {'provenance': 'synthetic', 'checks': ['launch and coverage precede decision lists at desktop and mobile widths', 'text ledger safe cancellation and resume preserve the same run', 'explicit full-text launch', 'decision inspector shows exact support without persisting excerpts', 'late fifteenth-unit finding', 'separate failed-unit coverage', 'desktop and mobile without page overflow', 'complete JSON download', 'saved full-text run copied to readable Report', 'bounded full-text scope and source citation retained', 'Report desktop and mobile without overflow', 'Report Markdown download']}
             (args.output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
             print(json.dumps(receipt))
         finally:
