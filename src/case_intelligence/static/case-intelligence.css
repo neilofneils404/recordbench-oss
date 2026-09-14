@@ -3435,13 +3435,8 @@ textarea::placeholder,
   background: #fff8f6;
 }
 
-.choose-folder-action {
-  justify-self: center;
-  color: #155ab1;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-}
+.upload-picker-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.upload-picker-actions [hidden] { display: none; }
 
 .upload-preflight {
   display: grid;

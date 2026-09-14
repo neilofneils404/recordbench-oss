@@ -44,7 +44,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='recordbench-entities-browser-') as temporary:
         root = Path(temporary).resolve()
         originals = []
-        for name, text in [('depot', 'Alex Example visited the synthetic depot.'), ('archive', 'Alex Example called the synthetic archive.')]:
+        for name, text in [('depot', 'Alex Example visited the synthetic depot on 03/04/2026.'), ('archive', 'Alex Example called the synthetic archive on 03/04/2026.')]:
             path = root / f'generated-{name}.txt'
             path.write_text(text)
             originals.append(path)
@@ -85,10 +85,12 @@ def main():
                             raise
                         return True
                 return check
-            def click(selector):
+            def click(selector, navigation=True):
                 element = driver.find_element(By.CSS_SELECTOR, selector)
                 driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", element)
                 element.click()
+                if not navigation:
+                    return
                 wait.until(detached(element))
                 wait.until(lambda d: d.execute_script('return document.readyState') == 'complete')
             def body():
@@ -99,6 +101,9 @@ def main():
             slug = urlparse(driver.current_url).path.split('/')[2]
             prefix = f'/matters/{slug}'
             driver.find_element(By.CSS_SELECTOR, '[data-assistant-collapse]').click()
+            collection_name = driver.find_element(By.CSS_SELECTOR, "[data-upload-collection-name]")
+            collection_name.clear()
+            collection_name.send_keys("Synthetic entity-discovery collection")
             driver.find_element(By.ID, 'source-files').send_keys('\n'.join(str(path) for path in originals))
             wait.until(lambda d: d.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').is_enabled())
             confirm = driver.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]')
@@ -108,6 +113,14 @@ def main():
             matter = bench.matter(slug, ACTOR)
             wait.until(lambda _: len([d for d in bench.source_store(matter).documents.values() if d.state == 'ready']) == 2)
             record('Two synthetic originals uploaded and searchable without a model')
+            from case_intelligence.intake_receipts import IntakeReceipts
+            receipt = IntakeReceipts(bench.workspace).recent(matter.matter_id, ACTOR)[0]
+            go(prefix + '/intake/' + receipt['receipt_id'])
+            click('a[href*="/entities?return_to="]')
+            assert 'No frozen text-review population yet' in body()
+            click('a[href*="/intake/"]')
+            assert 'Selected-file receipt' in body()
+            record('Intake receipt leads to discovery readiness and preserves the receipt return path')
             go(prefix + '/entities')
             assert 'No entities yet' in body()
             # Keyboard-only traversal of the creation controls.
@@ -199,16 +212,33 @@ def main():
             bench.workspace.fail_review_run(run.run_id, 'Synthetic inventory fixture finished; no generation requested.')
             go(prefix + '/entities')
             driver.find_element(By.CSS_SELECTOR, '#discovery-heading + p + details summary').click()
+            click('a.button[href*="/entity-discovery/"]')
+            assert '1 not yet inventoried' in body()
             click('form:has(input[value="discover"]) button')
             assert '1 units processed' in body()
             record('Discovery processes an inventoried unit without a model and shows remaining uninventoried sources honestly')
-            driver.find_element(By.CSS_SELECTOR, '#discovery-heading + p + details summary').click()
-            click('a[href*="/entity-discovery/"]')
+            assert '/entity-discovery/' in driver.current_url
+            assert 'No runnable units remain' in body()
+            driver.save_screenshot(str(args.output / 'guided-discovery-desktop.png'))
+            driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', dict(width=390, height=844, deviceScaleFactor=1, mobile=False))
+            wait.until(lambda d: d.execute_script('return document.documentElement.scrollWidth <= innerWidth'))
+            wait.until(lambda d: d.execute_script("return document.getElementById('matter-rail').getBoundingClientRect().right <= 1"))
+            driver.save_screenshot(str(args.output / 'guided-discovery-mobile.png'))
+            driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride', {})
+            driver.set_window_size(1440, 1000)
             assert len(driver.find_elements(By.CSS_SELECTOR, '[data-discovery-unit]')) == 1
             assert 'Showing up to 50 units' in body()
             record('Coverage details use a separate bounded source and unit page')
             rows = bench.entity_service(matter).list(matter.matter_id, ACTOR)[0]
-            discovered = next(row for row in rows if row['extractor_version'])
+            date = next(row for row in rows if row['entity_type'] == 'date')
+            go(prefix + '/entities/' + date['entity_id'])
+            assert '03/04/2026' in body() and 'unresolved' in body()
+            assert 'Suggested' in body()
+            click('a[href*="/assertions/new"][href*="support="]:not([href*="support=&"])')
+            assert 'Selected original passage' in body() and '03/04/2026' in body()
+            assert 'No events or assertions yet' in (go(prefix + '/chronology') or body())
+            record('Suggested date retains ambiguity and cited event handoff; opening the form creates no event')
+            discovered = next(row for row in rows if row['extractor_version'] and row['entity_type'] == 'person')
             discovered_path = prefix + '/entities/' + discovered['entity_id']
             go(discovered_path)
             assert 'Machine occurrence:' in body() and 'deterministic-entities-v1' in body()
@@ -233,7 +263,7 @@ def main():
             click('.notebook-item-form button')
             target = next(row for row in rows if not row['extractor_version'] and row['display_name'] == 'Alex Example')
             target = bench.entity_service(matter).detail(matter.matter_id, ACTOR, target['entity_id'])[0]
-            driver.find_element(By.CSS_SELECTOR, 'details:has(select[name=mention_id]) summary').click()
+            click('details:has(select[name=mention_id]) summary', navigation=False)
             fill('input[name=target_id]', target['entity_id'])
             fill('input[name=target_revision]', str(target['revision']))
             Select(driver.find_element(By.CSS_SELECTOR, 'select[name=action]')).select_by_value('alias')

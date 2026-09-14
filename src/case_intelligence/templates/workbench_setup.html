@@ -35,19 +35,19 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="upload-collection-name">
         <label for="upload-collection-name">Collection name</label>
-        <input id="upload-collection-name" name="collection_name" type="text" maxlength="160" value="Uploaded sources" autocomplete="off" data-upload-collection-name>
-        <span>Keep a production, witness packet, or review batch together.</span>
+        <input id="upload-collection-name" name="collection_name" type="text" maxlength="160" required pattern=".*\S.*" aria-describedby="upload-collection-help" autocomplete="off" data-upload-collection-name>
+        <span id="upload-collection-help">Name this group of uploads so your team can find and review it together.</span>
       </div>
       <input id="source-files" class="visually-hidden" name="files" type="file" multiple required accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tif,.tiff,.eml,.csv,.tsv,.xlsx,.wav,.mp3,.m4a,.ogg,.opus,.mp4,.mov,.webm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,message/rfc822,text/plain,text/csv,text/tab-separated-values,image/*,audio/*,video/*" data-file-input>
       <input id="source-folder" class="visually-hidden" type="file" multiple hidden disabled tabindex="-1" webkitdirectory directory accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tif,.tiff,.eml,.csv,.tsv,.xlsx,.wav,.mp3,.m4a,.ogg,.opus,.mp4,.mov,.webm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,message/rfc822,text/plain,text/csv,text/tab-separated-values,image/*,audio/*,video/*" data-folder-input>
-      <label for="source-files" class="upload-drop" data-upload-drop>
+      <div class="upload-drop" data-upload-drop>
         <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 22V6m0 0-6 6m6-6 6 6M7 19v5.5A2.5 2.5 0 0 0 9.5 27h13a2.5 2.5 0 0 0 2.5-2.5V19"/></svg>
         <strong>Drop files here</strong>
         <span>Documents, images, email, spreadsheets, audio, and video · up to {{ upload_limits.item_label }} selected records, saved in resumable {{ upload_limits.batch_item_label }}-item batches</span>
-        <span class="button button-primary choose-files">Choose files</span>
+        <div class="upload-picker-actions"><button type="button" class="button button-primary" data-file-chooser hidden>Choose files</button><button type="button" class="button button-primary" data-folder-chooser hidden>Choose a folder</button></div>
+        <noscript><label for="source-files" class="button button-primary">Choose files</label></noscript>
         <small data-file-summary>Only records you deliberately select are copied into this temporary matter.</small>
-      </label>
-      <label for="source-folder" class="choose-folder-action" data-folder-chooser hidden>Choose a folder instead</label>
+      </div>
       <section class="upload-preflight" data-upload-preflight hidden aria-labelledby="upload-preflight-title">
         <div class="upload-preflight-heading">
           <div>
@@ -63,6 +63,7 @@
         <div class="upload-preflight-actions">
           <button class="button button-primary" type="button" data-upload-preflight-confirm disabled>Upload 0 ready files</button>
           <button class="button button-secondary" type="button" data-upload-preflight-retry hidden>Retry selection review</button>
+          <button class="button button-secondary" type="button" data-upload-preflight-cancel>Cancel selection</button>
         </div>
       </section>
       <p data-intake-receipt-link hidden><a class="button button-secondary" data-intake-receipt-open>View selected-file receipt</a></p>

@@ -145,17 +145,84 @@ def main():
                 wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-folder-input]').is_enabled())
                 return bench.matter(slug, ACTOR)
 
-            def confirm():
+            def confirm(*, name_collection=True):
+                field = driver.find_element(By.CSS_SELECTOR, '[data-upload-collection-name]')
+                if name_collection and not field.get_attribute('value').strip():
+                    field.clear()
+                    field.send_keys('Generated receipt collection')
                 button = driver.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]')
                 driver.execute_script('arguments[0].scrollIntoView({block:"center",behavior:"instant"});', button)
                 wait.until(lambda current: current.execute_script('const r=arguments[0].getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight;', button))
                 button.click()
 
-            def completed(matter):
+            def cancel_selection():
+                button = driver.find_element(By.CSS_SELECTOR, '[data-upload-preflight-cancel]')
+                driver.execute_script('arguments[0].scrollIntoView({block:"center",behavior:"instant"});', button)
+                wait.until(lambda current: current.execute_script('const r=arguments[0].getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight;', button))
+                button.click()
+
+            def completed_on_server(matter):
                 sessions = bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR)
                 return sessions and all(s.state in {'complete', 'partial'} for s in sessions) and not any(bench.workspace.active_matter_work_counts(matter.matter_id).values())
 
+            def completed(matter):
+                return completed_on_server(matter) and driver.find_element(By.CSS_SELECTOR, '[data-file-chooser]').is_enabled()
+
+            # Exercise the real refresh code on a generated processing page.
+            refresh_page_fixture = root / 'synthetic-refresh.html'
+            refresh_page_fixture.write_text('<body data-ingestion-active><form data-upload-form><label>Collection name<input data-upload-collection-name></label></form><script>window.syntheticLoadToken=Math.random();</script><script>' + (ROOT / 'src/case_intelligence/static/case-intelligence.js').read_text() + '</script></body>')
+            driver.get(refresh_page_fixture.as_uri())
+            original_load = driver.execute_script('return window.syntheticLoadToken')
+            name = driver.find_element(By.CSS_SELECTOR, '[data-upload-collection-name]')
+            name.send_keys('Synthetic name before selection')
+            driver.execute_script('window.syntheticRefreshWaited=false; setTimeout(() => { window.syntheticRefreshWaited=true; }, 6500);')
+            wait.until(lambda x: x.execute_script('return window.syntheticRefreshWaited === true'))
+            require(driver.execute_script('return window.syntheticLoadToken') == original_load, 'Ingestion refresh discarded a name before selection')
+            require(name.get_attribute('value') == 'Synthetic name before selection', 'Entered name was lost')
+            name.clear()
+            wait.until(lambda x: x.execute_script('return window.syntheticLoadToken') != original_load)
+            record_check('A name entered before file selection survives ingestion refresh; clearing the draft permits refresh')
+
             matter = create_matter('Synthetic nested receipt')
+            require(driver.find_element(By.CSS_SELECTOR, '[data-upload-collection-name]').get_attribute('value') == '',
+                'Collection name was recommended instead of explicitly chosen')
+            for selector in ('[data-file-chooser]', '[data-folder-chooser]'):
+                picker = driver.find_element(By.CSS_SELECTOR, selector)
+                require(picker.is_displayed() and picker.tag_name == 'button', 'Upload picker is not a visible keyboard-operable button')
+            # A late preflight response must not revive a cancelled selection.
+            driver.execute_script(r"""
+                window.selectionFetch = window.fetch;
+                window.fetch = async (...args) => {
+                    const response = await window.selectionFetch(...args);
+                    if (/\/upload-preflight$/.test(String(args[0]))) {
+                        await new Promise(resolve => { window.releaseSelectionResponse = resolve; });
+                    }
+                    return response;
+                };
+            """)
+            driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(folder/'North/report.txt'))
+            wait.until(lambda x: x.execute_script('return typeof window.releaseSelectionResponse === "function"'))
+            cancel_selection()
+            driver.execute_script('window.fetch = window.selectionFetch; window.releaseSelectionResponse();')
+            require(not driver.find_element(By.CSS_SELECTOR, '[data-upload-preflight]').is_displayed(), 'Cancellation did not hide preflight')
+            require(driver.execute_script('return document.querySelector("[data-file-input]").files.length') == 0, 'Cancellation retained file input')
+            driver.find_element(By.CSS_SELECTOR, '[data-file-input]').send_keys(str(folder/'North/report.txt'))
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Upload 1 ready file')
+            for name in ('', '   '):
+                field = driver.find_element(By.CSS_SELECTOR, '[data-upload-collection-name]')
+                field.clear()
+                field.send_keys(name)
+                confirm(name_collection=False)
+                require(not field.get_attribute('value'), 'Blank name was not trimmed')
+                require(not receipts.recent(matter.matter_id, ACTOR), 'Blank name created a receipt')
+                require(not bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR), 'Blank name started transfer')
+            cancel_selection()
+            driver.find_element(By.CSS_SELECTOR, '[data-folder-input]').send_keys(str(folder))
+            wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').text == 'Upload 4 ready files')
+            cancel_selection()
+            require(driver.execute_script('return document.querySelector("[data-folder-input]").files.length') == 0, 'Cancellation retained folder input')
+            require(not receipts.recent(matter.matter_id, ACTOR), 'Cancelled selections created receipts')
+            record_check('Visible file/folder buttons, required collection names, cancellation, stale responses, and same-file reselection work before transfer')
             # Lose an actual successful confirmation response while browser
             # storage is unavailable. Retrying must reuse its in-memory key.
             driver.execute_script(r'''
@@ -347,12 +414,38 @@ def main():
                 field = driver.find_element(By.CSS_SELECTOR, '[data-upload-collection-name]')
                 field.clear()
                 field.send_keys(invalid_name)
-                confirm()
-                wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-state]').text == 'Selection receipt paused')
+                confirm(name_collection=False)
+                if invalid_name.strip():
+                    wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-state]').text == 'Selection receipt paused')
+                else:
+                    require(not field.get_attribute('value'), 'Whitespace name was not rejected locally')
                 require(not receipts.recent(correction_matter.matter_id, ACTOR), 'Invalid name unexpectedly created a receipt')
                 field.clear()
                 field.send_keys('Corrected generated collection')
+                if index == 0:
+                    # Hold the final status response after durable processing has
+                    # completed, so server readiness cannot mask browser busy state.
+                    driver.execute_script(r"""
+                        window.completionFetch = window.fetch;
+                        window.fetch = async (...args) => {
+                            const response = await window.completionFetch(...args);
+                            if (/\/upload-sessions\/[^/?]+\?compact=1$/.test(String(args[0]))) {
+                                const payload = await response.clone().json();
+                                if (['complete', 'partial'].includes(payload.state) && !window.releaseUploadCompletion) {
+                                    await new Promise(resolve => { window.releaseUploadCompletion = resolve; });
+                                }
+                            }
+                            return response;
+                        };
+                    """)
                 confirm()
+                if index == 0:
+                    wait.until(lambda x: x.execute_script('return typeof window.releaseUploadCompletion === "function"'))
+                    until(lambda: completed_on_server(correction_matter), 'Held upload did not finish on the server')
+                    for selector in ('[data-file-input]', '[data-folder-input]', '[data-file-chooser]', '[data-folder-chooser]', '[data-upload-collection-name]', '[data-upload-preflight-cancel]'):
+                        require(not driver.find_element(By.CSS_SELECTOR, selector).is_enabled(), 'Upload control still enabled before browser confirmation finished: ' + selector)
+                    driver.execute_script('window.fetch = window.completionFetch; window.releaseUploadCompletion();')
+
                 until(lambda: completed(correction_matter), 'Corrected collection name could not confirm the same selected files')
                 corrected = receipts.recent(correction_matter.matter_id, ACTOR)
                 require(len(corrected) == 1 and corrected[0]['collection_name'] == 'Corrected generated collection',
@@ -368,7 +461,7 @@ def main():
                     wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-state]').text == 'Selection receipt saved')
                     require(driver.find_element(By.CSS_SELECTOR, '[data-intake-receipt-open]').get_attribute('href') != old_link,
                         'A newly saved selection still points at its predecessor')
-                    record_check('A new unconfirmed selection hides the prior receipt link and confirmation opens its own receipt')
+                    record_check('Held completion disables intake controls until browser readiness; a subsequent selection opens its own receipt')
             record_check('Rejected collection names can be corrected without reselecting files or clearing storage, including storage-denied retries')
 
             full_matter = create_matter('Synthetic receipt capacity recovery')

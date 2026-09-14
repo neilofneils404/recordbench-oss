@@ -11591,6 +11591,7 @@ def create_workbench_app(
         request: Request,
         slug: str,
         files: list[UploadFile] = File(...),
+        collection_name: str = Form("Uploaded sources"),
     ):
         context = auth_context(request)
         try:
@@ -11603,6 +11604,12 @@ def create_workbench_app(
                 + quote_plus("Choose between 1 and 10 files for each upload."),
                 status_code=303,
             )
+        try:
+            collection_name = bench.workspace._safe_text(
+                collection_name, label="Collection name", maximum=160
+            )
+        except WorkspaceProblem as exc:
+            return PlainTextResponse(str(exc), status_code=400)
         declared_bytes = sum(
             int(upload.size)
             if isinstance(upload.size, int) and not isinstance(upload.size, bool)
@@ -11643,7 +11650,7 @@ def create_workbench_app(
             try:
                 collection = bench.workspace.create_source_collection(
                     matter.matter_id,
-                    "Uploaded sources",
+                    collection_name,
                     "upload",
                     context.principal_id,
                 )

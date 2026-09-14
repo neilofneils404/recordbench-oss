@@ -81,6 +81,8 @@ def test_receipt_retains_skips_received_bytes_exact_source_and_complete_exports(
     page = client.get(receipt['receipt_url'])
     assert page.status_code == 200
     assert 'Unsupported/opaque.bin' in page.text and '1 not uploaded' in page.text
+    assert 'check readiness for suggested people, things and dates' in page.text
+    assert 'not automatically limited to this collection' in page.text
     link = re.search(r'href="(/matters/[^\"]+/sources/[^\"]+)"[^>]*>Open source</a>', page.text)
     assert link is not None
     source = client.get(link.group(1))
