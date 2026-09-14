@@ -9,7 +9,8 @@ unextracted material.
 
 A search hit opens its existing document or recording inspection page at the
 matching section. Return to review context restores the complete search URL,
-including filters, page and population fingerprint. Ask using this source uses
+including filters, page and the computed population fingerprint, even on the first
+results page. A changed population requires an explicit search refresh. Ask using this source uses
 the existing single-source scope and retains that return link through question
 submission, status polling, completed answers and investigation startup/completion.
 Return paths
@@ -23,7 +24,9 @@ extracted text before its long source table. In Document review, launch controls
 stay ahead of the decision ledger even when a saved run is selected. Progress,
 safe cancellation/resume and a coverage notice link to the complete text ledger.
 The text-ledger page also places saved-run controls before extraction/source
-lists. Legacy and resource-limited runs retain their existing resume restrictions.
+lists. Cancel and Resume are shown only to the run owner; administrator read
+overrides do not expose controls they cannot use. Legacy and resource-limited runs
+retain their existing resume restrictions.
 A completed run can still have failed ranges, missing extraction or unavailable
 sources; the coverage ledger remains authoritative.
 

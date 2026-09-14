@@ -10196,6 +10196,7 @@ def create_workbench_app(
             **base_context(request, matter), "matter": matter, "run": run, "coverage": coverage,
             "rows": rows, "sources": sources, "after": after,
             "can_delete_text_review": not override and run.actor_id == actor,
+            "can_control_text_review": not override and run.actor_id == actor,
             "next_cursor": rows[-1]["cursor"] if len(rows) == 100 else None,
         }, headers={"Cache-Control": "no-store"})
 
@@ -10581,7 +10582,7 @@ def create_workbench_app(
             action_error, status = str(exc), 400
         links = {}
         if results:
-            for label, number in (("previous", results.page - 1), ("next", results.page + 1)):
+            for label, number in (("current", results.page), ("previous", results.page - 1), ("next", results.page + 1)):
                 if 1 <= number <= results.pages:
                     links[label] = _query_url(f"/matters/{slug}/exact-search", q=q if using_expression else "",
                         words=words, phrase=phrase, exclude=exclude,
