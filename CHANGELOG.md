@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Expose matter content Search, retain search context through source inspection and scoped questions, and place full-text review controls and coverage before long source lists.
+
 - 2026-09-09: Assemble selected final-acceptance contributions: export readiness,
   preserved Report review basis, explicit investigation accounting, exact-search
   grammar/corpus, contributor briefs and isolated candidate-history validation.

@@ -70,6 +70,10 @@ def main():
                         "A red bicycle " + "neutral " * 120 + "depot." if index == 2 else
                         "A red bicycle returned to the depot.")
                 store.store_stream(f"Synthetic record {index:02}.txt", "text/plain", io.BytesIO(text.encode()))
+            collection = bench.workspace.create_source_collection(matter.matter_id, "Synthetic selected collection", "upload", ACTOR)
+            bench._sync_source_catalog(matter, list(store.documents.values()))
+            bench.workspace.reconcile_source_organizations(matter.matter_id, tuple((item.document_id, "upload", item.display_name) for item in store.documents.values()))
+            bench.workspace.move_sources_to_collection(matter.matter_id, list(store.documents), collection.collection_id, ACTOR)
             path = base + f"/matters/{matter.slug}/exact-search"
 
             def click(element):
@@ -99,14 +103,34 @@ def main():
                 assert driver.execute_script("return document.documentElement.scrollWidth <= window.innerWidth")
                 driver.save_screenshot(str(args.output / f"{name}.png"))
 
-            driver.get(path)
+            driver.get(base + f"/matters/{matter.slug}/home")
+            click(driver.find_element(By.CSS_SELECTOR, '.matter-section-tabs a[href$="/exact-search"]'))
+            wait.until(lambda d: d.current_url == path)
+            assert driver.find_element(By.CSS_SELECTOR, '.matter-section-tabs [aria-current="page"]').text == "Search"
             assert not driver.find_element(By.ID, "find-query").is_displayed()
             screenshot("exact-search-first-use", 1440)
+            click(driver.find_element(By.CSS_SELECTOR, ".find-refinements > summary"))
+            collection = Select(driver.find_element(By.ID, "find-collection"))
+            collection.select_by_visible_text("Synthetic selected collection")
+            selected_collection = collection.first_selected_option.get_attribute("value")
             fill("find-words", "bicycle").send_keys(Keys.ENTER)
             expect_count(31)
             click(driver.find_element(By.CSS_SELECTOR, ".find-pagination a"))
             wait.until(EC.text_to_be_present_in_element((By.CSS_SELECTOR, ".find-pagination"), "Page 2 of 2"))
             assert len(driver.find_elements(By.CSS_SELECTOR, ".find-document")) == 6
+            assert "collection=" + selected_collection in driver.current_url
+            search_context = driver.current_url
+            click(driver.find_element(By.CSS_SELECTOR, ".find-open-source"))
+            wait.until(lambda d: "/sources/" in d.current_url)
+            click(driver.find_element(By.XPATH, '//a[text()="Return to review context"]'))
+            wait.until(lambda d: d.current_url == search_context)
+            click(driver.find_element(By.CSS_SELECTOR, '.find-document form button'))
+            wait.until(lambda d: "source_set=" in d.current_url and "#matter-question" in d.current_url)
+            assert Select(driver.find_element(By.ID, "answer-source-set")).first_selected_option.text.startswith("Only")
+            click(driver.find_element(By.XPATH, '//a[text()="Return to review context"]'))
+            wait.until(lambda d: d.current_url == search_context)
+            assert len(driver.find_elements(By.CSS_SELECTOR, ".find-document")) == 6
+
 
             driver.get(path)
             click(driver.find_element(By.CSS_SELECTOR, ".find-refinements > summary"))
@@ -159,7 +183,7 @@ def main():
                 "provenance": "temporary synthetic sources; no model or live backend required",
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
                 "working_tree_clean": not subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip(),
-                "checks": ["plain first-use form", "primary Enter search and complete pagination",
+                "checks": ["matter Search navigation and active label", "collection and page-2 search retained through inspection and source-scoped conversation", "plain first-use form", "primary Enter search and complete pagination",
                     "plain ordered proximity Enter returns 29 of 31", "either-order Apply filters returns 30 of 31",
                     "proximity fields retained on page 2", "advanced Enter overrides retained basic words",
                     "matching span highlight", "mixed literal/proximity evidence remains visible", "source link opens original unit", "desktop and 390px mobile without horizontal overflow"],

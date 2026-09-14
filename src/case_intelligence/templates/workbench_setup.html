@@ -226,6 +226,7 @@
       {% if source_library.same_content %}
       <p data-source-byte-comparison>{% if source_library.comparison_available %}Files with identical bytes to the selected source. Each source keeps its own collection and source references.{% else %}This comparison is unavailable. The source may have been removed or changed.{% endif %} <a href="{{ library_url(1, same_content='') }}">Leave comparison</a></p>
       {% endif %}
+      <section class="notice" aria-label="Search and document review"><p><a href="/matters/{{ matter.slug }}/exact-search?collection={{ source_library.collection_id|urlencode }}&amp;source_set={{ source_library.source_set_id|urlencode }}">Search document contents</a> across this selection. The filter below matches filenames and folders.</p><p><a class="button button-secondary" href="/matters/{{ matter.slug }}/full-review#review-controls">Review all extracted text</a> Save a criterion, review a frozen population, and inspect progress, missing extraction and safe resume controls in Document review.</p></section>
       <form class="source-library-filters" method="get" action="/matters/{{ matter.slug }}/setup">
         <input type="hidden" name="view" value="list">
         <input type="hidden" name="page_size" value="100">
@@ -233,7 +234,7 @@
         <input type="hidden" name="folder" value="{{ source_library.folder }}">
         <input type="hidden" name="source_set" value="{{ source_library.source_set_id }}">
         <input type="hidden" name="status" value="{{ source_library.status }}">
-        <label><span>Find a source</span><input type="search" name="q" value="{{ source_library.query }}" maxlength="240" placeholder="Filename or folder…"></label>
+        <label><span>Filter filenames or folders</span><input type="search" name="q" value="{{ source_library.query }}" maxlength="240" placeholder="Filename or folder…"></label>
         <label><span>Collection</span><select name="collection"><option value="">All collections</option>{% for collection in source_collections %}<option value="{{ collection.collection_id }}" {% if source_library.collection_id == collection.collection_id %}selected{% endif %}>{{ collection.name }} ({{ collection.source_count }})</option>{% endfor %}</select></label>
         <label><span>Type</span><select name="kind"><option value="">All types</option>{% for value, label in [('PDF', 'PDF'), ('DOCX', 'Word'), ('TXT', 'Text'), ('IMAGE', 'Image'), ('EMAIL', 'Email'), ('SPREADSHEET', 'Spreadsheet'), ('AUDIO', 'Audio'), ('VIDEO', 'Video')] %}<option value="{{ value }}" {% if source_library.kind == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         <label><span>Review</span><select name="review"><option value="">Any review state</option><option value="unreviewed" {% if source_library.review == 'unreviewed' %}selected{% endif %}>Unreviewed</option><option value="reviewed" {% if source_library.review == 'reviewed' %}selected{% endif %}>Reviewed</option><option value="flagged" {% if source_library.review == 'flagged' %}selected{% endif %}>Flagged</option></select></label>

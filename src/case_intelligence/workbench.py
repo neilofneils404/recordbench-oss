@@ -12880,6 +12880,7 @@ def create_workbench_app(
                 f"/matters/{slug}",
                 source_set=source_set.source_set_id,
                 notice="Answer scope limited to this source",
+                entity_return_to=_source_review_return_href(slug, request.query_params.get("entity_return_to", "")),
             )
             + "#matter-question",
             status_code=303,

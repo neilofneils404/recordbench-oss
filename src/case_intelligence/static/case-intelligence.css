@@ -7396,7 +7396,7 @@ html[data-theme="dusk"] .review-mode-switcher > a.selected {
 .has-active-run > .decision-ledger { order: 3; }
 .has-active-run > .decision-inspector { order: 4; }
 .has-active-run > .validation-panel { order: 5; }
-.has-active-run > .criterion-card { order: 6; }
+.has-active-run > .criterion-card { order: 0; }
 .has-active-run > .workflow-run-card { gap: 10px; padding: 15px 18px; }
 .has-active-run > .workflow-run-card .workflow-run-header h2 { font-size: 22px; }
 .has-active-run > .workflow-run-card .workflow-run-header p:last-child { margin-top: 2px; }
@@ -7711,7 +7711,8 @@ body.activity-open .activity-drawer { transform: translateX(0); }
 .has-active-run > .decision-ledger { order: 4; }
 .has-active-run > .decision-inspector { order: 5; }
 .has-active-run > .validation-panel { order: 6; }
-.has-active-run > .criterion-card { order: 7; }
+.has-active-run > .criterion-card { order: 0; }
+.has-active-run > .review-coverage { order: 2; }
 .has-selected-decision > .decision-inspector { order: 4; }
 .has-selected-decision > .decision-ledger { order: 5; }
 

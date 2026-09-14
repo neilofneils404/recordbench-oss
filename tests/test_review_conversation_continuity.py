@@ -431,9 +431,9 @@ def test_review_composer_starts_broader_work_in_the_same_conversation(tmp_path):
 
         review = client.get(f"/matters/{slug}")
         assert review.status_code == 200
-        assert "Review the record" in review.text
+        assert "Case conversation" in review.text
         assert "Investigate more deeply" in review.text
-        assert "Check every source" in review.text
+        assert "Document review" in review.text
         assert "Quick answer" not in review.text
         assert "Deep research" not in review.text
         conversation_id = re.search(

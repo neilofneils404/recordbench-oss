@@ -1,14 +1,15 @@
 {% extends "workbench_base.html" %}
-{% block title %}Find sources · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block title %}Search · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}workflow-page exact-search-page{% endblock %}
 {% block content %}
 <main class="workflow-shell find-sources-shell">
+  {% set search_return = request.url.path ~ '?' ~ request.url.query %}
   <header class="find-sources-heading">
     <div><a class="find-matter-link" href="/matters/{{ matter.slug }}">{{ matter.display_name }}</a>
-      <h1>Find sources</h1><p>Go straight to the records you need.</p></div>
+      <h1>Search</h1><p>Search document contents across this matter.</p></div>
     <a class="find-conversation-link" href="/matters/{{ matter.slug }}#matter-question">Ask about this matter <span aria-hidden="true">↗</span></a>
   </header>
-  {% with active='review', matter_readiness=none %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% with active='search', matter_readiness=none %}{% include "workbench_matter_tabs.html" %}{% endwith %}
 
   <section class="find-search-panel" aria-label="Find records">
     <form id="find-basic-form" class="find-sources-form" method="get" action="/matters/{{ matter.slug }}/exact-search">
@@ -18,9 +19,9 @@
         <div class="find-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
           <input id="find-words" name="words" value="{{ words }}" maxlength="512" placeholder="A name, a place, a detail…" aria-describedby="find-help" autocomplete="off">
         </div>
-        <button class="button button-ink" type="submit" name="advanced" value="0">Find sources</button>
+        <button class="button button-ink" type="submit" name="advanced" value="0">Search</button>
       </div>
-      <p id="find-help" class="find-help">We'll find sources that include all the words you enter.</p>
+      <p id="find-help" class="find-help">Finds all entered words in extracted document text. To filter filenames or folders, use Sources.</p>
     </form>
       <details class="find-refinements" {% if query or phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}open{% endif %}>
         <summary>Narrow your search{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<span class="find-refinements-active">Filters on</span>{% endif %}</summary>
@@ -74,16 +75,17 @@
     <article class="find-document">
       <div class="find-document-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/></svg></div>
       <div class="find-document-content">
-        <div class="find-document-title"><h3><a href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}">{{ item.source_name }}</a></h3><a class="find-open-source" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}">Open source <span aria-hidden="true">↗</span></a></div>
+        <div class="find-document-title"><h3><a href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}?entity_return_to={{ search_return|urlencode }}">{{ item.source_name }}</a></h3><a class="find-open-source" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}?entity_return_to={{ search_return|urlencode }}">Open source <span aria-hidden="true">↗</span></a></div>
         {% if item.passages %}
           {% set first = previews[item.document_id][0] %}
-          <a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if first.start_ms is not none %}?start_ms={{ first.start_ms }}&amp;unit={{ first.position }}#segment-{{ first.position }}{% else %}?unit={{ first.position }}{% endif %}">{{ first.location }}</a>
+          <a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if first.start_ms is not none %}?entity_return_to={{ search_return|urlencode }}&amp;start_ms={{ first.start_ms }}&amp;unit={{ first.position }}#segment-{{ first.position }}{% else %}?unit={{ first.position }}&amp;entity_return_to={{ search_return|urlencode }}{% endif %}">{{ first.location }}</a>
           <p class="find-excerpt">{% for text, highlighted in first.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p>
           {% if item.matching_unit_count > 1 %}<details class="find-more-passages"><summary>More places in this source <span>{{ item.matching_unit_count }} matching {% if item.media_type.startswith("audio/") or item.media_type.startswith("video/") %}transcript passages{% else %}pages or sections{% endif %}</span></summary>
-            {% for unit in previews[item.document_id][1:] %}<div><a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if unit.start_ms is not none %}?start_ms={{ unit.start_ms }}&amp;unit={{ unit.position }}#segment-{{ unit.position }}{% else %}?unit={{ unit.position }}{% endif %}">{{ unit.location }}</a><p class="find-excerpt">{% for text, highlighted in unit.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p></div>{% endfor %}
+            {% for unit in previews[item.document_id][1:] %}<div><a class="find-location" href="/matters/{{ matter.slug }}/sources/{{ item.source_token }}{% if unit.start_ms is not none %}?entity_return_to={{ search_return|urlencode }}&amp;start_ms={{ unit.start_ms }}&amp;unit={{ unit.position }}#segment-{{ unit.position }}{% else %}?unit={{ unit.position }}&amp;entity_return_to={{ search_return|urlencode }}{% endif %}">{{ unit.location }}</a><p class="find-excerpt">{% for text, highlighted in unit.pieces %}{% if highlighted %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p></div>{% endfor %}
             {% if item.matching_unit_count > 3 %}<p>Open the source to review every matching {% if item.media_type.startswith("audio/") or item.media_type.startswith("video/") %}transcript passage{% else %}page or section{% endif %}.</p>{% endif %}
           </details>{% endif %}
         {% else %}<p class="find-excerpt">This source matched because a word, phrase, or combination excluded by the search was absent.</p>{% endif %}
+        <form method="post" action="/matters/{{ matter.slug }}/sources/{{ item.source_token }}/ask?entity_return_to={{ search_return|urlencode }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Ask using this source</button></form>
       </div>
     </article>
     {% else %}<div class="find-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><h3>No sources found</h3><p>Try a shorter name or fewer words.{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %} You can also clear your filters to look more broadly.{% endif %}</p>{% if phrase or exclude or proximity_first or proximity_second or selected_source_set or selected_collection %}<a class="button button-secondary" href="{{ clear_refinements_url }}">Search without filters</a>{% endif %}</div>{% endfor %}

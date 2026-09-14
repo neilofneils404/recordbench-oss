@@ -80,7 +80,7 @@ def test_home_work_product_and_review_continue_flow(tmp_path):
 
         home = client.get(f"/matters/{slug}/home")
         assert home.status_code == 200
-        for label in ("Home", "Review", "Sources", "Work product"):
+        for label in ("Home", "Case conversation", "Search", "Document review", "Sources", "Work product"):
             assert f">{label}<" in home.text
         assert "Pick up where you left off" in home.text
         assert "Review next" in home.text
