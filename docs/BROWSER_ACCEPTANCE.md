@@ -142,3 +142,7 @@ layout. These checks cover source-library controls, not every Dusk screen or
 native operating-system select popup. Dusk overrides use existing theme tokens;
 Light styles and source workflows are unchanged. This journey is independent of
 the intake-selection acceptance and does not require changes to its runner steps.
+
+The standalone Dusk journey clears deployment environment settings before it
+constructs its disposable application, using the shared synthetic environment
+helper. This applies both to direct invocation and invocation through the runner.

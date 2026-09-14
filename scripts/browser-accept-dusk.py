@@ -55,6 +55,8 @@ return {ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05),fg,bg};
 
 
 def main():
+    from synthetic_browser_environment import isolate_environment
+    isolate_environment()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--chrome-binary', type=Path, required=True)
     parser.add_argument('--chromedriver', type=Path, required=True)
