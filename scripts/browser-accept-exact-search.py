@@ -140,6 +140,18 @@ def main():
             click(driver.find_element(By.CSS_SELECTOR, "[data-question-form] .ask-button"))
             wait.until(lambda d: d.current_url.endswith("#latest"))
             assert "entity_return_to=" in driver.current_url
+            # Keep the synthetic investigation queued so its native controls are deterministic.
+            bench.research.close()
+            bench.research = None
+            fill("matter-question", "Investigate the bicycle arrival")
+            click(driver.find_element(By.CSS_SELECTOR, "[data-question-form] .investigate-button"))
+            details = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".conversation-research-details")))
+            click(details)
+            cancel = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'form[action*="/cancel"] button')))
+            click(cancel)
+            resume = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'form[action*="/retry"] button')))
+            click(resume)
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'form[action*="/cancel"] button')))
             click(driver.find_element(By.XPATH, '//a[text()="Return to review context"]'))
             wait.until(lambda d: d.current_url == search_context)
             assert len(driver.find_elements(By.CSS_SELECTOR, ".find-document")) == 6
