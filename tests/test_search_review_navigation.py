@@ -87,6 +87,17 @@ def test_search_inspection_and_question_return_is_matter_local(tmp_path, origin)
         assert parse_qs(urlsplit(completed.headers['location']).query).get('entity_return_to', []) == expected
         page = client.get(completed.headers['location'])
         assert ('Return to review context' in page.text) == bool(expected)
+        citations = re.findall(r'class="citation[^\"]*" href="([^\"]+)"', page.text)
+        assert citations
+        for citation in citations:
+            target = html.unescape(citation)
+            assert parse_qs(urlsplit(target).query).get('entity_return_to', []) == expected
+            assert ('Return to review context' in client.get(target).text) == bool(expected)
+        state_action = html.unescape(re.search(r'action="([^\"]+/review-state[^\"]*)"', source.text)[1])
+        for state in ('flagged', 'invalid'):
+            changed = client.post(state_action, data={'state': state}, follow_redirects=False)
+            assert parse_qs(urlsplit(changed.headers['location']).query)['entity_return_to'] == [search]
+
         form_action = html.unescape(re.search(r'<form class="question-composer" method="post" action="([^"]+)"', page.text)[1])
         bench.research.close()
         bench.research = None
@@ -116,3 +127,21 @@ def test_search_inspection_and_question_return_is_matter_local(tmp_path, origin)
         rejected_query = parse_qs(urlsplit(rejected.headers['location']).query)
         assert rejected_query.get('entity_return_to', []) == expected
         assert rejected_query.get('error')
+
+
+def test_readonly_administrator_search_hides_source_question(tmp_path):
+    from tests.test_matter_management import ADMIN, OWNER, _app, _headers, _principal_id
+    with TestClient(_app(tmp_path), base_url='https://recordbench.example.test') as client:
+        client.get('/auth/login', headers=_headers(OWNER))
+        owner = _principal_id(client, OWNER)
+        bench = client.app.state.workbench
+        matter = bench.workspace.create_matter('Synthetic search access', 'Synthetic', owner)
+        bench.source_store(matter).store_stream('Synthetic.txt', 'text/plain', io.BytesIO(b'An amber bicycle.'))
+        path = f'/matters/{matter.slug}/exact-search?words=amber'
+        assert 'Ask using this source' in client.get(path, headers=_headers(OWNER)).text
+        client.cookies.clear()
+        client.get('/auth/login', headers=_headers(ADMIN))
+        page = client.get(path, headers=_headers(ADMIN))
+        assert page.status_code == 200
+        assert '1 source found' in page.text
+        assert 'Ask using this source' not in page.text
