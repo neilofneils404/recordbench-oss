@@ -304,7 +304,7 @@
                 {% if message.payload.workflow == 'research' %}
                 <div class="conversation-research-result" role="status">
                   <span><strong>Investigation ready</strong><small>Several evidence passes returned to this conversation</small></span>
-                  <a href="/matters/{{ matter.slug }}/research?job={{ message.payload.research_job_id }}">Open coverage and search details</a>
+                  <a href="{{ entity_context_href("/matters/" ~ matter.slug ~ "/research?job=" ~ message.payload.research_job_id, review_return) }}">Open coverage and search details</a>
                 </div>
                 {% endif %}
                 {% if message.payload.source_coverage and message.payload.source_coverage.mode == 'partial' %}
@@ -356,7 +356,7 @@
                       <div class="citation-list">
                         {% for citation in claim.citations %}
                         <div class="citation-with-save">
-                          <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id) }}">
+                          <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">
                             {% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg>
                           </a>
@@ -377,7 +377,7 @@
                     {% if message.payload.limitation.citations %}
                     <div class="citation-list">
                       {% for citation in message.payload.limitation.citations %}
-                      <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
+                      <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
                       {% endfor %}
                     </div>
                     {% endif %}
@@ -391,7 +391,7 @@
                     <p>These passages were retrieved from this matter, but they are not presented as a verified generated answer.</p>
                     <div class="citation-list">
                       {% for citation in message.payload.source_matches %}
-                      <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
+                      <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
                       {% endfor %}
                     </div>
                   </div>
