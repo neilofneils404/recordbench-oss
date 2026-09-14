@@ -9560,6 +9560,7 @@ def create_workbench_app(
         conversation: str = Form("", max_length=80),
     ):
         context = auth_context(request)
+        origin = _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
         try:
             matter = authorized_matter(request, slug)
             readiness = bench.workspace.matter_readiness(matter.matter_id)
@@ -9585,7 +9586,7 @@ def create_workbench_app(
             )
         except (WorkspaceProblem, KeyError) as exc:
             return RedirectResponse(
-                _query_url(f"/matters/{slug}/research", error=str(exc)), status_code=303
+                _query_url(f"/matters/{slug}/research", error=str(exc), entity_return_to=origin), status_code=303
             )
         if bench.research is not None:
             bench.research.notify()
@@ -9599,6 +9600,7 @@ def create_workbench_app(
                 f"/matters/{slug}",
                 conversation=active_conversation.conversation_id,
                 notice="Broader investigation saved in this conversation",
+                entity_return_to=origin,
             ),
             status_code=303,
         )
@@ -9632,6 +9634,7 @@ def create_workbench_app(
     )
     def cancel_research(request: Request, slug: str, job_id: str):
         context = auth_context(request)
+        origin = _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
         try:
             matter = authorized_matter(request, slug)
             job = bench.workspace.cancel_research_job(
@@ -9641,7 +9644,7 @@ def create_workbench_app(
             raise HTTPException(404, "Research run not found") from exc
         except WorkspaceProblem as exc:
             return RedirectResponse(
-                _query_url(f"/matters/{slug}/research", job=job_id, error=str(exc)),
+                _query_url(f"/matters/{slug}/research", job=job_id, error=str(exc), entity_return_to=origin),
                 status_code=303,
             )
         audit(
@@ -9650,7 +9653,7 @@ def create_workbench_app(
             details={"state": job.state},
         )
         return RedirectResponse(
-            _query_url(f"/matters/{slug}/research", job=job.job_id), status_code=303
+            _query_url(f"/matters/{slug}/research", job=job.job_id, entity_return_to=origin), status_code=303
         )
 
     @app.post(
@@ -9659,6 +9662,7 @@ def create_workbench_app(
     )
     def retry_research(request: Request, slug: str, job_id: str, additional_passes: int = Form(0), expected_passes: int | None = Form(None)):
         context = auth_context(request)
+        origin = _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
         try:
             matter = authorized_matter(request, slug)
             if not bench.workspace.matter_readiness(matter.matter_id).can_query:
@@ -9686,7 +9690,7 @@ def create_workbench_app(
             raise HTTPException(404, "Research run not found") from exc
         except (WorkspaceProblem, WorkflowFailure, ValueError) as exc:
             return RedirectResponse(
-                _query_url(f"/matters/{slug}/research", job=job_id, error=str(exc)),
+                _query_url(f"/matters/{slug}/research", job=job_id, error=str(exc), entity_return_to=origin),
                 status_code=303,
             )
         if bench.research is not None:
@@ -9697,7 +9701,7 @@ def create_workbench_app(
             details={"state": job.state, "count": additional_passes},
         )
         return RedirectResponse(
-            _query_url(f"/matters/{slug}/research", job=job.job_id), status_code=303
+            _query_url(f"/matters/{slug}/research", job=job.job_id, entity_return_to=origin), status_code=303
         )
 
     @app.get(

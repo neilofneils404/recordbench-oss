@@ -13,6 +13,8 @@ including filters, page and the computed population fingerprint, even on the fir
 results page. A changed population requires an explicit search refresh. Ask using this source uses
 the existing single-source scope and retains that return link through question
 submission, status polling, completed answers and investigation startup/completion.
+Investigation cancellation, resume/retry, run selection, cited support and returns
+to the conversation carry the same validated origin, including error redirects.
 Return paths
 are validated against the current matter; authorization is still checked at the
 destination. The link restores the search request, not a cached result snapshot.

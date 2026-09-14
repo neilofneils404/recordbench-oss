@@ -98,3 +98,21 @@ def test_search_inspection_and_question_return_is_matter_local(tmp_path, origin)
         status_url = html.unescape(re.search(r'data-workflow-monitor data-status-url="([^"]+)"', research_page.text)[1])
         status = client.get(status_url).json()
         assert parse_qs(urlsplit(status['result_url']).query).get('entity_return_to', []) == expected
+        details = client.get(status['result_url'])
+        cancel = html.unescape(re.search(r'action="([^"]+/cancel[^\"]*)"', details.text)[1])
+        assert parse_qs(urlsplit(cancel).query).get('entity_return_to', []) == expected
+        cancelled = client.post(cancel, follow_redirects=False)
+        assert cancelled.status_code == 303
+        assert parse_qs(urlsplit(cancelled.headers['location']).query).get('entity_return_to', []) == expected
+        details = client.get(cancelled.headers['location'])
+        resume = html.unescape(re.search(r'action="([^"]+/retry[^\"]*)"', details.text)[1])
+        assert parse_qs(urlsplit(resume).query).get('entity_return_to', []) == expected
+        resumed = client.post(resume, follow_redirects=False)
+        assert resumed.status_code == 303
+        assert parse_qs(urlsplit(resumed.headers['location']).query).get('entity_return_to', []) == expected
+        assert bench.workspace.research_job(matter.matter_id, matter.owner_id, status['job_id']).state == 'queued'
+        # An invalid extension keeps the same origin on its error redirect.
+        rejected = client.post(resume, data={"additional_passes": 999}, follow_redirects=False)
+        rejected_query = parse_qs(urlsplit(rejected.headers['location']).query)
+        assert rejected_query.get('entity_return_to', []) == expected
+        assert rejected_query.get('error')
