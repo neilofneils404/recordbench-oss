@@ -307,6 +307,8 @@
   const folderChooser = document.querySelector("[data-folder-chooser]");
   const fileSummary = document.querySelector("[data-file-summary]");
   const uploadCollectionName = document.querySelector("[data-upload-collection-name]");
+  let collectionNameEdited = false;
+  uploadCollectionName?.addEventListener("input", () => { collectionNameEdited = true; });
   const uploadProgress = document.querySelector("[data-upload-progress]");
   const uploadTitle = document.querySelector("[data-upload-title]");
   const uploadStatus = document.querySelector("[data-upload-status]");
@@ -1812,6 +1814,7 @@
     if (uploadPreflightState) uploadPreflightState.textContent = "Saving selected-file receipt";
     try {
       const intake = await recordConfirmedSelection(files, preview, version);
+      collectionNameEdited = false;
       if (!eligibleFiles.length) {
         clearIntakeResumeState();
         if (uploadPreflightState) uploadPreflightState.textContent = "Selection receipt saved";
@@ -1906,7 +1909,8 @@
 
   if (document.querySelector("[data-ingestion-active]")) {
     const refreshIngestion = () => {
-      if (confirmingUploadPreflight
+      if ((collectionNameEdited && uploadCollectionName?.value.trim())
+          || confirmingUploadPreflight
           || (preflightFiles.length && (!activePreflight || !uploadPreflightConfirm?.disabled))
           || uploadPreflight?.getAttribute("aria-busy") === "true"
           || uploadForm?.getAttribute("aria-busy") === "true") {

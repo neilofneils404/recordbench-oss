@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import uvicorn
 from selenium import webdriver
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -82,20 +83,40 @@ def main():
             owner, admin = browser(OWNER), browser(MEMBER)
             wait = WebDriverWait(owner, 20)
             wait.until(lambda _: server.started)
+            def detached(element):
+                def check(driver):
+                    try:
+                        return EC.staleness_of(element)(driver)
+                    except WebDriverException as exc:
+                        if 'Node with given id does not belong to the document' not in exc.msg:
+                            raise
+                        return True
+                return check
+            def enter_editor(driver):
+                links = driver.find_elements(By.CSS_SELECTOR, ".report-reading-page a[href*='edit=true']")
+                if links:
+                    links[0].click()
+                    WebDriverWait(driver, 20).until(detached(links[0]))
             def go(driver, path):
                 driver.get(base + path)
+                enter_editor(driver)
             def fill(driver, selector, value):
                 field = driver.find_element(By.CSS_SELECTOR, selector)
                 field.clear()
                 field.send_keys(value)
             def click(driver, selector):
+                if selector != '[data-assistant-collapse]' and 'assistant-collapsed' not in driver.find_element(By.TAG_NAME, 'body').get_attribute('class').split():
+                    toggles = driver.find_elements(By.CSS_SELECTOR, '[data-assistant-collapse]')
+                    if toggles and toggles[0].is_displayed():
+                        toggles[0].click()
                 button = driver.find_element(By.CSS_SELECTOR, selector)
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center', behavior: 'instant'})", button)
                 button.click()
                 return button
             def submit(driver, selector):
                 button = click(driver, selector)
-                WebDriverWait(driver, 20).until(EC.staleness_of(button))
+                WebDriverWait(driver, 20).until(detached(button))
+                enter_editor(driver)
             def body(driver):
                 return driver.find_element(By.TAG_NAME, 'body').text
 
@@ -105,6 +126,9 @@ def main():
             slug = urlparse(owner.current_url).path.split('/')[2]
             prefix = f'/matters/{slug}'
             owner.find_element(By.CSS_SELECTOR, '[data-assistant-collapse]').click()
+            collection_name = owner.find_element(By.CSS_SELECTOR, "[data-upload-collection-name]")
+            collection_name.clear()
+            collection_name.send_keys("Synthetic report-conflicts collection")
             owner.find_element(By.ID, 'source-files').send_keys(str(original))
             wait.until(lambda d: d.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').is_enabled())
             click(owner, '[data-upload-preflight-confirm]')
@@ -128,6 +152,7 @@ def main():
             bench.workspace.add_member(matter.matter_id, member_id, owner_id)
             note = bench.workspace.all_notebook_items(matter.matter_id, owner_id)[0]
             go(owner, prefix + '/reports')
+            click(owner, '.report-create-card summary')
             fill(owner, '.report-create-card input[name=title]', 'Generated shared Report')
             fill(owner, '.report-create-card textarea[name=purpose]', 'Original purpose')
             submit(owner, '.report-create-card button[type=submit]')
@@ -141,6 +166,8 @@ def main():
             header = '.report-settings form:first-child '
             recovery = '.report-recovery-panel form '
             def add_section(driver, heading, text):
+                if not driver.find_element(By.CSS_SELECTOR, '.report-add-material details:first-child').get_attribute('open'):
+                    click(driver, '.report-add-material details:first-child summary')
                 fill(driver, '.report-add-material details:first-child input[name=heading]', heading)
                 fill(driver, '.report-add-material details:first-child textarea[name=body]', text)
                 submit(driver, '.report-add-material details:first-child button[type=submit]')
@@ -148,7 +175,8 @@ def main():
             second = bench.workspace.report_sections(matter.matter_id, report.report_id)[1]
             second_edit = f'#{second.section_id} .report-section-content form:first-child '
             go(admin, report_path)
-            click(admin, '[data-assistant-collapse]')
+            if admin.find_elements(By.CSS_SELECTOR, '[data-assistant-collapse]'):
+                click(admin, '[data-assistant-collapse]')
             fill(owner, header + 'textarea[name=purpose]', 'Owner saved purpose')
             submit(owner, header + 'button[type=submit]')
             fill(admin, header + 'input[name=title]', 'Member proposed title')
@@ -197,7 +225,7 @@ def main():
             submit(owner, edit + 'button[type=submit]')
             fill(admin, second_edit + 'textarea[name=body]', 'Member independently reviewed second section')
             submit(admin, second_edit + 'button[type=submit]')
-            assert 'Section saved' in body(admin)
+            assert admin.find_element(By.CSS_SELECTOR, second_edit + 'textarea[name=body]').get_attribute('value') == 'Member independently reviewed second section'
             add_section(owner, 'Owner independent addition', 'Owner appended text')
             add_section(admin, 'Member independent addition', 'Member appended text')
             assert len(bench.workspace.report_sections(matter.matter_id, report.report_id)) == 4
@@ -236,7 +264,7 @@ def main():
             def delete(driver, selector):
                 button = click(driver, selector)
                 WebDriverWait(driver, 10).until(EC.alert_is_present()).accept()
-                WebDriverWait(driver, 20).until(EC.staleness_of(button))
+                WebDriverWait(driver, 20).until(detached(button))
             delete(admin, f'#{section.section_id} .danger-link')
             assert 'changed since the page was opened' in body(admin)
             go(admin, report_path)

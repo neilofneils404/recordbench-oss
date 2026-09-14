@@ -168,6 +168,21 @@ def main():
             def completed(matter):
                 return completed_on_server(matter) and driver.find_element(By.CSS_SELECTOR, '[data-file-chooser]').is_enabled()
 
+            # Exercise the real refresh code on a generated processing page.
+            refresh_page_fixture = root / 'synthetic-refresh.html'
+            refresh_page_fixture.write_text('<body data-ingestion-active><form data-upload-form><label>Collection name<input data-upload-collection-name></label></form><script>window.syntheticLoadToken=Math.random();</script><script>' + (ROOT / 'src/case_intelligence/static/case-intelligence.js').read_text() + '</script></body>')
+            driver.get(refresh_page_fixture.as_uri())
+            original_load = driver.execute_script('return window.syntheticLoadToken')
+            name = driver.find_element(By.CSS_SELECTOR, '[data-upload-collection-name]')
+            name.send_keys('Synthetic name before selection')
+            driver.execute_script('window.syntheticRefreshWaited=false; setTimeout(() => { window.syntheticRefreshWaited=true; }, 6500);')
+            wait.until(lambda x: x.execute_script('return window.syntheticRefreshWaited === true'))
+            require(driver.execute_script('return window.syntheticLoadToken') == original_load, 'Ingestion refresh discarded a name before selection')
+            require(name.get_attribute('value') == 'Synthetic name before selection', 'Entered name was lost')
+            name.clear()
+            wait.until(lambda x: x.execute_script('return window.syntheticLoadToken') != original_load)
+            record_check('A name entered before file selection survives ingestion refresh; clearing the draft permits refresh')
+
             matter = create_matter('Synthetic nested receipt')
             require(driver.find_element(By.CSS_SELECTOR, '[data-upload-collection-name]').get_attribute('value') == '',
                 'Collection name was recommended instead of explicitly chosen')

@@ -99,6 +99,9 @@ def main():
             slug = urlparse(driver.current_url).path.split('/')[2]
             prefix = f'/matters/{slug}'
             driver.find_element(By.CSS_SELECTOR, '[data-assistant-collapse]').click()
+            collection_name = driver.find_element(By.CSS_SELECTOR, "[data-upload-collection-name]")
+            collection_name.clear()
+            collection_name.send_keys("Synthetic entities collection")
             driver.find_element(By.ID, 'source-files').send_keys('\n'.join(str(path) for path in originals))
             wait.until(lambda d: d.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]').is_enabled())
             confirm = driver.find_element(By.CSS_SELECTOR, '[data-upload-preflight-confirm]')

@@ -231,7 +231,9 @@ upload recovery checkpoints remain available. During confirmation and transfer,
 file/folder inputs, picker buttons, collection naming, retry, and selection
 cancellation are disabled until the browser finishes handling the response; **Cancel upload** retains its existing
 semantics for a transfer already underway. Unrelated ingestion refresh waits
-while the user has an unconfirmed selection.
+while the user has an unconfirmed selection or a nonblank edited collection name,
+including a name entered before picking files. Once a receipt saves the name, it
+no longer counts as an unsaved draft. Clearing the draft allows refresh again.
 
 Synthetic browser acceptance covers blank/whitespace names, both pickers,
 cancellation during review and after folder review, same-file reselection, and
@@ -243,3 +245,10 @@ The browser regression holds a terminal upload response after the server finishe
 processing. Controls must remain disabled during that gap and become available
 when the response is released; the next selection then creates its own receipt.
 Server-side job completion alone is not a browser-ready signal.
+
+All browser upload journeys explicitly name their synthetic collections. The
+extended acceptance checks cover assertions, entities, entity discovery, matter
+renaming, notebook/Report/review-decision conflicts, folder navigation, media
+preflight, email coverage, and loose-file preflight in addition to the regular
+intake and Report-bundle CI journeys. The refresh regression verifies both
+name-before-selection preservation and renewed refresh after clearing the draft.
