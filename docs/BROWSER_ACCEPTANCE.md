@@ -146,3 +146,6 @@ the intake-selection acceptance and does not require changes to its runner steps
 The standalone Dusk journey clears deployment environment settings before it
 constructs its disposable application, using the shared synthetic environment
 helper. This applies both to direct invocation and invocation through the runner.
+
+The Dusk journey checks that disabled-button overrides remain confined to the
+source library and preserve disabled styling elsewhere.

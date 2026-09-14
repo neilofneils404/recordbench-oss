@@ -127,8 +127,21 @@ def main():
             report['checks'].append('Contrast calculation composites transparent text and ancestor backgrounds')
             one('[data-assistant-collapse]').click()
             light = snapshot()
+            def outside_disabled_style():
+                return driver.execute_script("""
+                    const button=document.createElement('button');
+                    button.className='button button-danger'; button.disabled=true;
+                    button.textContent='Synthetic unrelated disabled action';
+                    document.body.append(button);
+                    const s=getComputedStyle(button);
+                    const result=[s.backgroundColor,s.color,s.opacity,s.borderColor];
+                    button.remove(); return result;
+                """)
+            outside_light = outside_disabled_style()
             Select(one('[data-theme-picker]')).select_by_value('dusk')
             wait.until(lambda _: one('html').get_attribute('data-theme') == 'dusk')
+            assert outside_disabled_style() == outside_light
+            report['checks'].append('Disabled buttons outside the source library retain their existing styles')
             one('.source-status-overview').screenshot(str(output / 'dusk-status.png'))
             one('.source-library-filters').screenshot(str(output / 'dusk-filters.png'))
             one('.source-bulk-toolbar').screenshot(str(output / 'dusk-bulk.png'))
