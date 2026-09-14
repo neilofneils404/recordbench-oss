@@ -1,18 +1,38 @@
 {% extends "workbench_base.html" %}
-{% block title %}Entity discovery coverage · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block title %}Suggested findings · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block content %}
 <main class="notebook-main">
-  <header class="notebook-heading"><div><p class="eyebrow">{{ matter.display_name }}</p><h1>Entity discovery coverage</h1></div></header>
+  <header class="notebook-heading"><div><p class="eyebrow">{{ matter.display_name }}</p><h1>Suggested findings</h1></div></header>
   {% with active='entities' %}{% include 'workbench_matter_tabs.html' %}{% endwith %}
   {% include 'workbench_retention_notice.html' %}
   <p><a href="{{ entities_url }}">People, places & things</a> · <a href="{{ return_to }}">Return to source review</a></p>
-  <p>{{ coverage.counts.processed }} units processed · {{ coverage.counts.pending }} pending · {{ coverage.counts.failed }} failed · {{ coverage.counts.invalidated }} changed</p>
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }} Saved progress is retained. Check the outcomes below before retrying; repeated capacity failures need operator attention.</div>{% endif %}
+  <section class="notebook-tool-card" aria-labelledby="readiness-heading">
+  <h2 id="readiness-heading">1. Check readiness</h2>
+  <p>Intake and processing make extracted text available. Discovery uses only the sealed units in this frozen review; later uploads are not added to it.</p>
+  <p>{{ coverage.source_total }} frozen sources · {{ coverage.uninventoried }} not yet inventoried · {{ coverage.source_counts.get('unavailable', 0) }} unavailable · {{ coverage.source_counts.get('invalidated', 0) }} changed.</p>
+  <p><a href="/matters/{{ matter.slug }}/full-review/{{ coverage.run_id }}/text">Inspect full-text and extraction coverage</a> · <a href="/matters/{{ matter.slug }}/full-review?run={{ coverage.run_id }}">Resume or start a text review</a> · <a href="{{ return_to }}">Return to the previous workflow</a></p>
+  <p>For missing inventories, inspect the text review and resume it when available. For missing extraction, repair source processing first. Changed sources require a new current-source review; retrying discovery cannot repair extraction or update a frozen population. Text review may use the configured model and remains a separate explicit action.</p>
+  </section>
+  <section class="notebook-tool-card" aria-labelledby="batch-heading">
+  <h2 id="batch-heading">2. Discover a bounded batch</h2>
+  <p>Discovery runs only when you choose a batch. Each button processes at most 10 units using deterministic rules, saving each unit separately. You can leave and return between batches.</p>
+  <p role="status">{{ coverage.counts.processed }} units processed · {{ coverage.counts.pending }} pending · {{ coverage.counts.failed }} failed · {{ coverage.counts.invalidated }} changed</p>
   <p>Extractor: {{ coverage.extractor_version }}. Processing does not establish complete recognition. Uninventoried sources remain outside processed coverage.</p>
+  <progress aria-label="Discovery units processed in this frozen inventory" value="{{ coverage.counts.processed }}" max="{{ coverage.unit_total or 1 }}"></progress>
+  {% if not coverage.counts.pending and not coverage.counts.failed %}<p>No runnable units remain in this inventory. This does not mean source processing or recognition is complete. Inspect extraction coverage, including empty units and missing OCR or transcription.</p>{% endif %}
+  {% if coverage.counts.failed %}<p>Retry processes up to 10 failed units only. Pending units use the normal discovery button. If failure repeats, inspect unit outcomes and ask the operator to resolve the extractor or capacity problem.</p>{% endif %}
   {% for action, label in [('discover','Discover next 10 units'),('retry_discovery','Retry failed discovery')] %}
-    {% if action == 'discover' or coverage.counts.failed %}<form method="post" action="/matters/{{ matter.slug }}/entities/actions">
+    {% if (action == 'discover' and coverage.counts.pending) or (action == 'retry_discovery' and coverage.counts.failed) %}<form data-discovery-batch method="post" action="/matters/{{ matter.slug }}/entities/actions">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="run_id" value="{{ coverage.run_id }}"><input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="return_to" value="{{ return_to }}"><button class="button button-secondary">{{ label }}</button>
     </form>{% endif %}
   {% endfor %}
+  <p data-discovery-progress role="status" hidden>Processing up to 10 units… Wait for the saved outcomes before starting another batch.</p>
+  </section>
+  <section class="notebook-tool-card" aria-labelledby="accept-heading"><h2 id="accept-heading">3. Review cited suggestions</h2>
+  <p><a href="{{ entities_url }}#entity-list-heading">Review people, things and date candidates</a>. Open each candidate and its original-source mentions, then explicitly save the identity and mention review statuses. Extracted suggestions are not verified findings; repeated names remain separate until a reviewer reconciles them.</p>
+  <p>For a date, open its original passage and choose Create event or assertion from the candidate. Check the raw date, ambiguity, timezone and source support before saving. A date mention does not establish an event or a person's role.</p>
+  <p><a href="/matters/{{ matter.slug }}/chronology?return_to={{ return_to|urlencode }}">Open chronology</a> to review human-created events and assertions.</p></section>
   <section aria-labelledby="source-coverage-heading"><h2 id="source-coverage-heading">Frozen sources ({{ coverage.source_total }})</h2><p>{{ coverage.uninventoried }} not yet inventoried. Showing up to 50 sources.</p>
     {% for source in coverage.sources %}<article class="notebook-tool-card"><h3>{{ source.source_name }}</h3><p>{{ source.state }} · {{ source.unit_count }} units · {{ 'inventory sealed' if source.inventory_sealed else 'not yet inventoried' }}</p></article>{% endfor %}
     <nav aria-label="Source coverage pages">{% if coverage.source_page > 1 %}<a href="{{ coverage_url(target_source_page=coverage.source_page-1) }}">Previous sources</a>{% endif %} {% if coverage.source_page * 50 < coverage.source_total %}<a href="{{ coverage_url(target_source_page=coverage.source_page+1) }}">Next sources</a>{% endif %}</nav>
@@ -22,4 +42,5 @@
     <nav aria-label="Unit coverage pages">{% if coverage.page > 1 %}<a href="{{ coverage_url(target_page=coverage.page-1) }}">Previous units</a>{% endif %} {% if coverage.page * 50 < coverage.unit_total %}<a href="{{ coverage_url(target_page=coverage.page+1) }}">Next units</a>{% endif %}</nav>
   </section>
 </main>
+<script src="{{ url_for('static', path='guided-discovery.js') }}" defer></script>
 {% endblock %}

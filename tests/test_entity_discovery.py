@@ -195,12 +195,13 @@ def test_web_discovery_full_source_restore_export_and_purge(tmp_path, monkeypatc
         store.fail_review_run(run.run_id, 'Synthetic inventory fixture finished; no generation requested.')
         path = f'/matters/{slug}/entities'
         page = client.get(path)
-        assert page.status_code == 200 and 'Discover next 10 units' in page.text
+        assert page.status_code == 200 and 'Check readiness and discover suggestions' in page.text
         response = client.post(path + '/actions', data=dict(action='discover', run_id=run.run_id, return_to=f'/matters/{slug}?q=Alex'))
         assert response.status_code == 200 and '1 units processed' in response.text
         events = [event for event in store.audit_events(matter.matter_id) if event.action == 'entity.discovery_unit']
         assert len(events) == 1 and events[0].outcome == 'success'
-        assert 'data-discovery-unit' not in response.text
+        assert 'data-discovery-unit' in response.text
+        assert response.url.path == f'/matters/{slug}/entity-discovery/{run.run_id}'
         coverage_page = client.get(f'/matters/{slug}/entity-discovery/{run.run_id}')
         assert coverage_page.status_code == 200 and coverage_page.text.count('data-discovery-unit') == 1
         svc = bench.entity_service(matter)
