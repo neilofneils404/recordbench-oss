@@ -10,7 +10,9 @@ unextracted material.
 A search hit opens its existing document or recording inspection page at the
 matching section. Return to review context restores the complete search URL,
 including filters, page and population fingerprint. Ask using this source uses
-the existing single-source scope and also retains that return link. Return paths
+the existing single-source scope and retains that return link through question
+submission, status polling, completed answers and investigation startup/completion.
+Return paths
 are validated against the current matter; authorization is still checked at the
 destination. The link restores the search request, not a cached result snapshot.
 Changed populations continue to require the existing search refresh.
