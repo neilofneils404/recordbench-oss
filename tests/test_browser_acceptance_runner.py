@@ -345,3 +345,27 @@ def test_report_download_waits_for_completed_archive(tmp_path, suffix):
     assert module.completed_download(tmp_path, before, suffix) is None
     pending.unlink()
     assert module.completed_download(tmp_path, before, suffix) == target
+
+
+def test_standalone_dusk_clears_deployment_settings_before_app(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / 'scripts'))
+    spec = importlib.util.spec_from_file_location('standalone_dusk', ROOT / 'scripts/browser-accept-dusk.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for name in ('CASE_INTELLIGENCE_POSTGRES_DSN', 'CASE_INTELLIGENCE_POSTGRES_DSN_FILE',
+                 'CASE_REVIEW_RUNTIME_ROOT', 'RECORDBENCH_RUNTIME_ROOT'):
+        monkeypatch.setenv(name, 'synthetic-must-not-be-used')
+    monkeypatch.setattr(sys, 'argv', ['browser-accept-dusk.py', '--chrome-binary', '/synthetic/chrome',
+        '--chromedriver', '/synthetic/driver', '--output', str(tmp_path / 'screens')])
+    class AppBoundary(Exception):
+        pass
+    def check_app(*args, **kwargs):
+        assert 'CASE_INTELLIGENCE_POSTGRES_DSN' not in os.environ
+        assert 'CASE_INTELLIGENCE_POSTGRES_DSN_FILE' not in os.environ
+        assert 'CASE_REVIEW_RUNTIME_ROOT' not in os.environ
+        assert 'RECORDBENCH_RUNTIME_ROOT' not in os.environ
+        assert os.environ['CASE_INTELLIGENCE_STORAGE_RESERVE_GIB'] == '0'
+        raise AppBoundary
+    monkeypatch.setattr(module, 'create_workbench_app', check_app)
+    with pytest.raises(AppBoundary):
+        module.main()
