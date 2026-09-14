@@ -228,7 +228,8 @@ default.
 review, and ignores any late review response. It creates no receipt or upload
 session. The same files can be selected again. Previously saved receipts and
 upload recovery checkpoints remain available. During confirmation and transfer,
-selection cancellation is disabled; **Cancel upload** retains its existing
+file/folder inputs, picker buttons, collection naming, retry, and selection
+cancellation are disabled until the browser finishes handling the response; **Cancel upload** retains its existing
 semantics for a transfer already underway. Unrelated ingestion refresh waits
 while the user has an unconfirmed selection.
 
@@ -237,3 +238,8 @@ cancellation during review and after folder review, same-file reselection, and
 late response rejection alongside existing lost-response and receipt recovery.
 HTTP regression covers named direct uploads and whitespace rejection before
 source storage. No schema, model, or deployment change is required.
+
+The browser regression holds a terminal upload response after the server finishes
+processing. Controls must remain disabled during that gap and become available
+when the response is released; the next selection then creates its own receipt.
+Server-side job completion alone is not a browser-ready signal.

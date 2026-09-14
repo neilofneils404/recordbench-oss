@@ -1784,6 +1784,14 @@
     }
   };
 
+  const setUploadConfirmationBusy = (busy) => {
+    confirmingUploadPreflight = busy;
+    [fileInput, folderInput, fileChooser, folderChooser, uploadCollectionName,
+      uploadPreflightCancel, uploadPreflightRetry].forEach((control) => {
+      if (control) control.disabled = busy;
+    });
+  };
+
   const confirmUploadPreflight = async () => {
     if (confirmingUploadPreflight) return;
     if (uploadCollectionName) {
@@ -1799,8 +1807,7 @@
       previewSelectedFiles(files);
       return;
     }
-    confirmingUploadPreflight = true;
-    if (uploadPreflightCancel) uploadPreflightCancel.disabled = true;
+    setUploadConfirmationBusy(true);
     if (uploadPreflightConfirm) uploadPreflightConfirm.disabled = true;
     if (uploadPreflightState) uploadPreflightState.textContent = "Saving selected-file receipt";
     try {
@@ -1820,8 +1827,7 @@
       if (uploadPreflightStatus) uploadPreflightStatus.textContent = `${error.message} Your selection is still here. Try confirming again, or reselect the same files to resume.`;
       if (uploadPreflightConfirm) uploadPreflightConfirm.disabled = false;
     } finally {
-      confirmingUploadPreflight = false;
-      if (uploadPreflightCancel) uploadPreflightCancel.disabled = false;
+      setUploadConfirmationBusy(false);
     }
   };
 

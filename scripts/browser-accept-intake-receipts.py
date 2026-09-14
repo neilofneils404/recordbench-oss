@@ -161,9 +161,12 @@ def main():
                 wait.until(lambda current: current.execute_script('const r=arguments[0].getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight;', button))
                 button.click()
 
-            def completed(matter):
+            def completed_on_server(matter):
                 sessions = bench.workspace.recent_upload_sessions(matter.matter_id, ACTOR)
                 return sessions and all(s.state in {'complete', 'partial'} for s in sessions) and not any(bench.workspace.active_matter_work_counts(matter.matter_id).values())
+
+            def completed(matter):
+                return completed_on_server(matter) and driver.find_element(By.CSS_SELECTOR, '[data-file-chooser]').is_enabled()
 
             matter = create_matter('Synthetic nested receipt')
             require(driver.find_element(By.CSS_SELECTOR, '[data-upload-collection-name]').get_attribute('value') == '',
@@ -404,7 +407,30 @@ def main():
                 require(not receipts.recent(correction_matter.matter_id, ACTOR), 'Invalid name unexpectedly created a receipt')
                 field.clear()
                 field.send_keys('Corrected generated collection')
+                if index == 0:
+                    # Hold the final status response after durable processing has
+                    # completed, so server readiness cannot mask browser busy state.
+                    driver.execute_script(r"""
+                        window.completionFetch = window.fetch;
+                        window.fetch = async (...args) => {
+                            const response = await window.completionFetch(...args);
+                            if (/\/upload-sessions\/[^/?]+\?compact=1$/.test(String(args[0]))) {
+                                const payload = await response.clone().json();
+                                if (['complete', 'partial'].includes(payload.state) && !window.releaseUploadCompletion) {
+                                    await new Promise(resolve => { window.releaseUploadCompletion = resolve; });
+                                }
+                            }
+                            return response;
+                        };
+                    """)
                 confirm()
+                if index == 0:
+                    wait.until(lambda x: x.execute_script('return typeof window.releaseUploadCompletion === "function"'))
+                    until(lambda: completed_on_server(correction_matter), 'Held upload did not finish on the server')
+                    for selector in ('[data-file-input]', '[data-folder-input]', '[data-file-chooser]', '[data-folder-chooser]', '[data-upload-collection-name]', '[data-upload-preflight-cancel]'):
+                        require(not driver.find_element(By.CSS_SELECTOR, selector).is_enabled(), 'Upload control still enabled before browser confirmation finished: ' + selector)
+                    driver.execute_script('window.fetch = window.completionFetch; window.releaseUploadCompletion();')
+
                 until(lambda: completed(correction_matter), 'Corrected collection name could not confirm the same selected files')
                 corrected = receipts.recent(correction_matter.matter_id, ACTOR)
                 require(len(corrected) == 1 and corrected[0]['collection_name'] == 'Corrected generated collection',
@@ -420,7 +446,7 @@ def main():
                     wait.until(lambda x: x.find_element(By.CSS_SELECTOR, '[data-upload-preflight-state]').text == 'Selection receipt saved')
                     require(driver.find_element(By.CSS_SELECTOR, '[data-intake-receipt-open]').get_attribute('href') != old_link,
                         'A newly saved selection still points at its predecessor')
-                    record_check('A new unconfirmed selection hides the prior receipt link and confirmation opens its own receipt')
+                    record_check('Held completion disables intake controls until browser readiness; a subsequent selection opens its own receipt')
             record_check('Rejected collection names can be corrected without reselecting files or clearing storage, including storage-denied retries')
 
             full_matter = create_matter('Synthetic receipt capacity recovery')
