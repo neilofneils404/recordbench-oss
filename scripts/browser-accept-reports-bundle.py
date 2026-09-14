@@ -32,6 +32,24 @@ from case_intelligence.workbench import create_workbench_app  # noqa: E402
 ACTOR = "development-taylor-morgan"
 
 
+def completed_download(directory: Path, before: set[Path], suffix: str) -> Path | None:
+    paths = list(directory.iterdir())
+    if any(path.suffix == ".crdownload" for path in paths):
+        return None
+    for path in paths:
+        if path in before or path.suffix != suffix:
+            continue
+        try:
+            if not path.is_file() or path.stat().st_size == 0:
+                continue
+            if suffix in {".zip", ".docx"} and not zipfile.is_zipfile(path):
+                continue
+        except OSError:
+            continue  # Chrome may still be renaming its temporary download.
+        return path
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--chrome-binary", type=Path, required=True)
@@ -111,8 +129,7 @@ def main():
             def download(selector, suffix):
                 before = set(downloads.iterdir())
                 click(selector)
-                return wait.until(lambda _: next((path for path in downloads.iterdir()
-                    if path not in before and path.suffix == suffix), None))
+                return wait.until(lambda _: completed_download(downloads, before, suffix))
 
             go("/matters/new")
             fill("#matter-name", "Synthetic report acceptance")

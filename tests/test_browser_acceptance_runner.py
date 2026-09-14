@@ -321,3 +321,26 @@ def test_main_requires_both_journeys_to_pass(runner, tmp_path, monkeypatch, outc
     output = tmp_path / 'output'
     assert runner.main(['--output', str(output)]) == code
     assert json.loads((output / 'summary.json').read_text())['passed'] is (code == 0)
+
+
+@pytest.mark.parametrize("suffix", [".zip", ".docx"])
+def test_report_download_waits_for_completed_archive(tmp_path, suffix):
+    spec = importlib.util.spec_from_file_location("browser_reports", ROOT / "scripts/browser-accept-reports-bundle.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    previous = tmp_path / ("previous" + suffix)
+    with zipfile.ZipFile(previous, "w") as archive:
+        archive.writestr("synthetic.txt", "Previous synthetic download")
+    before = {previous}
+    target = tmp_path / ("current" + suffix)
+    target.touch()  # Chrome can reserve the final name before finishing transfer.
+    assert module.completed_download(tmp_path, before, suffix) is None
+    target.write_bytes(b"PK\x03\x04incomplete synthetic archive")
+    assert module.completed_download(tmp_path, before, suffix) is None
+    with zipfile.ZipFile(target, "w") as archive:
+        archive.writestr("synthetic.txt", "Complete synthetic download")
+    pending = tmp_path / "current.crdownload"
+    pending.touch()
+    assert module.completed_download(tmp_path, before, suffix) is None
+    pending.unlink()
+    assert module.completed_download(tmp_path, before, suffix) == target
