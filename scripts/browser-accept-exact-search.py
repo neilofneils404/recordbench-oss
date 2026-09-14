@@ -25,10 +25,19 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from case_intelligence.generation import UnavailableGenerator
 from case_intelligence.workbench import create_workbench_app
 
 ACTOR = "development-taylor-morgan"
+
+
+class SyntheticAnswerGenerator:
+    available = True
+
+    def generate(self, **kwargs):
+        evidence = kwargs["evidence"]
+        return {"answerable": bool(evidence), "claims": [
+            {"text": item.excerpt, "evidence_ids": [item.evidence_id]}
+            for item in evidence[:1]], "limitation": None, "missing_information": ""}
 
 
 def main():
@@ -45,7 +54,7 @@ def main():
             os.environ.pop(name)
     with tempfile.TemporaryDirectory(prefix="recordbench-exact-search-") as temporary:
         app = create_workbench_app(Path(temporary).resolve() / "runtime", auth_mode="test",
-            generator=UnavailableGenerator(), learned_retrieval=False, background_ingestion=False)
+            generator=SyntheticAnswerGenerator(), learned_retrieval=False, background_ingestion=False)
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         base = f"http://127.0.0.1:{listener.getsockname()[1]}"
@@ -127,6 +136,10 @@ def main():
             click(driver.find_element(By.CSS_SELECTOR, '.find-document form button'))
             wait.until(lambda d: "source_set=" in d.current_url and "#matter-question" in d.current_url)
             assert Select(driver.find_element(By.ID, "answer-source-set")).first_selected_option.text.startswith("Only")
+            fill("matter-question", "What does the bicycle record say?")
+            click(driver.find_element(By.CSS_SELECTOR, "[data-question-form] .ask-button"))
+            wait.until(lambda d: d.current_url.endswith("#latest"))
+            assert "entity_return_to=" in driver.current_url
             click(driver.find_element(By.XPATH, '//a[text()="Return to review context"]'))
             wait.until(lambda d: d.current_url == search_context)
             assert len(driver.find_elements(By.CSS_SELECTOR, ".find-document")) == 6

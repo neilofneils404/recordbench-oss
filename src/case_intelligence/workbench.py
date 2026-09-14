@@ -7603,7 +7603,7 @@ def create_workbench_app(
         fragment_url = _query_url(
             f"/matters/{matter.slug}/assistant", conversation=job.conversation_id
         )
-        return {
+        projected = {
             "job_id": job.job_id,
             "conversation_id": job.conversation_id,
             "conversation_title": conversation.title,
@@ -7644,6 +7644,11 @@ def create_workbench_app(
                 )
             ],
         }
+
+        origin = _source_review_return_href(matter.slug, request.query_params.get("entity_return_to", ""))
+        for key in ("status_url", "result_url", "cancel_url", "retry_url", "workspace_url", "fragment_url", "open_url"):
+            projected[key] = _entity_context_href(projected[key], origin)
+        return projected
 
     @app.get("/health")
     def health() -> dict[str, object]:
@@ -9447,7 +9452,7 @@ def create_workbench_app(
         }
 
     def research_status_projection(
-        matter: MatterRecord, job: ResearchJobRecord
+        matter: MatterRecord, job: ResearchJobRecord, *, origin: str = ""
     ) -> dict[str, object]:
         progress = (
             round((job.completed_steps / job.total_steps) * 100)
@@ -9481,7 +9486,7 @@ def create_workbench_app(
             "evidence_count": job.evidence_count,
             **eta,
             "terminal": job.state in {"succeeded", "failed", "cancelled"},
-            "result_url": result_url,
+            "result_url": _entity_context_href(result_url, origin),
         }
 
     @app.get("/matters/{slug}/research", response_class=HTMLResponse,
@@ -9668,7 +9673,7 @@ def create_workbench_app(
         except KeyError as exc:
             raise HTTPException(404, "Research run not found") from exc
         return JSONResponse(
-            research_status_projection(matter, job),
+            research_status_projection(matter, job, origin=_source_review_return_href(slug, request.query_params.get("entity_return_to", ""))),
             headers={"Cache-Control": "no-store"},
         )
 
@@ -15425,6 +15430,7 @@ def create_workbench_app(
     ):
         wants_json = "application/json" in request.headers.get("accept", "")
         context = auth_context(request)
+        origin = _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
         try:
             matter = authorized_matter(request, slug)
             if source_set:
@@ -15497,11 +15503,12 @@ def create_workbench_app(
                     f"/matters/{slug}",
                     conversation=research_conversation.conversation_id,
                     notice="Broader investigation saved in this conversation",
+                    entity_return_to=origin,
                 )
                 if wants_json:
                     return JSONResponse(
                         {
-                            **research_status_projection(matter, research),
+                            **research_status_projection(matter, research, origin=origin),
                             "workspace_url": workspace_url,
                         },
                         status_code=202 if created else 200,
@@ -15569,7 +15576,7 @@ def create_workbench_app(
             if wants_json:
                 return JSONResponse({"message": str(exc)}, status_code=409)
             return RedirectResponse(
-                _query_url(f"/matters/{slug}", conversation=conversation, error=str(exc)),
+                _query_url(f"/matters/{slug}", conversation=conversation, error=str(exc), entity_return_to=origin),
                 status_code=303,
             )
 
