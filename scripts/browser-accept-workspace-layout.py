@@ -102,6 +102,9 @@ def main(argv=None):
         thread.start()
         options = Options()
         options.binary_location = str(args.chrome_binary)
+        # Match the existing disposable journeys on hosted Linux runners.
+        if sys.platform == "linux":
+            options.add_argument("--no-sandbox")
         for flag in ("--headless=new", "--disable-dev-shm-usage", "--window-size=1440,900"):
             options.add_argument(flag)
         driver = None
@@ -383,8 +386,11 @@ def main(argv=None):
             wait.until(lambda _: find("[data-assistant-expand]").is_displayed())
             js("arguments[0].disabled=true", question)
             viewport(1024, 768)
-            wait.until(lambda _: driver.switch_to.active_element == find("[data-assistant-collapse]"))
+            wait.until(lambda _: "assistant-collapsed" not in find("body").get_attribute("class")
+                and question.is_displayed()
+                and driver.switch_to.active_element == find("[data-assistant-collapse]"))
             js("arguments[0].disabled=false", question)
+            reachable(question)
             question.clear()
             checks.append("Assistant preserves drafts and desktop preference when compact navigation opens; resizing preserves visible focus and provides an enabled fallback when the question field is disabled")
 

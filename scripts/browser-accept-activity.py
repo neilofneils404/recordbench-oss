@@ -91,6 +91,9 @@ def main():
         thread.start()
         options = Options()
         options.binary_location = str(args.chrome_binary)
+        # Match the existing disposable journeys on hosted Linux runners.
+        if sys.platform == "linux":
+            options.add_argument("--no-sandbox")
         for flag in ('--headless=new', '--disable-dev-shm-usage', '--no-proxy-server', '--window-size=1024,768'):
             options.add_argument(flag)
         driver = None
