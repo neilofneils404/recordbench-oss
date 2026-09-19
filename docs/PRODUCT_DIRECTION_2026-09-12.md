@@ -16,6 +16,11 @@ knowledge and genuinely scalable collection review.
 
 ## Current-state addendum: after slice 19 first adapter
 
+September 19 landing order: the [cruise](EXIT_ALPHA_CRUISE.md) now selects
+[source-backed graph exploration](GRAPH_MULTIMODAL_EXPLORATION.md).
+This supersedes the no-next-step statement in the older receipt below; it does
+not alter that receipt's historical implementation or acceptance evidence.
+
 This addendum supersedes earlier implementation-status and queue claims below.
 [PR #85](https://github.com/neilofneils404/recordbench-oss/pull/85) landed the
 first single-run full-text synthesis adapter at `95f290bf350742bc77c915eb0269c774069f3633`.

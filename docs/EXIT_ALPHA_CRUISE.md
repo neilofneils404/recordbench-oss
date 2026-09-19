@@ -18,9 +18,9 @@ The [September 12 assessment](PRODUCT_DIRECTION_2026-09-12.md) identifies gaps
 and subsequent delivery stages. Slice 19's first single-run adapter is landed
 as recorded below. Multiple-run aggregation, new questions, background material,
 matter memory, production imports and larger capacity remain separately scoped
-work. This receipt selects no further product step.
+work. The September 19 landing order below selects the next bounded exploration step.
 
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-19
 
 ## Current upstream receipt
 
@@ -144,11 +144,18 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 7 | Slice **17** — entity discovery and reviewer reconciliation | Done (#79) |
 | 8 | Slice **18** — evidence-backed relationships and events | Done (#82) |
 | 9 | Slice **19** — first substep: synthesize one terminal full-text run for its criterion | Done — first adapter only (#85) |
+| 10 | Slice **20** — source-backed graph exploration from a saved entity | **Next** — implemented and tested locally; upstream acceptance pending |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
-No further product step is selected. Later slice-19 work and other proposals
-require a separate explicit cruise update. Existing holds and parallel
-release-readiness requirements remain unchanged.
+The September 19 landing order selects slice 20 under
+[graph and multimodal exploration](GRAPH_MULTIMODAL_EXPLORATION.md) and its
+[bounded implementation brief](product-slices/20-graph-exploration.md).
+Land this cruise update and slice 20 before starting slice 21, further visual
+experiments or additional work on PR #34. High-resolution retrieval work remains
+local and outside this PR. Existing text and transcript support is not native
+image understanding. Later slice-19 work, model deployment and larger-capacity
+claims require their own acceptance. Existing holds and parallel release-readiness
+requirements remain.
 
 Slice **12** needed no further product PR. **Review all extracted text** is
 already on `main` from [#59](https://github.com/neilofneils404/recordbench-oss/pull/59)

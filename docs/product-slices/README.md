@@ -37,11 +37,16 @@ specifications; the cruise takes precedence over historical sequencing below.
 
 ### Current implementation snapshot
 
+The September 19 landing order selects [20: graph exploration](20-graph-exploration.md).
+Its implementation and acceptance status is recorded in the cruise; this is not a
+merged-release claim. Slice 21 and further visual experiments are held until
+slice 20 lands.
+
 At verified implementation snapshot `95f290bf350742bc77c915eb0269c774069f3633`, slices 16–18 are
 landed and slice 19's **first single-run adapter only** is Done. The
 [cruise receipt](../EXIT_ALPHA_CRUISE.md#current-upstream-receipt) records
-final-head acceptance and independent post-merge checks. No further product
-step is selected. Remaining 00/08 PostgreSQL acceptance, 09 operators and
+final-head acceptance and independent post-merge checks. That receipt predates
+the September 19 selection above. Remaining 00/08 PostgreSQL acceptance, 09 operators and
 later slice-19 work retain their separate scopes.
 
 ### Historical implementation snapshots
