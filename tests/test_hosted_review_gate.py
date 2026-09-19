@@ -108,6 +108,8 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch, qu
                              "body": "RecordBench hosted review gate: previous acceptance"}]
                 approvals.append((path, data))
                 return {"id": 11}
+            if "/events?" in path:
+                return []
             if "/statuses/" in path:
                 statuses.append(data["state"])
                 return {}
@@ -157,6 +159,8 @@ def test_shared_head_does_not_share_native_approval_or_approve_another_base(monk
                             if number == 4 else [])
                 issued.append((number, data["event"], data["commit_id"]))
                 return {"id": number}
+            if "/events?" in path:
+                return []
             if "/statuses/" in path:
                 return {}
             if "/comments?" in path:
@@ -198,6 +202,8 @@ def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):
                 assert data["event"] == "REQUEST_CHANGES"
                 withdrawn.append(data["commit_id"])
             return {"id": 11}
+        if "/events?" in path:
+            return []
         if "/statuses/" in path:
             statuses.append(data["state"])
             return {}
@@ -444,6 +450,8 @@ def test_optional_policy_passes_without_fetching_reviews_or_requesting_codex(mon
                          "body": GATE.APPROVAL_PREFIX + " revalidation required"}]
             reviews.append(data)
             return {"id": 11}
+        if "/events?" in path:
+            return []
         if "/statuses/" in path:
             statuses.append(data)
             return {}
@@ -484,6 +492,8 @@ def test_opt_in_change_during_gate_never_publishes_success(monkeypatch, change_a
                 return []
             reviews.append(data["event"])
             return {"id": 11}
+        if "/events?" in path:
+            return []
         if "/statuses/" in path:
             statuses.append(data["state"])
             return {}
@@ -501,3 +511,56 @@ def test_opt_in_change_during_gate_never_publishes_success(monkeypatch, change_a
         GATE.main()
     assert statuses == ["pending"]
     assert reviews == ([] if change_at == "inspection" else ["APPROVE", "REQUEST_CHANGES"])
+
+
+@pytest.mark.parametrize("permission,expected", [
+    ("read", True), ("triage", True), ("write", False), ("maintain", False), ("admin", False),
+])
+def test_label_removal_requires_live_maintainer_permission(monkeypatch, permission, expected):
+    events = [
+        {"id": 1, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
+        {"id": 2, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
+         "actor": {"login": "fixture-reviewer"}},
+    ]
+
+    def request(path, data=None, *, method=None):
+        if "/events?" in path:
+            return events
+        if path.endswith("/collaborators/fixture-reviewer/permission"):
+            return {"permission": permission}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(GATE, "request", request)
+    assert GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []}) is expected
+
+
+def test_label_event_history_is_paginated_and_readding_opts_in(monkeypatch):
+    unrelated = {"id": 1, "event": "labeled", "label": {"name": "documentation"}}
+    events = [
+        {"id": 101, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
+        {"id": 102, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
+         "actor": {"login": "fixture-reviewer"}},
+        {"id": 103, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
+        {"id": 104, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL}, "actor": None},
+    ]
+
+    def request(path, data=None, *, method=None):
+        if path.endswith("page=1"):
+            return [unrelated] * 100
+        if path.endswith("page=2"):
+            return events
+        if path.endswith("/collaborators/fixture-reviewer/permission"):
+            return {"permission": "write"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(GATE, "request", request)
+    assert GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []})
+
+
+def test_missing_label_history_fails_closed(monkeypatch):
+    def request(path, data=None, *, method=None):
+        raise RuntimeError("History unavailable")
+
+    monkeypatch.setattr(GATE, "request", request)
+    with pytest.raises(RuntimeError, match="History unavailable"):
+        GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []})

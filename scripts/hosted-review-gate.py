@@ -47,8 +47,40 @@ CODE_ONLY_ROW = re.compile(
 
 
 def requires_hosted_review(pr: dict) -> bool:
-    """Only the explicit PR label opts into the strict hosted review policy."""
+    """The current label can always request stricter review."""
     return any(label["name"] == REQUIRED_LABEL for label in pr.get("labels", []))
+
+
+def effective_hosted_review(prefix: str, number: int, pr: dict) -> bool:
+    """An opt-in persists until a write/maintain/admin actor removes the label.
+
+    Triage may manage labels, so current absence alone cannot authorize opt-out.
+    Read the complete public issue event history on every policy inspection.
+    """
+    transitions = []
+    for page in range(1, 101):
+        events = request(f"{prefix}/issues/{number}/events?per_page=100&page={page}")
+        transitions.extend(event for event in events
+            if event.get("event") in {"labeled", "unlabeled"}
+            and (event.get("label") or {}).get("name") == REQUIRED_LABEL)
+        if len(events) < 100:
+            break
+    else:
+        raise RuntimeError("Label event limit exceeded")
+    required = False
+    permissions = {}
+    for event in sorted(transitions, key=lambda event: event["id"]):
+        if event["event"] == "labeled":
+            required = True
+            continue
+        login = (event.get("actor") or {}).get("login", "")
+        if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
+            continue
+        if login not in permissions:
+            permissions[login] = request(f"{prefix}/collaborators/{login}/permission").get("permission")
+        if permissions[login] in {"write", "maintain", "admin"}:
+            required = False
+    return requires_hosted_review(pr) or required
 
 
 def comment_time(comment: dict) -> datetime:
@@ -194,7 +226,6 @@ def main() -> int:
         return 0
     head = pr["head"]["sha"]
     base = pr["base"]["sha"]
-    required = requires_hosted_review(pr)
     review_path = f"{prefix}/pulls/{number}/reviews"
     request(f"{prefix}/statuses/{head}", {"state": "pending", "context": CONTEXT,
         "description": "Rechecking current-commit hosted review policy",
@@ -218,6 +249,7 @@ def main() -> int:
             "body": f"{APPROVAL_PREFIX} PR #{number} requires gate revalidation before approval."})
     if pr["base"]["ref"] != pr["base"]["repo"]["default_branch"]:
         return 0
+    required = effective_hosted_review(prefix, number, pr)
     state, description = "success", OPTIONAL_DESCRIPTION
     if required:
         comments = []
@@ -274,7 +306,7 @@ def main() -> int:
         current = request(f"{prefix}/pulls/{number}")
         return (current["state"] == "open" and current["head"]["sha"] == head
                 and current["base"]["sha"] == base and current["base"]["ref"] == pr["base"]["ref"]
-                and requires_hosted_review(current) == required)
+                and effective_hosted_review(prefix, number, current) == required)
 
     if not unchanged():
         raise RuntimeError("PR, base or hosted-review opt-in changed during inspection; rerun the gate")

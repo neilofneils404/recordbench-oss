@@ -119,10 +119,22 @@ A maintainer opts a PR into strict hosted review by adding the exact label
 `require-hosted-review`. Review commands (`@codex review` and
 `@codex security review`) alone request advisory review and do not opt in.
 Adding the label does not launch reviews; request them deliberately. Removing
-the label restores the default optional policy. Both label events rerun the
-workflow. Keep automatic code review disabled in the Codex GitHub integration's
+the label restores the default optional policy only when the removal actor has
+current write, maintain or admin permission. The gate reconstructs label history
+and fails closed if history is unavailable. A triage-level removal cannot disable
+strict review; a maintainer can add and remove the label again to authorize
+opt-out. Both label events rerun the workflow. Keep automatic code review disabled in the Codex GitHub integration's
 repository settings; Actions policy does not control that separate setting.
 No repository workflow posts review commands on open or synchronize.
+
+Policy changes on an already-open PR require the
+[draft-first procedure](../CONTRIBUTING.md#pull-requests): disable auto-merge,
+convert the PR to draft and confirm that state before changing the label. Keep
+it draft until the resulting gate run finishes and publishes the new policy's
+status and native review. A failed run leaves the PR draft until corrected.
+Label events alone are not an atomic merge barrier; the synchronous draft
+transition prevents the old approval from authorizing a merge while Actions
+queues. Only return the PR to ready after that revalidation.
 
 For opted-in PRs, the gate requires completed GitHub Codex code and security
 reviews on the current head (or the narrow security-quota exception below),

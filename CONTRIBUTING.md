@@ -151,13 +151,25 @@ synthetic-data provenance and disclosure risk before merging.
 
 The required `hosted-review-gate` status passes by default with “Hosted review
 not required”; it does not request Codex work. To make hosted reviews a merge
-requirement for a specific PR, a maintainer adds the exact label
+requirement for a specific PR, a maintainer uses the draft-first procedure below to add the exact label
 `require-hosted-review`, then requests the reviews they want to run. With that
 label, both current-head code and security review (or the documented security
 quota exception), reconciled findings and full-head maintainer acceptance are
-required. A review command alone does not opt in; removing the label restores
-the default policy. Label changes rerun the gate and invalidate an in-flight
+required. A review command alone does not opt in. Only a label removal by an account
+with current write, maintain or admin permission restores the default policy.
+The gate checks label history, so a triage user removing the label cannot
+disable an existing opt-in. A maintainer can add and remove the label again
+to authorize opt-out after an unauthorized removal. Label changes rerun the gate and invalidate an in-flight
 policy approval if the opt-in state changes.
+
+To change review policy on an existing PR, first disable auto-merge and convert
+it to draft (`gh pr merge NUMBER --disable-auto`, then `gh pr ready NUMBER --undo`).
+Confirm the PR is draft before adding or removing the label. Keep it draft until
+the resulting gate run finishes and its status/native review reflect the new
+policy; then mark it ready (`gh pr ready NUMBER`). If the run fails, leave it draft
+and fix or rerun it. GitHub label events are asynchronous: adding a label alone
+does not immediately invalidate an old approval. Draft state prevents a merge
+while Actions queues. Do not enable auto-merge or merge during a policy change.
 
 The gate retains its native, PR-specific policy approval so existing branch
 protections can stay in place. A default approval records only that hosted
