@@ -9,6 +9,7 @@ import socket
 import sys
 import tempfile
 import threading
+from urllib.parse import urlsplit
 
 import uvicorn
 from selenium import webdriver
@@ -77,9 +78,10 @@ def main():
             login = find('.local-login-form button')
             js('arguments[0].scrollIntoView({block:"center",behavior:"instant"})', login)
             login.click()
-            wait.until(lambda _: '/matters/new' in driver.current_url)
+            wait.until(lambda _: urlsplit(driver.current_url).path == '/matters/new')
+            wait.until(lambda _: find('#matter-name').is_displayed())
             session = driver.get_cookie(SESSION_COOKIE)
-            assert session and session['secure'] and session['httpOnly']
+            assert session and session['secure'] and session['httpOnly'], 'Authenticated session must be Secure and HttpOnly'
             report['checks'].append('Local login creates a Secure HttpOnly session at 320px')
             find('#matter-name').send_keys('Synthetic account-controls matter with a long name')
             find('#matter-descriptor').send_keys('Synthetic browser acceptance')
