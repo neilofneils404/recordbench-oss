@@ -80,7 +80,7 @@ def test_refresh_fails_when_navigation_does_not_finish(intake_script, stalled_do
 
 def receipt(path, **values):
     path.write_text(json.dumps({'passed': True, 'synthetic_only': True,
-        'checks': ['Generated check'] * 12, **values}))
+        'checks': ['Generated check'] * 18, **values}))
 
 
 def test_pins_match_browser_driver_version_and_official_archives(runner):
@@ -181,6 +181,21 @@ def test_artifacts_are_bounded_allowlisted_and_exclude_runtime_and_downloads(run
     assert sum(path.stat().st_size for path in output.iterdir()) == 900 - remaining
 
 
+
+def test_zoom_evidence_is_retained_without_collecting_profile_data(runner, tmp_path):
+    raw, output = tmp_path / 'raw', tmp_path / 'output'
+    raw.mkdir()
+    expected = {f'zoom-{percent}-{page}.png' for percent in (125, 150, 200, 400)
+        for page in ('notes', 'sources')}
+    for name in expected:
+        (raw / name).write_bytes(b'Generated synthetic screenshot')
+    (raw / 'zoom-profile.json').write_text('Generated profile state must not be collected')
+    remaining, omitted = runner.collect_artifacts(raw, output, tmp_path / 'absent.log', 10000)
+    assert {path.name for path in output.iterdir()} == expected
+    assert omitted == []
+    assert remaining == 10000 - sum(path.stat().st_size for path in output.iterdir())
+
+
 def test_environment_excludes_deployment_and_proxy_settings(runner, tmp_path, monkeypatch):
     for key in ('CASE_INTELLIGENCE_POSTGRES_DSN', 'DATABASE_URL', 'HTTP_PROXY', 'HTTPS_PROXY', 'PYTHONHOME'):
         monkeypatch.setenv(key, 'generated-untrusted-value')
@@ -201,8 +216,9 @@ def test_existing_output_is_preserved_and_no_journey_runs(runner, tmp_path, monk
     assert marker.read_text() == 'Generated old result'
 
 
-@pytest.mark.parametrize('failure', ['exit', 'timeout', 'missing', 'failed', 'none'])
-def test_all_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_path, monkeypatch, failure):
+@pytest.mark.parametrize('failure_position', [1, 4, 6, 7])
+@pytest.mark.parametrize('failure', ['exit', 'timeout', 'missing', 'failed', 'truncated', 'none'])
+def test_all_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_path, monkeypatch, failure, failure_position):
     scratch, output = tmp_path / 'scratch', tmp_path / 'output'
     scratch.mkdir()
     output.mkdir()
@@ -213,9 +229,13 @@ def test_all_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_pa
         raw = Path(command[command.index('--output') + 1])
         log.write_text('Generated child output')
         name = 'receipt-browser-result.json' if len(commands) == 1 else 'receipt.json'
-        if failure != 'missing' or len(commands) != 1:
-            receipt(raw / name, passed=failure != 'failed' or len(commands) != 1)
-        if len(commands) == 1:
+        failing_journey = len(commands) == failure_position
+        if failure != 'missing' or not failing_journey:
+            values = {'passed': failure != 'failed' or not failing_journey}
+            if failure == 'truncated' and failing_journey:
+                values['checks'] = ['Generated incomplete check'] * {1: 10, 4: 17, 6: 11, 7: 5}[failure_position]
+            receipt(raw / name, **values)
+        if failing_journey:
             if failure == 'exit':
                 return 9  # A success receipt must not mask a process error.
             if failure == 'timeout':
@@ -224,11 +244,15 @@ def test_all_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_pa
 
     monkeypatch.setattr(runner, 'run_process', run)
     results = runner.run_journeys(Path('/generated/chrome'), Path('/generated/driver'), scratch, output, 1)
-    assert len(commands) == 3
+    assert len(commands) == 7
     assert '--verify-readiness' in commands[2]
     assert 'browser-accept-dusk.py' in commands[1][1]
-    assert results[0]['passed'] is (failure == 'none')
-    assert all(result['passed'] for result in results[1:])
+    assert 'browser-accept-workspace-layout.py' in commands[3][1]
+    assert 'browser-accept-activity.py' in commands[4][1]
+    assert 'browser-accept-zoom.py' in commands[5][1]
+    assert 'browser-accept-account-controls.py' in commands[6][1]
+    assert results[failure_position - 1]['passed'] is (failure == 'none')
+    assert all(result['passed'] for index, result in enumerate(results) if index != failure_position - 1)
     assert json.loads((output / 'journeys.json').read_text()) == results
 
 
@@ -314,7 +338,9 @@ def test_mismatched_driver_version_pin_is_rejected(runner, tmp_path, monkeypatch
         runner.browser_pins('linux64')
 
 
-@pytest.mark.parametrize('outcomes,code', [([True, False, True], 1), ([True, True, False], 1), ([True, True, True], 0), ([True, True], 1), ([], 1)])
+@pytest.mark.parametrize('outcomes,code', [
+    ([index != failing for index in range(7)], 1) for failing in range(7)
+] + [([True] * 7, 0), ([True] * 6, 1), ([], 1)])
 def test_main_requires_all_journeys_to_pass(runner, tmp_path, monkeypatch, outcomes, code):
     monkeypatch.setattr(runner, 'install_browser', lambda *_: (Path('/generated/chrome'), Path('/generated/driver'), '1.2.3.4'))
     monkeypatch.setattr(runner, 'host_platform', lambda: 'linux64')
@@ -369,3 +395,79 @@ def test_standalone_dusk_clears_deployment_settings_before_app(tmp_path, monkeyp
     monkeypatch.setattr(module, 'create_workbench_app', check_app)
     with pytest.raises(AppBoundary):
         module.main()
+
+
+@pytest.fixture
+def workspace_layout_script(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / 'scripts'))
+    spec = importlib.util.spec_from_file_location('browser_workspace_layout', ROOT / 'scripts/browser-accept-workspace-layout.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize('existing', ['receipt', 'directory', 'symlink'])
+def test_workspace_layout_preserves_existing_evidence(workspace_layout_script, tmp_path, existing):
+    output = tmp_path / 'output'
+    original = tmp_path / 'original'
+    original.mkdir()
+    if existing == 'symlink':
+        output.symlink_to(original, target_is_directory=True)
+    else:
+        output.mkdir()
+        if existing == 'receipt':
+            (output / 'receipt.json').write_text('Generated previous receipt')
+        else:
+            (output / 'partial').mkdir()
+    with pytest.raises(ValueError, match='existing results were preserved'):
+        workspace_layout_script.prepare_output(output)
+    if existing == 'receipt':
+        assert (output / 'receipt.json').read_text() == 'Generated previous receipt'
+    elif existing == 'directory':
+        assert (output / 'partial').is_dir()
+    else:
+        assert output.is_symlink()
+        assert list(original.iterdir()) == []
+
+
+@pytest.mark.parametrize('runner_precreated', [False, True])
+def test_workspace_layout_accepts_only_fresh_empty_output(workspace_layout_script, tmp_path, runner_precreated):
+    output = tmp_path / 'output'
+    if runner_precreated:
+        output.mkdir()
+    workspace_layout_script.prepare_output(output)
+    assert output.is_dir() and list(output.iterdir()) == []
+
+
+@pytest.mark.parametrize('capture_fails', [False, True])
+def test_workspace_failure_receipt_cannot_remain_successful(workspace_layout_script, tmp_path, capture_fails):
+    driver = Mock()
+    if capture_fails:
+        driver.save_screenshot.side_effect = RuntimeError('Synthetic disconnected driver')
+    report = {'passed': True, 'synthetic_only': True, 'checks': ['Earlier passing check']}
+    workspace_layout_script.failure_evidence(tmp_path, driver, report, AssertionError('Synthetic source filename is clipped'))
+    saved = json.loads((tmp_path / 'receipt.json').read_text())
+    assert saved['passed'] is False
+    assert saved['checks'] == ['Earlier passing check']
+    assert saved['error'] == {'type': 'AssertionError', 'message': 'Synthetic source filename is clipped'}
+    driver.save_screenshot.assert_called_once_with(str(tmp_path / 'failure.png'))
+    assert ('screenshot_error' in saved) is capture_fails
+
+
+def test_standalone_workspace_layout_clears_deployment_settings_before_app(workspace_layout_script, tmp_path, monkeypatch):
+    for name in ('CASE_INTELLIGENCE_POSTGRES_DSN', 'CASE_INTELLIGENCE_POSTGRES_DSN_FILE',
+                 'CASE_REVIEW_RUNTIME_ROOT', 'RECORDBENCH_RUNTIME_ROOT'):
+        monkeypatch.setenv(name, 'synthetic-must-not-be-used')
+
+    class AppBoundary(Exception):
+        pass
+
+    def check_app(*args, **kwargs):
+        assert all('synthetic-must-not-be-used' != value for value in os.environ.values())
+        assert os.environ['CASE_INTELLIGENCE_STORAGE_RESERVE_GIB'] == '0'
+        raise AppBoundary
+
+    monkeypatch.setattr(workspace_layout_script, 'create_workbench_app', check_app)
+    with pytest.raises(AppBoundary):
+        workspace_layout_script.main(['--chrome-binary', '/synthetic/chrome', '--chromedriver', '/synthetic/driver',
+            '--output', str(tmp_path / 'screens')])

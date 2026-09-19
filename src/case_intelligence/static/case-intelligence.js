@@ -2993,30 +2993,146 @@
   window.addEventListener("pagehide", () => window.clearTimeout(readinessTimer));
 })();
 
+(() => {
+  const main = document.querySelector("main");
+  const skip = document.querySelector(".skip-link");
+  if (!main || !skip) return;
+  if (!main.id) main.id = "main-content";
+  skip.href = `#${main.id}`;
+  main.tabIndex = -1;
+  skip.addEventListener("click", (event) => {
+    event.preventDefault();
+    main.focus({ preventScroll: true });
+    main.scrollIntoView({ block: "start", behavior: "instant" });
+  });
+})();
+
+/* One set of destinations: direct links when the workspace has room, a named
+   section navigator when panels or enlarged text leave less working space. */
+(() => {
+  const tabs = document.querySelector(".matter-section-tabs");
+  if (!tabs) return;
+  const links = Array.from(tabs.querySelectorAll(":scope > a"));
+  if (!links.length) return;
+  const disclosure = document.createElement("details");
+  disclosure.className = "matter-section-disclosure";
+  const summary = document.createElement("summary");
+  const current = links.find((link) => link.getAttribute("aria-current") === "page");
+  const title = document.createElement("span");
+  title.textContent = current ? current.textContent.trim() : "Case workspace";
+  const caption = document.createElement("small");
+  caption.textContent = "Current section";
+  const copy = document.createElement("span");
+  copy.className = "section-current";
+  copy.append(caption, title);
+  summary.append(copy);
+  summary.setAttribute("aria-label", `Current section: ${title.textContent}. Change section`);
+  const choices = document.createElement("div");
+  choices.className = "section-destinations";
+  disclosure.append(summary, choices);
+  links.forEach((link) => {
+    const description = link.dataset.sectionDescription;
+    if (!description) return;
+    const detail = document.createElement("small");
+    detail.className = "section-description";
+    detail.textContent = description;
+    link.append(detail);
+  });
+  const place = () => {
+    // A content breakpoint, scaled with the user's root font size. Direct links
+    // also wrap as a fallback, so a long label can never become unreachable.
+    const narrow = tabs.clientWidth < 70 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const focused = document.activeElement;
+    if (narrow && !disclosure.isConnected) {
+      tabs.classList.add("sections-compact");
+      tabs.prepend(disclosure);
+      links.forEach((link) => choices.append(link));
+      if (links.some((link) => link.contains(focused))) {
+        disclosure.open = true;
+        focused.focus({ preventScroll: true });
+      }
+    } else if (!narrow && disclosure.isConnected) {
+      links.forEach((link) => tabs.append(link));
+      disclosure.remove();
+      tabs.classList.remove("sections-compact");
+      if (focused === summary) (current || links[0]).focus({ preventScroll: true });
+      else if (links.some((link) => link.contains(focused))) focused.focus({ preventScroll: true });
+    }
+  };
+  disclosure.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !disclosure.open) return;
+    event.preventDefault();
+    disclosure.open = false;
+    summary.focus();
+  });
+  place();
+  new ResizeObserver(place).observe(tabs);
+  window.addEventListener("resize", place);
+  document.fonts?.ready.then(place);
+})();
+
 /* A workspace-wide activity drawer keeps background work visible across pages. */
 (() => {
   const body = document.body;
   const drawer = document.querySelector("[data-activity-drawer]");
+  const contentSlot = drawer?.querySelector("[data-activity-body]");
   const toggle = document.querySelector("[data-activity-toggle]");
   const scrim = document.querySelector("[data-activity-scrim]");
   const badge = document.querySelector("[data-activity-badge]");
-  if (!drawer || !toggle) return;
+  if (!drawer || !contentSlot || !toggle) return;
 
+  const closeButton = drawer.querySelector("[data-activity-close]");
+  const backgroundState = new Map();
   let activityTimer = 0;
   let loaded = false;
   let loading = false;
+  let opener = null;
+  let pageHidden = false;
 
-  const setActivityOpen = (open, { restoreFocus = false } = {}) => {
+  const isOpen = () => body.classList.contains("activity-open");
+  const canFocus = (element) => element instanceof HTMLElement && element.isConnected
+    && (element.tabIndex >= 0 || element.hasAttribute("tabindex") || element.isContentEditable)
+    && !element.matches(":disabled") && !element.closest("[inert], [hidden]") && element.getClientRects().length > 0
+    && getComputedStyle(element).visibility !== "hidden";
+  const focusable = () => Array.from(drawer.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')).filter(canFocus);
+  const focusClose = () => (canFocus(closeButton) ? closeButton : drawer).focus({ preventScroll: true });
+
+  // Only siblings along the dialog's ancestor path are background. Making the
+  // whole app frame inert would also disable the dialog nested inside it.
+  const suspendBackground = () => {
+    for (let active = drawer; active && active !== body; active = active.parentElement) {
+      for (const sibling of active.parentElement.children) {
+        if (sibling === active || sibling === scrim || !(sibling instanceof HTMLElement)) continue;
+        if (!backgroundState.has(sibling)) backgroundState.set(sibling, sibling.getAttribute("inert"));
+        sibling.inert = true;
+      }
+    }
+  };
+  const restoreBackground = () => {
+    for (const [element, previous] of backgroundState) {
+      if (previous === null) element.removeAttribute("inert");
+      else element.setAttribute("inert", previous);
+    }
+    backgroundState.clear();
+  };
+
+  const setActivityOpen = (open) => {
+    if (open === isOpen()) return;
+    if (open) opener = document.activeElement;
     body.classList.toggle("activity-open", open);
     drawer.setAttribute("aria-hidden", open ? "false" : "true");
     drawer.inert = !open;
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
     toggle.setAttribute("aria-label", open ? "Close background activity" : "Open background activity");
     if (open) {
+      suspendBackground();
+      focusClose();
       refreshActivity();
-      window.requestAnimationFrame(() => drawer.querySelector("[data-activity-close]")?.focus({ preventScroll: true }));
-    } else if (restoreFocus) {
-      toggle.focus({ preventScroll: true });
+    } else {
+      restoreBackground();
+      const target = canFocus(opener) ? opener : canFocus(toggle) ? toggle : document.querySelector("#main-content");
+      target?.focus({ preventScroll: true });
+      opener = null;
     }
   };
 
@@ -3031,7 +3147,7 @@
 
   const scheduleActivity = (delay) => {
     window.clearTimeout(activityTimer);
-    activityTimer = window.setTimeout(refreshActivity, Math.max(Number(delay) || 15000, 1500));
+    if (!pageHidden) activityTimer = window.setTimeout(refreshActivity, Math.max(Number(delay) || 15000, 1500));
   };
 
   async function refreshActivity() {
@@ -3040,6 +3156,14 @@
       return;
     }
     loading = true;
+    const loadingPanel = contentSlot.querySelector("[data-activity-loading]");
+    if (loadingPanel) {
+      loadingPanel.querySelector("strong").textContent = "Checking background work…";
+      loadingPanel.querySelector(".activity-loading-mark").hidden = false;
+      loadingPanel.querySelector("[data-activity-error]").hidden = true;
+      // Keep a focused Retry button in place until a successful response lands.
+      loadingPanel.querySelector("[data-activity-retry]").setAttribute("aria-disabled", "true");
+    }
     try {
       const response = await fetch(drawer.dataset.activityUrl, {
         headers: { Accept: "text/html" },
@@ -3050,36 +3174,86 @@
       holder.innerHTML = await response.text();
       const content = holder.querySelector("[data-activity-content]");
       if (!content) throw new Error("Activity response was incomplete.");
-      drawer.replaceChildren(content);
+      const focused = document.activeElement;
+      const replaceFocused = isOpen() && contentSlot.contains(focused);
+      const action = focused?.dataset?.activityAction;
+      const scrollTop = contentSlot.querySelector(".activity-list")?.scrollTop || 0;
+      contentSlot.replaceChildren(content);
+      // The permanent header never loses focus. A replaced record action keeps
+      // its identity, even when a new status changes its position in the list.
+      if (replaceFocused) {
+        const replacement = action && Array.from(content.querySelectorAll("[data-activity-action]"))
+          .find((element) => element.dataset.activityAction === action);
+        if (canFocus(replacement)) replacement.focus({ preventScroll: true });
+        else focusClose();
+      }
+      const list = content.querySelector(".activity-list");
+      if (list) list.scrollTop = scrollTop;
       updateActivityBadge(content);
       loaded = true;
       scheduleActivity(content.dataset.pollAfterMs);
     } catch (_error) {
-      const loadingCopy = drawer.querySelector("[data-activity-loading] strong");
-      if (loadingCopy) loadingCopy.textContent = "Activity update paused. Reconnecting…";
-      if (loaded) drawer.querySelector("[data-activity-content]")?.classList.add("is-stale");
+      if (loadingPanel?.isConnected) {
+        loadingPanel.querySelector("strong").textContent = "Activity couldn’t be updated.";
+        loadingPanel.querySelector(".activity-loading-mark").hidden = true;
+        loadingPanel.querySelector("[data-activity-error]").hidden = false;
+        const retry = loadingPanel.querySelector("[data-activity-retry]");
+        retry.hidden = false;
+        retry.removeAttribute("aria-disabled");
+      }
+      if (loaded) {
+        contentSlot.querySelector("[data-activity-content]")?.classList.add("is-stale");
+        const updated = contentSlot.querySelector("[data-activity-updated]");
+        if (updated) updated.textContent = "Updates paused. Retrying…";
+      }
       scheduleActivity(5000);
     } finally {
       loading = false;
     }
   }
 
-  toggle.addEventListener("click", () => {
-    setActivityOpen(!body.classList.contains("activity-open"), { restoreFocus: true });
-  });
-  scrim?.addEventListener("click", () => setActivityOpen(false, { restoreFocus: true }));
+  toggle.addEventListener("click", () => setActivityOpen(!isOpen()));
+  scrim?.addEventListener("click", () => setActivityOpen(false));
   drawer.addEventListener("click", (event) => {
-    if (event.target.closest("[data-activity-close]")) {
-      setActivityOpen(false, { restoreFocus: true });
-    }
+    if (event.target.closest("[data-activity-close]")) setActivityOpen(false);
+    if (event.target.closest("[data-activity-retry]")) refreshActivity();
+  });
+  document.addEventListener("focusin", (event) => {
+    if (isOpen() && !drawer.contains(event.target)) focusClose();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && body.classList.contains("activity-open")) {
-      setActivityOpen(false, { restoreFocus: true });
+    if (!isOpen()) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setActivityOpen(false);
+    } else if (event.key === "Tab") {
+      const items = focusable();
+      const first = items[0], last = items.at(-1);
+      if (!items.length) {
+        event.preventDefault();
+        drawer.focus({ preventScroll: true });
+      } else if (!drawer.contains(document.activeElement) || document.activeElement === drawer) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus({ preventScroll: true });
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
     }
-  });
+  }, true);
   window.addEventListener("recordbench:readiness", () => scheduleActivity(400));
-  window.addEventListener("pagehide", () => window.clearTimeout(activityTimer));
+  window.addEventListener("pagehide", () => {
+    pageHidden = true;
+    window.clearTimeout(activityTimer);
+  });
+  window.addEventListener("pageshow", () => {
+    pageHidden = false;
+    scheduleActivity(600);
+  });
   scheduleActivity(600);
 })();
 
@@ -3110,6 +3284,9 @@
   });
 
   const assistantPreferenceKey = "recordbench:assistant:display:v2";
+  const compactAssistant = window.matchMedia("(max-width: 900px)");
+  const assistantDisplayKey = () => compactAssistant.matches
+    ? `${assistantPreferenceKey}:compact` : assistantPreferenceKey;
   let assistantDock = document.querySelector("[data-assistant-dock]");
   let assistantPollTimer = 0;
   let assistantDraft = false;
@@ -3122,7 +3299,7 @@
 
   const readAssistantPreference = () => {
     try {
-      const saved = window.localStorage.getItem(assistantPreferenceKey);
+      const saved = window.localStorage.getItem(assistantDisplayKey());
       if (saved === "collapsed") return true;
       if (saved === "open") return false;
       return body.dataset.assistantDefault === "collapsed"
@@ -3135,7 +3312,7 @@
 
   const saveAssistantPreference = (collapsed) => {
     try {
-      window.localStorage.setItem(assistantPreferenceKey, collapsed ? "collapsed" : "open");
+      window.localStorage.setItem(assistantDisplayKey(), collapsed ? "collapsed" : "open");
     } catch (_error) {
       // The assistant remains usable when browser preference storage is unavailable.
     }
@@ -3167,18 +3344,23 @@
     return `${url.pathname}${url.search}`;
   };
 
-  const setAssistantCollapsed = (collapsed, { focus = false, persist = true } = {}) => {
+  const setAssistantCollapsed = (collapsed, { focus = false, persist = true, preserveFocus = false } = {}) => {
     const pageX = window.scrollX;
     const pageY = window.scrollY;
+    const previousFocus = document.activeElement;
     body.classList.toggle("assistant-collapsed", collapsed);
     if (persist) saveAssistantPreference(collapsed);
     window.scrollTo(pageX, pageY);
     if (focus) {
       window.requestAnimationFrame(() => {
         window.scrollTo(pageX, pageY);
-        const target = collapsed
+        const previousVisible = preserveFocus && previousFocus?.isConnected
+          && !previousFocus.disabled && previousFocus.getClientRects().length
+          && getComputedStyle(previousFocus).visibility !== "hidden";
+        const target = previousVisible ? previousFocus : collapsed
           ? assistantDock?.querySelector("[data-assistant-expand]")
-          : assistantDock?.querySelector("textarea");
+          : assistantDock?.querySelector("textarea:not(:disabled)")
+            || assistantDock?.querySelector("[data-assistant-collapse]");
         target?.focus({ preventScroll: true });
       });
     }
@@ -3587,6 +3769,22 @@
   if (assistantDock) {
     setAssistantCollapsed(readAssistantPreference(), { persist: false });
     bindAssistant();
+    compactAssistant.addEventListener("change", () => {
+      setAssistantCollapsed(readAssistantPreference(), {
+        persist: false,
+        focus: assistantDock.contains(document.activeElement),
+        preserveFocus: true,
+      });
+    });
+    // A mobile workspace should not compete with two open surfaces. Choosing
+    // a section or account action tucks the Assistant away without changing
+    // its conversation, draft, work in progress, or desktop display preference.
+    document.addEventListener("toggle", (event) => {
+      if (compactAssistant.matches && event.target.open
+          && event.target.matches(".matter-section-disclosure, .account-menu")) {
+        setAssistantCollapsed(true);
+      }
+    }, true);
     const thread = assistantDock.querySelector("[data-assistant-thread]");
     if (thread?.dataset.hasMessages === "true") thread.scrollTop = thread.scrollHeight;
     const preferredConversation = readAssistantConversationPreference();

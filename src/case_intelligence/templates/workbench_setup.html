@@ -254,8 +254,11 @@
       <form id="source-bulk-form" method="post" action="/matters/{{ matter.slug }}/sources/bulk" class="source-bulk-toolbar" data-source-bulk-form>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="return_query" value="{{ source_return_query }}">
-        <strong><span data-source-selected-count>0</span> selected</strong>
-        <select name="action" required data-source-bulk-action>
+        <div class="source-selection-summary">
+          <label class="source-select-page"><input type="checkbox" aria-label="Select all sources on this page" data-source-select-all><span>Select page</span></label>
+          <strong><span data-source-selected-count>0</span> selected</strong>
+        </div>
+        <label class="source-bulk-field" for="source-bulk-action"><span>Bulk action</span><select id="source-bulk-action" name="action" required data-source-bulk-action>
           <option value="">Choose action…</option>
           <option value="reviewed">Mark reviewed</option>
           <option value="unreviewed">Mark unreviewed</option>
@@ -263,41 +266,41 @@
           <option value="move">Move to collection</option>
           <option value="create_set">Create source set</option>
           {% if source_sets %}<option value="add_to_set">Add to source set</option>{% endif %}
-        </select>
-        <select name="collection_id" data-bulk-collection hidden><option value="">Choose collection…</option>{% for collection in source_collections %}<option value="{{ collection.collection_id }}">{{ collection.name }}</option>{% endfor %}</select>
-        <select name="source_set_id" data-bulk-source-set hidden><option value="">Choose source set…</option>{% for set in source_sets %}<option value="{{ set.source_set_id }}">{{ set.name }}</option>{% endfor %}</select>
-        <input name="source_set_name" type="text" maxlength="160" placeholder="Source set name" data-bulk-set-name hidden>
+        </select></label>
+        <label class="source-bulk-field" for="bulk-collection"><span>Destination collection</span><select id="bulk-collection" name="collection_id" data-bulk-collection hidden><option value="">Choose collection…</option>{% for collection in source_collections %}<option value="{{ collection.collection_id }}">{{ collection.name }}</option>{% endfor %}</select></label>
+        <label class="source-bulk-field" for="bulk-source-set"><span>Source set</span><select id="bulk-source-set" name="source_set_id" data-bulk-source-set hidden><option value="">Choose source set…</option>{% for set in source_sets %}<option value="{{ set.source_set_id }}">{{ set.name }}</option>{% endfor %}</select></label>
+        <label class="source-bulk-field" for="bulk-source-set-name"><span>New source set name</span><input id="bulk-source-set-name" name="source_set_name" type="text" maxlength="160" placeholder="Source set name" data-bulk-set-name hidden></label>
         <button class="button button-secondary" type="submit" disabled data-source-bulk-submit>Apply</button>
       </form>
 
-      <div class="source-table source-library-table" role="table" aria-label="Matter sources">
+      <div class="source-table source-library-table" role="table" aria-label="Matter sources" aria-colcount="6">
         <div class="source-table-head" role="row">
-          <span role="columnheader"><input type="checkbox" aria-label="Select all sources on this page" data-source-select-all></span>
+          <span role="columnheader"><span class="visually-hidden">Select source</span></span>
           <span role="columnheader">Source</span>
           <span role="columnheader">Collection</span>
           <span role="columnheader">Review and status</span>
           <span role="columnheader">Length</span>
-          <span aria-hidden="true"></span>
+          <span role="columnheader">Actions</span>
         </div>
         {% for source in sources %}
         <div class="source-table-row" role="row">
-          <span class="source-select-cell" role="cell"><input type="checkbox" name="selected" value="{{ source.action_token }}" form="source-bulk-form" aria-label="Select {{ source.name }}" data-source-select></span>
-          <span class="source-name-cell" role="cell"><span class="file-mark file-{{ source.kind|lower }}">{{ source.kind }}</span><a href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}?browse={{ source_return_query|urlencode }}"><strong>{{ source.name }}</strong>{% if '/' in source.relative_path %}<small>{{ source.relative_path.rsplit('/', 1)[0] }}</small>{% endif %}</a></span>
-          <span class="source-collection-cell" role="cell"><a href="{{ library_url(1, view='list', collection=source.collection_id, source_set='') }}">{{ source.collection_name }}</a><small>{{ source.kind }}</small>{% if source.byte_match_count > 1 %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;same_content={{ source.action_token }}" data-source-byte-matches>{{ source.byte_match_count }} files with identical bytes</a>{% endif %}</span>
-          <span class="source-review-cell" role="cell"><span class="review-badge review-{{ source.review_state }}">{{ source.review_state|replace('_', ' ')|title }}</span><span class="source-state state-{{ source.tone }}"><i aria-hidden="true"></i>{{ source.state }}</span></span>
-          <span class="source-count" role="cell">{{ source.count_label }}</span>
-          <span class="row-actions" role="cell">
-            <a class="source-open-action" href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}?browse={{ source_return_query|urlencode }}">{% if source.kind == 'VIDEO' %}Play video{% elif source.kind == 'AUDIO' %}Play audio{% elif source.kind == 'PDF' %}Open PDF{% elif source.kind == 'IMAGE' %}View image{% else %}Read document{% endif %}</a>
+          <div class="source-select-cell" role="cell"><label class="source-select-target"><input type="checkbox" name="selected" value="{{ source.action_token }}" form="source-bulk-form" aria-label="Select {{ source.name }}" data-source-select></label></div>
+          <div class="source-name-cell" role="cell"><span class="file-mark file-{{ source.kind|lower }}">{{ source.kind }}</span><a href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}?browse={{ source_return_query|urlencode }}"><strong id="source-name-{{ loop.index }}">{{ source.name }}</strong>{% if '/' in source.relative_path %}<small>{{ source.relative_path.rsplit('/', 1)[0] }}</small>{% endif %}</a></div>
+          <div class="source-collection-cell" role="cell"><span class="source-cell-label" aria-hidden="true">Collection</span><a href="{{ library_url(1, view='list', collection=source.collection_id, source_set='') }}">{{ source.collection_name }}</a><small>{{ source.kind }}</small>{% if source.byte_match_count > 1 %}<a href="/matters/{{ matter.slug }}/setup?view=list&amp;same_content={{ source.action_token }}" data-source-byte-matches>{{ source.byte_match_count }} files with identical bytes</a>{% endif %}</div>
+          <div class="source-review-cell" role="cell"><span class="source-cell-label" aria-hidden="true">Review and status</span><span class="review-badge review-{{ source.review_state }}">{{ source.review_state|replace('_', ' ')|title }}</span><span class="source-state state-{{ source.tone }}"><i aria-hidden="true"></i>{{ source.state }}</span></div>
+          <div class="source-count" role="cell"><span class="source-cell-label" aria-hidden="true">Length</span><span>{{ source.count_label }}</span></div>
+          <div class="row-actions" role="cell">
+            <a class="source-open-action" href="/matters/{{ matter.slug }}/sources/{{ source.action_token }}?browse={{ source_return_query|urlencode }}" aria-describedby="source-name-{{ loop.index }}">{% if source.kind == 'VIDEO' %}Play video{% elif source.kind == 'AUDIO' %}Play audio{% elif source.kind == 'PDF' %}Open PDF{% elif source.kind == 'IMAGE' %}View image{% else %}Read document{% endif %}</a>
             {% if source.retryable %}
-            <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Try again</button></form>
+            <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" aria-describedby="source-name-{{ loop.index }}">Try again</button></form>
             {% endif %}
             {% if source.removable %}
-            <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/remove"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="remove-action" type="submit">Remove</button></form>
+            <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.action_token }}/remove"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="remove-action" type="submit" aria-describedby="source-name-{{ loop.index }}">Remove</button></form>
             {% endif %}
-          </span>
+          </div>
         </div>
         {% else %}
-        <div class="source-table-empty">{% if source_library.stats.total %}No sources match these filters.{% else %}Selected records will appear here as a searchable collection.{% endif %}</div>
+        <div class="source-table-empty" role="row"><span role="cell" aria-colspan="6">{% if source_library.stats.total %}No sources match these filters.{% else %}Selected records will appear here as a searchable collection.{% endif %}</span></div>
         {% endfor %}
       </div>
 

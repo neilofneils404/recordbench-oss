@@ -6,22 +6,13 @@
   data-badge-count="{{ activity.badge_count }}"
   data-poll-after-ms="{{ activity.poll_after_ms }}"
 >
-  <header class="activity-drawer-header">
-    <div>
-      <span>Across your matters</span>
-      <h2 id="activity-drawer-heading">Activity</h2>
-    </div>
-    <button type="button" data-activity-close aria-label="Close activity">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
-    </button>
-  </header>
   <div class="activity-summary {% if activity.attention_count %}has-attention{% elif activity.active_count %}is-working{% endif %}" role="status" aria-live="polite">
     <span class="activity-summary-mark" aria-hidden="true"></span>
     <div><strong>{{ activity.summary }}</strong><small>Work continues if you leave this page.</small></div>
   </div>
   <div class="activity-list" aria-label="Recent background work">
     {% for item in activity['items'] %}
-    <a class="activity-item tone-{{ item.tone }}" href="{{ item.href }}">
+    <a class="activity-item tone-{{ item.tone }}" href="{{ item.href }}" data-activity-action="{{ item.kind }}:{{ item.href }}">
       <span class="activity-item-mark" aria-hidden="true">
         {% if item.kind == 'Source preparation' %}
         <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 11h6M9 15h6"/></svg>
@@ -49,7 +40,7 @@
     {% endfor %}
   </div>
   <footer class="activity-drawer-footer">
-    <span>Updated just now</span>
-    {% if activity.active_slug %}<a href="/matters/{{ activity.active_slug }}/setup?view=list#source-library">Open Source Library</a>{% endif %}
+    <span data-activity-updated role="status">Updated just now</span>
+    {% if activity.active_slug %}<a href="/matters/{{ activity.active_slug }}/setup?view=list#source-library" data-activity-action="source-library">Open Source Library</a>{% endif %}
   </footer>
 </div>

@@ -1,27 +1,27 @@
 <nav class="matter-section-tabs" aria-label="Matter workspace sections">
-  <a class="{% if active == 'home' %}selected{% endif %}" href="/matters/{{ matter.slug }}/home"{% if active == 'home' %} aria-current="page"{% endif %}>
+  <a class="{% if active == 'home' %}selected{% endif %}" href="/matters/{{ matter.slug }}/home" data-section-description="Case overview and recent work"{% if active == 'home' %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 10 8-6 8 6v10h-6v-6h-4v6H4V10Z"/></svg>
     <span>Home</span>
   </a>
-  <a class="{% if active == 'review' %}selected{% endif %}" href="/matters/{{ matter.slug }}"{% if active == 'review' %} aria-current="page"{% endif %}>
+  <a class="{% if active == 'review' %}selected{% endif %}" href="/matters/{{ matter.slug }}" data-section-description="Ask questions with cited source support"{% if active == 'review' %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5Z"/></svg>
     <span>Case conversation</span>
   </a>
-  <a class="{% if active == 'search' %}selected{% endif %}" href="/matters/{{ matter.slug }}/exact-search"{% if active == 'search' %} aria-current="page"{% endif %}><span>Search</span></a>
-  <a class="{% if active == 'full_review' %}selected{% endif %}" href="/matters/{{ matter.slug }}/full-review"{% if active == 'full_review' %} aria-current="page"{% endif %}><span>Document review</span></a>
-  <a class="{% if active == 'sources' %}selected{% endif %}" href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100#source-library"{% if active == 'sources' %} aria-current="page"{% endif %}>
+  <a class="{% if active == 'search' %}selected{% endif %}" href="/matters/{{ matter.slug }}/exact-search" data-section-description="Find exact words and phrases"{% if active == 'search' %} aria-current="page"{% endif %}><span>Search</span></a>
+  <a class="{% if active == 'full_review' %}selected{% endif %}" href="/matters/{{ matter.slug }}/full-review" data-section-description="Read and review the source record"{% if active == 'full_review' %} aria-current="page"{% endif %}><span>Document review</span></a>
+  <a class="{% if active == 'sources' %}selected{% endif %}" href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100#source-library" data-section-description="Browse and organize your sources"{% if active == 'sources' %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v13H4zM8 3h8v3M8 10h8M8 14h6"/></svg>
     <span>Sources</span>
   </a>
-  <a class="{% if active in ('work_product', 'notes', 'analysis', 'reports') %}selected{% endif %}" href="/matters/{{ matter.slug }}/work-product"{% if active in ('work_product', 'notes', 'analysis', 'reports') %} aria-current="page"{% endif %}>
+  <a class="{% if active in ('work_product', 'notes', 'analysis', 'reports') %}selected{% endif %}" href="/matters/{{ matter.slug }}/work-product" data-section-description="Case notes, review maps, and reports"{% if active in ('work_product', 'notes', 'analysis', 'reports') %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6M9 18h4"/></svg>
     <span>Work product</span>
   </a>
-  <a class="{% if active == 'entities' %}selected{% endif %}" href="/matters/{{ matter.slug }}/entities"{% if active == 'entities' %} aria-current="page"{% endif %}>
+  <a class="{% if active == 'entities' %}selected{% endif %}" href="/matters/{{ matter.slug }}/entities" data-section-description="Follow people, places, and things"{% if active == 'entities' %} aria-current="page"{% endif %}>
     <span>People, places &amp; things</span>
   </a>
-  <a class="{% if active == 'chronology' %}selected{% endif %}" href="/matters/{{ matter.slug }}/chronology"{% if active == 'chronology' %} aria-current="page"{% endif %}><span>Chronology</span></a>
-  <a class="{% if active == 'settings' %}selected{% endif %}" href="/matters/{{ matter.slug }}/settings"{% if active == 'settings' %} aria-current="page"{% endif %}>
+  <a class="{% if active == 'chronology' %}selected{% endif %}" href="/matters/{{ matter.slug }}/chronology" data-section-description="Trace events and their source support"{% if active == 'chronology' %} aria-current="page"{% endif %}><span>Chronology</span></a>
+  <a class="{% if active == 'settings' %}selected{% endif %}" href="/matters/{{ matter.slug }}/settings" data-section-description="Manage access and case settings"{% if active == 'settings' %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8 4 2-1-2-3-2 .5-1.5-1L16 5h-4l-.5 2.5-1.5 1L8 8 6 11l2 1v2l-2 1 2 3 2-.5 1.5 1L12 21h4l.5-2.5 1.5-1 2 .5 2-3-2-1v-2Z"/></svg>
     <span>Settings</span>
   </a>

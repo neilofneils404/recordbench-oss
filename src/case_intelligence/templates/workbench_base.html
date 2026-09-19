@@ -12,6 +12,7 @@
   <script src="{{ url_for('static', path='case-intelligence.js') }}" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}{% if active_matter %} matter-page{% endif %}{% if show_assistant_dock %} assistant-available{% endif %}" data-csrf-token="{{ csrf_token }}" data-assistant-default="{{ assistant_default|default('open') }}">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="topbar">
     <div class="brand-zone">
       <button class="icon-button menu-button" type="button" aria-label="Hide matters" aria-controls="matter-rail" aria-expanded="true" data-rail-toggle>
@@ -128,11 +129,24 @@
 
     {% block content %}{% endblock %}
     {% if show_assistant_dock %}{% include "workbench_assistant.html" %}{% endif %}
-    <button class="activity-scrim" type="button" aria-label="Close activity" data-activity-scrim></button>
-    <aside class="activity-drawer" id="workspace-activity-drawer" data-activity-drawer data-activity-url="{{ activity_url }}" aria-labelledby="activity-drawer-heading" aria-hidden="true" inert>
-      <div class="activity-loading" data-activity-loading>
-        <span class="activity-loading-mark" aria-hidden="true"></span>
-        <strong>Checking background work…</strong>
+    <button class="activity-scrim" type="button" aria-label="Close activity" tabindex="-1" aria-hidden="true" data-activity-scrim></button>
+    <aside class="activity-drawer" id="workspace-activity-drawer" data-activity-drawer data-activity-url="{{ activity_url }}" role="dialog" aria-modal="true" aria-labelledby="activity-drawer-heading" aria-hidden="true" tabindex="-1" inert>
+      <header class="activity-drawer-header">
+        <div>
+          <span>Across your matters</span>
+          <h2 id="activity-drawer-heading">Activity</h2>
+        </div>
+        <button type="button" data-activity-close aria-label="Close activity">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div class="activity-body" data-activity-body>
+        <div class="activity-loading" data-activity-loading>
+          <span class="activity-loading-mark" aria-hidden="true"></span>
+          <strong role="status">Checking background work…</strong>
+          <p data-activity-error hidden>You can close this panel and continue working.</p>
+          <button type="button" data-activity-retry hidden>Try again</button>
+        </div>
       </div>
     </aside>
   </div>

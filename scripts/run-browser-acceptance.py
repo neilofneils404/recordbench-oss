@@ -30,6 +30,10 @@ JOURNEYS = (
     ('intake', 'browser-accept-intake-receipts.py', 'receipt-browser-result.json', 11, ()),
     ('dusk', 'browser-accept-dusk.py', 'receipt.json', 12, ()),
     ('reports', 'browser-accept-reports-bundle.py', 'receipt.json', 12, ('--verify-readiness',)),
+    ('workspace-layout', 'browser-accept-workspace-layout.py', 'receipt.json', 18, ()),
+    ('activity', 'browser-accept-activity.py', 'receipt.json', 8, ()),
+    ('zoom', 'browser-accept-zoom.py', 'receipt.json', 12, ()),
+    ('account-controls', 'browser-accept-account-controls.py', 'receipt.json', 6, ()),
 )
 ARTIFACT_NAMES = (
     'receipt-browser-result.json', 'receipt.json', 'failure.png', 'failure.html',
@@ -38,6 +42,14 @@ ARTIFACT_NAMES = (
     'browser-errors.json', 'reports-desktop.png', 'reports-mobile.png',
     'export-ready-1440.png', 'export-ready-430.png', 'export-needs-attention.png',
     'readiness-failed-close-1440.png', 'readiness-failed-close-430.png',
+    'notes-constrained-with-assistant.png', 'sources-mobile-actions-390.png',
+    'sources-mobile-actions-320.png',
+    'notes-suggestion-original-support.png', 'root-font-200-percent.png',
+    'text-spacing.png', 'notes-balanced-4k.png',
+    'zoom-125-notes.png', 'zoom-125-sources.png',
+    'zoom-150-notes.png', 'zoom-150-sources.png',
+    'zoom-200-notes.png', 'zoom-200-sources.png',
+    'zoom-400-notes.png', 'zoom-400-sources.png',
 )
 
 

@@ -89,3 +89,197 @@
     overflow: visible;
   }
 }
+
+/* Section navigation follows the space inside the workspace, not the screen.
+   JS moves the existing links; no duplicate or hidden interactive copies. */
+.matter-page main .matter-section-tabs {
+  width: 100%;
+  margin-inline: 0;
+  padding-inline: 0;
+  flex-wrap: wrap;
+  overflow: visible;
+}
+.matter-page main .matter-section-tabs > a {
+  min-width: 0;
+  min-height: 44px;
+  padding-inline: 12px;
+  font-size: .8125rem;
+}
+.section-description { display: none; }
+.matter-page main .matter-section-tabs.sections-compact { display: block; border: 0; }
+.matter-section-disclosure {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-lifted);
+}
+.matter-section-disclosure > summary {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  list-style: none;
+  cursor: pointer;
+}
+.matter-section-disclosure > summary::-webkit-details-marker { display: none; }
+.matter-section-disclosure > summary::after {
+  content: "Change section ▾";
+  flex: 0 0 auto;
+  color: var(--blue-action);
+  font-size: .75rem;
+  font-weight: 650;
+}
+.matter-section-disclosure[open] > summary::after { content: "Close ▴"; }
+.section-current { display: grid; min-width: 0; gap: 2px; }
+.section-current small { color: var(--ink-soft); font-size: .6875rem; }
+.section-current > span { color: var(--ink); font-size: .9375rem; font-weight: 750; overflow-wrap: anywhere; }
+.section-destinations {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+}
+.matter-page main .sections-compact a {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  align-content: center;
+  min-width: 0;
+  min-height: 64px;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink);
+  background: none;
+  font-size: .875rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.matter-page main .sections-compact a > svg { display: none; }
+.matter-page main .sections-compact a:hover { background: var(--surface); }
+.matter-page main .sections-compact a[aria-current="page"] {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  box-shadow: inset 3px 0 var(--accent);
+}
+.matter-page main .sections-compact a::after { display: none; }
+.sections-compact .section-description {
+  display: block;
+  color: var(--ink-soft);
+  font-size: .75rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* A bounded notes board keeps reading and actions together on large displays.
+   The outer shell still spans the application; other workflows keep their own
+   widths. Notes use ordinary rows, never masonry or a reordered reading flow. */
+.notebook-shell { container: notebook / inline-size; }
+.matter-page .notebook-shell > * { max-width: 100rem; margin-inline: auto; }
+.matter-page .notebook-shell > .matter-section-tabs { margin-inline: auto; }
+.notebook-shell .notebook-layout {
+  display: grid;
+  grid-template-columns: minmax(17rem, 20.625rem) minmax(0, 1fr);
+  gap: 28px;
+}
+.notebook-library { min-width: 0; }
+.notebook-shell .notebook-stats {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+  overflow: visible;
+}
+.notebook-shell .notebook-stats a { min-width: 0; grid-column: auto; }
+.notebook-stats span { font-size: .8125rem; }
+.notebook-shell .notebook-library-heading {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.notebook-library-heading p { font-size: .8125rem; }
+.notebook-shell .notebook-filter-form {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  min-width: 0;
+  max-width: 100%;
+  gap: 8px;
+}
+.notebook-search { flex: 1 1 13rem; min-width: 0; }
+.notebook-shell .notebook-filter-form input { width: 100%; min-width: 0; }
+.notebook-shell .notebook-filter-form select { flex: 1 1 9rem; min-width: 0; max-width: 100%; }
+.notebook-shell .notebook-filter-form :is(input, select, button) { min-height: 44px; height: auto; font-size: .8125rem; }
+.notebook-tool-card { background: var(--surface-lifted); }
+.notebook-tool-heading p, .tool-caution { font-size: .8125rem; line-height: 1.55; }
+.notebook-item-form label, .suggestion-tool label { font-size: .8125rem; }
+.notebook-item-form :is(input:not([type="checkbox"]), select, button), .suggestion-tool :is(select, button) {
+  min-height: 44px;
+  max-width: 100%;
+  font-size: .875rem;
+}
+.notebook-form-row { min-width: 0; }
+.notebook-form-row > label { min-width: 0; }
+.notebook-item-form textarea { font-size: .9375rem; }
+.notebook-item-form :is(input, select, textarea), .suggestion-tool select {
+  background: var(--surface-lifted);
+  color: var(--ink);
+}
+.notebook-shell .notebook-item { padding: 20px; }
+.notebook-body { max-width: 80ch; color: var(--ink); font-size: 1rem; line-height: 1.65; }
+.notebook-item > footer {
+  max-width: 80ch;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: .75rem;
+}
+.notebook-item-actions { flex-wrap: wrap; justify-content: flex-start; gap: 4px 8px; }
+.notebook-item-actions :is(a, button) { display: inline-flex; min-height: 40px; align-items: center; padding: 4px; font-size: .8125rem; }
+.notebook-provenance { max-width: 80ch; }
+.notebook-provenance a { max-width: 100%; min-height: 44px; }
+.notebook-provenance a span { white-space: normal; overflow-wrap: anywhere; font-size: .8125rem; }
+.notebook-provenance a small { font-size: .75rem; }
+.case-notes-guide .eyebrow { color: var(--blue-action); }
+
+@container notebook (max-width: 56rem) {
+  .notebook-shell .notebook-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .notebook-shell .notebook-tools {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  .notebook-shell .notebook-library-heading { flex-direction: column; }
+  .notebook-shell .notebook-filter-form { width: 100%; }
+  .case-notes-guide-content { grid-template-columns: minmax(0, 1fr); }
+  .case-notes-guide > summary > span { display: block; margin: 4px 0 0 15px; }
+}
+@container notebook (min-width: 90rem) {
+  .notebook-item-list { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 18px; }
+}
+
+/* Compact global actions keep the matter name useful. Appearance and sign-out
+   already live in the native account disclosure; don't squeeze a second copy
+   into the mobile header. */
+@media (max-width: 900px) {
+  .topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .context-zone { min-width: 0; max-width: none; padding-inline: 8px; }
+  .context-zone .matter-switcher { min-width: 0; max-width: 100%; }
+  .context-zone .matter-switcher > span { max-width: none; }
+  .user-zone { gap: 4px; padding-inline: 4px 8px; }
+  .user-zone .theme-picker { display: none; }
+  .user-zone .account-theme-form { display: grid; }
+  .user-zone .user-name, .user-zone .development-label { display: none; }
+  .user-zone .administrator-view-label { max-width: 6rem; font-size: .625rem; }
+  .activity-button, .account-menu > summary { min-width: 44px; min-height: 44px; justify-content: center; }
+  .account-menu-panel { width: min(18rem, calc(100vw - 24px)); max-height: calc(100dvh - var(--topbar-height) - 20px); overflow: auto; }
+  .account-menu-panel :is(a, button, select) { min-height: 44px; font-size: .875rem; }
+}
+.topbar :focus-visible { outline-color: #a4d4ff; }
+.skip-link { max-width: calc(100vw - 16px); }
+main { scroll-margin-top: calc(var(--topbar-height) + 12px); }
+@media (forced-colors: active) {
+  :root :focus-visible { outline: 3px solid Highlight; outline-offset: 2px; }
+}
