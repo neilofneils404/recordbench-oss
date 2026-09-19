@@ -18,11 +18,29 @@ The [September 12 assessment](PRODUCT_DIRECTION_2026-09-12.md) identifies gaps
 and subsequent delivery stages. Slice 19's first single-run adapter is landed
 as recorded below. Multiple-run aggregation, new questions, background material,
 matter memory, production imports and larger capacity remain separately scoped
-work. The September 19 landing order below selects the next bounded exploration step.
+work. Slice 20 is landed as recorded below; no further product step is selected.
 
 **Last updated:** 2026-09-19
 
 ## Current upstream receipt
+
+Slice **20** — source-backed graph exploration from a saved entity — is **Done**.
+The September 19 landing sequence on `main` is:
+
+- Cruise selection: `06f286eac5c62641de18be6db74e84b55228ea5a`.
+- Graph implementation: `f5a6ae51b729e7337043d3e532ee150bdd48c4e2`.
+- Graph omission-label fix: `6dca8a55b29b9268596f2d89c27fb6314adda77c`.
+- Planner fixture-write serialization: `e7a6847a717c22ea97e06608657eab9bad24590c`.
+
+The verified upstream tip is `e7a6847a717c22ea97e06608657eab9bad24590c`.
+Its [post-landing Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/35462727086)
+passed all six jobs: application, PostgreSQL integration, synthetic browser,
+transcription, deployment contract and secret scan. This receipt closes the
+slice-20 queue state only; it does not select slice 21 or authorize visual work,
+PR #34, PR #87, deployment or a supported release. Leftover local visual paths
+remain outside this update and must not be published.
+
+## Historical post-19 receipt (superseded snapshot)
 
 Verified `main` implementation snapshot after slice 19's first adapter:
 `95f290bf350742bc77c915eb0269c774069f3633`, merged in
@@ -144,14 +162,14 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 7 | Slice **17** — entity discovery and reviewer reconciliation | Done (#79) |
 | 8 | Slice **18** — evidence-backed relationships and events | Done (#82) |
 | 9 | Slice **19** — first substep: synthesize one terminal full-text run for its criterion | Done — first adapter only (#85) |
-| 10 | Slice **20** — source-backed graph exploration from a saved entity | **Next** — implemented and tested locally; upstream acceptance pending |
+| 10 | Slice **20** — source-backed graph exploration from a saved entity | Done — landed at `e7a6847a` |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
-The September 19 landing order selects slice 20 under
+The September 19 landing completes slice 20 under
 [graph and multimodal exploration](GRAPH_MULTIMODAL_EXPLORATION.md) and its
 [bounded implementation brief](product-slices/20-graph-exploration.md).
-Land this cruise update and slice 20 before starting slice 21, further visual
-experiments or additional work on PR #34. High-resolution retrieval work remains
+No further product step is selected. Slice 21, further visual experiments and
+additional work on PR #34 or PR #87 remain on hold. High-resolution retrieval work remains
 local and outside this PR. Existing text and transcript support is not native
 image understanding. Later slice-19 work, model deployment and larger-capacity
 claims require their own acceptance. Existing holds and parallel release-readiness
