@@ -184,3 +184,48 @@ def test_media_and_workspace_copy_uses_staff_language():
         "durable job",
     ):
         assert implementation_phrase not in public_copy.casefold()
+
+
+def test_skip_link_targets_focusable_main_in_server_rendered_pages(tmp_path):
+    from tests.test_source_library_accessibility import RenderedHTML
+
+    app = create_workbench_app(tmp_path / "runtime", generator=UnavailableGenerator(),
+        auth_mode="test", background_ingestion=False)
+    with TestClient(app) as client:
+        slug, _, _ = _matter(client)
+        for suffix in ("", "/home", "/setup", "/notebook", "/research", "/full-review", "/reports"):
+            response = client.get(f"/matters/{slug}{suffix}")
+            assert response.status_code == 200
+            page = RenderedHTML(response.text)
+            skip = page.matching(**{"class": "skip-link"})[0]
+            targets = page.matching(id=skip.attrs["href"][1:])
+            assert len(targets) == 1, suffix
+            assert targets[0].tag == "main"
+            assert targets[0].attrs.get("tabindex") == "-1"
+
+
+def test_activity_answer_jobs_share_destination_but_keep_distinct_stable_keys(tmp_path):
+    from tests.test_source_library_accessibility import RenderedHTML
+
+    app = create_workbench_app(tmp_path / "runtime", generator=UnavailableGenerator(),
+        auth_mode="test", background_ingestion=False)
+    with TestClient(app) as client:
+        slug, matter_id, actor = _matter(client)
+        bench = app.state.workbench
+        bench.answers.close()
+        conversation = bench.workspace.get_conversation(matter_id)
+        for number in range(3):
+            job, _ = bench.workspace.queue_answer_job(matter_id, conversation.conversation_id,
+                actor, "Generated duplicate-destination question", f"answer-request-{number:032x}")
+            claimed = bench.workspace.claim_answer_job("synthetic-activity-worker")
+            assert claimed.job_id == job.job_id
+            bench.workspace.fail_answer_job(job.job_id, f"Generated failure {number}")
+        keys = []
+        for _ in range(2):
+            page = RenderedHTML(client.get(f"/activity?matter={slug}").text)
+            rows = [e for e in page.elements if e.tag == "a" and "Focused answer" in e.text]
+            assert len(rows) == 3
+            assert len({row.attrs["href"] for row in rows}) == 1
+            keys.append([row.attrs["data-activity-action"] for row in rows])
+            assert len(set(keys[-1])) == 3
+        assert keys[0] == keys[1]

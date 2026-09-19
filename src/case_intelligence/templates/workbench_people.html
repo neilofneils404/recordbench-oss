@@ -2,7 +2,7 @@
 {% block title %}{{ selected_account.display_name if selected_account else 'People' }} · {{ product_name }}{% endblock %}
 {% block body_class %}administrator-page people-page{% endblock %}
 {% block content %}
-<main class="administrator-main people-main">
+<main id="main-content" tabindex="-1" class="administrator-main people-main">
   <header class="administrator-heading compact-heading">
     <div><p class="eyebrow">Administration</p><h1>{{ selected_account.display_name if selected_account else 'People' }}</h1>
       <p>{{ 'Manage this person’s sign-in and application access.' if selected_account else 'Give people a sign-in, then choose which matters they can access.' }}</p></div>

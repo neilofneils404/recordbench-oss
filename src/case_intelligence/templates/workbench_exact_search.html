@@ -2,7 +2,7 @@
 {% block title %}Search · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}workflow-page exact-search-page{% endblock %}
 {% block content %}
-<main class="workflow-shell find-sources-shell">
+<main id="main-content" tabindex="-1" class="workflow-shell find-sources-shell">
   {% set search_return = links.get('current', '') %}
   <header class="find-sources-heading">
     <div><a class="find-matter-link" href="/matters/{{ matter.slug }}">{{ matter.display_name }}</a>

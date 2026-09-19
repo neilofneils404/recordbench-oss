@@ -24,7 +24,7 @@
 {% block body_class %}workflow-page full-review-page{% endblock %}
 
 {% block content %}
-<main class="workflow-shell">
+<main id="main-content" tabindex="-1" class="workflow-shell">
   <header class="matter-heading workflow-heading"><div><p class="eyebrow">Review workspace</p><h1>{{ matter.display_name }}</h1><p>{{ matter.descriptor or 'Active case review' }}</p></div><div class="matter-actions"><a class="button button-secondary" href="/matters/{{ matter.slug }}/setup?view=list#source-library">Sources</a><a class="button button-secondary" href="/matters/{{ matter.slug }}/work-product">Work product</a></div></header>
   {% with active='full_review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   {% include "workbench_review_modes.html" %}

@@ -2,7 +2,7 @@
 {% block title %}Team setup · {{ product_name }}{% endblock %}
 {% block body_class %}administrator-page people-page{% endblock %}
 {% block content %}
-<main class="administrator-main people-main onboarding-main">
+<main id="main-content" tabindex="-1" class="administrator-main people-main onboarding-main">
   <header class="administrator-heading compact-heading"><div><p class="eyebrow">Start here</p><h1>Bring your team into RecordBench</h1><p>Use synthetic records for this first check. Progress below comes from current workspace state; return through the account menu at any time.</p></div><a class="button button-secondary" href="/admin">Workspace health</a></header>
   <section class="administrator-panel"><h2>1. Check what is available</h2><p><strong>{{ 'Basic review is available' if setup_cpu_ready else 'Basic review needs operator attention' }}</strong></p><p>Source review: {{ setup_capabilities.source_review }} · Search: {{ setup_capabilities.search }} · Storage: {{ setup_capabilities.storage }} · Malware scanning: {{ setup_capabilities.malware_scan }}.</p><p>Optional answers: {{ setup_capabilities.answering }}. Transcription: {{ setup_capabilities.transcription }}. An unavailable optional capability stays unavailable until configured and verified.</p><a href="/admin#admin-ai-heading">Check processing and storage readiness</a></section>
   <section class="administrator-panel"><h2>2. Give your teammate a sign-in</h2>

@@ -216,7 +216,7 @@ def test_existing_output_is_preserved_and_no_journey_runs(runner, tmp_path, monk
     assert marker.read_text() == 'Generated old result'
 
 
-@pytest.mark.parametrize('failure_position', [1, 4, 6, 7])
+@pytest.mark.parametrize('failure_position', [1, 4, 5, 6, 7])
 @pytest.mark.parametrize('failure', ['exit', 'timeout', 'missing', 'failed', 'truncated', 'none'])
 def test_all_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_path, monkeypatch, failure, failure_position):
     scratch, output = tmp_path / 'scratch', tmp_path / 'output'
@@ -233,7 +233,7 @@ def test_all_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_pa
         if failure != 'missing' or not failing_journey:
             values = {'passed': failure != 'failed' or not failing_journey}
             if failure == 'truncated' and failing_journey:
-                values['checks'] = ['Generated incomplete check'] * {1: 10, 4: 18, 6: 11, 7: 5}[failure_position]
+                values['checks'] = ['Generated incomplete check'] * {1: 10, 4: 18, 5: 9, 6: 11, 7: 5}[failure_position]
             receipt(raw / name, **values)
         if failing_journey:
             if failure == 'exit':

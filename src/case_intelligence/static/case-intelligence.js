@@ -2998,12 +2998,9 @@
 })();
 
 (() => {
-  const main = document.querySelector("main");
+  const main = document.querySelector("#main-content");
   const skip = document.querySelector(".skip-link");
   if (!main || !skip) return;
-  if (!main.id) main.id = "main-content";
-  skip.href = `#${main.id}`;
-  main.tabIndex = -1;
   skip.addEventListener("click", (event) => {
     event.preventDefault();
     main.focus({ preventScroll: true });

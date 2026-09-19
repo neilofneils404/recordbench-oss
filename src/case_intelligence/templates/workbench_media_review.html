@@ -4,7 +4,7 @@
 {% block body_class %}source-review-page media-review-page{% endblock %}
 
 {% block content %}
-<main class="source-review-main media-review-main" data-media-review data-start-ms="{{ media.start_ms }}" data-transcript-page="{{ segment_page }}" data-transcript-pages="{{ segment_pages }}" data-transcript-filtered="{{ 'true' if transcript_query or transcript_speaker or transcript_flag else 'false' }}" data-media-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status" data-media-resume-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/resume" data-media-job-state="{{ media.job.display_state if media.job else 'unavailable' }}" data-playback-state="{{ media.document.playback_state or 'unknown' }}" data-summary-state="{{ media.summary.state if media.summary else 'not_created' }}">
+<main id="main-content" tabindex="-1" class="source-review-main media-review-main" data-media-review data-start-ms="{{ media.start_ms }}" data-transcript-page="{{ segment_page }}" data-transcript-pages="{{ segment_pages }}" data-transcript-filtered="{{ 'true' if transcript_query or transcript_speaker or transcript_flag else 'false' }}" data-media-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status" data-media-resume-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/resume" data-media-job-state="{{ media.job.display_state if media.job else 'unavailable' }}" data-playback-state="{{ media.document.playback_state or 'unknown' }}" data-summary-state="{{ media.summary.state if media.summary else 'not_created' }}">
   <header class="source-review-heading media-review-heading">
     <div>
       <a class="back-link" href="{{ source_sequence.library_href }}">← Review sources</a>

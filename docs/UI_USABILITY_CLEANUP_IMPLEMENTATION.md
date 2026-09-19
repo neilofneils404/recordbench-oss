@@ -146,6 +146,20 @@ synthetic browser journeys also use the existing hosted Linux launch policy;
 Mac browser sandbox settings are retained. Authentication and live-resize
 acceptance wait for the actual visible destination/state before interacting.
 
+### Hosted review follow-up
+
+Two synthetic regressions reproduced the hosted review findings before correction:
+multiple answer jobs in one conversation shared a refresh key, and the skip-link
+target was absent from server-rendered HTML. Activity now keys every row by its
+stable matter/job/run identity. All workbench main landmarks render the skip-link
+target and `tabindex="-1"` before JavaScript runs.
+
+The Activity journey additionally checks focus on the second of three answer jobs
+sharing one destination across an actual poll, and native keyboard skip-link
+activation with page JavaScript disabled. Its ten-check receipt is mandatory;
+the runner rejects truncated results. The focused regression suite passed 131
+cases. Final-head hosted reviews and Linux CI must cover this correction too.
+
 ## Remaining acceptance and handoff
 
 Native OS font/display scaling, physical phone touch/on-screen-keyboard behavior,

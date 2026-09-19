@@ -1,7 +1,7 @@
 {% extends "workbench_base.html" %}
 {% block title %}Check export · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block content %}
-<main class="single-page-main">
+<main id="main-content" tabindex="-1" class="single-page-main">
   <section class="close-matter-card" aria-labelledby="export-check-heading">
     <p class="eyebrow">{{ matter.display_name }} · Work product</p>
     <h1 id="export-check-heading">{{ 'Ready to download' if check.ready else 'Export needs attention' }}</h1>

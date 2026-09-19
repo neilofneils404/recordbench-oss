@@ -76,12 +76,21 @@ def main():
         # Keep queued synthetic jobs stable; no model or external service runs.
         assert bench.research is not None
         bench.research.close()
+        assert bench.answers is not None
+        bench.answers.close()
         for number in range(6):
             matter = bench.create_matter(f'Synthetic activity matter {number}', 'Generated modal checks', ACTOR)
             for job in range(3):
                 bench.workspace.queue_research_job(matter.matter_id, ACTOR,
                     'Synthetic review question', f'Generated review {number}-{job}',
                     f'research-request-{number * 3 + job:032x}')
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        for number in range(3):
+            job, _ = bench.workspace.queue_answer_job(matter.matter_id, conversation.conversation_id,
+                ACTOR, 'Generated duplicate-destination question', f'answer-request-{number:032x}')
+            claimed = bench.workspace.claim_answer_job('synthetic-activity-worker')
+            assert claimed.job_id == job.job_id
+            bench.workspace.fail_answer_job(job.job_id, f'Generated failure {number}')
         transport = ActivityResponses(app)
         listener = socket.socket()
         listener.bind(('127.0.0.1', 0))
@@ -171,12 +180,33 @@ def main():
                 }); item.focus({preventScroll:true}); return item;''')
             action = focused.get_attribute('data-activity-action')
             scroll_top = js('return arguments[0].scrollTop', find('.activity-list'))
+            assert scroll_top > 0
             wait.until(lambda _: transport.started > before)
             transport.gate.set()
             wait.until(EC.staleness_of(focused))
             wait.until(lambda _: active().get_attribute('data-activity-action') == action)
             assert abs(js('return arguments[0].scrollTop', find('.activity-list')) - scroll_top) <= 1
             checks.append('An actual automatic poll replaces data while preserving the focused surviving record action and list scroll')
+
+            transport.plan(hold=True)
+            before = transport.started
+            answers = [row for row in driver.find_elements(By.CSS_SELECTOR, '.activity-item')
+                if 'Focused answer' in row.text]
+            assert len(answers) == 3
+            assert len({row.get_attribute('href') for row in answers}) == 1
+            assert len({row.get_attribute('data-activity-action') for row in answers}) == 3
+            focused = answers[1]
+            detail = focused.text
+            js('arguments[0].scrollIntoView({block:"center",behavior:"instant"}); arguments[0].focus({preventScroll:true})', focused)
+            action = focused.get_attribute('data-activity-action')
+            scroll_top = js('return arguments[0].scrollTop', find('.activity-list'))
+            wait.until(lambda _: transport.started > before)
+            transport.gate.set()
+            wait.until(EC.staleness_of(focused))
+            wait.until(lambda _: active().get_attribute('data-activity-action') == action)
+            assert active().text == detail
+            assert abs(js('return arguments[0].scrollTop', find('.activity-list')) - scroll_top) <= 1
+            checks.append('Three answer jobs share a destination; polling preserves focus on the second distinct record and its scroll position')
 
             transport.plan(status=503)
             focused = active()
@@ -218,6 +248,14 @@ def main():
             close.click()
             assert active() == find('#main-content')
             checks.append('If the opener disappears, closing returns focus to main content instead of a detached control')
+            driver.execute_cdp_cmd('Emulation.setScriptExecutionDisabled', {'value': True})
+            driver.get(base + f'/matters/{matter.slug}/notebook')
+            assert not driver.find_elements(By.CSS_SELECTOR, '.matter-section-disclosure')
+            ActionChains(driver).send_keys(Keys.TAB).perform()
+            assert active() == find('.skip-link')
+            active().send_keys(Keys.ENTER)
+            assert active() == find('#main-content')
+            checks.append('With page JavaScript disabled, the first Tab reaches Skip to main content and Enter focuses its rendered main target')
             report.update(passed=True, browser='Chrome for Testing', viewport='1024x768',
                 commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                 unrun_checks=['Safari/WebKit', 'screen reader announcements'])

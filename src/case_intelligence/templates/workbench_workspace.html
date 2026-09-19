@@ -4,7 +4,7 @@
 {% block body_class %}workspace-page {% if support %}support-is-open{% endif %} {% if support and support.evidence_kind == 'transcript' %}support-media-is-open{% endif %}{% endblock %}
 
 {% block content %}
-<main class="workspace-shell {% if support %}with-support{% endif %}">
+<main id="main-content" tabindex="-1" class="workspace-shell {% if support %}with-support{% endif %}">
   <section class="workspace-main">
     <header class="matter-heading">
       <div>

@@ -2,7 +2,7 @@
 {% block title %}Make a report · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}report-compilation-page{% endblock %}
 {% block content %}
-<main class="report-compose-shell">
+<main id="main-content" tabindex="-1" class="report-compose-shell">
   <header class="report-compose-heading"><a href="/matters/{{ matter.slug }}/reports">← Reports</a><h1>What would you like to understand?</h1><p>Turn saved AI answers and your team's review into a report you can use.</p></header>
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
   {% if active_job %}

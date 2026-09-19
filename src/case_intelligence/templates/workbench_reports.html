@@ -4,7 +4,7 @@
 {% block body_class %}reports-page{% if report %} has-report{% endif %}{% endblock %}
 
 {% block content %}
-<main class="reports-shell">
+<main id="main-content" tabindex="-1" class="reports-shell">
   <header class="matter-heading reports-heading">
     <div><p class="eyebrow">Work product</p><h1>Reports</h1>{% if not report %}<p>Turn saved AI work and team review into something you can read, refine, and share.</p>{% endif %}</div>
     {% if report %}<div class="report-export-actions"><a class="button button-secondary" href="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/export?format=docx" data-download>Export Word</a><a class="button button-secondary" href="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/export?format=markdown" data-download>Export Markdown</a></div>{% endif %}

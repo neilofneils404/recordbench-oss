@@ -2,7 +2,7 @@
 {% block title %}Review validation changes · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}workflow-page full-review-page{% endblock %}
 {% block content %}
-<main class="workflow-shell decision-recovery">
+<main id="main-content" tabindex="-1" class="workflow-shell decision-recovery">
   <header class="matter-heading workflow-heading"><div><p class="eyebrow">Check every source</p><h1>Review validation changes</h1><p>{{ matter.display_name }}</p></div><a class="button button-secondary" href="/matters/{{ matter.slug }}/full-review{% if active_run %}?criterion={{ active_run.criterion_id }}&amp;run={{ active_run.run_id }}{% if selected_decision %}&amp;source={{ selected_decision.document_id }}{% endif %}{% endif %}">Return to source checks</a></header>
   <div class="notice notice-error" role="alert">{{ error }}</div>
   <div class="decision-recovery-columns">

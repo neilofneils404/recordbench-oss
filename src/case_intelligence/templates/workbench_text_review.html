@@ -3,7 +3,7 @@
 {% block body_class %}workflow-page full-review-page text-review-page{% endblock %}
 {% block content %}
 {% set has_gaps = coverage.has_gaps %}
-<main class="workflow-shell" style="display:grid;gap:1rem">
+<main id="main-content" tabindex="-1" class="workflow-shell" style="display:grid;gap:1rem">
   <header class="matter-heading"><div><p class="eyebrow">Review all extracted text</p><h1>{{ matter.display_name }}</h1><p>{% if run.state == 'succeeded' %}{{ 'Review finished with gaps' if has_gaps else 'Review finished' }}{% else %}{{ run.state|title }}{% endif %} · Frozen source population</p></div><a class="button button-secondary" href="/matters/{{ matter.slug }}/full-review?criterion={{ run.criterion_id }}&run={{ run.run_id }}">Back to source decisions</a></header>
   {% with active='full_review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   <section class="criterion-card" aria-label="Saved review controls"><h2>Saved review progress</h2><p>{{ run.message }} · {{ run.reviewed_count }} / {{ run.snapshot_count }} sources</p>

@@ -2,7 +2,7 @@
 {% block title %}Review case note changes · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}notebook-page{% endblock %}
 {% block content %}
-<main class="notebook-shell notebook-recovery">
+<main id="main-content" tabindex="-1" class="notebook-shell notebook-recovery">
   <header class="matter-heading notebook-heading">
     <div><p class="eyebrow">Case notes</p><h1>Review changes</h1><p>{{ matter.display_name }}</p></div>
     <a class="button button-secondary" href="/matters/{{ matter.slug }}/notebook">Return to case notes</a>

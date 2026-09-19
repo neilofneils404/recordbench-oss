@@ -6673,6 +6673,7 @@ def create_workbench_app(
             *,
             matter: MatterRecord,
             kind: str,
+            activity_key: str,
             title: str,
             detail: str,
             state: str,
@@ -6702,6 +6703,7 @@ def create_workbench_app(
                     "matter_name": matter.display_name,
                     "matter_slug": matter.slug,
                     "kind": kind,
+                    "activity_key": activity_key,
                     "title": title,
                     "detail": detail,
                     "state": state,
@@ -6722,6 +6724,7 @@ def create_workbench_app(
                 append_item(
                     matter=matter,
                     kind="Source preparation",
+                    activity_key=f"sources:{matter.matter_id}",
                     title=str(readiness["headline"]),
                     detail=str(readiness["summary"]),
                     state=(
@@ -6751,6 +6754,7 @@ def create_workbench_app(
                 append_item(
                     matter=matter,
                     kind="Focused answer",
+                    activity_key=f"answer:{job.job_id}",
                     title="Focused answer",
                     detail=job.message,
                     state=job.state,
@@ -6773,6 +6777,7 @@ def create_workbench_app(
                 append_item(
                     matter=matter,
                     kind="Investigation",
+                    activity_key=f"research:{job.job_id}",
                     title=job.title,
                     detail=job.message,
                     state=job.state,
@@ -6793,6 +6798,7 @@ def create_workbench_app(
                 append_item(
                     matter=matter,
                     kind="Every-source check",
+                    activity_key=f"review:{run.run_id}",
                     title=(
                         f"Every-source check · {run.snapshot_count:,} source"
                         f"{'s' if run.snapshot_count != 1 else ''}"

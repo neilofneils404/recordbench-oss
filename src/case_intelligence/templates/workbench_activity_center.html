@@ -12,7 +12,7 @@
   </div>
   <div class="activity-list" aria-label="Recent background work">
     {% for item in activity['items'] %}
-    <a class="activity-item tone-{{ item.tone }}" href="{{ item.href }}" data-activity-action="{{ item.kind }}:{{ item.href }}">
+    <a class="activity-item tone-{{ item.tone }}" href="{{ item.href }}" data-activity-action="{{ item.activity_key }}">
       <span class="activity-item-mark" aria-hidden="true">
         {% if item.kind == 'Source preparation' %}
         <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 11h6M9 15h6"/></svg>
