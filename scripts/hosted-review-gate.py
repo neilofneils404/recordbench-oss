@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 
 BOT = "chatgpt-codex-connector[bot]"
@@ -77,7 +78,14 @@ def effective_hosted_review(prefix: str, number: int, pr: dict) -> bool:
         if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
             continue
         if login not in permissions:
-            permissions[login] = request(f"{prefix}/collaborators/{login}/permission").get("permission")
+            try:
+                permissions[login] = request(f"{prefix}/collaborators/{login}/permission").get("permission")
+            except urllib.error.HTTPError as error:
+                if error.code != 404:
+                    raise
+                # A former collaborator cannot authorize opt-out. Continue so a
+                # later removal by a current maintainer can recover the policy.
+                permissions[login] = None
         if permissions[login] in {"write", "maintain", "admin"}:
             required = False
     return requires_hosted_review(pr) or required

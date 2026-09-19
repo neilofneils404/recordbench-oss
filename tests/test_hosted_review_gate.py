@@ -601,3 +601,43 @@ def test_optional_shared_sha_success_leaves_strict_pr_blocked(monkeypatch):
         assert GATE.main() == 0
     assert status == "success"  # Optional PR overwrites the shared commit status.
     assert latest_gate_review == {1: "REQUEST_CHANGES", 2: "APPROVE"}
+
+
+@pytest.mark.parametrize("later_maintainer", [False, True])
+def test_missing_former_collaborator_preserves_strict_policy_until_maintainer_removal(monkeypatch, later_maintainer):
+    events = [
+        {"id": 1, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
+        {"id": 2, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
+         "actor": {"login": "former-reviewer"}},
+    ]
+    if later_maintainer:
+        events += [
+            {"id": 3, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
+            {"id": 4, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
+             "actor": {"login": "current-reviewer"}},
+        ]
+
+    def request(path, data=None, *, method=None):
+        if "/events?" in path:
+            return events
+        if path.endswith("/collaborators/former-reviewer/permission"):
+            raise GATE.urllib.error.HTTPError(path, 404, "Not Found", {}, None)
+        if path.endswith("/collaborators/current-reviewer/permission"):
+            return {"permission": "write"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(GATE, "request", request)
+    assert GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []}) is (not later_maintainer)
+
+
+@pytest.mark.parametrize("code", [401, 403, 429, 500])
+def test_permission_service_errors_still_fail_closed(monkeypatch, code):
+    def request(path, data=None, *, method=None):
+        if "/events?" in path:
+            return [{"id": 1, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
+                     "actor": {"login": "fixture-reviewer"}}]
+        raise GATE.urllib.error.HTTPError(path, code, "Unavailable", {}, None)
+
+    monkeypatch.setattr(GATE, "request", request)
+    with pytest.raises(GATE.urllib.error.HTTPError):
+        GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []})
