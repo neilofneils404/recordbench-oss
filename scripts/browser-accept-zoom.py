@@ -121,7 +121,7 @@ def main():
                     assert js('return document.documentElement.scrollWidth <= innerWidth + 1'), (percent, 'Page scrolls sideways')
 
                 def reachable(element):
-                    js('arguments[0].scrollIntoView({block:"center",inline:"nearest"})', element)
+                    js('arguments[0].scrollIntoView({block:"center",inline:"nearest",behavior:"instant"})', element)
                     wait.until(lambda _: js('''const e=arguments[0],r=e.getBoundingClientRect();
                         return r.width>0 && r.left>=-1 && r.right<=innerWidth+1 && r.top>=0 && r.bottom<=innerHeight+1
                         && e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));''', element))

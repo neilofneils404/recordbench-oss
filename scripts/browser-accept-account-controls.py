@@ -106,7 +106,7 @@ def main():
             find('.account-menu > summary').send_keys(Keys.ENTER)
             signout = find('.logout-form button')
             signout.send_keys(Keys.NULL)
-            js('arguments[0].scrollIntoView({block:"nearest"})', signout)
+            js('arguments[0].scrollIntoView({block:"nearest",behavior:"instant"})', signout)
             bounds = js('return arguments[0].getBoundingClientRect().toJSON()', signout)
             assert 0 <= bounds['left'] < bounds['right'] <= 320
             assert 0 <= bounds['top'] < bounds['bottom'] <= 568

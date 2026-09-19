@@ -306,7 +306,7 @@ def main(argv=None):
                 return bounds
 
             def reachable(element):
-                js("arguments[0].scrollIntoView({block:'center',inline:'nearest'})", element)
+                js("arguments[0].scrollIntoView({block:'center',inline:'nearest',behavior:'instant'})", element)
                 wait.until(lambda _: js("const r=arguments[0].getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight+1 && arguments[0].contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))", element))
                 fits(element)
 
@@ -482,7 +482,7 @@ def main(argv=None):
             viewport(1440, 480)
             go(paths["notes"])
             tools = find(".notebook-tools")
-            js("arguments[0].scrollIntoView({block:'start'})", tools)
+            js("arguments[0].scrollIntoView({block:'start',behavior:'instant'})", tools)
             tools.send_keys(Keys.END)
             suggestion = find(".suggestion-tool button")
             reachable(suggestion)
