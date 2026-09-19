@@ -86,3 +86,9 @@ state or a supported release.
 
 See [the implementation brief](product-slices/20-graph-exploration.md). Native
 visual qualification remains separately scoped and on hold until this slice lands.
+
+### Hosted-review correction
+
+The diagram reserves bottom space for the final additional-role count. Synthetic
+one-record and eight-record pages reproduce the previous clipped notice and verify
+that every omission label now fits within the SVG viewport.

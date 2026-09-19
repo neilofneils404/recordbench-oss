@@ -60,7 +60,9 @@ def install_evidence_graph_routes(app, *, assertions_for, authorized_matter,
 
         # The diagram is a compact projection of the evidence list below. Lists
         # retain each admitted role/account and all omission counts.
-        graph_height = max(220, len(graph['records']) * 190 + 30)
+        # The last omission label has baseline records * 190 + 37. Keep room
+        # below that baseline so the outer SVG does not clip the notice.
+        graph_height = max(220, len(graph['records']) * 190 + 60)
         for index, entry in enumerate(graph['records']):
             entry['diagram_y'] = index * 190 + 45
             entry['diagram_roles'] = [role for role in entry['roles'] if role['entity_id'] != entity_id][:4]

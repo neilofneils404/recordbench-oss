@@ -2,6 +2,7 @@
 import html
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlencode, urlparse
+from xml.etree import ElementTree
 
 from fastapi.testclient import TestClient
 import pytest
@@ -212,6 +213,34 @@ def test_graph_identity_roundtrips_keep_a_bounded_return_context(connections):
     assert any(href == graph_context and label == 'Return to review context'
                for href, label in _links(original))
     assert client.get(graph_context).status_code == 200
+
+
+@pytest.mark.parametrize('record_count', (1, 8))
+def test_diagram_keeps_final_omitted_roles_label_inside_viewport(connections, record_count):
+    context = connections
+    client, slug = context['client'], context['slug']
+    records = [context['assertion_id']]
+    for number in range(1, record_count):
+        records.append(_create_event(client, slug, context['entity_id'], context['supporting'],
+                                     title=f'Synthetic linked event {number}'))
+    neighbors = [_entity(client, slug, f'Synthetic graph neighbor {number}') for number in range(5)]
+    for identifier in records:
+        for neighbor in neighbors:
+            response = _action(client, slug, identifier, 'add_role',
+                               entity_selection=f'{neighbor}:1', role='participant')
+            assert response.status_code == 200
+    graph = client.get(_graph_url(slug, context['entity_id']))
+    assert graph.status_code == 200
+    start = graph.text.index('<svg class="evidence-graph"')
+    markup = graph.text[start:graph.text.index('</svg>', start) + len('</svg>')]
+    diagram = ElementTree.fromstring(markup)
+    height = float(diagram.attrib['viewBox'].split()[3])
+    labels = [node for node in diagram.iter('text')
+              if 'additional role(s)' in ''.join(node.itertext())]
+    assert len(labels) == record_count
+    # Leave room below the text baseline too, so SVG overflow cannot clip the
+    # omission notice on either a one-record neighborhood or a full page.
+    assert all(float(label.attrib['y']) + 16 <= height for label in labels)
 
 
 def test_page_beyond_live_neighborhood_redirects_to_available_records(connections):
