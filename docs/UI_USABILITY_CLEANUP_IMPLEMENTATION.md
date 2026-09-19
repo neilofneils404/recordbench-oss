@@ -126,6 +126,26 @@ identifies the tested UI by file hashes and preserves synthetic receipts.
   and complete-history inspection. Candidate publication still uses the
   installed pre-push guard, without bypasses or new scanner exceptions.
 
+### Classic-scrollbar follow-up
+
+Hosted Linux acceptance reproduced a conversation-history overlap at 761 pixels.
+The previous height calculation used the viewport, including the space taken by
+classic scrollbars. A local synthetic reproduction forced classic scrollbars:
+its 844-pixel pane had only 829 usable pixels, leaving history at 693 pixels
+while the composer began at 690.84 pixels.
+
+History now uses the pane's measured client height. A ResizeObserver watches
+both the pane and composer, so scrollbar and container-size changes retain the
+spacing. The same reproduction leaves history at 678 pixels, clear of the
+composer. All 19 layout checks and 123 focused tests passed. The runner requires
+that additional check; missing/truncated results fail closed.
+
+[Follow-up receipt and source hashes](ui-usability-audit/2026-09-19/scrollbar-followup/manifest.json)
+identify this correction separately from the earlier evidence snapshots. New
+synthetic browser journeys also use the existing hosted Linux launch policy;
+Mac browser sandbox settings are retained. Authentication and live-resize
+acceptance wait for the actual visible destination/state before interacting.
+
 ## Remaining acceptance and handoff
 
 Native OS font/display scaling, physical phone touch/on-screen-keyboard behavior,

@@ -80,7 +80,7 @@ def test_refresh_fails_when_navigation_does_not_finish(intake_script, stalled_do
 
 def receipt(path, **values):
     path.write_text(json.dumps({'passed': True, 'synthetic_only': True,
-        'checks': ['Generated check'] * 18, **values}))
+        'checks': ['Generated check'] * 19, **values}))
 
 
 def test_pins_match_browser_driver_version_and_official_archives(runner):
@@ -233,7 +233,7 @@ def test_all_journeys_run_and_failure_cannot_be_hidden_by_receipt(runner, tmp_pa
         if failure != 'missing' or not failing_journey:
             values = {'passed': failure != 'failed' or not failing_journey}
             if failure == 'truncated' and failing_journey:
-                values['checks'] = ['Generated incomplete check'] * {1: 10, 4: 17, 6: 11, 7: 5}[failure_position]
+                values['checks'] = ['Generated incomplete check'] * {1: 10, 4: 18, 6: 11, 7: 5}[failure_position]
             receipt(raw / name, **values)
         if failing_journey:
             if failure == 'exit':

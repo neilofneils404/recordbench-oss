@@ -30,7 +30,7 @@ JOURNEYS = (
     ('intake', 'browser-accept-intake-receipts.py', 'receipt-browser-result.json', 11, ()),
     ('dusk', 'browser-accept-dusk.py', 'receipt.json', 12, ()),
     ('reports', 'browser-accept-reports-bundle.py', 'receipt.json', 12, ('--verify-readiness',)),
-    ('workspace-layout', 'browser-accept-workspace-layout.py', 'receipt.json', 18, ()),
+    ('workspace-layout', 'browser-accept-workspace-layout.py', 'receipt.json', 19, ()),
     ('activity', 'browser-accept-activity.py', 'receipt.json', 8, ()),
     ('zoom', 'browser-accept-zoom.py', 'receipt.json', 12, ()),
     ('account-controls', 'browser-accept-account-controls.py', 'receipt.json', 6, ()),

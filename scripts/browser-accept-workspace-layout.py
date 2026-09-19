@@ -216,13 +216,18 @@ def main(argv=None):
                 viewport(width, 900)
                 go(paths["review"])
                 pane = find(".workspace-main")
+                # Exercise the space consumed by classic scrollbars on Linux
+                # and by accessibility scrollbar preferences on other hosts.
+                js("const s=document.createElement('style');s.textContent='.workspace-main{scrollbar-width:auto;overflow-x:scroll}.workspace-main::-webkit-scrollbar{height:24px;width:24px}';document.head.append(s)")
+                assert js("return arguments[0].clientHeight < arguments[0].getBoundingClientRect().height", pane)
                 wheel(width - 30, 300, 1900)
                 wait.until(lambda _: scroll(pane) > 1000)
                 history, active = find(".conversation-history"), find(".conversation-active")
                 composer = find(".composer-wrap")
                 history_bounds, active_bounds = rect(history), rect(active)
                 assert history_bounds["right"] + 16 <= active_bounds["left"]
-                assert history_bounds["bottom"] <= rect(composer)["top"] - 5
+                wait.until(lambda _: rect(history)["bottom"] <= rect(composer)["top"] - 5)
+                history_bounds = rect(history)
                 assert js("const r=arguments[0].getBoundingClientRect(); return arguments[0].contains(document.elementFromPoint(r.left+r.width/2, arguments[1]))", active, history_bounds["top"] + 100)
                 conversation_layouts[str(width)] = {
                     "columns": js("return getComputedStyle(arguments[0]).gridTemplateColumns", find(".conversation-workspace")),
@@ -237,6 +242,7 @@ def main(argv=None):
                 wait.until(lambda _: js("return arguments[0].scrollTop + arguments[0].clientHeight >= arguments[0].scrollHeight - 2", nav))
                 assert abs(scroll(pane) - previous_pane) <= 1
                 screenshot(f"review-support-closed-{width}")
+            checks.append("Classic scrollbars reduce the available review pane height without obscuring conversation history behind the composer")
             viewport(760, 900)
             go(paths["review"])
             pane, history, active, nav = find(".workspace-main"), find(".conversation-history"), find(".conversation-active"), find("[data-conversation-list]")
