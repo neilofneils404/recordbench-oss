@@ -113,7 +113,9 @@ workspace transaction lock. Prefer public workflow transitions over direct SQL
 to establish retry states. If a fixture manually claims and completes a job,
 stop and join that job's coordinator before queueing it; retain live workers in
 tests that exercise automatic processing. A passing rerun alone does not fix a
-fixture race.
+fixture race. Direct SQL fixture writes must acquire `workspace._lock` before
+entering the connection transaction; stopping one coordinator does not stop the
+other workers that share that connection.
 
 The frozen Review acceptance pack pins test nodes and their complete files,
 including helpers. Changes to those files require reviewed node/file digests
