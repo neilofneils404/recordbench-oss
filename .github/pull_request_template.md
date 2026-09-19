@@ -30,8 +30,8 @@ acceptance performed. Do not include private deployment output.
 - [ ] The publication sanitizer passes.
 - [ ] The complete outgoing history passed the local pre-push check; PR text
       and attachments were separately inspected before upload.
-- [ ] Before merge: final-commit GitHub Codex code review and security review
-      (or the verified maintainer security-quota exception) completed,
-      all findings were reconciled, required CI passed, and a maintainer accepted
-      the full reviewed commit following `docs/PUBLIC_ALPHA.md`.
+- [ ] Before merge: local/maintainer review completed, all Quality gates passed,
+      and branch protections allow merge. Hosted reviews are optional unless
+      `require-hosted-review` is applied; opted-in PRs meet the final-head review
+      and acceptance rules in `docs/PUBLIC_ALPHA.md`.
 - [ ] No existing release tag was moved or rewritten.

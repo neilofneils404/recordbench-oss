@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a merge status from GitHub-hosted Codex reviews, without running PR code."""
+"""Publish an opt-in hosted-review status without running PR code."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,6 +12,8 @@ import urllib.request
 BOT = "chatgpt-codex-connector[bot]"
 SUMMARY = "<!-- codex-pull-request-review-summary -->"
 CONTEXT = "hosted-review-gate"
+REQUIRED_LABEL = "require-hosted-review"
+OPTIONAL_DESCRIPTION = "Hosted review not required; maintainer review and Quality gates still apply"
 APPROVAL_PREFIX = "RecordBench hosted review gate:"
 ACCEPTANCE = re.compile(r"RecordBench maintainer acceptance: ([0-9a-f]{40})")
 QUOTA_REQUEST = re.compile(r"@codex security review\n\nRecordBench security review head: ([0-9a-f]{40})")
@@ -42,6 +44,11 @@ CODE_ONLY_ROW = re.compile(
     r'\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* '
     r'<relative-time datetime="(?P<completed_at>[^"<>]+)">[^<>]+</relative-time> '
     r'\| `(?P<head_prefix>[0-9a-f]{7,40})` \| [^|\r\n]+ \|')
+
+
+def requires_hosted_review(pr: dict) -> bool:
+    """Only the explicit PR label opts into the strict hosted review policy."""
+    return any(label["name"] == REQUIRED_LABEL for label in pr.get("labels", []))
 
 
 def comment_time(comment: dict) -> datetime:
@@ -187,9 +194,10 @@ def main() -> int:
         return 0
     head = pr["head"]["sha"]
     base = pr["base"]["sha"]
+    required = requires_hosted_review(pr)
     review_path = f"{prefix}/pulls/{number}/reviews"
     request(f"{prefix}/statuses/{head}", {"state": "pending", "context": CONTEXT,
-        "description": "Rechecking current-commit hosted reviews and discussions",
+        "description": "Rechecking current-commit hosted review policy",
         "target_url": pr["html_url"]})
     # Native approvals belong to one PR. Withdraw the prior gate opinion using
     # a new review; this needs pull-request write permission, not admin dismissal.
@@ -210,63 +218,66 @@ def main() -> int:
             "body": f"{APPROVAL_PREFIX} PR #{number} requires gate revalidation before approval."})
     if pr["base"]["ref"] != pr["base"]["repo"]["default_branch"]:
         return 0
-    comments = []
-    for page in range(1, 101):
-        items = request(f"{prefix}/issues/{number}/comments?per_page=100&page={page}")
-        comments.extend(items)
-        if len(items) < 100:
-            break
-    else:
-        raise RuntimeError("Comment limit exceeded")
-    owner, name = repo.split("/")
-    threads = []
-    cursor = None
-    query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
-      repository(owner:$owner,name:$name) { pullRequest(number:$number) {
-        reviewThreads(first:100,after:$cursor) { nodes { isResolved resolvedBy { login } }
-          pageInfo { hasNextPage endCursor } }
-      } }
-    }"""
-    for _ in range(100):
-        result = request("graphql", {"query": query, "variables": {
-            "owner": owner, "name": name, "number": number, "cursor": cursor}})
-        if result.get("errors"):
-            raise RuntimeError("Review discussions unavailable")
-        connection = result["data"]["repository"]["pullRequest"]["reviewThreads"]
-        threads.extend(connection["nodes"])
-        if not connection["pageInfo"]["hasNextPage"]:
-            break
-        cursor = connection["pageInfo"]["endCursor"]
-    else:
-        raise RuntimeError("Discussion limit exceeded")
-    resolver_permissions = {}
-    def can_reconcile(login):
-        if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
-            return False
-        if login not in resolver_permissions:
-            permission = request(f"{prefix}/collaborators/{login}/permission")
-            resolver_permissions[login] = permission.get("permission") in {"admin", "maintain", "write"}
-        return resolver_permissions[login]
+    state, description = "success", OPTIONAL_DESCRIPTION
+    if required:
+        comments = []
+        for page in range(1, 101):
+            items = request(f"{prefix}/issues/{number}/comments?per_page=100&page={page}")
+            comments.extend(items)
+            if len(items) < 100:
+                break
+        else:
+            raise RuntimeError("Comment limit exceeded")
+        owner, name = repo.split("/")
+        threads = []
+        cursor = None
+        query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
+          repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+            reviewThreads(first:100,after:$cursor) { nodes { isResolved resolvedBy { login } }
+              pageInfo { hasNextPage endCursor } }
+          } }
+        }"""
+        for _ in range(100):
+            result = request("graphql", {"query": query, "variables": {
+                "owner": owner, "name": name, "number": number, "cursor": cursor}})
+            if result.get("errors"):
+                raise RuntimeError("Review discussions unavailable")
+            connection = result["data"]["repository"]["pullRequest"]["reviewThreads"]
+            threads.extend(connection["nodes"])
+            if not connection["pageInfo"]["hasNextPage"]:
+                break
+            cursor = connection["pageInfo"]["endCursor"]
+        else:
+            raise RuntimeError("Discussion limit exceeded")
+        resolver_permissions = {}
+        def can_reconcile(login):
+            if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
+                return False
+            if login not in resolver_permissions:
+                permission = request(f"{prefix}/collaborators/{login}/permission")
+                resolver_permissions[login] = permission.get("permission") in {"admin", "maintain", "write"}
+            return resolver_permissions[login]
 
-    for comment in comments:
-        comment["maintainerCanAccept"] = False
-        if any(pattern.fullmatch(comment.get("body", "").strip())
-               for pattern in (ACCEPTANCE, QUOTA_REQUEST, QUOTA_EXCEPTION)):
-            comment["maintainerCanAccept"] = can_reconcile(comment.get("user", {}).get("login", ""))
-    for thread in threads:
-        resolver = (thread.get("resolvedBy") or {}).get("login", "")
-        thread["resolverCanReconcile"] = False
-        if not thread.get("isResolved") or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", resolver):
-            continue
-        thread["resolverCanReconcile"] = can_reconcile(resolver)
-    state, description = evaluate(head, comments, threads)
+        for comment in comments:
+            comment["maintainerCanAccept"] = False
+            if any(pattern.fullmatch(comment.get("body", "").strip())
+                   for pattern in (ACCEPTANCE, QUOTA_REQUEST, QUOTA_EXCEPTION)):
+                comment["maintainerCanAccept"] = can_reconcile(comment.get("user", {}).get("login", ""))
+        for thread in threads:
+            resolver = (thread.get("resolvedBy") or {}).get("login", "")
+            thread["resolverCanReconcile"] = False
+            if not thread.get("isResolved") or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", resolver):
+                continue
+            thread["resolverCanReconcile"] = can_reconcile(resolver)
+        state, description = evaluate(head, comments, threads)
     def unchanged():
         current = request(f"{prefix}/pulls/{number}")
         return (current["state"] == "open" and current["head"]["sha"] == head
-                and current["base"]["sha"] == base and current["base"]["ref"] == pr["base"]["ref"])
+                and current["base"]["sha"] == base and current["base"]["ref"] == pr["base"]["ref"]
+                and requires_hosted_review(current) == required)
 
     if not unchanged():
-        raise RuntimeError("PR or base changed during inspection; rerun the gate")
+        raise RuntimeError("PR, base or hosted-review opt-in changed during inspection; rerun the gate")
     if state == "success":
         request(review_path, {"commit_id": head, "event": "APPROVE",
             "body": f"{APPROVAL_PREFIX} PR #{number}, head {head}, base {base}. {description}."})

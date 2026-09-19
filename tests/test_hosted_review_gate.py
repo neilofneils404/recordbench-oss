@@ -101,7 +101,7 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch, qu
 
         def request(path, data=None, *, method=None):
             if path.endswith("/pulls/1"):
-                return {"state": "open", "head": {"sha": HEAD}, "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}}, "html_url": "https://example.test/pr/1"}
+                return {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}], "head": {"sha": HEAD}, "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}}, "html_url": "https://example.test/pr/1"}
             if path.split("?")[0].endswith("/reviews"):
                 if data is None:
                     return [{"id": 10, "state": "APPROVED", "user": {"login": "github-actions[bot]"},
@@ -143,7 +143,7 @@ def test_shared_head_does_not_share_native_approval_or_approve_another_base(monk
         monkeypatch.setenv("PR_NUMBER", str(number))
         accepted = approval()
         accepted["user"] = {"login": "fixture-reviewer"}
-        pr = {"state": "open", "head": {"sha": HEAD}, "base": {"sha": "b" * 40,
+        pr = {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}], "head": {"sha": HEAD}, "base": {"sha": "b" * 40,
               "ref": "other" if number >= 3 else "main", "repo": {"default_branch": "main"}},
               "html_url": "https://example.test/pr/" + str(number)}
 
@@ -186,7 +186,7 @@ def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):
     def request(path, data=None, *, method=None):
         nonlocal changed
         if path.endswith("/pulls/1"):
-            return {"state": "open", "head": {"sha": HEAD}, "base": {
+            return {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}], "head": {"sha": HEAD}, "base": {
                 "sha": ("c" if changed else "b") * 40, "ref": "main", "repo": {"default_branch": "main"}},
                 "html_url": "https://example.test/pr/1"}
         if path.split("?")[0].endswith("/reviews"):
@@ -422,3 +422,82 @@ def test_new_quota_receipt_allows_deliberate_retry():
         comment["updated_at"] = f"2026-01-01T12:0{index + 4}:00Z"
     newer[-1]["body"] = newer[-1]["body"].replace("101", "201").replace("102", "202")
     assert evaluate(HEAD, [*comments, *newer], [])[0] == "success"
+
+
+@pytest.mark.parametrize("labels", [[], [{"name": "documentation"}], [{"name": "product"}]])
+def test_optional_policy_passes_without_fetching_reviews_or_requesting_codex(monkeypatch, labels):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
+    monkeypatch.setenv("PR_NUMBER", "1")
+    statuses, reviews = [], []
+    pr = {"state": "open", "labels": labels, "head": {"sha": HEAD},
+          "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}},
+          "html_url": "https://example.test/pr/1"}
+
+    def request(path, data=None, *, method=None):
+        if path.endswith("/pulls/1"):
+            return deepcopy(pr)
+        if path.split("?")[0].endswith("/reviews"):
+            if data is None:
+                # A strict-mode gate may previously have requested changes.
+                return [{"id": 10, "state": "CHANGES_REQUESTED",
+                         "user": {"login": "github-actions[bot]"},
+                         "body": GATE.APPROVAL_PREFIX + " revalidation required"}]
+            reviews.append(data)
+            return {"id": 11}
+        if "/statuses/" in path:
+            statuses.append(data)
+            return {}
+        # No comment, discussion, permission or review-launch API is needed.
+        raise AssertionError(path)
+
+    monkeypatch.setattr(GATE, "request", request)
+    assert GATE.main() == 0
+    assert [status["state"] for status in statuses] == ["pending", "success"]
+    assert statuses[-1]["context"] == "hosted-review-gate"
+    assert "not required" in statuses[-1]["description"]
+    assert len(reviews) == 1 and reviews[0]["event"] == "APPROVE"
+    assert reviews[0]["commit_id"] == HEAD
+    assert "not required" in reviews[0]["body"]
+    assert "@codex" not in reviews[0]["body"]
+
+
+@pytest.mark.parametrize("change_at", ["inspection", "approval"])
+@pytest.mark.parametrize("initially_required", [False, True])
+def test_opt_in_change_during_gate_never_publishes_success(monkeypatch, change_at, initially_required):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
+    monkeypatch.setenv("PR_NUMBER", "1")
+    reads, statuses, reviews = 0, [], []
+    accepted = approval()
+    accepted["user"] = {"login": "fixture-reviewer"}
+
+    def request(path, data=None, *, method=None):
+        nonlocal reads
+        if path.endswith("/pulls/1"):
+            reads += 1
+            changed = reads >= (2 if change_at == "inspection" else 3)
+            required = initially_required != changed
+            return {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}] if required else [],
+                    "head": {"sha": HEAD}, "base": {"sha": "b" * 40, "ref": "main",
+                    "repo": {"default_branch": "main"}}, "html_url": "https://example.test/pr/1"}
+        if path.split("?")[0].endswith("/reviews"):
+            if data is None:
+                return []
+            reviews.append(data["event"])
+            return {"id": 11}
+        if "/statuses/" in path:
+            statuses.append(data["state"])
+            return {}
+        if "/comments?" in path:
+            return [summary(), accepted]
+        if path == "graphql":
+            return {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        if path.endswith("/collaborators/fixture-reviewer/permission"):
+            return {"permission": "write"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(GATE, "request", request)
+    with pytest.raises(RuntimeError, match="changed during"):
+        GATE.main()
+    assert statuses == ["pending"]
+    assert reviews == ([] if change_at == "inspection" else ["APPROVE", "REQUEST_CHANGES"])

@@ -99,33 +99,50 @@ does not remove public copies or history. Revoke exposed credentials first.
 
 ## Merge and automation boundary
 
-Protect the default branch with required CI, `hosted-review-gate`, resolved
-discussions, at least one native PR approval, stale-approval dismissal, approval
-of the most recent push, and no force pushes or deletion. `hosted-review-gate` requires completed GitHub Codex code and security
-reviews on the current head (or the narrow security-quota exception below) and review discussions reconciled by someone with
-repository write, maintain or admin access. An outside author cannot satisfy the
-gate by resolving their own findings. Request renewed
-reviews after corrections; never use a previous commit's review as acceptance.
-If a discussion was reconciled after the last summary update, dispatch the
-Hosted review gate workflow with the PR number to recheck it. A changed Codex
-summary format blocks pending diagnosis rather than silently passing. Edited
-requests invalidate earlier completions; each request is compared with its own
-code or security review completion. A maintainer deleting their own review-request
-comment withdraws that request; any running state already recorded by the bot
-continues to block. Request review again when a withdrawn rerun is still wanted.
+Keep the default branch protected with required Quality CI, `hosted-review-gate`,
+resolved discussions, at least one native PR approval, stale-approval dismissal,
+approval of the most recent push, and no force pushes or deletion. Application,
+PostgreSQL integration, synthetic-browser, transcription, deployment-contract
+and secret-scan Quality gates remain mandatory; this policy does not remove or
+weaken any Quality check.
 
-A passing gate also submits a native approval to the individual PR, bound to
-its full head and recorded base. Both that native approval and the status are
-required: a shared commit status alone cannot authorize another PR with the
-same head. The gate only approves PRs targeting the default branch. It withdraws
-its earlier native approval with a review requesting revalidation before
-reevaluation, and rechecks both head and base around approval. A change during
-approval also withdraws the newly issued approval. This uses pull-request write
-permission; the workflow does not need repository-admin review-dismissal rights.
-Require branches to be up to date before merging (strict required status checks),
-so a default-branch advance requires an updated head and fresh reviews. Native
-approvals must not be disabled while relying on this gate. Separate
-branches need their own deliberate protection policy.
+Hosted Codex review is an optional maintainer tool. Local/maintainer review is
+sufficient when Quality is green and protections allow merge. By default,
+`hosted-review-gate` publishes success with “Hosted review not required” without
+reading or waiting for Codex results. It still submits a native policy approval
+bound to the individual PR, full head and base so the existing required status
+and approval do not become dangling requirements. This approval records policy
+eligibility only, not a completed code or security review. Branch conversation
+resolution and other native protections still apply independently.
+
+A maintainer opts a PR into strict hosted review by adding the exact label
+`require-hosted-review`. Review commands (`@codex review` and
+`@codex security review`) alone request advisory review and do not opt in.
+Adding the label does not launch reviews; request them deliberately. Removing
+the label restores the default optional policy. Both label events rerun the
+workflow. Keep automatic code review disabled in the Codex GitHub integration's
+repository settings; Actions policy does not control that separate setting.
+No repository workflow posts review commands on open or synchronize.
+
+For opted-in PRs, the gate requires completed GitHub Codex code and security
+reviews on the current head (or the narrow security-quota exception below),
+review discussions reconciled by someone with write, maintain or admin access,
+and later full-head maintainer acceptance. Local review does not substitute for
+those explicitly required hosted reviews. Changed heads and newer requests
+require renewed review; edited requests invalidate earlier completions. A
+withdrawn request no longer counts, but already-recorded running security state
+still blocks until reconciled. Unknown review-summary formats fail closed.
+After resolving discussions, dispatch the Hosted review gate workflow with the
+PR number if a new evaluation is needed.
+
+In both modes, the status and native approval are required by existing branch
+protection and apply to PRs targeting the default branch. Shared commit status
+cannot grant another PR native approval. The gate withdraws its prior approval
+before reevaluation, then checks head, base and opt-in state around approval.
+Changes during approval withdraw the new approval and require reevaluation.
+Keep strict up-to-date status checks enabled. A default-branch advance requires
+an updated head and fresh CI, plus fresh hosted review when opted in. The gate
+uses pull-request write permission, not repository-admin dismissal rights.
 
 The gate reads trusted default-branch code and GitHub metadata only; it never executes the PR head
 with a write token. External contributor workflows require
@@ -135,7 +152,7 @@ workflow permissions are read-only and actions are pinned to full commits.
 Enable GitHub Actions PR-review approval capability for this trusted workflow;
 only this gate requests pull-request write permission.
 
-After both hosted reviews finish, or after code review and the verified
+For an opted-in PR, after both hosted reviews finish, or after code review and the verified
 security-quota exception below, a maintainer independently checks the full
 current head and review results, then posts this exact one-line PR comment,
 replacing the placeholder with the complete 40-character commit ID:
@@ -157,6 +174,8 @@ The maintainer still reviews disclosure, provenance, and reconciled findings.
 Outside contributors do not need or receive access to a private deployment.
 
 ### Security-review quota exception
+
+This exception applies only to PRs labeled `require-hosted-review`.
 
 A maintainer may proceed when GitHub Codex explicitly cannot start security
 review because its security-review quota is exhausted. This is a recorded

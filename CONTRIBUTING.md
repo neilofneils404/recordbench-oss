@@ -144,11 +144,37 @@ downstream is private.
 
 ## Pull requests
 
-Wait for GitHub-hosted Codex code and security reviews on the final commit,
-reconcile every finding, and pass required CI before merge. Corrections require
-renewed review. Local review does not replace those hosted reviews. Maintainers
-must also inspect synthetic-data provenance and disclosure risk. See
-[merge and automation controls](docs/PUBLIC_ALPHA.md#merge-and-automation-boundary).
+Hosted Codex review is optional. A maintainer may request `@codex review` or
+`@codex security review` when useful. Local/maintainer review is enough to merge
+when all Quality gates are green and branch protections allow it. Inspect
+synthetic-data provenance and disclosure risk before merging.
+
+The required `hosted-review-gate` status passes by default with “Hosted review
+not required”; it does not request Codex work. To make hosted reviews a merge
+requirement for a specific PR, a maintainer adds the exact label
+`require-hosted-review`, then requests the reviews they want to run. With that
+label, both current-head code and security review (or the documented security
+quota exception), reconciled findings and full-head maintainer acceptance are
+required. A review command alone does not opt in; removing the label restores
+the default policy. Label changes rerun the gate and invalidate an in-flight
+policy approval if the opt-in state changes.
+
+The gate retains its native, PR-specific policy approval so existing branch
+protections can stay in place. A default approval records only that hosted
+review is optional; it is not a claim that code or security review occurred.
+Quality checks, resolved-conversation requirements and other protections remain
+independent. See [merge and automation controls](docs/PUBLIC_ALPHA.md#merge-and-automation-boundary).
+
+| PR scenario | Before | After |
+| --- | --- | --- |
+| Docs-only PR | Waits for hosted code/security reviews and acceptance | Hosted status passes without Codex; maintainer review and green Quality required |
+| Product PR without opt-in | Same mandatory hosted reviews | Same default as docs; maintainer chooses whether to request advisory reviews |
+| Product PR labeled `require-hosted-review` | Mandatory hosted reviews | Strict current-head hosted review, reconciled findings and acceptance remain required, plus Quality |
+
+Repository workflows must not post review commands on open or synchronize.
+Keep automatic review disabled in the Codex GitHub repository settings as well;
+that integration setting is separate from the Actions gate. Adding the opt-in
+label enforces review completion but does not launch reviews automatically.
 
 Each pull request should explain the user problem, the resulting behavior, the
 synthetic evidence, and any security, lifecycle, migration, model, or recovery

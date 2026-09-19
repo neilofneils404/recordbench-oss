@@ -12,12 +12,12 @@ content and metadata for private information. Hosted CI runs after upload and
 cannot prevent the initial disclosure. Private deployment facts belong outside
 this repository, including in plans and agent handoffs. Read docs/PUBLIC_ALPHA.md.
 
-Do not merge until GitHub Codex code review and either security review or the
-verified maintainer security-quota exception in `docs/PUBLIC_ALPHA.md` cover the
-final commit, all findings are resolved or explicitly reconciled, and required CI
-passes. A maintainer must also accept the full reviewed commit as described in
-`docs/PUBLIC_ALPHA.md`. A local or subagent review is additional evidence, not a
-substitute.
+Hosted Codex code/security review is optional unless a maintainer adds the
+`require-hosted-review` PR label. By default, local/maintainer review is enough
+when all Quality gates pass and branch protections allow merge. Do not request
+hosted reviews automatically on PR open or synchronize. For opted-in PRs, follow
+the final-head review, findings reconciliation and maintainer acceptance rules
+in `docs/PUBLIC_ALPHA.md`. Publication safeguards and Quality gates always apply.
 
 Before changing deployment behavior, read `docs/ARCHITECTURE.md`,
 `docs/SECURITY_MODEL.md`, and the relevant runbook. Keep services private by
