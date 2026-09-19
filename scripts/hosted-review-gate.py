@@ -244,10 +244,13 @@ def main() -> int:
     else:
         raise RuntimeError("Review limit exceeded")
     previous = max(gate_reviews, key=lambda review: review["id"], default=None)
-    if previous and previous["state"] == "APPROVED":
+    default_base = pr["base"]["ref"] == pr["base"]["repo"]["default_branch"]
+    # Statuses are shared by commit SHA across PRs. Block this PR even on its
+    # first evaluation so another PR cannot satisfy its strict review policy.
+    if default_base or (previous and previous["state"] == "APPROVED"):
         request(review_path, {"commit_id": head, "event": "REQUEST_CHANGES",
             "body": f"{APPROVAL_PREFIX} PR #{number} requires gate revalidation before approval."})
-    if pr["base"]["ref"] != pr["base"]["repo"]["default_branch"]:
+    if not default_base:
         return 0
     required = effective_hosted_review(prefix, number, pr)
     state, description = "success", OPTIONAL_DESCRIPTION

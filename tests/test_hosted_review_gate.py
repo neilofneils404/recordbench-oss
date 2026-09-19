@@ -174,7 +174,8 @@ def test_shared_head_does_not_share_native_approval_or_approve_another_base(monk
 
         monkeypatch.setattr(GATE, "request", request)
         assert GATE.main() == 0
-    assert issued == [(1, "APPROVE", HEAD), (4, "REQUEST_CHANGES", HEAD)]
+    assert issued == [(1, "REQUEST_CHANGES", HEAD), (1, "APPROVE", HEAD),
+                      (2, "REQUEST_CHANGES", HEAD), (4, "REQUEST_CHANGES", HEAD)]
 
 
 def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):
@@ -219,7 +220,7 @@ def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):
     monkeypatch.setattr(GATE, "request", request)
     with pytest.raises(RuntimeError, match="changed during approval"):
         GATE.main()
-    assert withdrawn == [HEAD]
+    assert withdrawn == [HEAD, HEAD]
     assert statuses == ["pending"]
 
 
@@ -463,9 +464,9 @@ def test_optional_policy_passes_without_fetching_reviews_or_requesting_codex(mon
     assert [status["state"] for status in statuses] == ["pending", "success"]
     assert statuses[-1]["context"] == "hosted-review-gate"
     assert "not required" in statuses[-1]["description"]
-    assert len(reviews) == 1 and reviews[0]["event"] == "APPROVE"
+    assert [review["event"] for review in reviews] == ["REQUEST_CHANGES", "APPROVE"]
     assert reviews[0]["commit_id"] == HEAD
-    assert "not required" in reviews[0]["body"]
+    assert "not required" in reviews[-1]["body"]
     assert "@codex" not in reviews[0]["body"]
 
 
@@ -510,7 +511,7 @@ def test_opt_in_change_during_gate_never_publishes_success(monkeypatch, change_a
     with pytest.raises(RuntimeError, match="changed during"):
         GATE.main()
     assert statuses == ["pending"]
-    assert reviews == ([] if change_at == "inspection" else ["APPROVE", "REQUEST_CHANGES"])
+    assert reviews == ["REQUEST_CHANGES"] + ([] if change_at == "inspection" else ["APPROVE", "REQUEST_CHANGES"])
 
 
 @pytest.mark.parametrize("permission,expected", [
@@ -564,3 +565,39 @@ def test_missing_label_history_fails_closed(monkeypatch):
     monkeypatch.setattr(GATE, "request", request)
     with pytest.raises(RuntimeError, match="History unavailable"):
         GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []})
+
+
+def test_optional_shared_sha_success_leaves_strict_pr_blocked(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
+    latest_gate_review = {}
+    status = None
+    for number in (1, 2):
+        monkeypatch.setenv("PR_NUMBER", str(number))
+        pr = {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}] if number == 1 else [],
+              "head": {"sha": HEAD}, "base": {"sha": "b" * 40, "ref": "main",
+              "repo": {"default_branch": "main"}}, "html_url": f"https://example.test/pr/{number}"}
+
+        def request(path, data=None, *, method=None):
+            nonlocal status
+            if path.endswith(f"/pulls/{number}"):
+                return deepcopy(pr)
+            if path.split("?")[0].endswith("/reviews"):
+                if data is None:
+                    return [{"id": 1, "state": "APPROVED", "user": {"login": "fixture-reviewer"},
+                             "body": "Ordinary maintainer review"}]
+                latest_gate_review[number] = data["event"]
+                return {"id": 2}
+            if "/statuses/" in path:
+                status = data["state"]
+                return {}
+            if "/events?" in path or "/comments?" in path:
+                return []
+            if path == "graphql":
+                return {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(GATE, "request", request)
+        assert GATE.main() == 0
+    assert status == "success"  # Optional PR overwrites the shared commit status.
+    assert latest_gate_review == {1: "REQUEST_CHANGES", 2: "APPROVE"}
