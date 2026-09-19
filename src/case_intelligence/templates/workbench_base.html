@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="{{ url_for('static', path='report-compilation.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', path='workspace-layout.css') }}">
   <script src="{{ url_for('static', path='case-intelligence.js') }}" defer></script>
+  {% block extra_head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}{% if active_matter %} matter-page{% endif %}{% if show_assistant_dock %} assistant-available{% endif %}" data-csrf-token="{{ csrf_token }}" data-assistant-default="{{ assistant_default|default('open') }}">
   <a class="skip-link" href="#main-content">Skip to main content</a>

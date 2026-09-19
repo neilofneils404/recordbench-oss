@@ -13476,6 +13476,11 @@ def create_workbench_app(
                              audit=audit, require_response_lease=require_matter_response_lease,
                              transfer_response_lease=transfer_matter_response_lease)
 
+    from .evidence_graph_routes import install_evidence_graph_routes
+    install_evidence_graph_routes(app, assertions_for=bench.assertion_service,
+                                  authorized_matter=authorized_matter, auth_context=auth_context,
+                                  templates=templates, base_context=base_context)
+
     @app.get("/matters/{slug}/notebook", response_class=HTMLResponse)
     def matter_notebook(
         request: Request,

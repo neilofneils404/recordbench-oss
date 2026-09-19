@@ -219,3 +219,11 @@ Both adapters retain the existing research-job lifecycle and versioned JSON.
 over the existing authorized SQLite unit of work. Original passage validation
 and final save remain under the source mutation guard; names and aliases never
 merge stable matter-scoped identities.
+
+[Evidence connections](GRAPH_EXPLORATION.md) project existing explicit entity
+roles, events/assertions and source accounts into a bounded read-only neighborhood.
+The graph service shares the authorized entity/assertion unit of work and batches
+original-reference validation. Graph traversal retains saved identity revisions;
+historical roles and source accounts remain explicit. No graph database or new
+persistent authority is added. Native visual retrieval follows its separate
+qualification contract and is not implied by OCR or transcript navigation.

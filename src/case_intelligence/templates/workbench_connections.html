@@ -1,0 +1,97 @@
+{% extends "workbench_base.html" %}
+{% block title %}Evidence connections · {{ graph.center.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}evidence-graph-page{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static', path='evidence-graph.css') }}">{% endblock %}
+{% block content %}
+<main id="main-content" tabindex="-1" class="notebook-main evidence-graph-main">
+  <header class="notebook-heading"><div><p class="eyebrow">{{ matter.display_name }}</p><h1>Evidence connections</h1><p>Follow saved roles and inspect the original accounts behind them.</p></div></header>
+  {% with active='entities' %}{% include 'workbench_matter_tabs.html' %}{% endwith %}
+  {% include 'workbench_retention_notice.html' %}
+  <p><a href="{{ return_to }}">Return to previous review</a> · <a href="{{ entity_url(graph.center.entity_id) }}">Open identity</a> · <a href="#connection-evidence">Skip to evidence list</a></p>
+  <section class="notebook-tool-card graph-focus" aria-labelledby="focus-heading">
+    <div><p class="eyebrow">Selected identity</p><h2 id="focus-heading">{{ graph.center.display_name }}</h2>
+      <p>{{ graph.center.entity_type|title }} · {{ graph.center.status|replace('_',' ')|title }} · Identity {{ graph.center.entity_id[-8:] }}</p>
+    </div>
+    <div><a class="button button-secondary" href="{{ search_url(graph.center.display_name) }}">Find more originals</a>
+      <p class="small">Searches this name as a phrase. Matching text is a lead to review.</p>
+      {% if graph.center.aliases %}<details><summary>Search an alias</summary><ul>{% for alias in graph.center.aliases %}<li><a href="{{ search_url(alias) }}">{{ alias }}</a></li>{% endfor %}</ul></details>{% endif %}
+    </div>
+  </section>
+  <p>{{ graph.shown_records }} of {{ graph.total_records }} saved records shown · Page {{ graph.page }} of {{ graph.pages }}. Changes to saved records appear on refresh.</p>
+  <p>Lines show explicitly recorded roles. Review decisions and competing source accounts remain visible. This neighborhood covers saved knowledge, not every occurrence in the collection.</p>
+  {% if graph.records %}
+  <details class="graph-diagram-panel" open>
+    <summary>Connection diagram</summary>
+    <p class="small">Each record shows up to four other roles here. The evidence list includes more roles and source accounts, with links to the complete records.</p>
+    <div class="graph-diagram-scroll" tabindex="0" role="region" aria-label="Scrollable connection diagram">
+      <svg class="evidence-graph" viewBox="0 0 1020 {{ graph_height }}" width="1020" height="{{ graph_height }}" role="group" aria-labelledby="diagram-title diagram-description">
+        <title id="diagram-title">Saved connections for {{ graph.center.display_name }}</title>
+        <desc id="diagram-description">Selected identity connects to event and assertion records. Each record connects to other explicitly saved entity roles. Equivalent links and original source accounts follow in the evidence list. Dashed lines indicate historical identity snapshots.</desc>
+        {% set cy = graph_height / 2 %}
+        {% for entry in graph.records %}
+          <path class="graph-line{% if entry.center_historical %} graph-line-historical{% endif %}" d="M 225 {{ cy }} C 285 {{ cy }}, 285 {{ entry.diagram_y + 32 }}, 340 {{ entry.diagram_y + 32 }}"/>
+          {% for role in entry.diagram_roles %}
+            <path class="graph-line{% if not role.traversable %} graph-line-historical{% endif %}" d="M 650 {{ entry.diagram_y + 32 }} C 685 {{ entry.diagram_y + 32 }}, 685 {{ entry.diagram_y + loop.index0 * 42 + 16 }}, 720 {{ entry.diagram_y + loop.index0 * 42 + 16 }}"/>
+          {% endfor %}
+        {% endfor %}
+        <g class="graph-center"><rect x="12" y="{{ cy - 34 }}" width="213" height="68" rx="12"/><text x="26" y="{{ cy - 5 }}">{{ graph.center.display_name|truncate(25, true) }}</text><text class="graph-subtitle" x="26" y="{{ cy + 17 }}">Selected {{ graph.center.entity_type }}</text></g>
+        {% for entry in graph.records %}
+          <a href="{{ record_url(entry.record.assertion_id) }}" aria-label="Inspect {{ entry.record.title }}">
+            <g class="graph-record"><title>{{ entry.record.title }} · {{ entry.record.status|replace('_',' ') }}</title><rect x="340" y="{{ entry.diagram_y }}" width="310" height="68" rx="10"/>
+              <text x="354" y="{{ entry.diagram_y + 25 }}">{{ entry.record.title|truncate(36, true) }}</text>
+              <text class="graph-subtitle" x="354" y="{{ entry.diagram_y + 47 }}">{{ entry.record.record_type|title }} · {{ entry.record.status|replace('_',' ')|title }}</text>
+            </g>
+          </a>
+          <a href="#record-{{ entry.record.assertion_id }}"><text class="graph-account-link" x="354" y="{{ entry.diagram_y + 91 }}">{{ entry.account_totals.supporting }} supporting · {{ entry.account_totals.competing }} competing</text></a>
+          {% if entry.center_historical %}<text class="graph-subtitle" x="354" y="{{ entry.diagram_y + 112 }}">Selected identity changed since this role was saved</text>{% endif %}
+          {% for role in entry.diagram_roles %}
+            {% if role.traversable %}<a href="{{ graph_url(role.entity_id, 1) }}" aria-label="Explore connections for {{ role.display_name }}, identity {{ role.entity_id[-8:] }}">{% endif %}
+              <g class="graph-role{% if not role.traversable %} graph-role-historical{% endif %}"><title>{{ role.role|title }}: {{ role.display_name }} · Identity {{ role.entity_id }} · {{ role.identity_state }}</title>
+                <rect x="720" y="{{ entry.diagram_y + loop.index0 * 42 }}" width="280" height="33" rx="8"/>
+                <text x="731" y="{{ entry.diagram_y + loop.index0 * 42 + 22 }}">{{ role.role|title }}: {{ role.display_name|truncate(23, true) }}{% if not role.traversable %} *{% endif %}</text>
+              </g>
+            {% if role.traversable %}</a>{% endif %}
+          {% endfor %}
+          {% if entry.diagram_roles_omitted %}<text class="graph-subtitle" x="731" y="{{ entry.diagram_y + 182 }}">{{ entry.diagram_roles_omitted }} additional role(s) in complete record</text>{% endif %}
+        {% endfor %}
+      </svg>
+    </div>
+  </details>
+  {% endif %}
+  <section id="connection-evidence" aria-labelledby="evidence-heading">
+    <h2 id="evidence-heading">Evidence list</h2>
+    {% for entry in graph.records %}
+    <article class="notebook-tool-card graph-evidence-record" id="record-{{ entry.record.assertion_id }}">
+      <header><p class="eyebrow">{{ entry.record.record_type|title }} · Human review: {{ entry.record.status|replace('_',' ')|title }}</p>
+        <h3><a href="{{ record_url(entry.record.assertion_id) }}">{{ entry.record.title }}</a></h3>
+      </header>
+      <p>{{ entry.record.statement }}</p>
+      <p>Date as stated: {{ entry.record.raw_date or 'Not stated' }} · {{ entry.record.date_uncertainty or 'Uncertainty not recorded' }}<br>Ordering date: {{ entry.record.sort_date or 'Unresolved / not dated' }}</p>
+      <h4>Recorded entity roles</h4>
+      <ul class="graph-role-list">
+        {% for role in entry.roles %}<li><strong>{{ role.role|title }}:</strong> {{ role.display_name }} <small>· Identity {{ role.entity_id[-8:] }}</small>
+          {% if role.traversable %}{% if role.entity_id != graph.center.entity_id %} · <a href="{{ graph_url(role.entity_id, 1) }}">Explore connections</a>{% else %} · Selected identity{% endif %}
+          {% else %}<span class="graph-historical-label">Historical role: identity {{ role.identity_state }}. Open the record to inspect or correct it.</span>{% endif %}
+        </li>{% endfor %}
+      </ul>
+      {% if entry.roles_omitted %}<p>{{ entry.roles_omitted }} additional role(s) are available in the complete record.</p>{% endif %}
+      <h4>Original source accounts</h4>
+      <p>{{ entry.account_totals.supporting }} supporting · {{ entry.account_totals.competing }} competing. Showing {{ entry.accounts|length }} of {{ entry.account_total }} accounts.</p>
+      <div class="graph-accounts">
+      {% for account in entry.accounts %}<details class="graph-account graph-account-{{ account.stance }}">
+        <summary>{{ account.stance|title }} · {{ account.source_name }} · {{ account.location }}{% if not account.available %} · Historical support{% endif %}</summary>
+        <p>Attributed to {{ account.attributed_to }}</p><blockquote>{{ account.excerpt }}</blockquote>
+        {% if account.available %}<p><a class="button button-secondary graph-original-link" href="{{ original_url(account.support_token) }}">Open original passage</a></p>
+        {% else %}<p class="graph-historical-label">Original passage changed or is unavailable. This retained excerpt is historical support.</p>{% endif %}
+      </details>{% endfor %}
+      </div>
+      {% if entry.accounts_omitted %}<p>Additional accounts in the complete record: {{ entry.account_omissions.supporting }} supporting and {{ entry.account_omissions.competing }} competing.</p>{% endif %}
+      <p><a href="{{ record_url(entry.record.assertion_id) }}">Inspect complete record and correction history</a></p>
+    </article>
+    {% else %}
+    <div class="notebook-tool-card"><h3>No saved connections for this identity yet</h3><p>Open an original passage and record an event or assertion with an explicit role. Saved mentions and shared names alone do not create a relationship.</p><p><a href="{{ entity_url(graph.center.entity_id) }}">Inspect this identity and its mentions</a> · <a href="{{ search_url(graph.center.display_name) }}">Find more originals</a></p></div>
+    {% endfor %}
+  </section>
+  <nav class="graph-pagination" aria-label="Connection pages">{% if graph.page > 1 %}<a class="button button-secondary" href="{{ graph_url(graph.center.entity_id, graph.page - 1) }}">Previous records</a>{% endif %}{% if graph.page < graph.pages %}<a class="button button-secondary" href="{{ graph_url(graph.center.entity_id, graph.page + 1) }}">Next records</a>{% endif %}</nav>
+</main>
+{% endblock %}
