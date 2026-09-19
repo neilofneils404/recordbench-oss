@@ -23,7 +23,10 @@ The complete development gate is exercised on Ubuntu 24.04 with **Python 3.12**.
 The application requires 3.12 or newer, but the bundled transcription package
 requires a version below 3.13, so their shared environment currently needs 3.12.
 The contributor tests do not require a GPU or downloaded model weights.
-To run the deployed application, use the separate [installation playbook](docs/INSTALL.md).
+For code-only work, keep using `make bootstrap` and `make check` below.
+To use the product for UI work, follow the separate
+[Ubuntu CPU node path](docs/INSTALL.md#cpu-node-quick-start-ubuntu-2404), then
+[sign in and create a synthetic practice matter](docs/FIRST_RUN.md#cpu-practice-matter).
 
 Clone your fork and enter the repository. Before committing, configure Git
 with your public GitHub username and the no-reply address shown in your GitHub

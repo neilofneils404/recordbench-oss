@@ -18,7 +18,8 @@ The [September 12 assessment](PRODUCT_DIRECTION_2026-09-12.md) identifies gaps
 and subsequent delivery stages. Slice 19's first single-run adapter is landed
 as recorded below. Multiple-run aggregation, new questions, background material,
 matter memory, production imports and larger capacity remain separately scoped
-work. Slice 20 is landed as recorded below; no further product step is selected.
+work. Slice 20 is landed as recorded below. The bounded Linux CPU contributor
+node path (B-lite) is Next; no further product feature is selected.
 
 **Last updated:** 2026-09-19
 
@@ -173,12 +174,15 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 8 | Slice **18** — evidence-backed relationships and events | Done (#82) |
 | 9 | Slice **19** — first substep: synthesize one terminal full-text run for its criterion | Done — first adapter only (#85) |
 | 10 | Slice **20** — source-backed graph exploration from a saved entity | Done — landed at `e7a6847a` |
+| 12 | **20b — Linux CPU node (B-lite):** fresh Ubuntu 24.04 x86-64 → service account + Docker → `./install` CPU/local/loopback HTTPS → doctor → first-admin browser sign-in and synthetic practice matter | **Next** — [brief](product-slices/20b-linux-cpu-node.md); [timed journey passed](LINUX_CPU_NODE_ACCEPTANCE_2026-09-19.md), Quality pending |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 The September 19 landing completes slice 20 under
 [graph and multimodal exploration](GRAPH_MULTIMODAL_EXPLORATION.md) and its
 [bounded implementation brief](product-slices/20-graph-exploration.md).
-No further product step is selected. Slice 21, further visual experiments and
+The bounded **20b B-lite** node path is Next. Code-only contribution remains
+`make bootstrap/check`; running the product uses the existing `./install`.
+No further product feature is selected. Slice 21, further visual experiments and
 additional work on PR #34 or PR #87 remain on hold. High-resolution retrieval work remains
 local and outside this PR. Existing text and transcript support is not native
 image understanding. Later slice-19 work, model deployment and larger-capacity

@@ -6,6 +6,113 @@ runtime states, and the next incomplete step. It never treats a prepared node
 as a successful browser sign-in. Passwords and tokens are not included in phase
 receipts or the handoff.
 
+## CPU practice matter
+
+Start with the [Ubuntu CPU node quick start](INSTALL.md#cpu-node-quick-start-ubuntu-2404)
+and a successful `./install doctor --root /srv/recordbench`. This first journey
+uses just the installer-created administrator and one synthetic text file.
+Team setup, additional accounts and adoption checks come later.
+
+1. **Reach loopback HTTPS.** On the node itself, use
+   `https://localhost:8443`. For a remote node, run this on your browser computer
+   using your ordinary SSH operator account (replace the example destination):
+
+   ```console
+   ssh -N -L 127.0.0.1:8443:127.0.0.1:8443 operator@node.example.test
+   ```
+
+   Keep that tunnel open while using the browser. Port 8443 must be free on the
+   browser computer. Keep the node's listener on loopback; do not open a firewall
+   port or change the bind address for this exercise.
+
+2. **Trust this practice node's certificate before signing in.** The installer
+   generated `/srv/recordbench/tls/tls.crt` for `localhost`. As the service
+   account, inspect its fingerprint:
+
+   ```console
+   openssl x509 -in /srv/recordbench/tls/tls.crt -noout -sha256 -fingerprint
+   ```
+
+   In another terminal as the ordinary operator on the node, export only that
+   public certificate to the operator's home, outside the checkout:
+
+   ```console
+   sudo -u recordbench cat /srv/recordbench/tls/tls.crt > "$HOME/loopback.crt"
+   ```
+
+   If browsing remotely, copy it on the browser computer through the same
+   authenticated SSH connection:
+
+   ```console
+   scp operator@node.example.test:loopback.crt "$HOME/loopback.crt"
+   openssl x509 -in "$HOME/loopback.crt" -noout -sha256 -fingerprint
+   ```
+
+   Compare its fingerprint with the node's. Import it as a trusted
+   authority in a disposable browser profile or dedicated test user's browser
+   certificate store. Restart that browser and verify that
+   `https://localhost:8443/auth/login` has no certificate warning. Keep the
+   private `tls.key` on the node. Do not use an insecure-certificate browser
+   switch or click through a warning. Remove this evaluation trust after the
+   exercise; use organization-trusted TLS for staff access.
+
+   For Chromium on a **dedicated Linux test user with a fresh certificate
+   store**, the accepted route uses `libnss3-tools` on the browser computer.
+   After saving the verified public certificate as `~/loopback.crt`:
+
+   ```console
+   sudo apt-get install --yes libnss3-tools
+   mkdir -p "$HOME/.pki/nssdb"
+   certutil -N -d "sql:$HOME/.pki/nssdb" --empty-password
+   certutil -A -d "sql:$HOME/.pki/nssdb" -n synthetic-recordbench-loopback \
+     -t 'C,,' -i "$HOME/loopback.crt"
+   ```
+
+   Do not initialize over an existing user's certificate database. Other
+   browsers may have their own certificate store. When finished, remove this
+   trust with `certutil -D -d "sql:$HOME/.pki/nssdb" -n synthetic-recordbench-loopback`.
+
+3. **Sign in as the first administrator.** Use the username shown in the
+   installer handoff (default `recordbench.admin`) and the password you entered
+   during installation. This is an application account, separate from the
+   `recordbench` Linux service account. No preview identity or seeded account
+   is needed. An administrator with no matter arrives at **Team setup**.
+
+4. **Create a practice matter.** Choose **Create matter**, name it
+   `Synthetic CPU practice`, and submit the form. You own the new matter.
+   The other team-setup checklist items can remain incomplete for this one-user
+   exercise.
+
+5. **Add one synthetic source.** On the browser computer, save a UTF-8 text file
+   named `synthetic-practice.txt` outside the checkout containing:
+
+   ```text
+   Synthetic practice only. No real people or case facts.
+   The fictional Aurora team inspected the blue folder on 12 September 2026.
+   ```
+
+   Open **Sources**, choose **Upload sources**, enter the collection name
+   `Synthetic practice sources`, then choose the file. Inspect the selection
+   preview and select **Upload 1 ready file**. Wait for **Sources ready**, choose
+   **Review uploaded sources**, then open `synthetic-practice.txt` and check
+   that the text is visible. Reload and confirm the matter and source remain.
+   With `--models none`, generated answers and transcription are unavailable;
+   this source-review exercise does not need them. A failed upload or scanner
+   check is an incomplete journey: use [startup troubleshooting](INSTALL.md#startup-troubleshooting)
+   and retain the failure accurately, without disabling scanning.
+
+6. **Record a dated receipt.** Include the public Ubuntu image/version,
+   architecture, CPU/RAM/disk allocation, exact source revision, commands and
+   wall times for host setup, install, doctor and browser practice. Record
+   preflight/doctor exit status, successful first-admin sign-in, matter creation
+   and source opening/reload. Note any retries or uncompleted steps. Use only
+   content-free observations and synthetic names; omit host identifiers,
+   credentials, certificates, cookies, runtime files and raw logs. A green
+   doctor alone does not establish browser acceptance.
+
+The wider team journey below is optional for this practice path. Code-only
+contribution still uses [make bootstrap/check](../CONTRIBUTING.md#set-up-a-development-checkout).
+
 ## Continue an interrupted installation
 
 Run `./install install --root /srv/recordbench --resume` using the same reviewed

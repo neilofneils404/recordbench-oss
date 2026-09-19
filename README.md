@@ -242,20 +242,24 @@ their cited sources.
 
 ## Quick start
 
-The lowest-barrier path is the CPU evaluation profile on a Linux host with
-Docker Compose:
+### Run a node
 
-```bash
-git clone https://github.com/neilofneils404/recordbench-oss.git recordbench
-cd recordbench
-./install --help
-./install
-```
+To try the product or work on its UI, follow the short
+[Ubuntu 24.04 CPU node path](docs/INSTALL.md#cpu-node-quick-start-ubuntu-2404):
+dedicated service account and Docker → `./install` with `--models none` →
+`doctor` → [first-admin sign-in and a synthetic practice matter](docs/FIRST_RUN.md#cpu-practice-matter).
+It keeps HTTPS on loopback and uses local accounts. Other distributions are
+unproven; the guide lists the portable host and container capabilities.
 
-The installer defaults to CPU evaluation, loopback-only HTTPS, and local
-accounts. NVIDIA Container Toolkit is required only when selecting a GPU
-profile. Read the complete [installation playbook](docs/INSTALL.md) before an
-installation intended for staff access.
+### Contribute code
+
+Follow [development checkout setup](CONTRIBUTING.md#set-up-a-development-checkout),
+then run `make bootstrap` and `make check`. This path does not require an
+installed node. Use the node path when you need the running product for UI work.
+
+### Operator reference
+
+Read the full [installation playbook](docs/INSTALL.md) before staff access.
 
 The installer also provides commands for node diagnostics, optional encrypted
 backup, isolated restore testing, and versioned updates. Operators can use

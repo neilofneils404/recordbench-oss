@@ -1,7 +1,8 @@
 # Installation playbook
 
-See [Installation handoff and team setup](FIRST_RUN.md) for phase meanings,
-interrupted-run recovery, offline model reuse, and the first browser journey.
+For a first CPU node, follow the short path below, then
+[sign in and create a practice matter](FIRST_RUN.md#cpu-practice-matter).
+The later sections are operator reference and recovery guidance.
 
 For a source checkout used to write code and run tests, start with
 [contributor setup](../CONTRIBUTING.md#set-up-a-development-checkout). The playbook
@@ -13,6 +14,110 @@ enables the **People** account editor and first-administrator setup checklist.
 The [browser account playbook](LOCAL_ACCOUNT_BROWSER.md) covers its narrow
 writable account mount, existing-node relocation, backup and rollback. Without
 the explicit option, local sign-in retains the operator-managed account layout.
+
+## CPU node quick start (Ubuntu 24.04)
+
+This path is for trying the product or doing UI work on a **fresh dedicated
+Ubuntu 24.04 x86-64 host**. Use synthetic material. Start with an ordinary
+sudo-capable operator account, internet access, 8 CPU cores, 16 GiB RAM and
+at least 150 GiB free SSD space. Keep more than the unchanged 100 GiB reserve
+free after image builds; 220 GiB of disk was allocated for the acceptance VM.
+Docker image storage needs headroom too. These are evaluation targets, not a
+supported-release or collection-capacity claim. Other Linux distributions are
+unproven; the portable capabilities are listed below.
+
+1. Install the host packages and start Docker:
+
+   ```console
+   sudo apt-get update
+   sudo apt-get install --yes git ca-certificates python3 openssl docker.io docker-compose-v2
+   sudo systemctl enable --now docker
+   ```
+
+2. Create the dedicated non-root service account, its real owner-only HOME,
+   and an empty node root. Run these once on the fresh host:
+
+   ```console
+   sudo groupadd --system recordbench
+   sudo useradd --system --gid recordbench --groups docker \
+     --home-dir /var/lib/recordbench-home --shell /bin/bash recordbench
+   sudo install -d -m 0700 -o recordbench -g recordbench \
+     /var/lib/recordbench-home /srv/recordbench
+   sudo -iu recordbench
+   ```
+
+   Docker-group membership grants privileged engine access. Keep the socket's
+   normal permissions. This operating-system account owns the node; it is
+   separate from the administrator you will create for browser sign-in.
+
+3. In that new service-account session, check Docker and clone the source:
+
+   ```console
+   docker info --format '{{.ServerVersion}}'
+   docker compose version
+   umask 077
+   git clone --single-branch --branch main --no-tags \
+     https://github.com/neilofneils404/recordbench-oss.git recordbench
+   cd recordbench
+   ```
+
+4. Check exactly the CPU/local-account choices, then install:
+
+   ```console
+   ./install preflight --root /srv/recordbench --models none --auth local \
+     --enable-account-management --server-name localhost --bind-address 127.0.0.1
+   COMPOSE_PARALLEL_LIMIT=1 ./install --root /srv/recordbench --models none --auth local \
+     --enable-account-management --server-name localhost --bind-address 127.0.0.1
+   ```
+
+   Resolve any `BLOCK` before installing. Accept the proposed administrator
+   username or choose your own, and enter a new password of at least 14
+   characters at the hidden prompt. Accept the default matter-storage path.
+   Retain that username and password for the browser. The installer builds the
+   application, creates its first administrator, obtains malware signatures and
+   starts the private companion services. No model weights are selected.
+   Keep passwords out of shell arguments, history and receipts.
+   The Compose limit serializes shared-image builds; see the reproduced
+   [image-build remedy](#shared-image-build-collision).
+
+5. Verify the running node from the same checkout and account:
+
+   ```console
+   ./install doctor --root /srv/recordbench
+   ```
+
+   Expect exit status 0, **Node diagnostic complete**, and complete running,
+   login-reachable, basic-review and selected-capability states. An unselected
+   AI capability can remain unavailable with `--models none`. Browser sign-in
+   is still unverified. For an interrupted install, follow the printed resume
+   command; for startup failures, use [startup troubleshooting](#startup-troubleshooting).
+
+6. Follow [CPU practice matter](FIRST_RUN.md#cpu-practice-matter) to trust the
+   loopback certificate, sign in at `https://localhost:8443`, create one matter
+   and add a synthetic source. Record the result and elapsed time.
+
+No DNS, LAN listener, organization identity provider, GPU or model setup is
+needed for this journey. Staff access and recovery planning belong to the
+operator sections below; this isolated practice node is not adoption acceptance.
+
+### Portable package and capability map
+
+Package names below describe the Ubuntu path. Equivalent capabilities on other
+distributions have not been accepted as a working node path.
+
+| Where | Ubuntu packages / capability | Purpose |
+| --- | --- | --- |
+| Node host | `git`, `ca-certificates` | Obtain the public source and verify HTTPS downloads |
+| Node host | `python3` (Ubuntu 24.04 supplies 3.12), `openssl` | Run the existing stdlib installer and prepare loopback TLS |
+| Node host | `docker.io`, `docker-compose-v2` | Docker Engine, daemon access and Compose v2 builds/services |
+| Node host | Dedicated account, writable mode-0700 HOME and storage; working clock/DNS/HTTPS egress | Own state, build images and refresh malware signatures |
+| Containers, supplied by `./install` | Application Python dependencies, document/media tools, English/Spanish OCR, PostgreSQL/pgvector, ClamAV, HTTPS gateway | CPU intake, extraction, word search, source review and exports |
+| Browser computer | Current browser, trusted loopback certificate; SSH client for a remote node | Sign in and use the UI through loopback HTTPS |
+
+Host OCR/media tools and a Python development environment are for the separate
+[code contribution path](../CONTRIBUTING.md#set-up-a-development-checkout);
+they are not prerequisites for this containerized node. NVIDIA, learned search,
+generated answers and transcription are outside this CPU path.
 
 ## Hardware and capability profiles
 
@@ -242,6 +347,30 @@ host networking. Successful engine access is not a container-connectivity test.
 Keep the gateway on loopback HTTPS and companion services private.
 
 ## Startup troubleshooting
+
+### Shared-image build collision
+
+On the fresh Ubuntu 24.04 Docker/Compose path, parallel builds of `app` and
+`account-admin` reproduced `failed to solve: image ... already exists`. They
+publish the same application image. Use `COMPOSE_PARALLEL_LIMIT=1` for the
+installation command, as shown in the quick start. If already interrupted,
+retain the node and run from the same checkout and service-account session:
+
+```console
+COMPOSE_PARALLEL_LIMIT=1 ./install install --root /srv/recordbench --resume
+./install doctor --root /srv/recordbench
+```
+
+Resume asks for the initial password again if the account was not yet created.
+This remedy does not require image deletion, a new installer or node reset.
+
+### Runtime readiness
+
+The clean-host B-lite run also reproduced an unstyled workspace with an inert
+upload control: absolute static URLs used the gateway's internal HTTP origin
+and omitted port 8443. The shared workspace now emits static asset paths so
+the browser retains its HTTPS origin and port. Use this corrected revision;
+do not allow mixed content or broaden trusted proxy headers to work around it.
 
 A passing preflight is a point-in-time check. A completed CPU clean-host receipt
 on `ccba441` passed install/resume, doctor, synthetic team setup and encrypted
