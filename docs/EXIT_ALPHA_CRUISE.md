@@ -22,7 +22,7 @@ work. Slice 20 is landed as recorded below; no further product step is selected.
 
 **Last updated:** 2026-09-19
 
-## Current upstream receipt
+## Current slice-20 landing receipt
 
 Slice **20** — source-backed graph exploration from a saved entity — is **Done**.
 The September 19 landing sequence on `main` is:
@@ -32,13 +32,23 @@ The September 19 landing sequence on `main` is:
 - Graph omission-label fix: `6dca8a55b29b9268596f2d89c27fb6314adda77c`.
 - Planner fixture-write serialization: `e7a6847a717c22ea97e06608657eab9bad24590c`.
 
-The verified upstream tip is `e7a6847a717c22ea97e06608657eab9bad24590c`.
+The verified implementation snapshot before this receipt update is
+`e7a6847a717c22ea97e06608657eab9bad24590c`.
 Its [post-landing Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/35462727086)
 passed all six jobs: application, PostgreSQL integration, synthetic browser,
 transcription, deployment contract and secret scan. This receipt closes the
 slice-20 queue state only; it does not select slice 21 or authorize visual work,
 PR #34, PR #87, deployment or a supported release. Leftover local visual paths
 remain outside this update and must not be published.
+
+The pending-acceptance wording in the [slice-20 brief](product-slices/20-graph-exploration.md),
+[graph feature contract](GRAPH_EXPLORATION.md) and
+[slice overview](product-slices/README.md) describes their pre-landing preparation
+state. This landing receipt supersedes that wording for slice 20; this cruise
+remains the binding implementation queue. Their feature scope and limits remain
+unchanged.
+
+<a id="current-upstream-receipt"></a>
 
 ## Historical post-19 receipt (superseded snapshot)
 
