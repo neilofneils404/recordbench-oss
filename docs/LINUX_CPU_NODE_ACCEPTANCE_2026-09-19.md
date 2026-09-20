@@ -113,11 +113,18 @@ from the uninterrupted accepted run above.
 Focused gateway-asset, local-account and onboarding tests: **35 passed**.
 Bundled transcription suite: **194 passed**. Compilation, Compose validation
 and candidate-only tree/reachable-history publication inspection passed.
-The full local application suite is still running. It reported a failure in
-the unchanged `test_legacy_job_mutations_cannot_bypass_full_text_fences[0-checkpoint]`;
-the immediate isolated rerun passed, then the complete fence file passed all
-**60 tests**. No later-19 code or tests were changed. This is separate diagnostic
-evidence, not a green full-suite claim. Hosted Quality evidence is pending.
+An exploratory full local run started before the asset correction was complete:
+**3,170 passed, 9 skipped, one SQLite OperationalError** in the unchanged
+`test_legacy_job_mutations_cannot_bypass_full_text_fences[0-checkpoint]`.
+The immediate isolated rerun passed, then the complete fence file passed all
+**60 tests**. No later-19 code or tests were changed. This exploratory run does
+not establish full-suite acceptance for the final candidate.
+
+The first hosted run tested the complete candidate and caught an existing
+branding assertion tied to the old favicon template expression: **3,171 passed,
+9 skipped, one failed**. The expectation now follows the approved path-only
+asset correction; no additional runtime or visual change was needed. Hosted
+Quality on that corrected candidate is pending.
 
 No new installer was created. Code-only contribution retains Make. This receipt
 does not establish other distributions, GPU/transcription, staff/LAN access,
