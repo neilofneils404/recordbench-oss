@@ -1,9 +1,9 @@
 # Substep 20b: Linux CPU node for contributors (B-lite)
 
-Status: **Next** in the binding [cruise](../EXIT_ALPHA_CRUISE.md); the
+Status: **Done** in the binding [cruise](../EXIT_ALPHA_CRUISE.md); the
 [timed clean-node journey passed](../LINUX_CPU_NODE_ACCEPTANCE_2026-09-19.md),
-with Quality pending. Slice 20 remains Done. This is the node companion to the code-only
-`make bootstrap/check` path, not another product feature.
+with all six Quality jobs green. Slice 20 remains Done. This is the node
+companion to the code-only `make bootstrap/check` path, not another product feature.
 
 ## User outcome
 

@@ -1,9 +1,9 @@
 # Linux CPU contributor node (B-lite) — 2026-09-19
 
-**Clean-node journey: passed. Quality: pending.** The corrected documented
+**Clean-node journey: passed. Quality: passed.** The corrected documented
 path reached first-admin sign-in and a usable synthetic source in **313.26
 seconds (5 minutes 13 seconds)**, from host-package setup through browser reload.
-The cruise remains Next until Quality evidence is recorded.
+The bounded B-lite substep is Done; no further product feature is selected.
 
 ## Public image and candidate
 
@@ -19,7 +19,9 @@ The cruise remains Next until Quality evidence is recorded.
   The only runtime source change is `src/case_intelligence/templates/workbench_base.html`,
   SHA-256 `8296375201daf9a1193266c1f1447ea63d2fe8a8b894993e935c406487c70169`.
   Its installed capsule was `0.1.0-alpha.2-a5d0fce3ca5e`; the installed template
-  hash independently matched the candidate.
+  hash independently matched the candidate. The reviewed implementation commit is
+  `d232e1ec66ddcfd38d38ff4a553bb80d3f639d02`; subsequent completion edits only
+  update the documentation and leave that installed runtime unchanged.
 - Ubuntu Docker Engine `29.1.3`, Compose `2.40.3+ds1-0ubuntu1~24.04.1`.
   No GPU, models, transcription or organization identity provider was selected.
 - The service account had a real mode-0700 HOME and owned the dedicated empty
@@ -124,7 +126,16 @@ The first hosted run tested the complete candidate and caught an existing
 branding assertion tied to the old favicon template expression: **3,171 passed,
 9 skipped, one failed**. The expectation now follows the approved path-only
 asset correction; no additional runtime or visual change was needed. Hosted
-Quality on that corrected candidate is pending.
+Quality on that corrected candidate passed on 2026-09-20 UTC.
+
+All six jobs passed in [Quality run 35478490846](https://github.com/neilofneils404/recordbench-oss/actions/runs/35478490846)
+for `d232e1ec66ddcfd38d38ff4a553bb80d3f639d02`: application, PostgreSQL
+integration, synthetic-browser, transcription, deployment-contract and
+secret-scan. The full application suite passed with **3,172 passed and 9
+expected skips**. The installed pre-push guard inspected the complete outgoing
+history; independent secret scanning and local review also passed. Hosted review
+was not required under PUBLIC_ALPHA. The completion commit changes documentation
+only; its final PR checks must also pass before landing.
 
 No new installer was created. Code-only contribution retains Make. This receipt
 does not establish other distributions, GPU/transcription, staff/LAN access,

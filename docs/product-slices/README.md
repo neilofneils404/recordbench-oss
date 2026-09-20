@@ -1,7 +1,8 @@
 # Portable RecordBench product slices
 
 Contributor node onboarding: [20b — Linux CPU node (B-lite)](20b-linux-cpu-node.md)
-is the bounded Next in the [binding cruise](../EXIT_ALPHA_CRUISE.md).
+is Done with its [dated receipt](../LINUX_CPU_NODE_ACCEPTANCE_2026-09-19.md)
+in the [binding cruise](../EXIT_ALPHA_CRUISE.md).
 
 The [product north star](../PRODUCT_NORTH_STAR.md) governs product direction;
 the [assessment](../PRODUCT_DIRECTION_2026-09-12.md) records gaps and delivery
@@ -41,8 +42,8 @@ specifications; the cruise takes precedence over historical sequencing below.
 ### Current implementation snapshot
 
 The September 19 cruise records [20: graph exploration](20-graph-exploration.md)
-as Done and selects the bounded [20b CPU node path](20b-linux-cpu-node.md) as
-Next. Slice 21 and further visual experiments remain held. The cruise records
+and the bounded [20b CPU node path](20b-linux-cpu-node.md) as Done. Slice 21
+and further visual experiments remain held. The cruise records
 acceptance and landing evidence; this index does not imply a supported release.
 
 At verified implementation snapshot `95f290bf350742bc77c915eb0269c774069f3633`, slices 16–18 are
