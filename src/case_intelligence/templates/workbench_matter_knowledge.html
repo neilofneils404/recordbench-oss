@@ -1,0 +1,71 @@
+{% macro source(reference) %}
+  <p class="knowledge-source">
+    <span>{{ reference.source_name }} · {{ reference.location }}</span>
+    {% if reference.available %}<a href="{{ knowledge_source_url(reference.support_token) }}">Open original passage</a>
+    {% else %}<strong>Source unavailable or changed · historical reference</strong>{% endif %}
+  </p>
+{% endmacro %}
+<div class="knowledge-sections">
+  <section id="knowledge-entities" class="knowledge-section" aria-labelledby="knowledge-entities-heading">
+    <header><h2 id="knowledge-entities-heading">Saved identities</h2><a href="{{ knowledge_record_url('entities') }}">Manage people, places &amp; things</a></header>
+    <p>Names and aliases do not merge identities or establish relationships. All human review statuses, including dismissed, are included.</p>
+    <p class="knowledge-count">Showing {{ knowledge.entities['items']|length }} of {{ knowledge.entities.total }} identities · {{ knowledge.entities.omitted }} not shown on this page. Ordered by name.</p>
+    {% for entity in knowledge.entities['items'] %}
+    <article class="knowledge-record" id="knowledge-{{ entity.entity_id }}">
+      <p class="eyebrow">{{ entity.entity_type|title }}</p>
+      <h3><a href="{{ knowledge_record_url('entities', entity.entity_id) }}">{{ entity.display_name }}</a></h3>
+      <p>Human review: {{ entity.status|replace('_', ' ')|title }} · Revision {{ entity.revision }}</p>
+      <details class="knowledge-identity"><summary>Identity {{ entity.entity_id[-8:] }}</summary><p>{{ entity.entity_id }}</p></details>
+      {% if entity.aliases %}<p>Recorded aliases: {{ entity.aliases[:3]|join('; ') }}{% if entity.aliases|length > 3 %} · {{ entity.aliases|length - 3 }} more in the identity record{% endif %}</p>{% endif %}
+      <details class="knowledge-support">
+        <summary>Source mentions ({{ entity.reference_total }}) · {{ entity.mentions|rejectattr('available')|list|length }} unavailable among {{ entity.mentions|length }} shown{% if entity.references_omitted %} · {{ entity.references_omitted }} not shown{% endif %}</summary>
+        {% for reference in entity.mentions %}
+        <div class="knowledge-reference">
+          <p>Mention review: {{ reference.review_status|replace('_', ' ')|title }}</p>
+          {{ source(reference) }}
+        </div>
+        {% else %}<p>No source mentions recorded.</p>{% endfor %}
+        {% if entity.references_omitted %}<p>{{ entity.references_omitted }} additional mentions not shown. <a href="{{ knowledge_record_url('entities', entity.entity_id) }}">Inspect all mentions</a>.</p>{% endif %}
+      </details>
+    </article>
+    {% else %}<p>No saved identities yet. Person or place notes remain in Case notes until explicitly imported as identities.</p>{% endfor %}
+    <nav class="knowledge-pagination" aria-label="Saved identity pages">
+      {% if knowledge.entities.page > 1 %}<a href="{{ knowledge_url(identities=knowledge.entities.page - 1) }}#knowledge-entities">Previous identities</a>{% endif %}
+      <span>Page {{ knowledge.entities.page }} of {{ knowledge.entities.pages }}</span>
+      {% if knowledge.entities.page < knowledge.entities.pages %}<a href="{{ knowledge_url(identities=knowledge.entities.page + 1) }}#knowledge-entities">Next identities</a>{% endif %}
+    </nav>
+  </section>
+  <section id="knowledge-assertions" class="knowledge-section" aria-labelledby="knowledge-assertions-heading">
+    <header><h2 id="knowledge-assertions-heading">Events and assertions</h2><a href="{{ knowledge_record_url('chronology') }}">Open chronology</a></header>
+    <p>Reviewer statements retain separately attributed supporting and competing accounts. A disputed review status and a competing account are different signals. All statuses, including dismissed, are included.</p>
+    <p class="knowledge-count">Showing {{ knowledge.assertions['items']|length }} of {{ knowledge.assertions.total }} records · {{ knowledge.assertions.omitted }} not shown on this page. Ordered by reviewer ordering date, then undated records.</p>
+    {% for record in knowledge.assertions['items'] %}
+    <article class="knowledge-record" id="knowledge-{{ record.assertion_id }}">
+      <p class="eyebrow">{{ record.record_type|title }}</p>
+      <h3><a href="{{ knowledge_record_url('assertions', record.assertion_id) }}">{{ record.title }}</a></h3>
+      <p>Human review: {{ record.status|replace('_', ' ')|title }} · Revision {{ record.revision }}</p>
+      <p class="knowledge-statement">{{ record.statement[:360] }}{% if record.statement|length > 360 %}… <a href="{{ knowledge_record_url('assertions', record.assertion_id) }}">Read complete statement</a>{% endif %}</p>
+      <p>Recorded date: {{ record.raw_date or 'Not recorded' }} · Ordering date: {{ record.sort_date or 'Undated' }}</p>
+      {% if record.date_uncertainty %}<p>Date uncertainty: {{ record.date_uncertainty }}</p>{% endif %}
+      {% for stance, group in record.stances.items() %}
+      <details class="knowledge-support knowledge-{{ stance }}">
+        <summary>{{ stance|title }} accounts ({{ group.total }}) · {{ group.accounts|rejectattr('available')|list|length }} unavailable among {{ group.accounts|length }} shown{% if group.omitted %} · {{ group.omitted }} not shown{% endif %}</summary>
+        {% for account in group.accounts %}
+        <div class="knowledge-reference">
+          <p>Attributed to: {{ account.attributed_to }}</p>
+          <blockquote>{{ account.excerpt[:260] }}{% if account.excerpt|length > 260 %}…{% endif %}</blockquote>
+          {{ source(account) }}
+        </div>
+        {% else %}<p>No {{ stance }} accounts recorded.</p>{% endfor %}
+        {% if group.omitted %}<p>{{ group.omitted }} additional {{ stance }} accounts not shown. <a href="{{ knowledge_record_url('assertions', record.assertion_id) }}">Inspect all accounts</a>.</p>{% endif %}
+      </details>
+      {% endfor %}
+    </article>
+    {% else %}<p>No saved events or assertions yet. Event notes and Review map candidates remain separate from these records.</p>{% endfor %}
+    <nav class="knowledge-pagination" aria-label="Event and assertion pages">
+      {% if knowledge.assertions.page > 1 %}<a href="{{ knowledge_url(assertions=knowledge.assertions.page - 1) }}#knowledge-assertions">Previous records</a>{% endif %}
+      <span>Page {{ knowledge.assertions.page }} of {{ knowledge.assertions.pages }}</span>
+      {% if knowledge.assertions.page < knowledge.assertions.pages %}<a href="{{ knowledge_url(assertions=knowledge.assertions.page + 1) }}#knowledge-assertions">Next records</a>{% endif %}
+    </nav>
+  </section>
+</div>

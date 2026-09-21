@@ -227,3 +227,14 @@ original-reference validation. Graph traversal retains saved identity revisions;
 historical roles and source accounts remain explicit. No graph database or new
 persistent authority is added. Native visual retrieval follows its separate
 qualification contract and is not implied by OCR or transcript navigation.
+
+[Case notes continuity](product-slices/continuity-a-case-notes.md) adds a bounded
+read-only projection of the same saved identities and events/assertions to the
+existing notebook. `matter_knowledge_repository.py` reads on the authorized
+assertion connection; `matter_knowledge.py` holds the source guard and batches
+exact original-reference validation without loading correction histories.
+Independent pages and per-stance omissions preserve competing accounts. The
+page keeps human review separate from source availability and rechecks access
+after rendering. No schema, model call, persisted projection or context selection
+is introduced. Existing note exports and operational access/activity writes
+retain their contracts.

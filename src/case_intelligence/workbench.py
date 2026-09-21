@@ -13489,6 +13489,8 @@ def create_workbench_app(
         item_type: str = Query("", alias="type", max_length=24),
         status: str = Query("", max_length=24),
         page: int = Query(1, ge=1, le=100_000),
+        entity_page: int = Query(1, ge=1, le=100_000),
+        assertion_page: int = Query(1, ge=1, le=100_000),
         edit: str = Query("", max_length=80),
         notice: str = Query("", max_length=240),
         error: str = Query("", max_length=240),
@@ -13502,6 +13504,12 @@ def create_workbench_app(
             )
             read_actor_id = (
                 matter.owner_id if administrator_override else context.principal_id
+            )
+            from .matter_knowledge import MatterKnowledgeService
+            knowledge_service = MatterKnowledgeService(bench.assertion_service(matter))
+            knowledge = knowledge_service.page(
+                matter.matter_id, read_actor_id,
+                entity_page=entity_page, assertion_page=assertion_page,
             )
             notebook_page = bench.workspace.notebook_page(
                 matter.matter_id,
@@ -13553,16 +13561,30 @@ def create_workbench_app(
             object_id=matter.matter_id,
             details={"result_count": notebook_page.total},
         )
-        def notebook_url(target_page: int) -> str:
+        def knowledge_url(*, notes=notebook_page.page,
+                          identities=knowledge['entities']['page'],
+                          assertions=knowledge['assertions']['page']):
             return _query_url(
                 f"/matters/{slug}/notebook",
                 q=notebook_page.query,
                 type=notebook_page.item_type,
                 status=notebook_page.status,
-                page=str(target_page) if target_page > 1 else "",
+                page=str(notes) if notes > 1 else "",
+                entity_page=str(identities) if identities > 1 else "",
+                assertion_page=str(assertions) if assertions > 1 else "",
             )
 
-        return templates.TemplateResponse(
+        current_knowledge_url = knowledge_url()
+
+        def knowledge_record_url(kind, identifier=''):
+            path = f'/matters/{slug}/{kind}' + ('/' + identifier if identifier else '')
+            return _query_url(path, return_to=current_knowledge_url)
+
+        def knowledge_source_url(token):
+            return _query_url(f'/matters/{slug}', support=token,
+                              entity_return_to=current_knowledge_url) + '#support-pane'
+
+        response = templates.TemplateResponse(
             request=request,
             name="workbench_notebook.html",
             context={
@@ -13575,11 +13597,25 @@ def create_workbench_app(
                 "notebook_types": NOTEBOOK_TYPES,
                 "notebook_statuses": NOTEBOOK_STATUSES,
                 "source_sets": bench.workspace.source_sets(matter.matter_id),
-                "notebook_url": notebook_url,
+                "notebook_url": lambda target_page: knowledge_url(notes=target_page),
+                "knowledge": knowledge,
+                "knowledge_url": knowledge_url,
+                "knowledge_record_url": knowledge_record_url,
+                "knowledge_source_url": knowledge_source_url,
                 "notice": notice,
                 "error": error,
             },
+            headers={"Cache-Control": "no-store"},
         )
+        # Rendering and source validation may outlive the original access check.
+        # Preserve administrator read-only review, but recheck the real actor too.
+        authorized_matter(request, slug)
+        try:
+            with knowledge_service.assertions.repository.transaction(matter.matter_id, read_actor_id):
+                pass
+        except KeyError as exc:
+            raise HTTPException(404, "Matter is no longer available") from exc
+        return response
 
     @app.get("/matters/{slug}/analysis", response_class=HTMLResponse)
     def matter_analysis(

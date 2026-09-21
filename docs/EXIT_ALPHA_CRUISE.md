@@ -4,6 +4,28 @@ Binding execution order for leaving public contributor alpha.
 Product slice briefs under `docs/product-slices/` remain the implementation
 specs. When numeric slice order conflicts with this file, **this file wins**.
 
+## Current state — September 21, 2026
+
+Reference upstream revision: `622cf7a03b67c6d850f06799c98b2333b2efd52d`.
+Manual entities, entity discovery, events/assertions, the first single-run
+full-text synthesis adapter, graph exploration and Linux CPU B-lite are landed.
+Historical receipts below retain their original scope and evidence.
+
+The one active product increment is **trusted matter continuity A**:
+[connect Case notes to saved identities and events/assertions](product-slices/continuity-a-case-notes.md).
+A reviewer returning to an active matter can inspect the team's saved knowledge,
+its human review status and current original-source availability from Case notes.
+Local implementation and focused synthetic acceptance are complete; this is
+**not Done**. The [brief](product-slices/continuity-a-case-notes.md#local-validation--september-21-2026)
+records actual results. Outstanding gates: a clock-sensitive full-suite failure
+also reproduced on unmodified upstream, existing publication-guard findings,
+final Quality acceptance and maintainer review/landing.
+
+Increments B/C, model/runtime changes, visual work/slice 21, Mac work/PR #34,
+PR #87, wider onboarding, later slice-19 work, deployment and supported-release
+claims remain unselected or held. Parallel release-readiness evidence continues;
+this increment does not qualify or change any model/runtime profile.
+
 ## Governing product direction
 
 The [product north star](PRODUCT_NORTH_STAR.md) governs what RecordBench is
@@ -19,9 +41,9 @@ and subsequent delivery stages. Slice 19's first single-run adapter is landed
 as recorded below. Multiple-run aggregation, new questions, background material,
 matter memory, production imports and larger capacity remain separately scoped
 work. Slice 20 is landed as recorded below. The bounded Linux CPU contributor
-node path (B-lite) is Done; no further product feature is selected.
+node path (B-lite) is Done. Continuity A is the selected next product increment.
 
-**Last updated:** 2026-09-19
+**Last updated:** 2026-09-21
 
 ## Current slice-20 landing receipt
 
@@ -175,6 +197,7 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 9 | Slice **19** — first substep: synthesize one terminal full-text run for its criterion | Done — first adapter only (#85) |
 | 10 | Slice **20** — source-backed graph exploration from a saved entity | Done — landed at `e7a6847a` |
 | 12 | **20b — Linux CPU node (B-lite):** fresh Ubuntu 24.04 x86-64 → service account + Docker → `./install` CPU/local/loopback HTTPS → doctor → first-admin browser sign-in and synthetic practice matter | **Done** — [brief](product-slices/20b-linux-cpu-node.md); [5m13s clean-node receipt and green Quality](LINUX_CPU_NODE_ACCEPTANCE_2026-09-19.md) |
+| 13 | **Continuity A:** connect existing Case notes to authoritative saved identities and events/assertions | **In progress** — [bounded brief](product-slices/continuity-a-case-notes.md); local implementation, acceptance and landing tracked separately |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 The September 19 landing completes slice 20 under
@@ -183,7 +206,7 @@ The September 19 landing completes slice 20 under
 The bounded **20b B-lite** node path is Done with its dated clean-node and
 Quality receipt. Code-only contribution remains
 `make bootstrap/check`; running the product uses the existing `./install`.
-No further product feature is selected. Slice 21, further visual experiments and
+Continuity A is selected. Slice 21, further visual experiments and
 additional work on PR #34 or PR #87 remain on hold. High-resolution retrieval work remains
 local and outside this PR. Existing text and transcript support is not native
 image understanding. Later slice-19 work, model deployment and larger-capacity
