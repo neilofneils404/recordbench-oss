@@ -1,6 +1,6 @@
 # Continuity B — explicit durable context selection
 
-Status: **Implementing; acceptance and landing pending.** The existing
+Status: **Implemented locally; acceptance and landing pending.** The existing
 [cruise](../EXIT_ALPHA_CRUISE.md) is the binding queue. C is not selected.
 
 Reviewed baseline: `0d59d5fe4f7be575a66039274415de945a6d5db5`.
@@ -133,3 +133,100 @@ existing source guard. These were test-fixture errors, not waived requirements.
 The first full application attempt was deliberately interrupted at **636 passed,
 one skipped** to incorporate the transaction-ownership correction; it is not a
 full-suite pass. Final full-suite and final browser evidence follow below.
+
+## Final implementation evidence and handoff
+
+Implementation revision: `2567f974d46604c0870131d4f2c1e72bac27fb2a`.
+Persistence/contract commit: `4e6888caa3cd80cbb4aba47d9cb21e30776cbd86`.
+The subsequent receipt commit changes documentation only.
+
+The final focused command was:
+
+```console
+PYTHONPATH=src CASE_INTELLIGENCE_STORAGE_RESERVE_GIB=0 python -m pytest -q tests/test_matter_context.py tests/test_matter_context_workflow.py tests/test_matter_knowledge_workflow.py tests/test_identity_membership_audit.py tests/test_browser_local_accounts.py tests/test_local_account_lifecycle.py
+```
+
+Result: **159 passed**. This includes local-account/provider/session/principal
+changes after rendering for both the existing notebook and new context surface,
+with administrator/member controls. The earlier authority run's invalid
+machine-note fixture produced **157 passed, one failed** before correction.
+The final B-only subset separately passed **19 tests**.
+
+The final complete pinned browser runner was repeated after the read-only
+authority correction and inspection-template adjustment:
+
+```console
+PYTHONPATH=src python scripts/run-browser-acceptance.py --archives /path/to/verified-archives --output /tmp/recordbench-context-final-browser-suite
+```
+
+Result: **nine of nine journeys passed**, Chrome **153.0.8010.36**; B's seven
+checks all passed. The runner's checksummed archives and bounded artifact
+allowlist remain in use. No browser harness, CI job or infrastructure was added.
+
+Independent Gitleaks **8.30.1** working-tree and reachable-HEAD history scans
+passed: **no leaks found**, **345 reachable commits** for the implementation
+head. Generic publication sanitization passed. The installed outgoing-history
+pre-push guard was executed locally without pushing and **blocked**. Its installed
+working-tree scanner reported eight operator-deny rule/path findings; the same
+scanner on an untouched archive of the implementation base reported the
+**identical eight findings**. No matched values or private deny terms are retained
+here. This comparison is diagnostic, not publication clearance or a waiver.
+Guard settings and dispositions were not changed.
+
+Both observed full-suite failing cases reproduced against an untouched archive
+of `91a97d2ef2b7d4733551a9189bd9c2c7c50c692c`:
+
+- `test_same_size_edit_with_restored_mtime_reloads_cached_snapshot`: baseline
+  diagnostic attempts one/two passed, attempt three failed because consecutive
+  writes had the same filesystem ctime.
+- `test_notebook_rechecks_live_local_authority_after_render[False-disable_principal]`:
+  baseline attempt one passed; attempt two failed with SQLite's “cannot start a
+  transaction within a transaction” at the fixture's direct principal update.
+  The corresponding current-tree notebook case also passed when rerun alone.
+
+These unrelated baseline issues were not repaired in B. The complete local
+application result is recorded below; neither baseline comparison turns a failed
+full-suite gate into a pass.
+
+Final full application command:
+
+```console
+umask 022
+PYTHONPATH=src CASE_INTELLIGENCE_STORAGE_RESERVE_GIB=0 python -m pytest -q
+```
+
+Result: **3,265 passed, nine skipped, two failed in 822.89 seconds**. The two
+failures are the baseline-reproduced cases above. In the current full run, the
+notebook fixture failed at transaction exit with “cannot commit - no transaction
+is active”; its baseline diagnostic failed at transaction entry instead. Both
+are concurrent transaction errors at that fixture's unguarded direct write.
+The complete local application gate remains **failed**, despite the focused
+passes. No unrelated baseline fix was included.
+
+The nine skips were the eight opt-in PostgreSQL/model cases and the opt-in
+encrypted backup drill. Seven PostgreSQL cases were executed separately and
+passed as recorded above. The encrypted backup case was then executed separately:
+`PYTHONPATH=src RECORDBENCH_BACKUP_INTEGRATION=1 python -m pytest -q tests/test_backup_consistency.py::test_encrypted_split_snapshot_and_postgres_restore`:
+**one passed in 10.12 seconds**, using real restic encryption and PostgreSQL
+restore in disposable synthetic storage; app stop/start is simulated by that
+existing drill. No installed-node acceptance is claimed.
+The live learned-model case was deliberately excluded:
+B does not invoke or change models, and C/model acceptance is outside this task.
+
+Changed areas: paired migration 0035; reference-only context repository/service;
+thin context routes; Case notes and detail navigation/inspection; transaction-safe
+read-only authority refresh; complete-export manifest and purge integration;
+synthetic service/HTTP/browser/restore acceptance; this brief and binding queue.
+Generation, prompts, retrieval, historical notebook scopes, model behavior,
+deployment and unrelated working-tree edits are unchanged. No push, PR, merge,
+release, installation or deployment was performed.
+
+Outstanding gates: the failed full application result; installed publication
+clearance; current candidate hosted Quality/maintainer acceptance and authorized
+landing. No hosted review was requested automatically. This is implemented local
+B, **not Done**, a supported release or deployment acceptance. C remains a
+separate unselected task.
+
+**Single next action:** maintainer review of this bounded B diff and its existing
+application/publication gate findings, before separately authorizing publication
+and landing. Do not integrate C or bypass either gate to close B.
