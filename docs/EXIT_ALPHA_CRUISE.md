@@ -217,6 +217,7 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 10 | Slice **20** — source-backed graph exploration from a saved entity | Done — landed at `e7a6847a` |
 | 12 | **20b — Linux CPU node (B-lite):** fresh Ubuntu 24.04 x86-64 → service account + Docker → `./install` CPU/local/loopback HTTPS → doctor → first-admin browser sign-in and synthetic practice matter | **Done** — [brief](product-slices/20b-linux-cpu-node.md); [5m13s clean-node receipt and green Quality](LINUX_CPU_NODE_ACCEPTANCE_2026-09-19.md) |
 | 13 | **Continuity A:** connect existing Case notes to authoritative saved identities and events/assertions | **Done** — PR #100 at `dd367cc`; [landing receipt](#continuity-a-landing-receipt), Quality **35610419040** |
+| 14 | **Continuity B:** explicit, durable reviewer-owned context selection; no answer integration | **Next / implementing** — [bounded brief](product-slices/continuity-b-context-selection.md); acceptance and landing pending |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 The September 19 landing completes slice 20 under
@@ -225,7 +226,7 @@ The September 19 landing completes slice 20 under
 The bounded **20b B-lite** node path is Done with its dated clean-node and
 Quality receipt. Code-only contribution remains
 `make bootstrap/check`; running the product uses the existing `./install`.
-Continuity A is Done; B's selection contract is the next continuity step.
+Continuity A is Done. B is the only selected product increment; C remains unselected.
 Slice 21, further visual experiments and additional work on PR #34 or PR #87
 remain on hold. High-resolution retrieval work remains
 local and outside this PR. Existing text and transcript support is not native

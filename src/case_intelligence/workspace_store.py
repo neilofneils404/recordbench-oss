@@ -1076,6 +1076,8 @@ class WorkspaceStore:
             self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
         migration = resources.files("case_intelligence").joinpath("migrations/sqlite/0034_evidence_assertions.sql").read_text(encoding="utf-8")
         self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
+        migration = resources.files("case_intelligence").joinpath("migrations/sqlite/0035_matter_context_selection.sql").read_text(encoding="utf-8")
+        self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
         from .full_text_review_budget import backfill_legacy_ledgers
         backfill_legacy_ledgers(self)
         session_columns = {
@@ -3143,6 +3145,7 @@ class WorkspaceStore:
             )
             for table in ('workbench_entity_discovery_seen', 'workbench_entity_discovery_unit', 'workbench_entity_reconciliation'):
                 self.connection.execute(f"DELETE FROM {table} WHERE matter_id=?", (matter_id,))
+            self.connection.execute('DELETE FROM workbench_context_selection WHERE matter_id=?', (matter_id,))
             self.connection.execute('DELETE FROM workbench_assertion WHERE matter_id=?', (matter_id,))
             self.connection.execute(
                 "DELETE FROM workbench_entity WHERE matter_id=?", (matter_id,)
