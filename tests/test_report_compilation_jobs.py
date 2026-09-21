@@ -354,8 +354,9 @@ def test_locked_source_validation_outlasting_lease_keeps_worker_owned(tmp_path, 
     store, matter = setup_store(path)
     competing_store = WorkspaceStore(path)
     policy = CompilationJobPolicy(lease_seconds=0.6)
-    jobs = ReportCompilationJobs(store, policy=policy)
-    competitor = ReportCompilationJobs(competing_store, policy=policy)
+    now = [100.0]
+    jobs = ReportCompilationJobs(store, policy=policy, clock=lambda: now[0])
+    competitor = ReportCompilationJobs(competing_store, policy=policy, clock=lambda: now[0])
     queued = queue(jobs, matter)
     validating = threading.Event()
     release = threading.Event()
@@ -365,7 +366,7 @@ def test_locked_source_validation_outlasting_lease_keeps_worker_owned(tmp_path, 
         # a write transaction. Another process must see live lease renewals.
         with store._lock:
             validating.set()
-            assert release.wait(5)
+            assert release.wait(20)
 
     def process(job, cancelled):
         if validation_phase == "snapshot":
@@ -382,12 +383,26 @@ def test_locked_source_validation_outlasting_lease_keeps_worker_owned(tmp_path, 
     coordinator = ReportCompilationCoordinator(jobs, process=process, finish=finish)
     try:
         assert validating.wait(5)
-        time.sleep(policy.lease_seconds * 2)
-        assert not release.is_set()
-        assert competitor.claim("synthetic-competing-worker") is None
-        active = competitor.get(matter.matter_id, ACTOR, queued.job_id)
-        assert active.state == "running" and active.attempts == 1
-        assert active.lease_expires_at > time.time()
+        original = competitor.get(matter.matter_id, ACTOR, queued.job_id)
+        # Advance lease time in bounded steps, observing each committed renewal
+        # through the independent connection. Thread scheduling must not accidentally
+        # expire a 0.6-second lease and turn this lock-isolation test into a test
+        # of CI runner load. The coordinator and heartbeat writes remain real.
+        for _ in range(3):
+            now[0] += policy.lease_seconds / 2
+            deadline = time.monotonic() + 5
+            while True:
+                active = competitor.get(matter.matter_id, ACTOR, queued.job_id)
+                assert active.state == "running" and active.lease_expires_at is not None
+                if active.lease_expires_at >= now[0] + policy.lease_seconds:
+                    break
+                assert time.monotonic() < deadline, "Heartbeat did not renew during locked validation."
+                time.sleep(0.01)
+            assert not release.is_set()
+            assert competitor.claim("synthetic-competing-worker") is None
+            assert active.state == "running" and active.attempts == 1
+            assert active.lease_token == original.lease_token
+        assert now[0] > original.lease_expires_at
         release.set()
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and competitor.get(matter.matter_id, ACTOR, queued.job_id).state == "running":

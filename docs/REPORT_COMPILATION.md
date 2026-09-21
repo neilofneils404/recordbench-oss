@@ -240,6 +240,12 @@ stale-token attempts, delayed heartbeats, cancellation/retry, denied matter acce
 admission pressure, rollback after report creation, and a SQLite online backup
 restored into a clean workspace. Restore preserves the original live lease until
 expiry, then admits one replacement claim; `PRAGMA integrity_check` remains clean.
+The source-validation lock regression uses a controlled lease clock with real
+coordinator threads and independent SQLite connections. It observes committed
+renewals before advancing beyond the original lease, proving that both snapshot
+and final validation allow renewal without depending on subsecond runner
+scheduling. Separate expiry regressions retain stale-worker and atomic-save
+fencing coverage; this test does not promise renewal after an actual lease expires.
 
 ## Relevance of human review
 
