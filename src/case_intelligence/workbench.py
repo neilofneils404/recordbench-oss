@@ -13610,12 +13610,13 @@ def create_workbench_app(
             headers={"Cache-Control": "no-store"},
         )
         # Rendering and source validation may outlive the original access check.
-        # Preserve administrator read-only review, but recheck the real actor too.
-        authorized_matter(request, slug)
+        # Recheck the real actor without repeating the initial access audit.
         try:
+            bench.matter(slug, context.principal_id, administrator=administrator_override)
             with knowledge_service.assertions.repository.transaction(matter.matter_id, read_actor_id):
                 pass
         except KeyError as exc:
+            audit(request, "matter.access", "denied", context=context)
             raise HTTPException(404, "Matter is no longer available") from exc
         return response
 

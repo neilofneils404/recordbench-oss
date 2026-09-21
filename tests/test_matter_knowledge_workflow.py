@@ -175,6 +175,10 @@ def test_administrator_knowledge_links_respect_membership(protected_assertion, t
             expected_revision=revision, support=token, stance='supporting', attributed_to='Synthetic source')
     assertions.update(matter.matter_id, c['owner_id'], c['record']['assertion_id'],
         expected_revision=3, **(EVENT_FIELDS | dict(statement='Synthetic long statement. ' * 20)))
+    with assertions.repository.transaction(matter.matter_id, c['owner_id']):
+        bench.workspace.connection.execute(
+            'UPDATE workbench_assertion_account SET excerpt=? WHERE assertion_id=?',
+            ('Synthetic long historical account. ' * 12, c['record']['assertion_id']))
     response = client.get(prefix + '/notebook', headers=_headers(ADMIN))
     assert '1 additional mentions not shown' in response.text
     assert '1 additional supporting accounts not shown' in response.text
@@ -186,7 +190,8 @@ def test_administrator_knowledge_links_respect_membership(protected_assertion, t
         urlparse(href).path.startswith(prefix + '/' + kind)
         for kind in ('entities', 'assertions', 'chronology'))]
     assert bool(member_links) == team_member
-    for label in ('Inspect all mentions', 'Inspect all accounts', 'Read complete statement'):
+    for label in ('Inspect all mentions', 'Inspect all accounts', 'Read complete statement',
+                  'Read complete account in assertion record'):
         assert any(text == label for _, text in links) == team_member
     assert any('support=' in href for href, _ in links)
     assert any('entity_page=2' in href for href, _ in links)
@@ -316,3 +321,95 @@ def test_new_app_session_resumes_saved_knowledge_without_generation(tmp_path, mo
     with TestClient(_app(runtime)) as client:
         response = client.get(f'/matters/{slug}/notebook')
         assert response.status_code == 200 and identity['entity_id'] in response.text and 'Resume here' in response.text
+
+
+@pytest.mark.parametrize('stance', ['supporting', 'competing'])
+@pytest.mark.parametrize('available', [True, False])
+def test_truncated_account_links_to_complete_record_without_omissions(connections, stance, available):
+    c = connections
+    client, slug = c['client'], c['slug']
+    bench = client.app.state.workbench
+    matter = bench.matter(slug, WEB_ACTOR)
+    excerpt = '<script>changeScope()</script> ' + 'Synthetic retained account text. ' * 12
+    name = 'Generated long account.txt'
+    assert client.post(f'/matters/{slug}/uploads',
+        files=[('files', (name, excerpt.encode(), 'text/plain'))]).status_code == 200
+    store = bench.source_store(matter)
+    document = next(doc for doc in store.documents.values() if doc.display_name == name)
+    token = bench._support_token(bench._candidate(matter, document, document.parsed_units()[0], 1))
+    service = bench.assertion_service(matter)
+    service.attach(matter.matter_id, WEB_ACTOR, c['assertion_id'], expected_revision=3,
+        support=token, stance=stance, attributed_to='Synthetic long account')
+    account = next(row for row in service.detail(matter.matter_id, WEB_ACTOR, c['assertion_id'])['accounts']
+                   if row['support_token'] == token)
+    if not available:
+        with store.mutation_guard():
+            document.version_id = 'f' * 32
+            store._save()
+    response = client.get(f'/matters/{slug}/notebook')
+    assert response.status_code == 200
+    record = next(row for row in response.context['knowledge']['assertions']['items']
+                  if row['assertion_id'] == c['assertion_id'])
+    assert record['stances'][stance]['omitted'] == 0
+    article = response.text.split(f'id="knowledge-{c["assertion_id"]}"', 1)[1].split('</article>', 1)[0]
+    group = article.split(f'knowledge-{stance}">', 1)[1].split('</details>', 1)[0]
+    assert f'<blockquote>{html.escape(account["excerpt"][:260])}…</blockquote>' in group
+    assert '<script>changeScope()</script>' not in group
+    links = _LinkParser(group).links
+    complete = next(href for href, label in links if label == 'Read complete account in assertion record')
+    assert urlparse(complete).fragment == account['account_id']
+    detail = client.get(complete)
+    assert detail.status_code == 200 and html.escape(account['excerpt']) in detail.text
+    assert any(parse_qs(urlparse(href).query).get('support') == [token] for href, _ in links) == available
+
+
+@pytest.mark.parametrize('team_member', [False, True])
+def test_notebook_audits_administrator_access_once_per_request(protected_assertion, team_member):
+    from tests.test_matter_management import _principal_id
+    c = protected_assertion
+    client, bench, matter = c['client'], c['bench'], c['matter']
+    client.cookies.clear()
+    client.get('/matters/new', headers=_headers(ADMIN))
+    admin_id = _principal_id(client, ADMIN)
+    if team_member:
+        bench.workspace.add_member(matter.matter_id, admin_id, c['owner_id'])
+    for _ in range(2):
+        before = {event.event_id for event in bench.workspace.audit_events(matter.matter_id)}
+        response = client.get(f'/matters/{matter.slug}/notebook', headers=_headers(ADMIN))
+        assert response.status_code == 200
+        events = [event for event in bench.workspace.audit_events(matter.matter_id)
+                  if event.event_id not in before]
+        access = [event for event in events if event.action == 'matter.admin_access']
+        opened = [event for event in events if event.action == 'notebook.open']
+        assert len(access) == (0 if team_member else 1)
+        assert len(opened) == 1
+        assert all(event.actor_principal_id == admin_id and event.outcome == 'success'
+                   and event.request_id == opened[0].request_id for event in access)
+
+
+def test_notebook_administrator_recheck_discards_content_if_actor_disappears(protected_assertion, monkeypatch):
+    from starlette.templating import Jinja2Templates
+    from tests.test_matter_management import _principal_id
+    c = protected_assertion
+    client, bench, matter = c['client'], c['bench'], c['matter']
+    client.cookies.clear()
+    client.get('/matters/new', headers=_headers(ADMIN))
+    admin_id = _principal_id(client, ADMIN)
+    original_render = Jinja2Templates.TemplateResponse
+    original_principal = bench.workspace.get_principal
+    checks = []
+    def missing_actor(principal_id):
+        if principal_id == admin_id:
+            checks.append(principal_id)
+            raise KeyError(principal_id)
+        return original_principal(principal_id)
+    def render_then_remove_actor(self, *args, **kwargs):
+        response = original_render(self, *args, **kwargs)
+        if kwargs.get('name') == 'workbench_notebook.html':
+            monkeypatch.setattr(bench.workspace, 'get_principal', missing_actor)
+        return response
+    monkeypatch.setattr(Jinja2Templates, 'TemplateResponse', render_then_remove_actor)
+    response = client.get(f'/matters/{matter.slug}/notebook', headers=_headers(ADMIN))
+    assert checks == [admin_id]
+    assert response.status_code == 404 and response.headers['cache-control'] == 'no-store'
+    assert c['record']['title'] not in response.text and c['entity']['display_name'] not in response.text

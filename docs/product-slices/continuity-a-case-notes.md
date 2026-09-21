@@ -33,6 +33,8 @@ Export case notes still exports notes, not a new combined knowledge artifact.
   Up to three aliases appear; additional aliases are explicitly counted.
   Statements/excerpts have labeled complete-record routes and visible ellipses.
   Mention excerpts show up to 260 characters, including retained historical text.
+  Truncated account excerpts link directly to the complete account in its
+  assertion record, even when no accounts were omitted from the preview.
   An out-of-range page displays the latest available page with its actual number.
 - Review status and original-reference availability are independent. Unavailable
   support keeps attribution and historical text but has no live original link.
@@ -40,6 +42,7 @@ Export case notes still exports notes, not a new combined knowledge artifact.
 - Projection SQL shares the existing authorized SQLite transaction and source
   guard, batches admitted references, loads no correction histories and performs
   no writes. The HTTP response rechecks access after rendering and is uncached.
+  This recheck does not repeat the initial administrator-access audit event.
   Existing administrator read-only Case notes access remains read-only. Without
   case-team membership, the preview explains that complete records, omitted
   references, identity management and chronology require membership, and hides
@@ -170,3 +173,24 @@ contributor environment from another checkout so imports target this worktree.
 The initial publication passed the installed outgoing-history guard after the
 owner-approved exact documentation versions were recorded. The follow-up keeps
 those versions unchanged and remains subject to the same installed guard.
+
+
+### Second review follow-up
+
+Truncated supporting and competing account excerpts now include a labeled link
+to the exact account in the complete assertion record, even with no omitted
+accounts. The administrator preview continues to hide member-only links. The
+final notebook access recheck now uses the underlying authorization lookup,
+retaining the real-actor and authorized-transaction checks without logging a
+second successful administrator access; late denials remain audited.
+
+The new regression selection reproduced five failures on the preceding head:
+four long-account cases and the duplicate administrator audit. Two access-control
+cases already passed and remain passing. After correction, **112 focused tests**
+passed across continuity, notebook, graph, source navigation, matter management
+and administrator authentication, plus **88 browser-runner contract tests**.
+The pinned Chrome **153.0.8010.36** continuity journey passed all seven checks,
+including following the long-account link to its exact account and returning to
+Case notes. The longer source fixture required whitespace normalization in the
+browser's source-pane text comparison; the complete text remains checked.
+The updated head still requires its own hosted CI and requested code review.

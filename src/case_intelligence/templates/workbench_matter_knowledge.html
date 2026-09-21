@@ -60,6 +60,7 @@
         <div class="knowledge-reference">
           <p>Attributed to: {{ account.attributed_to }}</p>
           <blockquote>{{ account.excerpt[:260] }}{% if account.excerpt|length > 260 %}…{% endif %}</blockquote>
+          {% if account.excerpt|length > 260 and not administrator_view %}<p><a href="{{ knowledge_record_url('assertions', record.assertion_id) }}#{{ account.account_id }}">Read complete account in assertion record</a></p>{% endif %}
           {{ source(account) }}
         </div>
         {% else %}<p>No {{ stance }} accounts recorded.</p>{% endfor %}
