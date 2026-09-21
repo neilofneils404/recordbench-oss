@@ -42,7 +42,10 @@ Export case notes still exports notes, not a new combined knowledge artifact.
 - Projection SQL shares the existing authorized SQLite transaction and source
   guard, batches admitted references, loads no correction histories and performs
   no writes. The HTTP response rechecks access after rendering and is uncached.
-  This recheck does not repeat the initial administrator-access audit event.
+  This recheck refreshes the session, enabled identity and provider authority;
+  an administrator override requires a current administrator role. Kerberos
+  requests revalidate trusted-proxy binding and current group authorization.
+  It does not repeat the initial administrator-access audit event.
   Existing administrator read-only Case notes access remains read-only. Without
   case-team membership, the preview explains that complete records, omitted
   references, identity management and chronology require membership, and hides
@@ -194,3 +197,25 @@ including following the long-account link to its exact account and returning to
 Case notes. The longer source fixture required whitespace normalization in the
 browser's source-pane text comparison; the complete text remains checked.
 The updated head still requires its own hosted CI and requested code review.
+
+
+### Third review follow-up
+
+The final notebook authorization check now resolves the current session and
+provider authority instead of trusting the administrator role captured before
+rendering. Local account restrictions, revoked sessions and disabled principals
+withhold the rendered content. Kerberos requests also refresh the trusted-proxy
+binding and current group authorization. The actor must still match the original
+reader, and any owner-backed administrator preview requires a current
+administrator role. Matter and repository authorization checks remain in place;
+late denials are audited without a second successful administrator-access event.
+
+Twelve synthetic cases change authority after the template renders, using real
+local account mutations and session revocation, with member/nonmember and
+unchanged-account controls, plus Kerberos administrator-group removal with and
+without continued application admission. Eight cases reproduced the defect on
+the preceding head; all twelve pass after the correction. The broader continuity,
+notebook, graph, source-navigation, matter-management, administrator, local-account
+and identity selection passed **191 tests**. The pinned Chrome
+**153.0.8010.36** continuity journey passed all seven checks. Final hosted CI and
+the requested code review remain pending for the updated head.

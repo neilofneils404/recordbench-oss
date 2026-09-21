@@ -13610,9 +13610,23 @@ def create_workbench_app(
             headers={"Cache-Control": "no-store"},
         )
         # Rendering and source validation may outlive the original access check.
-        # Recheck the real actor without repeating the initial access audit.
+        # Refresh session and provider authority without repeating the access audit.
         try:
-            bench.matter(slug, context.principal_id, administrator=administrator_override)
+            current = identity.resolve(request.cookies.get(SESSION_COOKIE))
+            if current is not None and identity.auth_mode == "kerberos":
+                current = identity.bind_kerberos_request(
+                    current,
+                    request.headers.get(KERBEROS_USER_HEADER),
+                    request.headers.get(KERBEROS_SECRET_HEADER),
+                )
+            if (
+                current is None
+                or current.principal_id != context.principal_id
+                or not current.principal.active
+                or (administrator_override and not current.is_administrator)
+            ):
+                raise KeyError(context.principal_id)
+            bench.matter(slug, current.principal_id, administrator=administrator_override)
             with knowledge_service.assertions.repository.transaction(matter.matter_id, read_actor_id):
                 pass
         except KeyError as exc:

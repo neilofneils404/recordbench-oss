@@ -413,3 +413,101 @@ def test_notebook_administrator_recheck_discards_content_if_actor_disappears(pro
     assert checks == [admin_id]
     assert response.status_code == 404 and response.headers['cache-control'] == 'no-store'
     assert c['record']['title'] not in response.text and c['entity']['display_name'] not in response.text
+
+
+@pytest.mark.parametrize('change', ['unchanged', 'demote', 'disable', 'revoke_session', 'disable_principal'])
+@pytest.mark.parametrize('team_member', [False, True])
+def test_notebook_rechecks_live_local_authority_after_render(tmp_path, monkeypatch, change, team_member):
+    from starlette.templating import Jinja2Templates
+    from case_intelligence.identity import SESSION_COOKIE
+    from tests.test_browser_local_accounts import configured_app, login, PASSWORD, ORIGIN
+    from tests.test_matter_management import _csrf
+    monkeypatch.setenv('CASE_INTELLIGENCE_STORAGE_RESERVE_GIB', '0')
+    app, accounts = configured_app(tmp_path)
+    accounts.create('owner.admin', 'Synthetic Owner', PASSWORD,
+                    administrator=True, actor='synthetic-operator')
+    with TestClient(app, base_url=ORIGIN) as client:
+        assert login(client, 'owner.admin').status_code == 303
+        identity, bench = app.state.identity, app.state.workbench
+        owner = identity.resolve(client.cookies.get(SESSION_COOKIE))
+        created = client.post('/matters', data=dict(
+            name='Synthetic authority recheck', descriptor='',
+            csrf_token=_csrf(client.get('/matters/new').text)), follow_redirects=False)
+        assert created.status_code == 303
+        slug = created.headers['location'].split('/')[2]
+        matter = bench.matter(slug, owner.principal_id)
+        saved = bench.entity_service(matter).create(matter.matter_id, owner.principal_id,
+                                                    display_name='Synthetic restricted identity')
+        note, _ = bench.workspace.create_notebook_item(matter.matter_id, owner.principal_id,
+            title='Synthetic restricted note', body='Retained private-to-matter fixture',
+            item_type='note', status='needs_review')
+        client.cookies.clear()
+        assert login(client).status_code == 303
+        administrator = identity.resolve(client.cookies.get(SESSION_COOKIE))
+        assert administrator.is_administrator
+        if team_member:
+            bench.workspace.add_member(matter.matter_id, administrator.principal_id, owner.principal_id)
+        original = Jinja2Templates.TemplateResponse
+        rendered = []
+        def render_then_restrict(self, *args, **kwargs):
+            response = original(self, *args, **kwargs)
+            if kwargs.get('name') == 'workbench_notebook.html':
+                rendered.append(response.body)
+                if change == 'demote':
+                    accounts.set_administrator('alice.admin', False, actor='synthetic-operator')
+                elif change == 'disable':
+                    accounts.set_enabled('alice.admin', False, actor='synthetic-operator')
+                elif change == 'revoke_session':
+                    identity.logout(administrator)
+                elif change == 'disable_principal':
+                    with bench.workspace.connection:
+                        bench.workspace.connection.execute(
+                            'UPDATE workbench_principal SET active=0 WHERE principal_id=?',
+                            (administrator.principal_id,))
+            return response
+        monkeypatch.setattr(Jinja2Templates, 'TemplateResponse', render_then_restrict)
+        response = client.get(f'/matters/{slug}/notebook', follow_redirects=False)
+        assert len(rendered) == 1 and saved['display_name'].encode() in rendered[0]
+        assert response.headers['cache-control'] == 'no-store'
+        if change == 'unchanged':
+            assert response.status_code == 200 and note.title in response.text
+        else:
+            assert response.status_code == 404
+            assert saved['display_name'] not in response.text and note.title not in response.text
+            denied = [event for event in bench.workspace.audit_events()
+                      if event.action == 'matter.access' and event.actor_principal_id == administrator.principal_id]
+            assert len(denied) == 1 and denied[0].outcome == 'denied'
+        access = [event for event in bench.workspace.audit_events(matter.matter_id)
+                  if event.action == 'matter.admin_access']
+        assert len(access) == (0 if team_member else 1)
+
+
+@pytest.mark.parametrize('admitted', [False, True])
+def test_notebook_rechecks_live_kerberos_admin_group_after_render(protected_assertion, monkeypatch, admitted):
+    from starlette.templating import Jinja2Templates
+    from tests.test_matter_management import ADMIN_GROUP, USER_GROUP
+    c = protected_assertion
+    client, bench, matter = c['client'], c['bench'], c['matter']
+    identity = client.app.state.identity
+    groups = {ADMIN_GROUP}
+    monkeypatch.setattr(identity, 'kerberos_group_resolver', lambda principal: groups)
+    client.cookies.clear()
+    client.get('/matters/new', headers=_headers(ADMIN))
+    original = Jinja2Templates.TemplateResponse
+    rendered = []
+    def render_then_revoke(self, *args, **kwargs):
+        response = original(self, *args, **kwargs)
+        if kwargs.get('name') == 'workbench_notebook.html':
+            rendered.append(response.body)
+            groups.clear()
+            if admitted:
+                groups.add(USER_GROUP)
+        return response
+    monkeypatch.setattr(Jinja2Templates, 'TemplateResponse', render_then_revoke)
+    response = client.get(f'/matters/{matter.slug}/notebook', headers=_headers(ADMIN), follow_redirects=False)
+    assert len(rendered) == 1 and c['record']['title'].encode() in rendered[0]
+    assert response.status_code == 404 and response.headers['cache-control'] == 'no-store'
+    assert c['record']['title'] not in response.text and c['entity']['display_name'] not in response.text
+    access = [event for event in bench.workspace.audit_events(matter.matter_id)
+              if event.action == 'matter.admin_access']
+    assert len(access) == 1
