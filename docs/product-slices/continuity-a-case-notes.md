@@ -219,3 +219,20 @@ notebook, graph, source-navigation, matter-management, administrator, local-acco
 and identity selection passed **191 tests**. The pinned Chrome
 **153.0.8010.36** continuity journey passed all seven checks. Final hosted CI and
 the requested code review remain pending for the updated head.
+
+
+### Fourth review follow-up
+
+The notebook GET no-write test now stops and joins its fixture's compilation
+worker before installing the shared SQLite trace callback. This isolates the
+request from periodic compilation lease recovery while retaining the original
+mutation checks. Callback cleanup also runs if the request raises. Product
+behavior and production worker configuration are unchanged.
+
+A deterministic diagnostic forced compilation recovery into the traced request
+window and reproduced the preceding head's assertion failure. The corrected test
+passed under that diagnostic. Injecting a write into the request still caused
+the no-write assertion to fail, confirming the check remains effective. The
+continuity service/workflow and report-compilation job suites passed **82
+tests**. Earlier browser acceptance remains applicable to this test-only change;
+fresh hosted CI and requested code review remain pending.
