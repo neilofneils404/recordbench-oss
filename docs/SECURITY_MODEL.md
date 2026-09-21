@@ -164,3 +164,20 @@ results may retain their historical human-decision context; historical source
 identity never grants current access. Quarantined-source exports fail closed.
 Active synthesis uses existing research-job close/backup guards; matter purge
 removes the jobs, receipts and nodes, and late workers cannot recreate them.
+
+## Explicit reviewer context selection
+
+Continuity B uses matter/principal-owned reference selections, not a new access
+boundary. Stable object IDs are matter-checked through the existing authorized
+services under source-then-workspace guards. Selection revision and current
+object/dependency approval stamps fence writes. Changed, missing, unsupported,
+disputed and dismissed records do not become accepted facts through selection.
+
+B's in-transaction session recheck uses the identity resolver's read-only mode:
+current session expiry/revocation, principal, local-account binding and provider
+authority are still checked, but the resolver does not touch sessions, refresh
+principal projections or commit the caller's transaction. Normal request
+session maintenance retains its existing behavior. Rendered previews/conflicts
+are reauthorized before return. Administrator visibility remains read-only
+without membership. CSRF applies to selection writes; GET does not create
+selection or knowledge state. B calls no model and changes no answer inputs.

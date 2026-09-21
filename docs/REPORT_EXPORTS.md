@@ -74,3 +74,15 @@ application suite passes with 706 tests and 9 environment-gated skips. The
 synthetic browser acceptance passes all seven workflow checks. Compilation,
 publication tree/history checks, and both Compose graphs pass. Hosted PR code
 and security reviews and required CI remain separate merge gates.
+
+## Reviewer context selection manifests
+
+Continuity B adds `context/selections.json` to complete matter bundles and their
+existing additional-work-product inventory. It includes all owners' selection
+headers, revisions, ordered typed references, approval fingerprints and
+attribution. Knowledge remains shared; owner-specific selections are not private
+notes. The manifest explicitly says selections are not consumed by answers.
+It does not claim current support availability or retain authoritative fact
+copies. Shared knowledge is exported through its existing separate artifacts.
+A manifest exceeding 1,000 selection owners or 8 MiB fails the complete export;
+it is never silently omitted. Note-only export behavior is unchanged.

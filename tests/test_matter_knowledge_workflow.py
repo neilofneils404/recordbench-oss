@@ -422,9 +422,10 @@ def test_notebook_administrator_recheck_discards_content_if_actor_disappears(pro
     assert c['record']['title'] not in response.text and c['entity']['display_name'] not in response.text
 
 
+@pytest.mark.parametrize('surface', ['notebook', 'context'])
 @pytest.mark.parametrize('change', ['unchanged', 'demote', 'disable', 'revoke_session', 'disable_principal'])
 @pytest.mark.parametrize('team_member', [False, True])
-def test_notebook_rechecks_live_local_authority_after_render(tmp_path, monkeypatch, change, team_member):
+def test_notebook_rechecks_live_local_authority_after_render(tmp_path, monkeypatch, change, team_member, surface):
     from starlette.templating import Jinja2Templates
     from case_intelligence.identity import SESSION_COOKIE
     from tests.test_browser_local_accounts import configured_app, login, PASSWORD, ORIGIN
@@ -458,7 +459,7 @@ def test_notebook_rechecks_live_local_authority_after_render(tmp_path, monkeypat
         rendered = []
         def render_then_restrict(self, *args, **kwargs):
             response = original(self, *args, **kwargs)
-            if kwargs.get('name') == 'workbench_notebook.html':
+            if kwargs.get('name') == f'workbench_{surface}.html':
                 rendered.append(response.body)
                 if change == 'demote':
                     accounts.set_administrator('alice.admin', False, actor='synthetic-operator')
@@ -473,11 +474,11 @@ def test_notebook_rechecks_live_local_authority_after_render(tmp_path, monkeypat
                             (administrator.principal_id,))
             return response
         monkeypatch.setattr(Jinja2Templates, 'TemplateResponse', render_then_restrict)
-        response = client.get(f'/matters/{slug}/notebook', follow_redirects=False)
+        response = client.get(f'/matters/{slug}/{surface}', params=dict(kind='entity',object_id=saved['entity_id']) if surface == 'context' else {}, follow_redirects=False)
         assert len(rendered) == 1 and saved['display_name'].encode() in rendered[0]
         assert response.headers['cache-control'] == 'no-store'
         if change == 'unchanged':
-            assert response.status_code == 200 and note.title in response.text
+            assert response.status_code == 200 and saved['display_name'] in response.text
         else:
             assert response.status_code == 404
             assert saved['display_name'] not in response.text and note.title not in response.text
@@ -489,8 +490,9 @@ def test_notebook_rechecks_live_local_authority_after_render(tmp_path, monkeypat
         assert len(access) == (0 if team_member else 1)
 
 
+@pytest.mark.parametrize('surface', ['notebook', 'context'])
 @pytest.mark.parametrize('admitted', [False, True])
-def test_notebook_rechecks_live_kerberos_admin_group_after_render(protected_assertion, monkeypatch, admitted):
+def test_notebook_rechecks_live_kerberos_admin_group_after_render(protected_assertion, monkeypatch, admitted, surface):
     from starlette.templating import Jinja2Templates
     from tests.test_matter_management import ADMIN_GROUP, USER_GROUP
     c = protected_assertion
@@ -504,14 +506,14 @@ def test_notebook_rechecks_live_kerberos_admin_group_after_render(protected_asse
     rendered = []
     def render_then_revoke(self, *args, **kwargs):
         response = original(self, *args, **kwargs)
-        if kwargs.get('name') == 'workbench_notebook.html':
+        if kwargs.get('name') == f'workbench_{surface}.html':
             rendered.append(response.body)
             groups.clear()
             if admitted:
                 groups.add(USER_GROUP)
         return response
     monkeypatch.setattr(Jinja2Templates, 'TemplateResponse', render_then_revoke)
-    response = client.get(f'/matters/{matter.slug}/notebook', headers=_headers(ADMIN), follow_redirects=False)
+    response = client.get(f'/matters/{matter.slug}/{surface}', params=dict(kind='assertion',object_id=c['record']['assertion_id']) if surface == 'context' else {}, headers=_headers(ADMIN), follow_redirects=False)
     assert len(rendered) == 1 and c['record']['title'].encode() in rendered[0]
     assert response.status_code == 404 and response.headers['cache-control'] == 'no-store'
     assert c['record']['title'] not in response.text and c['entity']['display_name'] not in response.text

@@ -1798,11 +1798,13 @@ class WorkspaceStore:
         return self._session(row)
 
     def resolve_session(
-        self, token_digest: str, *, now: str, next_idle_expires_at: str
+        self, token_digest: str, *, now: str, next_idle_expires_at: str, read_only: bool = False
     ) -> tuple[SessionRecord, PrincipalRecord] | None:
         if not re.fullmatch(r"[0-9a-f]{64}", token_digest):
             return None
-        with self._lock, self.connection:
+        # Read-only authority checks may run inside a caller-owned transaction.
+        # They must neither touch session state nor commit/roll back that unit.
+        with self._lock, (nullcontext() if read_only else self.connection):
             row = self.connection.execute(
                 "SELECT s.session_id,s.token_digest,s.principal_id,s.auth_method,s.application_roles,s.created_at,"
                 "s.last_seen_at,s.idle_expires_at,s.absolute_expires_at,s.revoked_at,"
@@ -1815,18 +1817,20 @@ class WorkspaceStore:
             if row is None or row["revoked_at"] is not None or not row["active"]:
                 return None
             if row["idle_expires_at"] <= now or row["absolute_expires_at"] <= now:
-                self.connection.execute(
-                    "UPDATE workbench_session SET revoked_at=? "
-                    "WHERE session_id=? AND revoked_at IS NULL",
-                    (now, row["session_id"]),
-                )
+                if not read_only:
+                    self.connection.execute(
+                        "UPDATE workbench_session SET revoked_at=? "
+                        "WHERE session_id=? AND revoked_at IS NULL",
+                        (now, row["session_id"]),
+                    )
                 return None
             idle = min(next_idle_expires_at, row["absolute_expires_at"])
-            self.connection.execute(
-                "UPDATE workbench_session SET last_seen_at=?,idle_expires_at=? "
-                "WHERE session_id=? AND revoked_at IS NULL",
-                (now, idle, row["session_id"]),
-            )
+            if not read_only:
+                self.connection.execute(
+                    "UPDATE workbench_session SET last_seen_at=?,idle_expires_at=? "
+                    "WHERE session_id=? AND revoked_at IS NULL",
+                    (now, idle, row["session_id"]),
+                )
             session_row = self.connection.execute(
                 "SELECT session_id,token_digest,principal_id,auth_method,application_roles,created_at,last_seen_at,"
                 "idle_expires_at,absolute_expires_at,revoked_at FROM workbench_session "

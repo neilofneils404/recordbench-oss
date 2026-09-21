@@ -2001,11 +2001,11 @@ def export_matter_bundle(
             kind = _plain(item.get("kind"))
             if (
                 not re.fullmatch(
-                    r"(?:investigations|source-checks|intake|entities|assertions)/"
+                    r"(?:investigations|source-checks|intake|entities|assertions|context)/"
                     r"[A-Za-z0-9][A-Za-z0-9._/-]{0,240}",
                     path,
                 )
-                or kind not in {"investigation", "source_check", "intake_receipt", "full_text_review", "entity", "entity_discovery", "assertion"}
+                or kind not in {"investigation", "source_check", "intake_receipt", "full_text_review", "entity", "entity_discovery", "assertion", "context_selection"}
                 or ".." in path.split("/")
                 or path.casefold() in seen_additional_paths
                 or not isinstance(body, bytes)

@@ -16,6 +16,7 @@
     <p class="knowledge-count">Showing {{ knowledge.entities['items']|length }} of {{ knowledge.entities.total }} identities · {{ knowledge.entities.omitted }} not shown on this page. Ordered by name.</p>
     {% for entity in knowledge.entities['items'] %}
     <article class="knowledge-record" id="knowledge-{{ entity.entity_id }}">
+      <a href="/matters/{{ matter.slug }}/context?kind=entity&amp;object_id={{ entity.entity_id }}&amp;return_to={{ knowledge_url()|urlencode }}">Inspect / use as context</a>
       <p class="eyebrow">{{ entity.entity_type|title }}</p>
       <h3>{{ record_title('entities', entity.entity_id, entity.display_name) }}</h3>
       <p>Human review: {{ entity.status|replace('_', ' ')|title }} · Revision {{ entity.revision }}</p>
@@ -47,6 +48,7 @@
     <p class="knowledge-count">Showing {{ knowledge.assertions['items']|length }} of {{ knowledge.assertions.total }} records · {{ knowledge.assertions.omitted }} not shown on this page. Ordered by reviewer ordering date, then undated records.</p>
     {% for record in knowledge.assertions['items'] %}
     <article class="knowledge-record" id="knowledge-{{ record.assertion_id }}">
+      <a href="/matters/{{ matter.slug }}/context?kind=assertion&amp;object_id={{ record.assertion_id }}&amp;return_to={{ knowledge_url()|urlencode }}">Inspect / use as context</a>
       <p class="eyebrow">{{ record.record_type|title }}</p>
       <h3>{{ record_title('assertions', record.assertion_id, record.title) }}</h3>
       <p>Human review: {{ record.status|replace('_', ' ')|title }} · Revision {{ record.revision }}</p>

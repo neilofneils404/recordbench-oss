@@ -5,6 +5,8 @@
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static', path='matter-knowledge.css').path }}">{% endblock %}
 
 {% block content %}
+
+
 <main id="main-content" tabindex="-1" class="notebook-shell">
   <header class="matter-heading notebook-heading">
     <div>
@@ -26,6 +28,10 @@
   </header>
   {% with active='notes' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   {% with work_product_active='notes' %}{% include "workbench_work_product_tabs.html" %}{% endwith %}
+  <section class="notebook-tool-card" aria-label="Selected context"><h2><a href="/matters/{{ matter.slug }}/context">Selected context</a></h2><p>Save your own selection of shared notes, stable identities and assertions for future questions. <strong>Not yet consumed by answers.</strong> Selection does not confirm truth.</p>
+    <p>{{ context_selection.entries|length }} saved references · selection revision {{ context_selection.revision }}{% if administrator_view %} · Read-only preview of the matter owner's selection{% endif %}</p>
+    {% if context_selection.rows %}<details><summary>Inspect saved selection status</summary><ol>{% for row in context_selection.rows %}<li style="overflow-wrap:anywhere"><a href="/matters/{{ matter.slug }}/context?kind={{ row.kind }}&amp;object_id={{ row.object_id }}&amp;return_to={{ notebook_url(notebook.page)|urlencode }}">{{ row.current.record.title or row.current.record.display_name if row.current else row.object_id }}</a> · {{ row.kind }} · {{ row.state }}{% if row.current %} · {{ row.current.record.status|replace('_',' ')|title }} · {{ row.current.record.origin }} · {{ row.current.support_state }}{% endif %}{% if row.warning %} · {{ row.warning }}{% endif %}</li>{% endfor %}</ol></details>{% endif %}
+  </section>
   {% include "workbench_retention_notice.html" %}
 
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
@@ -126,6 +132,7 @@
           <header>
             <div class="notebook-item-labels"><span class="notebook-type">{{ item.item_type|replace('_', ' ')|title }}</span><span class="notebook-status">{{ item.status|replace('_', ' ')|title }}</span>{% if item.is_pinned %}<span class="notebook-pinned">Pinned</span>{% endif %}</div>
             <h3>{{ item.title }}</h3>
+            <a href="/matters/{{ matter.slug }}/context?kind=notebook_item&amp;object_id={{ item.item_id }}&amp;return_to={{ notebook_url(notebook.page)|urlencode }}">Inspect / use as context</a>
             {% if item.date_label %}<p class="notebook-date">{{ item.date_label }}</p>{% endif %}
           </header>
           {% if item.body %}<p class="notebook-body">{{ item.body }}</p>{% endif %}

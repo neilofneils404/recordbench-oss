@@ -13481,6 +13481,26 @@ def create_workbench_app(
                                   authorized_matter=authorized_matter, auth_context=auth_context,
                                   templates=templates, base_context=base_context)
 
+    def refresh_context_authority(request, slug, original, administrator_override):
+        current = identity.resolve(request.cookies.get(SESSION_COOKIE), read_only=True)
+        if current is not None and identity.auth_mode == "kerberos":
+            current = identity.bind_kerberos_request(current,
+                request.headers.get(KERBEROS_USER_HEADER), request.headers.get(KERBEROS_SECRET_HEADER))
+        try:
+            if (current is None or current.principal_id != original.principal_id
+                    or not current.principal.active or (administrator_override and not current.is_administrator)):
+                raise KeyError(original.principal_id)
+            return bench.matter(slug, current.principal_id, administrator=administrator_override)
+        except KeyError as exc:
+            if not bench.workspace.connection.in_transaction:
+                audit(request, "matter.access", "denied", context=original)
+            raise HTTPException(404, "Matter is no longer available") from exc
+
+    from .matter_context_routes import install_context_routes
+    install_context_routes(app, assertions_for=bench.assertion_service, authorized_matter=authorized_matter,
+                           auth_context=auth_context, refresh_authority=refresh_context_authority,
+                           require_csrf=require_csrf, templates=templates, base_context=base_context)
+
     @app.get("/matters/{slug}/notebook", response_class=HTMLResponse)
     def matter_notebook(
         request: Request,
@@ -13511,6 +13531,9 @@ def create_workbench_app(
                 matter.matter_id, read_actor_id,
                 entity_page=entity_page, assertion_page=assertion_page,
             )
+            from .matter_context import MatterContextService
+            context_selection, _ = MatterContextService(knowledge_service.assertions).inspect(
+                matter.matter_id, read_actor_id)
             notebook_page = bench.workspace.notebook_page(
                 matter.matter_id,
                 read_actor_id,
@@ -13601,6 +13624,7 @@ def create_workbench_app(
                 "notebook_url": lambda target_page: knowledge_url(notes=target_page),
                 "notebook_status_url": lambda value: knowledge_url(notes=1, note_status=value),
                 "knowledge": knowledge,
+                "context_selection": context_selection,
                 "knowledge_url": knowledge_url,
                 "knowledge_record_url": knowledge_record_url,
                 "knowledge_source_url": knowledge_source_url,
@@ -15394,6 +15418,12 @@ def create_workbench_app(
                     add_work_product(kind="assertion", path=f"assertions/{index:04d}-assertion.json",
                         artifact=ExportArtifact(body=json.dumps(record, indent=2).encode("utf-8"),
                             media_type="application/json", filename="assertion.json"))
+            from .matter_context_repository import MatterContextRepository
+            with repository.transaction(matter.matter_id, read_actor_id):
+                manifest = MatterContextRepository(repository).export(matter.matter_id)
+                add_work_product(kind="context_selection", path="context/selections.json",
+                    artifact=ExportArtifact(body=json.dumps(manifest, indent=2).encode("utf-8"),
+                        media_type="application/json", filename="selections.json"))
             artifact = export_matter_bundle(
                 matter,
                 conversations,

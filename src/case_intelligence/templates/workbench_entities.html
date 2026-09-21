@@ -1,8 +1,10 @@
 {% extends "workbench_base.html" %}
 {% block title %}{{ entity.display_name if entity else 'People, places & things' }} · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block content %}
+
 <main id="main-content" tabindex="-1" class="notebook-main">
   <header class="notebook-heading"><div><p class="eyebrow">{{ matter.display_name }}</p><h1>{{ entity.display_name if entity else 'People, places & things' }}</h1><p>Keep distinct identities and the original passages that support your review.</p></div></header>
+{% if entity %}<p><a href="/matters/{{ matter.slug }}/context?kind=entity&amp;object_id={{ entity.entity_id }}">Inspect / use as context</a></p>{% endif %}
   {% with active='entities' %}{% include 'workbench_matter_tabs.html' %}{% endwith %}
   {% include 'workbench_retention_notice.html' %}
   <p><a href="{{ return_to }}">Return to source review</a>{% if entity %} · <a href="{{ entity_url() }}">All entities</a>{% endif %}</p>

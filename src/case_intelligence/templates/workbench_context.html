@@ -1,0 +1,50 @@
+{% extends "workbench_base.html" %}
+{% block title %}Selected context · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block body_class %}notebook-page{% endblock %}
+{% block content %}
+<main id="main-content" tabindex="-1" class="notebook-shell">
+  <h1>Selected context</h1>
+  <p>Saved for future question context. <strong>Not yet consumed by answers.</strong> Selection does not confirm truth or provide independent evidence.</p>
+  <p>One selection per reviewer in this matter. Shared knowledge remains shared; this is not private notes or a team default.</p>
+  <p>Up to 50 references; a saved selection is not a model-fit guarantee.</p>
+  <p><a href="{{ return_to }}">Return to Case notes or record</a> · <a href="/matters/{{ matter.slug }}/notebook">Browse Case notes</a></p>
+  {% if administrator_view %}<p><strong>Administrator preview is read-only.</strong> Showing the matter owner's selection. Case-team membership is required to maintain your own selection or open record editors.</p>{% endif %}
+  {% if error %}<p role="alert">{{ error }}</p>{% endif %}
+  {% if proposal %}<section aria-labelledby="proposal-heading"><h2 id="proposal-heading">Your unsaved choice</h2><p>Nothing was saved. Compare this choice with the current selection below; use its current controls to deliberately try again.</p><dl>{% for key,value in proposal.items() %}<dt>{{ key|replace('_',' ')|title }}</dt><dd style="overflow-wrap:anywhere">{{ value }}</dd>{% endfor %}</dl></section>{% endif %}
+  {% macro action(label, operation, entry_kind='', identifier='', stamp=none) %}
+  {% if not administrator_view %}<form method="post" action="/matters/{{ matter.slug }}/context">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected_selection_revision" value="{{ selection.revision }}">
+    <input type="hidden" name="action" value="{{ operation }}">
+    <input type="hidden" name="kind" value="{{ entry_kind }}"><input type="hidden" name="object_id" value="{{ identifier }}">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    {% if stamp %}<input type="hidden" name="approval" value="{{ stamp|tojson|forceescape }}">{% endif %}
+    <button class="button button-secondary">{{ label }}</button>
+  </form>{% endif %}
+  {% endmacro %}
+  <section aria-labelledby="saved-heading"><h2 id="saved-heading">Saved selection ({{ selection.entries|length }})</h2>
+    <p>Selection revision {{ selection.revision }}{% if selection.header %} · Updated {{ selection.header.updated_at }} by {{ selection.header.updated_by }}{% endif %}</p>
+    {% for row in selection.rows %}<article class="notebook-tool-card" id="selected-{{ row.object_id }}" style="overflow-wrap:anywhere">
+      <h3>{{ loop.index }}. {{ row.current.record.title or row.current.record.display_name if row.current else row.object_id }}</h3>
+      <p>{{ row.kind|replace('_',' ')|title }} · {{ row.object_id }} · <strong>{{ row.state }}</strong></p>
+      <p>Approved version {{ row.approval.version }} · Selected by {{ row.selected_by }} at {{ row.selected_at }}</p>
+      {% if row.current %}<p>Current human review: <strong>{{ row.current.record.status|replace('_',' ')|title }}</strong> · Origin: {{ row.current.record.origin }} · {{ row.current.support_state }}</p>{% endif %}
+      {% if row.warning %}<p>{{ row.warning }}</p>{% endif %}
+      <p><a href="{{ inspect_url(row) }}">Inspect / review changes</a>{% if not administrator_view %} · <a href="{{ record_url(row.kind,row.object_id) }}">Open complete record / repair support</a>{% endif %}</p>
+      <div class="button-row">{{ action('Move up', 'up', row.kind, row.object_id) }}{{ action('Move down', 'down', row.kind, row.object_id) }}{{ action('Remove from context', 'remove', row.kind, row.object_id) }}</div>
+    </article>{% else %}<p>No selected context. Pinning or confirming a note does not add it here.</p>{% endfor %}
+    {% if selection.entries %}{{ action('Clear selection', 'clear') }}{% endif %}
+  </section>
+  {% if candidate %}<section class="notebook-tool-card" aria-labelledby="inspect-heading" id="context-inspection" style="overflow-wrap:anywhere">
+    <h2 id="inspect-heading">Inspect current {{ kind|replace('_',' ') }}</h2>
+    <p>{{ object_id }} · Current version {{ candidate.approval.version }} · {{ candidate.support_state }}</p>
+    <p>Human review: <strong>{{ candidate.record.status|replace('_',' ')|title }}</strong> · Origin: {{ candidate.record.origin }}. Disputed and dismissed records retain their review labels when selected.</p>
+    {% if not administrator_view %}<p><a href="{{ record_url(kind,object_id) }}">Open complete record / edit support</a></p>{% endif %}
+    <dl>{% for key,label in [('title','Title'),('display_name','Identity name'),('item_type','Note type'),('entity_type','Identity type'),('record_type','Record type'),('aliases','Aliases'),('body','Details'),('statement','Statement'),('date_label','Date as recorded'),('raw_date','Date as stated'),('date_uncertainty','Date uncertainty'),('sort_date','Ordering date'),('is_pinned','Pinned'),('created_by','Created by'),('created_at','Created at'),('updated_by','Last edited by'),('updated_at','Last edited at'),('extractor_version','Extraction origin')] %}{% if key in candidate.record %}<dt>{{ label }}</dt><dd style="white-space:pre-wrap">{% if key == 'aliases' %}{{ candidate.record[key]|join('; ') }}{% else %}{{ candidate.record[key] }}{% endif %}</dd>{% endif %}{% endfor %}</dl>
+    {% if candidate.roles %}<h3>Role dependencies</h3>{% for role in candidate.roles %}<p>{{ role.role }}: {{ role.display_name }} · {{ role.entity_id }} · Recorded identity revision {{ role.entity_revision }} · Current revision {{ role.current_revision or 'missing' }} · {{ role.identity_state }}</p>{% endfor %}{% endif %}
+    <h3>Complete attached support ({{ candidate.references|length }})</h3>
+    {% for reference in candidate.references %}<article><h4>{{ reference.stance|default('Source reference')|title }}{% if reference.attributed_to %} · {{ reference.attributed_to }}{% endif %}</h4><p>{{ reference.source_name }} · {{ reference.location }}{% if reference.review_status %} · Human review: {{ reference.review_status }}{% endif %}{% if reference.origin %} · Origin: {{ reference.origin }}{% endif %}</p><blockquote style="white-space:pre-wrap">{{ reference.excerpt }}</blockquote>{% if reference.available %}<a href="{{ source_url(reference.support_token) }}">Open original passage</a>{% else %}<strong>Source unavailable or changed · retained historical reference</strong>{% endif %}</article>{% else %}<p>No attached sources by design. Reviewer orientation is not source evidence.</p>{% endfor %}
+    {{ action('Accept current basis' if selected else 'Use as context', 'reconcile' if selected else 'add', kind, object_id, candidate.approval) }}
+  </section>{% endif %}
+</main>
+{% endblock %}

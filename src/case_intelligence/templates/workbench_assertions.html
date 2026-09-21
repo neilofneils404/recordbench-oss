@@ -1,8 +1,10 @@
 {% extends 'workbench_base.html' %}
 {% block title %}{{ detail.record.title if detail else ('Create event or assertion' if creating else 'Chronology') }} · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block content %}
+
 <main id="main-content" tabindex="-1" class="notebook-main assertion-workspace">
   <header class="notebook-heading"><div><p class="eyebrow">{{ matter.display_name }}</p><h1>{{ detail.record.title if detail else ('Create event or assertion' if creating else 'Chronology') }}</h1><p>Compare source accounts and preserve your team's decisions.</p></div></header>
+{% if detail %}<p><a href="/matters/{{ matter.slug }}/context?kind=assertion&amp;object_id={{ detail.record.assertion_id }}">Inspect / use as context</a></p>{% endif %}
   {% with active='chronology' %}{% include 'workbench_matter_tabs.html' %}{% endwith %}
   {% include 'workbench_retention_notice.html' %}
   <p><a href="{{ return_to }}">Return to source review</a> · <a href="/matters/{{ matter.slug }}/chronology">All events and assertions</a>{% if entity %} · <a href="/matters/{{ matter.slug }}/entities/{{ entity.entity_id }}">{{ entity.display_name }}</a>{% endif %}</p>

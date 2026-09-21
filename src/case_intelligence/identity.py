@@ -1411,7 +1411,7 @@ class IdentityService:
         context, raw_token = self._issue_session(principal, "oidc", roles)
         return context, raw_token, destination
 
-    def resolve(self, raw_token: str | None) -> AuthContext | None:
+    def resolve(self, raw_token: str | None, *, read_only: bool = False) -> AuthContext | None:
         if self.auth_mode == "test":
             principal = self.store.get_principal("development-taylor-morgan")
             return AuthContext(principal, None, "test-csrf", "test")
@@ -1422,6 +1422,7 @@ class IdentityService:
             self.token_digest(raw_token),
             now=self._iso(now),
             next_idle_expires_at=self._iso(now + self.idle_timeout),
+            read_only=read_only,
         )
         if resolved is None:
             return None
@@ -1429,14 +1430,16 @@ class IdentityService:
         try:
             raw_roles = json.loads(session.application_roles)
         except json.JSONDecodeError:
-            self.store.revoke_session(session.session_id)
+            if not read_only:
+                self.store.revoke_session(session.session_id)
             return None
         if (
             not isinstance(raw_roles, list)
             or any(value != "administrator" for value in raw_roles)
             or len(raw_roles) != len(set(raw_roles))
         ):
-            self.store.revoke_session(session.session_id)
+            if not read_only:
+                self.store.revoke_session(session.session_id)
             return None
         roles = frozenset(raw_roles)
         if self.auth_mode == "local":
@@ -1453,10 +1456,11 @@ class IdentityService:
             if (account is None or not account.enabled or session.auth_method != "local"
                     or len(binding) != 3 or binding[0] != "local"
                     or not hmac.compare_digest(binding[1], self._local_session_binding(account))):
-                self.store.revoke_session(session.session_id)
+                if not read_only:
+                    self.store.revoke_session(session.session_id)
                 return None
             roles = account.roles
-            if principal.display_name != account.display_name:
+            if not read_only and principal.display_name != account.display_name:
                 self.store.refresh_principal_display_name(
                     self.local_settings.provider_key, account.username, account.display_name,
                     expected_display_name=principal.display_name,

@@ -264,3 +264,25 @@ and Word/Markdown/JSON exports. Rollback uses the exact pre-upgrade backup in a
 clean target with its matching old revision. Do not run old writers against new
 job JSON: they do not understand this adapter or its saved charges. Keep the
 upgraded backup and post-upgrade exports separately.
+
+## Reviewer context selections
+
+Continuity B adds paired migration `0035_matter_context_selection.sql` to the
+control database. Include `workbench_context_selection` and
+`workbench_context_entry` in the same stopped, complete-runtime backup as the
+shared notes, entities, assertions and original sources. Entries contain typed
+references, approved-version/dependency fingerprints, ordering and attribution;
+they are not copies of current facts and are not historical answer inputs.
+A complete matter purge removes both tables' matter state. Complete work-product
+exports include `context/selections.json`; note-only exports remain note-only.
+Exported manifests are not restore archives or current-support attestations.
+
+Stop all application writers before upgrading. Mixed old/new writers and using
+old purge code on the upgraded database are unsupported. Rollback uses the
+verified pre-upgrade backup and its matching reader, losing subsequent B changes
+unless separately retained. `scripts/context-storage-restore-drill.py` exercises
+baseline migration, retained legacy answer notebook scopes, clean restore and
+matching-reader rollback with synthetic state. The HTTP acceptance additionally
+restores a stopped complete runtime and follows original-source links before
+export and purge. See the [bounded brief](product-slices/continuity-b-context-selection.md)
+for executed evidence and outstanding acceptance.

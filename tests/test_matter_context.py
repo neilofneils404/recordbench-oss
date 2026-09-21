@@ -180,3 +180,77 @@ def test_migration_backup_clean_restore_restart_export_and_purge(case, tmp_path)
     for table in ('workbench_context_selection','workbench_context_entry'):
         assert restored.connection.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0] == 0
     restored.close()
+
+
+def test_count_and_dependency_scan_bounds(case, monkeypatch):
+    store, matter, entities, assertions, first = case
+    service = MatterContextService(assertions)
+    # Save fifty exact references without quadratic preview work in the fixture.
+    entries = []
+    for number in range(50):
+        item = entities.create(matter.matter_id, ACTOR, display_name=f'Synthetic {number}')
+        current = service.inspect(matter.matter_id, ACTOR, kind='entity', object_id=item['entity_id'])[1]
+        entries.append(dict(kind='entity',object_id=item['entity_id'],approval=current['approval'],selected_by=ACTOR,selected_at=store._now()))
+    with assertions.repository.transaction(matter.matter_id,ACTOR):
+        service.repository.save(matter.matter_id,ACTOR,dict(revision=0),entries)
+    candidate = service.inspect(matter.matter_id,ACTOR,kind='entity',object_id=first['entity_id'])[1]
+    with pytest.raises(ContextLimit,match='50'):
+        service.change(matter.matter_id,ACTOR,expected_revision=1,action='add',kind='entity',object_id=first['entity_id'],approval=candidate['approval'])
+    assert len(service.inspect(matter.matter_id,ACTOR)[0]['entries']) == 50
+    # Reference counts are checked before the existing unbounded mention loader.
+    with entities.repository.transaction(matter.matter_id,ACTOR):
+        for number in range(201):
+            ref = dict(reference(0),support_token=f'{number:040x}')
+            entities.repository.add_mention(matter.matter_id,ACTOR,first['entity_id'],ref,'manual')
+    original_mentions = assertions.repository.entities.mentions
+    def bounded_mentions(matter_id, entity_id):
+        assert entity_id != first['entity_id'], 'Reference scan exceeded the preflight limit'
+        return original_mentions(matter_id, entity_id)
+    monkeypatch.setattr(assertions.repository.entities,'mentions',bounded_mentions)
+    with pytest.raises(ContextLimit):
+        service.inspect(matter.matter_id,ACTOR,kind='entity',object_id=first['entity_id'])
+
+
+def test_exact_reference_metadata_and_source_guard_transaction(case):
+    from contextlib import contextmanager
+    store,matter,_,_,first = case
+    guarded = []
+    @contextmanager
+    def guard():
+        assert not store.connection.in_transaction
+        guarded.append(True)
+        try:
+            yield
+        finally:
+            guarded.pop()
+    entities,assertions = services(store,guard=guard)
+    first = entities.attach(matter.matter_id,ACTOR,first['entity_id'],expected_revision=1,support='a'*40)
+    validate = entities.validate_references
+    def protected(references):
+        assert guarded and store.connection.in_transaction
+        return validate(references)
+    entities.validate_references = protected
+    service = MatterContextService(assertions)
+    add(service,matter,'entity',first['entity_id'])
+    with assertions.repository.transaction(matter.matter_id,ACTOR):
+        store.connection.execute('UPDATE workbench_entity_mention SET excerpt_digest=? WHERE entity_id=?',('f'*64,first['entity_id']))
+    row = service.inspect(matter.matter_id,ACTOR)[0]['rows'][0]
+    assert row['state'] == 'Changed' and row['current']['support_state'] == 'Source unavailable or changed'
+    assert not row['current']['references'][0]['available']
+
+
+def test_real_separate_connections_cannot_overwrite_selection(case):
+    store,matter,_,assertions,first = case
+    service = MatterContextService(assertions)
+    add(service,matter,'entity',first['entity_id'])
+    filename = store.connection.execute('PRAGMA database_list').fetchone()[2]
+    other = WorkspaceStore(Path(filename))
+    try:
+        second = MatterContextService(services(other)[1])
+        stale = second.inspect(matter.matter_id,ACTOR)[0]
+        service.change(matter.matter_id,ACTOR,expected_revision=1,action='clear')
+        with pytest.raises(ContextConflict):
+            second.change(matter.matter_id,ACTOR,expected_revision=stale['revision'],action='up',kind='entity',object_id=first['entity_id'])
+        assert second.inspect(matter.matter_id,ACTOR)[0]['entries'] == []
+    finally:
+        other.close()

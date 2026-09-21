@@ -35,6 +35,7 @@ JOURNEYS = (
     ('zoom', 'browser-accept-zoom.py', 'receipt.json', 12, ()),
     ('account-controls', 'browser-accept-account-controls.py', 'receipt.json', 6, ()),
     ('matter-knowledge', 'browser-accept-matter-knowledge.py', 'receipt.json', 7, ()),
+    ('matter-context', 'browser-accept-matter-context.py', 'receipt.json', 7, ()),
 )
 ARTIFACT_NAMES = (
     'receipt-browser-result.json', 'receipt.json', 'failure.png', 'failure.html',
@@ -51,6 +52,7 @@ ARTIFACT_NAMES = (
     'zoom-150-notes.png', 'zoom-150-sources.png',
     'zoom-200-notes.png', 'zoom-200-sources.png',
     'zoom-400-notes.png', 'zoom-400-sources.png',
+    'context-light-desktop.png', 'context-dusk-desktop.png', 'context-dusk-mobile.png',
     'knowledge-light-desktop.png', 'knowledge-dusk-desktop.png', 'knowledge-dusk-mobile.png',
 )
 
