@@ -5,15 +5,19 @@
     {% else %}<strong>Source unavailable or changed · historical reference</strong>{% endif %}
   </p>
 {% endmacro %}
+{% macro record_title(kind, identifier, label) %}
+  {% if administrator_view %}{{ label }}{% else %}<a href="{{ knowledge_record_url(kind, identifier) }}">{{ label }}</a>{% endif %}
+{% endmacro %}
+{% if administrator_view %}<p class="knowledge-scope">Administrator preview is read-only. Complete records, omitted mentions and accounts, identity management, and chronology require case-team membership.</p>{% endif %}
 <div class="knowledge-sections">
   <section id="knowledge-entities" class="knowledge-section" aria-labelledby="knowledge-entities-heading">
-    <header><h2 id="knowledge-entities-heading">Saved identities</h2><a href="{{ knowledge_record_url('entities') }}">Manage people, places &amp; things</a></header>
+    <header><h2 id="knowledge-entities-heading">Saved identities</h2>{% if not administrator_view %}<a href="{{ knowledge_record_url('entities') }}">Manage people, places &amp; things</a>{% endif %}</header>
     <p>Names and aliases do not merge identities or establish relationships. All human review statuses, including dismissed, are included.</p>
     <p class="knowledge-count">Showing {{ knowledge.entities['items']|length }} of {{ knowledge.entities.total }} identities · {{ knowledge.entities.omitted }} not shown on this page. Ordered by name.</p>
     {% for entity in knowledge.entities['items'] %}
     <article class="knowledge-record" id="knowledge-{{ entity.entity_id }}">
       <p class="eyebrow">{{ entity.entity_type|title }}</p>
-      <h3><a href="{{ knowledge_record_url('entities', entity.entity_id) }}">{{ entity.display_name }}</a></h3>
+      <h3>{{ record_title('entities', entity.entity_id, entity.display_name) }}</h3>
       <p>Human review: {{ entity.status|replace('_', ' ')|title }} · Revision {{ entity.revision }}</p>
       <details class="knowledge-identity"><summary>Identity {{ entity.entity_id[-8:] }}</summary><p>{{ entity.entity_id }}</p></details>
       {% if entity.aliases %}<p>Recorded aliases: {{ entity.aliases[:3]|join('; ') }}{% if entity.aliases|length > 3 %} · {{ entity.aliases|length - 3 }} more in the identity record{% endif %}</p>{% endif %}
@@ -22,10 +26,12 @@
         {% for reference in entity.mentions %}
         <div class="knowledge-reference">
           <p>Mention review: {{ reference.review_status|replace('_', ' ')|title }}</p>
+          <blockquote>{{ reference.excerpt[:260] }}{% if reference.excerpt|length > 260 %}…{% endif %}</blockquote>
+          {% if not administrator_view %}<p><a href="{{ knowledge_record_url('entities', entity.entity_id) }}">Read complete mention in identity record</a></p>{% endif %}
           {{ source(reference) }}
         </div>
         {% else %}<p>No source mentions recorded.</p>{% endfor %}
-        {% if entity.references_omitted %}<p>{{ entity.references_omitted }} additional mentions not shown. <a href="{{ knowledge_record_url('entities', entity.entity_id) }}">Inspect all mentions</a>.</p>{% endif %}
+        {% if entity.references_omitted %}<p>{{ entity.references_omitted }} additional mentions not shown. {% if not administrator_view %}<a href="{{ knowledge_record_url('entities', entity.entity_id) }}">Inspect all mentions</a>.{% endif %}</p>{% endif %}
       </details>
     </article>
     {% else %}<p>No saved identities yet. Person or place notes remain in Case notes until explicitly imported as identities.</p>{% endfor %}
@@ -36,15 +42,15 @@
     </nav>
   </section>
   <section id="knowledge-assertions" class="knowledge-section" aria-labelledby="knowledge-assertions-heading">
-    <header><h2 id="knowledge-assertions-heading">Events and assertions</h2><a href="{{ knowledge_record_url('chronology') }}">Open chronology</a></header>
+    <header><h2 id="knowledge-assertions-heading">Events and assertions</h2>{% if not administrator_view %}<a href="{{ knowledge_record_url('chronology') }}">Open chronology</a>{% endif %}</header>
     <p>Reviewer statements retain separately attributed supporting and competing accounts. A disputed review status and a competing account are different signals. All statuses, including dismissed, are included.</p>
     <p class="knowledge-count">Showing {{ knowledge.assertions['items']|length }} of {{ knowledge.assertions.total }} records · {{ knowledge.assertions.omitted }} not shown on this page. Ordered by reviewer ordering date, then undated records.</p>
     {% for record in knowledge.assertions['items'] %}
     <article class="knowledge-record" id="knowledge-{{ record.assertion_id }}">
       <p class="eyebrow">{{ record.record_type|title }}</p>
-      <h3><a href="{{ knowledge_record_url('assertions', record.assertion_id) }}">{{ record.title }}</a></h3>
+      <h3>{{ record_title('assertions', record.assertion_id, record.title) }}</h3>
       <p>Human review: {{ record.status|replace('_', ' ')|title }} · Revision {{ record.revision }}</p>
-      <p class="knowledge-statement">{{ record.statement[:360] }}{% if record.statement|length > 360 %}… <a href="{{ knowledge_record_url('assertions', record.assertion_id) }}">Read complete statement</a>{% endif %}</p>
+      <p class="knowledge-statement">{{ record.statement[:360] }}{% if record.statement|length > 360 %}… {% if not administrator_view %}<a href="{{ knowledge_record_url('assertions', record.assertion_id) }}">Read complete statement</a>{% endif %}{% endif %}</p>
       <p>Recorded date: {{ record.raw_date or 'Not recorded' }} · Ordering date: {{ record.sort_date or 'Undated' }}</p>
       {% if record.date_uncertainty %}<p>Date uncertainty: {{ record.date_uncertainty }}</p>{% endif %}
       {% for stance, group in record.stances.items() %}
@@ -57,7 +63,7 @@
           {{ source(account) }}
         </div>
         {% else %}<p>No {{ stance }} accounts recorded.</p>{% endfor %}
-        {% if group.omitted %}<p>{{ group.omitted }} additional {{ stance }} accounts not shown. <a href="{{ knowledge_record_url('assertions', record.assertion_id) }}">Inspect all accounts</a>.</p>{% endif %}
+        {% if group.omitted %}<p>{{ group.omitted }} additional {{ stance }} accounts not shown. {% if not administrator_view %}<a href="{{ knowledge_record_url('assertions', record.assertion_id) }}">Inspect all accounts</a>.{% endif %}</p>{% endif %}
       </details>
       {% endfor %}
     </article>

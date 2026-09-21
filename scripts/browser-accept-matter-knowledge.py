@@ -71,6 +71,11 @@ def seed(runtime):
             status='disputed')
         assertions.attach(matter.matter_id, ACTOR, record['assertion_id'], expected_revision=1,
             support=tokens['Generated competing account.txt'], stance='competing', attributed_to='Riley Demo')
+        for number in range(6):
+            assertions.create(matter.matter_id, ACTOR,
+                support=tokens['Generated supporting account.txt'], attributed_to='Morgan Sample',
+                roles=[dict(entity_id=person['entity_id'], expected_revision=1, role='subject')],
+                title=f'Synthetic follow-up assertion {number}', statement='Synthetic saved statement.')
         bench.workspace.create_notebook_item(matter.matter_id, ACTOR, item_type='person',
             title='Working note about Alex', body='Check the two separate identities.', status='confirmed')
         store = bench.source_store(matter)
@@ -153,8 +158,13 @@ def main():
             assert 'A. Example' in body() and '1 unavailable among 1 shown' in body()
             record('Reopened runtime shows saved notes, separate same-name identities, alias, human status and unavailable support with generation off')
             historical = driver.find_element(By.ID, 'knowledge-' + context['other'])
+            historical.find_element(By.CSS_SELECTOR, '.knowledge-support summary').send_keys(Keys.ENTER)
+            assert SOURCES['Generated unavailable source.txt'] in historical.text
             assert not historical.find_elements(By.CSS_SELECTOR, '.knowledge-source a')
-            record('The unavailable original retains its historical reference and has no live source action')
+            complete = historical.find_element(By.LINK_TEXT, 'Read complete mention in identity record')
+            assert '/entities/' + context['other'] in complete.get_attribute('href')
+            historical.find_element(By.CSS_SELECTOR, '.knowledge-support summary').send_keys(Keys.ENTER)
+            record('The unavailable original retains its visible historical excerpt and complete-record link without a live source action')
 
             # Reach the knowledge section using native Tab navigation, then open
             # an account with Enter and inspect its actual source.
@@ -193,9 +203,23 @@ def main():
             assert 'Showing 2 of 10 identities' in body()
             driver.refresh()
             assert 'Showing 2 of 10 identities' in body() and 'Page 2 of 2' in body()
+            click(driver.find_element(By.LINK_TEXT, 'Next records'))
+            assert 'Showing 1 of 7 records' in body()
+            search = driver.find_element(By.CSS_SELECTOR, '.notebook-filter-form input[name=q]')
+            search.send_keys('Working')
+            Select(driver.find_element(By.CSS_SELECTOR, '.notebook-filter-form select[name=type]')).select_by_value('person')
+            Select(driver.find_element(By.CSS_SELECTOR, '.notebook-filter-form select[name=status]')).select_by_value('confirmed')
+            click(driver.find_element(By.CSS_SELECTOR, '.notebook-filter-form button[type=submit]'))
+            for status in (None, '.status-needs-review', '.status-confirmed'):
+                if status:
+                    click(driver.find_element(By.CSS_SELECTOR, '.notebook-stats ' + status))
+                query = parse_qs(urlparse(driver.current_url).query)
+                assert query['entity_page'] == ['2'] and query['assertion_page'] == ['2']
+                assert query['q'] == ['Working'] and query['type'] == ['person']
+                assert 'Showing 2 of 10 identities' in body() and 'Showing 1 of 7 records' in body()
             click(driver.find_element(By.LINK_TEXT, 'Previous identities'))
             assert 'Showing 8 of 10 identities' in body()
-            record('Independent identity pagination survives browser reload and retains explicit omission counts')
+            record('Independent knowledge pagination survives reload, note-filter submission and status tiles with explicit omission counts')
 
             for theme in ('light', 'dusk'):
                 driver.get(base + path)
@@ -204,7 +228,8 @@ def main():
                 open_support()
                 no_overflow()
                 section = driver.find_element(By.CSS_SELECTOR, '.knowledge-sections')
-                section.screenshot(str(output / f'knowledge-{theme}-desktop.png'))
+                driver.execute_script("arguments[0].scrollIntoView({block:'start',behavior:'instant'})", section)
+                driver.save_screenshot(str(output / f'knowledge-{theme}-desktop.png'))
             record('Light and Dusk render saved identities and both source stances without desktop overflow')
             driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', dict(width=390, height=844, deviceScaleFactor=1, mobile=False))
             driver.get(base + path)

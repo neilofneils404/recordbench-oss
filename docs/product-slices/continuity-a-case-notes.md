@@ -26,10 +26,13 @@ Export case notes still exports notes, not a new combined knowledge artifact.
   ordered by explicit ordering date, then undated records, creation time and ID.
   The two page controls are independent of note filtering/pagination. All entity
   and assertion review statuses, including dismissed, are included and labeled.
+  Applying note filters or a note-status tile preserves both knowledge pages
+  and resets only the note page; status tiles also retain the note query/type.
 - At most two mentions per identity and two accounts **per stance** per record.
   Counts and omitted records/references remain visible with complete-record links.
   Up to three aliases appear; additional aliases are explicitly counted.
   Statements/excerpts have labeled complete-record routes and visible ellipses.
+  Mention excerpts show up to 260 characters, including retained historical text.
   An out-of-range page displays the latest available page with its actual number.
 - Review status and original-reference availability are independent. Unavailable
   support keeps attribution and historical text but has no live original link.
@@ -37,7 +40,10 @@ Export case notes still exports notes, not a new combined knowledge artifact.
 - Projection SQL shares the existing authorized SQLite transaction and source
   guard, batches admitted references, loads no correction histories and performs
   no writes. The HTTP response rechecks access after rendering and is uncached.
-  Existing administrator read-only Case notes access remains read-only.
+  Existing administrator read-only Case notes access remains read-only. Without
+  case-team membership, the preview explains that complete records, omitted
+  references, identity management and chronology require membership, and hides
+  those member-only links. Original-source and page links remain usable.
 - Source links preserve the matter-local notebook filters and knowledge pages as
   return context, including through the full source reader. Existing source
   routes revalidate support. A later reload reads current human revisions.
@@ -130,3 +136,37 @@ Next acceptance step: review the bounded diff, reconcile the baseline timing
 test and existing publication findings without weakening their checks, then
 obtain final Quality and maintainer landing acceptance after publication is
 explicitly authorized. Continuity A stays pending until then; B/C are not selected.
+
+
+## PR review corrections — September 21, 2026
+
+The initial PR head subsequently passed all hosted Quality checks. Its code
+review identified three user-visible gaps, corrected in this follow-up:
+
+- Identity mention previews now render bounded, escaped saved excerpts and a
+  complete-mention link for team members, including when the original is stale.
+- Administrator previews hide member-only record/management links and explain
+  the membership requirement. Synthetic cases follow every retained knowledge
+  link both with and without team membership, including omitted-reference and
+  truncated-statement cases; ordinary record authorization remains unchanged.
+- Note filter submissions and all five status tiles preserve both knowledge
+  pages while resetting the note page. Status tiles also retain query and type.
+
+Validation: the focused continuity, notebook, conflict, graph, source-navigation
+and browser-runner selection passed **171 tests**. The strengthened administrator
+cases separately passed **two tests**. Against the original PR code, the new
+regression selection failed in the **nine expected cases**; the administrator
+with team membership remained passing. The pinned Chrome **153.0.8010.36**
+continuity journey passed all seven checks, now including real filter submission,
+status-tile navigation on later pages and visible unavailable-mention text.
+Light/Dusk and 390-pixel reflow/source-return checks passed. The enlarged browser
+fixture initially timed out on a full-element screenshot; bounded viewport
+captures allowed the complete journey to pass. Generic publication sanitization
+and whitespace checks passed. Full-suite validation on the updated head remains
+with CI; the earlier local filesystem-timing failure is not reclassified.
+
+Run the focused commands above with `PYTHONPATH=src` when borrowing an existing
+contributor environment from another checkout so imports target this worktree.
+The initial publication passed the installed outgoing-history guard after the
+owner-approved exact documentation versions were recorded. The follow-up keeps
+those versions unchanged and remains subject to the same installed guard.

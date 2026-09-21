@@ -13563,12 +13563,13 @@ def create_workbench_app(
         )
         def knowledge_url(*, notes=notebook_page.page,
                           identities=knowledge['entities']['page'],
-                          assertions=knowledge['assertions']['page']):
+                          assertions=knowledge['assertions']['page'],
+                          note_status=notebook_page.status):
             return _query_url(
                 f"/matters/{slug}/notebook",
                 q=notebook_page.query,
                 type=notebook_page.item_type,
-                status=notebook_page.status,
+                status=note_status,
                 page=str(notes) if notes > 1 else "",
                 entity_page=str(identities) if identities > 1 else "",
                 assertion_page=str(assertions) if assertions > 1 else "",
@@ -13598,6 +13599,7 @@ def create_workbench_app(
                 "notebook_statuses": NOTEBOOK_STATUSES,
                 "source_sets": bench.workspace.source_sets(matter.matter_id),
                 "notebook_url": lambda target_page: knowledge_url(notes=target_page),
+                "notebook_status_url": lambda value: knowledge_url(notes=1, note_status=value),
                 "knowledge": knowledge,
                 "knowledge_url": knowledge_url,
                 "knowledge_record_url": knowledge_record_url,

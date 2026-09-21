@@ -53,11 +53,11 @@
   </details>
 
   <section class="notebook-stats" aria-label="Case note review status">
-    <a href="/matters/{{ matter.slug }}/notebook" class="{% if not notebook.status %}selected{% endif %}"><strong>{{ notebook.counts.all - notebook.counts.dismissed }}</strong><span>Active items</span></a>
-    <a href="/matters/{{ matter.slug }}/notebook?status=suggested" class="status-suggested {% if notebook.status == 'suggested' %}selected{% endif %}"><strong>{{ notebook.counts.suggested }}</strong><span>Suggestions</span></a>
-    <a href="/matters/{{ matter.slug }}/notebook?status=confirmed" class="status-confirmed {% if notebook.status == 'confirmed' %}selected{% endif %}"><strong>{{ notebook.counts.confirmed }}</strong><span>Confirmed</span></a>
-    <a href="/matters/{{ matter.slug }}/notebook?status=needs_review" class="status-needs-review {% if notebook.status == 'needs_review' %}selected{% endif %}"><strong>{{ notebook.counts.needs_review }}</strong><span>Needs review</span></a>
-    <a href="/matters/{{ matter.slug }}/notebook?status=disputed" class="status-disputed {% if notebook.status == 'disputed' %}selected{% endif %}"><strong>{{ notebook.counts.disputed }}</strong><span>Disputed</span></a>
+    <a href="{{ notebook_status_url('') }}" class="{% if not notebook.status %}selected{% endif %}"><strong>{{ notebook.counts.all - notebook.counts.dismissed }}</strong><span>Active items</span></a>
+    <a href="{{ notebook_status_url('suggested') }}" class="status-suggested {% if notebook.status == 'suggested' %}selected{% endif %}"><strong>{{ notebook.counts.suggested }}</strong><span>Suggestions</span></a>
+    <a href="{{ notebook_status_url('confirmed') }}" class="status-confirmed {% if notebook.status == 'confirmed' %}selected{% endif %}"><strong>{{ notebook.counts.confirmed }}</strong><span>Confirmed</span></a>
+    <a href="{{ notebook_status_url('needs_review') }}" class="status-needs-review {% if notebook.status == 'needs_review' %}selected{% endif %}"><strong>{{ notebook.counts.needs_review }}</strong><span>Needs review</span></a>
+    <a href="{{ notebook_status_url('disputed') }}" class="status-disputed {% if notebook.status == 'disputed' %}selected{% endif %}"><strong>{{ notebook.counts.disputed }}</strong><span>Disputed</span></a>
   </section>
 
   <div class="notebook-layout">
@@ -104,6 +104,8 @@
       <div class="notebook-library-heading">
         <div><h2 id="notebook-library-heading">Saved case notes</h2><p>{{ notebook.total }} result{% if notebook.total != 1 %}s{% endif %} in this view</p></div>
         <form method="get" action="/matters/{{ matter.slug }}/notebook" class="notebook-filter-form">
+          <input type="hidden" name="entity_page" value="{{ knowledge.entities.page }}">
+          <input type="hidden" name="assertion_page" value="{{ knowledge.assertions.page }}">
           <label class="notebook-search"><span class="visually-hidden">Search case notes</span><input type="search" name="q" value="{{ notebook.query }}" maxlength="200" placeholder="Search case notes…"></label>
           <select name="type" aria-label="Filter by type"><option value="">All types</option>{% for value in notebook_types %}<option value="{{ value }}" {% if notebook.item_type == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }} ({{ notebook.type_counts[value] }})</option>{% endfor %}</select>
           <select name="status" aria-label="Filter by status"><option value="" {% if not notebook.status %}selected{% endif %}>Active statuses</option><option value="all" {% if notebook.status == 'all' %}selected{% endif %}>All, including dismissed</option>{% for value in notebook_statuses %}<option value="{{ value }}" {% if notebook.status == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }} ({{ notebook.counts[value] }})</option>{% endfor %}</select>

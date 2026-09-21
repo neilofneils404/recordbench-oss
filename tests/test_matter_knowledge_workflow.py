@@ -1,4 +1,6 @@
 """Case notes connects saved records without inference, mutation or model work."""
+import html
+import re
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -7,7 +9,7 @@ from fastapi.testclient import TestClient
 from tests.test_assertion_workflow import (
     EVENT_FIELDS, ORIGINALS, _app, _detail, protected_assertion,
 )
-from tests.test_evidence_graph_workflow import connections, _links
+from tests.test_evidence_graph_workflow import connections, _links, _LinkParser
 from tests.test_matter_management import OWNER, ADMIN, _headers
 from tests.test_matter_notebook import WEB_ACTOR, _create_matter
 
@@ -72,6 +74,41 @@ def test_unavailable_support_has_historical_text_and_no_original_action(connecti
     assert any(query.get('support') == [connections['competing']] for query in queries)
 
 
+@pytest.mark.parametrize('long_excerpt', [False, True])
+def test_unavailable_identity_mention_retains_bounded_escaped_excerpt(connections, long_excerpt):
+    client, slug = connections['client'], connections['slug']
+    bench = client.app.state.workbench
+    matter = bench.matter(slug, WEB_ACTOR)
+    entity_id = connections['unrelated_id']
+    service = bench.entity_service(matter)
+    _, mentions, _, _ = service.detail(matter.matter_id, WEB_ACTOR, entity_id)
+    mention = mentions[0]
+    excerpt = mention['excerpt']
+    if long_excerpt:
+        excerpt = '<script>changeScope()</script> Synthetic historical mention. ' * 8
+        # Synthetic retained evidence whose original no longer matches.
+        with service.repository.transaction(matter.matter_id, WEB_ACTOR):
+            bench.workspace.connection.execute(
+                'UPDATE workbench_entity_mention SET excerpt=? WHERE mention_id=?',
+                (excerpt, mention['mention_id']))
+    store = bench.source_store(matter)
+    with store.mutation_guard():
+        store.get(mention['document_id']).version_id = 'f' * 32
+        store._save()
+    response = client.get(f'/matters/{slug}/notebook')
+    assert response.status_code == 200
+    article = response.text.split(f'id="knowledge-{entity_id}"', 1)[1].split('</article>', 1)[0]
+    expected = html.escape(excerpt[:260]) + ('…' if len(excerpt) > 260 else '')
+    assert f'<blockquote>{expected}</blockquote>' in article
+    assert 'Source unavailable or changed' in article
+    links = _LinkParser(article).links
+    assert not any('support=' in href for href, _ in links)
+    complete = next(href for href, label in links if label == 'Read complete mention in identity record')
+    detail = client.get(complete)
+    assert detail.status_code == 200 and html.escape(excerpt) in detail.text
+    assert '<script>changeScope()</script>' not in response.text
+
+
 def test_shared_review_edit_and_reload(protected_assertion):
     c = protected_assertion
     client, bench, matter = c['client'], c['bench'], c['matter']
@@ -87,7 +124,6 @@ def test_shared_review_edit_and_reload(protected_assertion):
     response = client.get(path, headers=_headers(OWNER))
     assert updated['title'] in response.text and 'Human review: Disputed' in response.text
     assert f'Revision {updated["revision"]}' in response.text
-
 
 @pytest.mark.parametrize('during_render', [False, True])
 def test_revoked_access_discards_content_and_existing_exports(protected_assertion, monkeypatch, during_render):
@@ -112,13 +148,55 @@ def test_revoked_access_discards_content_and_existing_exports(protected_assertio
         assert c['record']['title'] not in response.text and c['entity']['display_name'] not in response.text
         assert response.headers['cache-control'] == 'no-store'
 
-
-def test_administrator_keeps_existing_read_only_notes_access(protected_assertion):
+@pytest.mark.parametrize('team_member', [False, True])
+def test_administrator_knowledge_links_respect_membership(protected_assertion, team_member):
+    from tests.test_matter_management import _principal_id
     c = protected_assertion
-    c['client'].cookies.clear()
-    response = c['client'].get(f'/matters/{c["matter"].slug}/notebook', headers=_headers(ADMIN))
+    client, bench, matter = c['client'], c['bench'], c['matter']
+    prefix = f'/matters/{matter.slug}'
+    client.cookies.clear()
+    client.get(prefix + '/notebook', headers=_headers(ADMIN))
+    admin_id = _principal_id(client, ADMIN)
+    if team_member:
+        bench.workspace.add_member(matter.matter_id, admin_id, c['owner_id'])
+    # Exercise later pages as well as retained source links without granting
+    # ordinary membership to an administrator using the read override.
+    for number in range(8):
+        bench.entity_service(matter).create(matter.matter_id, c['owner_id'],
+            display_name=f'Later synthetic identity {number}')
+    entities = bench.entity_service(matter)
+    assertions = bench.assertion_service(matter)
+    documents = list(bench.source_store(matter).documents.values())
+    for revision, document in enumerate(documents[1:3], start=1):
+        token = bench._support_token(bench._candidate(matter, document, document.parsed_units()[0], 1))
+        entities.attach(matter.matter_id, c['owner_id'], c['entity']['entity_id'],
+            expected_revision=revision, support=token)
+        assertions.attach(matter.matter_id, c['owner_id'], c['record']['assertion_id'],
+            expected_revision=revision, support=token, stance='supporting', attributed_to='Synthetic source')
+    assertions.update(matter.matter_id, c['owner_id'], c['record']['assertion_id'],
+        expected_revision=3, **(EVENT_FIELDS | dict(statement='Synthetic long statement. ' * 20)))
+    response = client.get(prefix + '/notebook', headers=_headers(ADMIN))
+    assert '1 additional mentions not shown' in response.text
+    assert '1 additional supporting accounts not shown' in response.text
     assert response.status_code == 200 and c['record']['title'] in response.text
-    assert 'Administrator view' in response.text
+    assert ('Administrator preview is read-only' in response.text) == (not team_member)
+    section = response.text.split('<div class="knowledge-sections">', 1)[1]
+    links = _LinkParser(section).links
+    member_links = [href for href, _ in links if any(
+        urlparse(href).path.startswith(prefix + '/' + kind)
+        for kind in ('entities', 'assertions', 'chronology'))]
+    assert bool(member_links) == team_member
+    for label in ('Inspect all mentions', 'Inspect all accounts', 'Read complete statement'):
+        assert any(text == label for _, text in links) == team_member
+    assert any('support=' in href for href, _ in links)
+    assert any('entity_page=2' in href for href, _ in links)
+    for href in dict.fromkeys(href for href, _ in links):
+        opened = client.get(href, headers=_headers(ADMIN))
+        assert opened.status_code == 200, href
+    if not team_member:
+        for suffix in ('/entities/' + c['entity']['entity_id'],
+                       '/assertions/' + c['record']['assertion_id'], '/chronology'):
+            assert client.get(prefix + suffix, headers=_headers(ADMIN)).status_code == 404
 
 
 def test_cross_matter_records_and_return_parameters_cannot_change_scope(connections):
@@ -136,7 +214,8 @@ def test_cross_matter_records_and_return_parameters_cannot_change_scope(connecti
     assert client.get(f'/matters/{other}/assertions/{connections["assertion_id"]}').status_code == 404
 
 
-def test_pagination_keeps_note_filters_source_returns_and_reloads(connections):
+@pytest.fixture
+def paginated_connections(connections):
     client, slug = connections['client'], connections['slug']
     bench = client.app.state.workbench
     matter = bench.matter(slug, WEB_ACTOR)
@@ -148,6 +227,11 @@ def test_pagination_keeps_note_filters_source_returns_and_reloads(connections):
         assertions.create(matter.matter_id, WEB_ACTOR, support=connections['supporting'],
             roles=[dict(entity_id=connections['entity_id'], expected_revision=1, role='subject')],
             attributed_to='Synthetic source', **(EVENT_FIELDS | dict(sort_date=f'2026-05-{day:02d}')))
+    return connections
+
+
+def test_pagination_keeps_note_filters_source_returns_and_reloads(paginated_connections):
+    client, slug = paginated_connections['client'], paginated_connections['slug']
     path = f'/matters/{slug}/notebook'
     response = client.get(path, params=dict(q='Working', type='note', status='confirmed', entity_page=2, assertion_page=2))
     assert response.status_code == 200
@@ -162,6 +246,37 @@ def test_pagination_keeps_note_filters_source_returns_and_reloads(connections):
     assert parse_qs(urlparse(returned).query)['assertion_page'] == ['2']
     assert parse_qs(urlparse(returned).query)['entity_page'] == ['2']
     assert client.get(returned).context['knowledge'] == response.context['knowledge']
+
+
+@pytest.mark.parametrize('tile, status', [
+    ('Active items', ''), ('Suggestions', 'suggested'), ('Confirmed', 'confirmed'),
+    ('Needs review', 'needs_review'), ('Disputed', 'disputed'), (None, 'all'),
+])
+def test_note_filters_preserve_both_knowledge_pages(paginated_connections, tile, status):
+    c = paginated_connections
+    client, slug = c['client'], c['slug']
+    bench = client.app.state.workbench
+    matter = bench.matter(slug, WEB_ACTOR)
+    for number in range(26):
+        bench.workspace.create_notebook_item(matter.matter_id, WEB_ACTOR,
+            item_type='note', status='confirmed', title=f'Working note {number}', body='Synthetic')
+    path = f'/matters/{slug}/notebook'
+    response = client.get(path, params=dict(q='Working', type='note', status='confirmed',
+                                          page=2, entity_page=2, assertion_page=2))
+    assert response.context['notebook'].page == 2
+    if tile:
+        target = next(href for href, label in _links(response) if label.endswith(tile))
+        filtered = client.get(target)
+    else:
+        form = response.text.split('class="notebook-filter-form">', 1)[1].split('</form>', 1)[0]
+        hidden = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', form))
+        filtered = client.get(path, params=hidden | dict(q='Working', type='note', status=status))
+    assert filtered.status_code == 200
+    assert filtered.context['notebook'].page == 1
+    assert filtered.context['notebook'].status == status
+    assert filtered.context['notebook'].query == 'Working'
+    assert filtered.context['notebook'].item_type == 'note'
+    assert filtered.context['knowledge'] == response.context['knowledge']
 
 
 def test_source_instructions_and_markup_are_inert(connections):
