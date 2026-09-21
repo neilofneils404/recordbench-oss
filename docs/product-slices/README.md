@@ -1,9 +1,11 @@
 # Portable RecordBench product slices
 
-Active product increment: [trusted matter continuity A](continuity-a-case-notes.md)
-connects existing Case notes with saved identities and events/assertions.
-Local implementation is complete and final acceptance is pending; the binding cruise retains all
-unrelated holds.
+[Trusted matter continuity A](continuity-a-case-notes.md) is **Done** at
+`dd367cc`, with post-merge Quality **35610419040** passing. Case notes now connects
+saved notes with identities and events/assertions. The
+[binding cruise](../EXIT_ALPHA_CRUISE.md#continuity-a-landing-receipt) records the
+landing, keeps B's selection contract ahead of C's task integration, and retains
+all unrelated holds.
 
 Contributor node onboarding: [20b — Linux CPU node (B-lite)](20b-linux-cpu-node.md)
 is Done with its [dated receipt](../LINUX_CPU_NODE_ACCEPTANCE_2026-09-19.md)

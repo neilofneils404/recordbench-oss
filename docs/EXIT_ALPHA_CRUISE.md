@@ -6,22 +6,26 @@ specs. When numeric slice order conflicts with this file, **this file wins**.
 
 ## Current state — September 21, 2026
 
-Reference upstream revision: `622cf7a03b67c6d850f06799c98b2333b2efd52d`.
+Reference upstream revision: `dd367cc3a65fa733d44b612026a9d3912523fed6`.
 Manual entities, entity discovery, events/assertions, the first single-run
-full-text synthesis adapter, graph exploration and Linux CPU B-lite are landed.
+full-text synthesis adapter, graph exploration, Linux CPU B-lite and trusted
+matter continuity A are landed.
 Historical receipts below retain their original scope and evidence.
 
-The one active product increment is **trusted matter continuity A**:
+**Trusted matter continuity A is Done**:
 [connect Case notes to saved identities and events/assertions](product-slices/continuity-a-case-notes.md).
 A reviewer returning to an active matter can inspect the team's saved knowledge,
 its human review status and current original-source availability from Case notes.
-Local implementation and focused synthetic acceptance are complete; this is
-**not Done**. The [brief](product-slices/continuity-a-case-notes.md#local-validation--september-21-2026)
-records actual results. Outstanding gates: a clock-sensitive full-suite failure
-also reproduced on unmodified upstream, existing publication-guard findings,
-final Quality acceptance and maintainer review/landing.
+PR #100 landed at the reference revision above, and post-merge Quality run
+**35610419040** passed all six gates. The [landing receipt](#continuity-a-landing-receipt)
+and [brief](product-slices/continuity-a-case-notes.md#landing-receipt--september-21-2026)
+record final acceptance and preserve the earlier local validation limitations.
 
-Increments B/C, model/runtime changes, visual work/slice 21, Mac work/PR #34,
+No new product increment is selected by this receipt. Increments B/C remain
+follow-on work from the continuity review: B's explicit context-selection
+contract precedes C's recorded context in one existing task path.
+
+Model/runtime changes, visual work/slice 21, Mac work/PR #34,
 PR #87, wider onboarding, later slice-19 work, deployment and supported-release
 claims remain unselected or held. Parallel release-readiness evidence continues;
 this increment does not qualify or change any model/runtime profile.
@@ -41,9 +45,24 @@ and subsequent delivery stages. Slice 19's first single-run adapter is landed
 as recorded below. Multiple-run aggregation, new questions, background material,
 matter memory, production imports and larger capacity remain separately scoped
 work. Slice 20 is landed as recorded below. The bounded Linux CPU contributor
-node path (B-lite) is Done. Continuity A is the selected next product increment.
+node path (B-lite) and Continuity A are Done. The next continuity step is B's
+selection contract before C's task integration.
 
 **Last updated:** 2026-09-21
+
+## Continuity A landing receipt
+
+[PR #100](https://github.com/neilofneils404/recordbench-oss/pull/100) merged on
+September 21, 2026 at `dd367cc3a65fa733d44b612026a9d3912523fed6`.
+[Post-merge Quality run 35610419040](https://github.com/neilofneils404/recordbench-oss/actions/runs/35610419040)
+passed application, PostgreSQL integration, synthetic-browser, transcription,
+deployment-contract and secret-scan on that exact revision. Final-head hosted
+code review and maintainer landing acceptance completed; the separately requested
+hosted security review did not complete and was optional under repository policy.
+The installed publication guard passed before landing. The
+[bounded brief](product-slices/continuity-a-case-notes.md#landing-receipt--september-21-2026)
+retains the synthetic acceptance and review-correction evidence. This receipt
+does not qualify a model/runtime, deployment or supported release.
 
 ## Current slice-20 landing receipt
 
@@ -197,7 +216,7 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 9 | Slice **19** — first substep: synthesize one terminal full-text run for its criterion | Done — first adapter only (#85) |
 | 10 | Slice **20** — source-backed graph exploration from a saved entity | Done — landed at `e7a6847a` |
 | 12 | **20b — Linux CPU node (B-lite):** fresh Ubuntu 24.04 x86-64 → service account + Docker → `./install` CPU/local/loopback HTTPS → doctor → first-admin browser sign-in and synthetic practice matter | **Done** — [brief](product-slices/20b-linux-cpu-node.md); [5m13s clean-node receipt and green Quality](LINUX_CPU_NODE_ACCEPTANCE_2026-09-19.md) |
-| 13 | **Continuity A:** connect existing Case notes to authoritative saved identities and events/assertions | **In progress** — [bounded brief](product-slices/continuity-a-case-notes.md); local implementation, acceptance and landing tracked separately |
+| 13 | **Continuity A:** connect existing Case notes to authoritative saved identities and events/assertions | **Done** — PR #100 at `dd367cc`; [landing receipt](#continuity-a-landing-receipt), Quality **35610419040** |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 The September 19 landing completes slice 20 under
@@ -206,8 +225,9 @@ The September 19 landing completes slice 20 under
 The bounded **20b B-lite** node path is Done with its dated clean-node and
 Quality receipt. Code-only contribution remains
 `make bootstrap/check`; running the product uses the existing `./install`.
-Continuity A is selected. Slice 21, further visual experiments and
-additional work on PR #34 or PR #87 remain on hold. High-resolution retrieval work remains
+Continuity A is Done; B's selection contract is the next continuity step.
+Slice 21, further visual experiments and additional work on PR #34 or PR #87
+remain on hold. High-resolution retrieval work remains
 local and outside this PR. Existing text and transcript support is not native
 image understanding. Later slice-19 work, model deployment and larger-capacity
 claims require their own acceptance. Existing holds and parallel release-readiness

@@ -1,8 +1,32 @@
 # Trusted matter continuity A — connect existing Case notes
 
-Status: locally implemented; final acceptance and landing pending. Not Done.
-Reference: `622cf7a03b67c6d850f06799c98b2333b2efd52d`.
+Status: **Done** — landed September 21, 2026 at
+`dd367cc3a65fa733d44b612026a9d3912523fed6` through PR #100.
+Implementation baseline: `622cf7a03b67c6d850f06799c98b2333b2efd52d`.
 The [cruise](../EXIT_ALPHA_CRUISE.md) is the binding queue.
+
+## Landing receipt — September 21, 2026
+
+PR #100 is merged, and the landed revision is
+`dd367cc3a65fa733d44b612026a9d3912523fed6`. Post-merge Quality run
+**35610419040** completed successfully on that exact revision: application,
+PostgreSQL integration, synthetic-browser, transcription, deployment-contract
+and secret-scan all passed. The [cruise receipt](../EXIT_ALPHA_CRUISE.md#continuity-a-landing-receipt)
+links the merged PR and run.
+
+The final-head hosted code review reported no major issues; review findings were
+resolved before maintainer-authorized landing. A separately requested hosted
+security review did not complete. It was optional under the repository policy;
+this receipt does not claim a completed hosted security review. The installed
+publication guard passed before landing, with the previously owner-approved
+exact documentation dispositions and all generic and private-deny checks intact.
+
+The dated local results and review corrections below are historical evidence.
+Their pending-acceptance statements are superseded by this receipt. In particular,
+the original local full-suite timing failure remains a failed local result;
+the successful post-merge application gate is separate evidence. This completes
+only Continuity A, with no deployment, model qualification or supported-release
+claim. B's selection contract precedes C's integration into one task path.
 
 ## User outcome and scope
 
@@ -74,7 +98,7 @@ Do not mark Done before acceptance and landing. Preserve all unrelated holds.
 
 ## Local validation — September 21, 2026
 
-The clean implementation branch starts at the reference revision above; no
+The clean implementation branch starts at the implementation baseline above; no
 upstream difference from the reviewed handoff baseline was found. Existing
 onboarding edits in another checkout were preserved. No schema or persistent
 record shape changed, so this increment introduces no migration/restore step.
@@ -135,13 +159,15 @@ The first complete-suite attempt was interrupted after account-directory tests
 rejected group-writable fixtures created with the shell's `0002` umask. The
 subsequent attempt uses `022`; no product permission check was weakened.
 Synthetic acceptance is not confidential-casework readiness, model qualification,
-an installed-node acceptance or a supported release. No push, merge, publication,
-product installation or deployment was performed.
+an installed-node acceptance or a supported release. At this initial validation
+stage, no push, merge, publication, product installation or deployment had been
+performed; subsequent publication and landing are recorded above.
 
-Next acceptance step: review the bounded diff, reconcile the baseline timing
-test and existing publication findings without weakening their checks, then
-obtain final Quality and maintainer landing acceptance after publication is
-explicitly authorized. Continuity A stays pending until then; B/C are not selected.
+At that stage, the next acceptance step was to review the bounded diff, reconcile
+the baseline timing test and existing publication findings without weakening
+their checks, then obtain final Quality and maintainer landing acceptance after
+publication was explicitly authorized. Those landing gates are now complete as
+recorded above.
 
 
 ## PR review corrections — September 21, 2026
@@ -196,7 +222,8 @@ The pinned Chrome **153.0.8010.36** continuity journey passed all seven checks,
 including following the long-account link to its exact account and returning to
 Case notes. The longer source fixture required whitespace normalization in the
 browser's source-pane text comparison; the complete text remains checked.
-The updated head still requires its own hosted CI and requested code review.
+That updated head required fresh hosted CI and requested code review, subsequently
+completed before the final landing recorded above.
 
 
 ### Third review follow-up
@@ -217,8 +244,8 @@ without continued application admission. Eight cases reproduced the defect on
 the preceding head; all twelve pass after the correction. The broader continuity,
 notebook, graph, source-navigation, matter-management, administrator, local-account
 and identity selection passed **191 tests**. The pinned Chrome
-**153.0.8010.36** continuity journey passed all seven checks. Final hosted CI and
-the requested code review remain pending for the updated head.
+**153.0.8010.36** continuity journey passed all seven checks. Fresh hosted CI and
+the requested code review were pending at this stage and completed before landing.
 
 
 ### Fourth review follow-up
@@ -235,4 +262,4 @@ passed under that diagnostic. Injecting a write into the request still caused
 the no-write assertion to fail, confirming the check remains effective. The
 continuity service/workflow and report-compilation job suites passed **82
 tests**. Earlier browser acceptance remains applicable to this test-only change;
-fresh hosted CI and requested code review remain pending.
+fresh hosted CI and requested code review subsequently completed before landing.
