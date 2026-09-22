@@ -16,6 +16,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  change-scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify complete change conservatively
+        id: scope
+        run: python3 scripts/classify-quality-change.py
+
+  publication-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact publication head separately
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Verify exact publication checkout
+        env:
+          EXPECTED_PUBLICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_PUBLICATION_SHA"
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - name: Install publication inspection dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg
+          python -m pip install --disable-pip-version-check 'pypdf>=6,<7'
+      - name: Scan exact candidate tree and complete reachable history
+        if: ${{ !github.event.deleted }}
+        env:
+          EXPECTED_PUBLICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PUBLICATION_REF: ${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
+        run: |
+          python scripts/check-publication-candidate.py \
+            --expected-head "$EXPECTED_PUBLICATION_SHA" \
+            --publication-ref "$PUBLICATION_REF"
+
   secret-scan:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -39,54 +84,51 @@ jobs:
           fi
 
   application:
+    needs: [change-scope, publication-scan]
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Require successful classification and publication scan
+        env:
+          SCOPE_RESULT: ${{ needs.change-scope.result }}
+          PUBLICATION_RESULT: ${{ needs.publication-scan.result }}
+        run: test "$SCOPE_RESULT" = success && test "$PUBLICATION_RESULT" = success
+      - name: Record documentation-only acceptance
+        if: ${{ needs.change-scope.outputs.docs_only == 'true' }}
+        run: echo 'Plain documentation only; application tests are not applicable. Publication and secret checks remain required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Check out integration candidate
+        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Verify integration checkout
+        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         env:
           EXPECTED_INTEGRATION_SHA: ${{ github.sha }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"
       - name: Select Python 3.12
+        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
           cache: pip
       - name: Install document and media test dependencies
+        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             ffmpeg imagemagick poppler-utils tesseract-ocr \
             tesseract-ocr-eng tesseract-ocr-spa
       - name: Bootstrap contributor environment
+        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         run: make bootstrap SYSTEM_PYTHON=python
       - name: Verify repeatable setup
+        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         run: make bootstrap SYSTEM_PYTHON=python
-      - name: Check out exact publication head separately
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          path: _publication_head
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-      - name: Verify exact publication checkout
-        working-directory: _publication_head
-        env:
-          EXPECTED_PUBLICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_PUBLICATION_SHA"
-      - name: Scan exact candidate tree and complete reachable history
-        if: ${{ !github.event.deleted }}
-        working-directory: _publication_head
-        env:
-          EXPECTED_PUBLICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          PUBLICATION_REF: ${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
-        run: |
-          ../.venv/bin/python scripts/check-publication-candidate.py \
-            --expected-head "$EXPECTED_PUBLICATION_SHA" \
-            --publication-ref "$PUBLICATION_REF"
       - name: Compile Python sources
+        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         run: .venv/bin/python -m compileall -q src scripts tests
       - name: Run application suite
+        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         env:
           # Hosted runners are intentionally smaller than supported review nodes.
           # Production keeps the 100 GiB default from recordbench.env.example.
@@ -94,6 +136,8 @@ jobs:
         run: .venv/bin/python -m pytest -q
 
   postgres-integration:
+    needs: change-scope
+    if: ${{ always() && (needs.change-scope.result != 'success' || needs.change-scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
@@ -114,6 +158,10 @@ jobs:
     env:
       CASE_REVIEW_POSTGRES_TEST_DSN: postgresql://recordbench:synthetic-ci-only@127.0.0.1:5432/recordbench_test
     steps:
+      - name: Require successful classification
+        env:
+          SCOPE_RESULT: ${{ needs.change-scope.result }}
+        run: test "$SCOPE_RESULT" = success
       - name: Check out integration candidate
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -138,9 +186,15 @@ jobs:
           python scripts/check-postgres-test-report.py "$RUNNER_TEMP/postgres-results.xml"
 
   transcription:
+    needs: change-scope
+    if: ${{ always() && (needs.change-scope.result != 'success' || needs.change-scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Require successful classification
+        env:
+          SCOPE_RESULT: ${{ needs.change-scope.result }}
+        run: test "$SCOPE_RESULT" = success
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Verify integration checkout
         env:
@@ -162,9 +216,15 @@ jobs:
         run: python -m pytest -q
 
   deployment-contract:
+    needs: change-scope
+    if: ${{ always() && (needs.change-scope.result != 'success' || needs.change-scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Require successful classification
+        env:
+          SCOPE_RESULT: ${{ needs.change-scope.result }}
+        run: test "$SCOPE_RESULT" = success
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Verify integration checkout
         env:
@@ -197,9 +257,15 @@ jobs:
           PYCODE
 
   synthetic-browser:
+    needs: change-scope
+    if: ${{ always() && (needs.change-scope.result != 'success' || needs.change-scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - name: Require successful classification
+        env:
+          SCOPE_RESULT: ${{ needs.change-scope.result }}
+        run: test "$SCOPE_RESULT" = success
       - name: Check out integration candidate
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

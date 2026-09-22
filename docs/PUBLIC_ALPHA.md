@@ -101,10 +101,16 @@ does not remove public copies or history. Revoke exposed credentials first.
 
 Keep the default branch protected with required Quality CI, `hosted-review-gate`,
 resolved discussions, at least one native PR approval, stale-approval dismissal,
-approval of the most recent push, and no force pushes or deletion. Application,
-PostgreSQL integration, synthetic-browser, transcription, deployment-contract
-and secret-scan Quality gates remain mandatory; this policy does not remove or
-weaken any Quality check.
+approval of the most recent push, and no force pushes or deletion. The Quality
+workflow and existing required check names remain mandatory. Code, tests,
+dependencies, migrations, configuration and CI changes run the full application,
+PostgreSQL integration, synthetic-browser, transcription and deployment-contract
+suites. Proven plain documentation-only changes use the bounded
+[documentation fast path](QUALITY_GATES.md): expensive suites are explicitly
+not applicable, while the required application check verifies successful scope
+classification and exact-head publication scanning. Secret scanning and native
+review protections always remain required. Unknown scope runs the full gates;
+failed classification or publication scanning blocks the required check.
 
 Hosted Codex review is an optional maintainer tool. Local/maintainer review is
 sufficient when Quality is green and protections allow merge. By default,

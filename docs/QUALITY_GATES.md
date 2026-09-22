@@ -1,0 +1,45 @@
+# Quality checks for documentation changes
+
+Plain documentation changes do not start the application, PostgreSQL,
+transcription, deployment-contract or browser suites. They still run exact-head
+publication inspection of the complete outgoing history, independent secret
+scanning, and the existing native review policy. The required `application`
+check records that tests are not applicable only after scope classification and
+publication inspection succeed. The other suite jobs report explicitly skipped;
+this is not a claim that their tests ran. Required check names and branch
+protections remain unchanged.
+
+The fast path allows regular, non-executable Markdown files under `docs/` and
+these root documents: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`,
+`THIRD_PARTY_NOTICES.md`, `SECURITY.md`, and `CODE_OF_CONDUCT.md`. Added, edited,
+deleted and renamed documentation qualifies when both sides of the change are
+within that allowance. Assets, symlinks, executable files, agent instructions,
+fixtures, unknown paths and mixed changes run the full gates. In particular,
+Markdown fixtures inside source or test directories are not documentation.
+
+Pull requests compare the complete head against its merge base with the target.
+Feature-branch pushes inspect both the pushed change and the whole branch against
+the default branch, so a documentation follow-up cannot conceal an earlier code
+change. New feature branches use that same merge base. Default-branch pushes
+compare the previous and new revision. Tags, force pushes, empty changes,
+unavailable history and unrecognized metadata conservatively run the full gates.
+Git's complete NUL-delimited diff is used, without rename heuristics or a
+paginated API file list. An oversized diff also takes the full path.
+
+The workflow is not filtered out by file paths: it always publishes the check
+results needed by branch protection. If classification fails as a job, the
+required application check fails; a missing output does not qualify for the
+fast path. Publication failure also fails that required check. No manual label,
+commit-message bypass, administrator exception or approval waiver is introduced.
+
+Changes to the classifier or workflow itself require all existing suites.
+Synthetic regression tests cover the path and mode boundary, complete branch
+comparisons, code-to-documentation renames, missing history and failure handling.
+No product behavior, deployment behavior or model configuration changes.
+
+Initial local verification: **171 tests passed in 9.71 seconds** across scope
+classification, publication candidate/history inspection, publication rules,
+PostgreSQL report validation and browser-runner failure contracts. Actionlint
+**1.7.7** (checksum-verified upstream archive) accepted the workflow. The generic
+working-tree publication scan passed. Hosted full-suite and documentation-only
+workflow execution remain required evidence before accepting the CI change.
