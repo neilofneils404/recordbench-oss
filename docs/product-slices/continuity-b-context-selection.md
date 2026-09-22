@@ -1,6 +1,7 @@
 # Continuity B — explicit durable context selection
 
-Status: **Implemented locally; acceptance and landing pending.** The existing
+Status: **Done** — PR #103 landed at `d21c1d4`; see the
+[landing receipt](#landing-receipt--september-22-2026). The existing
 [cruise](../EXIT_ALPHA_CRUISE.md) is the binding queue. C is not selected.
 
 Reviewed baseline: `0d59d5fe4f7be575a66039274415de945a6d5db5`.
@@ -272,7 +273,7 @@ Executed with the same Python 3.12 environment, synthetic fixtures and `umask 02
 Current full-application and outgoing-history results for this follow-up are
 recorded in the subsequent receipt; the previous failures are not waived.
 
-### Current acceptance receipt and handoff
+### Pre-publication acceptance receipt and handoff
 
 Implementation revision: `fa6df35f1b5058c231bd308756372eca10fb3c92`.
 This receipt is a subsequent documentation-only commit.
@@ -317,3 +318,59 @@ publication and current-candidate Quality/maintainer landing checks. No push,
 PR, merge, release or deployment occurred. B remains implemented locally,
 **not Done**; saved selections are not consumed by answers. Stop at B; C remains
 a separate task.
+
+
+## Landing receipt — September 22, 2026
+
+B is **Done**. PR #103 landed at
+`d21c1d4849b46b8ae85db19b4d2ce80c8a9669a8` at 11:32:26 UTC on September 22.
+The [binding queue receipt](../EXIT_ALPHA_CRUISE.md#continuity-b-landing-receipt)
+links the PR, hosted review and Quality runs. It supersedes the earlier pending
+handoffs above while retaining their actual failures and diagnostic evidence.
+
+The user authorized publication and landing, then explicitly approved the
+B-only exact-file publication dispositions. All matches in the three changed
+historical queue versions were confined to public repository URLs. The already
+approved baseline dispositions were retained in a new external guard
+installation; the deny list and generic rules remained intact. Complete
+outgoing-history checks passed before branch publication and protected landing.
+The original checkout's guard and unrelated work stayed unchanged.
+
+GitHub's merge API rejected the verified public no-reply email. The documented
+normal protected fast-forward then landed the exact reviewed head, preserving
+its scanned author identities. No force push, administrator bypass, protection
+change, history rewrite, release or deployment was used.
+
+Exact-head Quality run **35720397034** and PR integration run **35720409778**
+passed application, PostgreSQL integration, synthetic-browser, transcription,
+deployment-contract and secret-scan. The integration application log reported
+**3,268 passed, nine skipped, one dependency deprecation warning in 737.99 seconds**.
+The PostgreSQL log reported **seven passed, one deliberate model deselection,
+zero skipped**. The hosted browser receipt confirmed all nine journeys and B's
+seven checks on Chrome **153.0.8010.36**. The existing local upgrade/restore,
+export, purge and authority evidence remains recorded above.
+
+Post-merge Quality run **35722012792**, attempt **2**, passed all six jobs.
+The application retry reported **3,268 passed, nine skipped, one dependency
+deprecation warning in 598.85 seconds**. Its first application attempt made
+continued progress to 96% but was cancelled at
+the existing 30-minute job timeout; its recorded progress contained no failure
+markers. That attempt did not pass. Only the application job was rerun, on the
+same commit and without changing workflow, timeout or tests; the five successful
+jobs were retained. The final result, rather than a waiver, closes this gate.
+
+The user requested hosted Codex code review immediately after landing. Request
+comment **5775685862** bound it to the full landed head. The official summary
+recorded completion at **11:39:30 UTC** on that head; result comment **5775776780**
+reported no major issues, and no inline findings were posted. This was a hosted
+code review after landing, not a pre-merge hosted review or a security review.
+Local review and the existing native review-policy gate had completed before
+landing; the PR did not carry the strict hosted-review label.
+
+Outcome: case-team reviewers can durably select, inspect, reconcile, remove and
+reorder existing matter knowledge with current status/support warnings and
+stable identity, while selections remain reference-only and are not consumed by
+answers. No B implementation or acceptance gate remains unresolved at this
+landed revision. This documentation-only receipt follows the repository's
+publication, Quality and review process. No new product work is selected:
+**stop at B; C is separate and unselected**.
