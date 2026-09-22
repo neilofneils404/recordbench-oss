@@ -468,7 +468,7 @@ def test_notebook_rechecks_live_local_authority_after_render(tmp_path, monkeypat
                 elif change == 'revoke_session':
                     identity.logout(administrator)
                 elif change == 'disable_principal':
-                    with bench.workspace.connection:
+                    with bench.workspace._lock, bench.workspace.connection:
                         bench.workspace.connection.execute(
                             'UPDATE workbench_principal SET active=0 WHERE principal_id=?',
                             (administrator.principal_id,))
