@@ -97,6 +97,40 @@ def test_source_edit_warning_reapproval_and_oversized_form(connections):
     assert client.post(path, data=dict(old, approval='x'*1025)).status_code == 422
 
 
+def test_role_inspection_distinguishes_recorded_and_current_identity(connections):
+    c = connections
+    client, slug = c['client'], c['slug']
+    bench = client.app.state.workbench
+    matter = bench.matter(slug, WEB_ACTOR)
+    service = MatterContextService(bench.assertion_service(matter))
+    path = f'/matters/{slug}/context'
+    params = dict(kind='assertion', object_id=c['assertion_id'])
+    assert client.post(path, data=form(client.get(path, params=params), 'add')).status_code == 200
+    previous = service.inspect(matter.matter_id, WEB_ACTOR)[0]['entries'][0]['approval']
+    for revision, status in enumerate(('suggested', 'needs_review', 'confirmed', 'disputed', 'dismissed'), 1):
+        service.entities.update(matter.matter_id, WEB_ACTOR, c['entity_id'],
+            expected_revision=revision, display_name='Alex corrected <synthetic>', status=status)
+        page = client.get(path, params=params)
+        assert page.status_code == 200
+        assert 'Recorded identity: Alex Example' in page.text
+        assert 'Current identity: Alex corrected &lt;synthetic&gt;' in page.text
+        assert f'Current human review: <strong>{status.replace("_", " ").title()}</strong> · Origin: manual' in page.text
+        assert 'Review changes: roles' in page.text
+        selection = service.inspect(matter.matter_id, WEB_ACTOR)[0]
+        assert selection['entries'][0]['approval'] == previous
+    links = [href for href, label in _links(page) if label == 'Inspect current role identity']
+    assert any(parse_qs(urlparse(href).query).get('object_id') == [c['entity_id']] for href in links)
+    assert not any(parse_qs(urlparse(href).query).get('object_id') == [c['unrelated_id']] for href in links)
+    assert client.post(path, data=form(page, 'reconcile')).status_code == 200
+    assert service.inspect(matter.matter_id, WEB_ACTOR)[0]['rows'][0]['state'] == 'Unchanged'
+    service.entities.delete(matter.matter_id, WEB_ACTOR, c['entity_id'], expected_revision=6)
+    missing = client.get(path, params=params)
+    assert missing.status_code == 200 and 'Current identity missing.' in missing.text
+    assert 'Recorded identity: Alex Example' in missing.text and 'Review changes: roles' in missing.text
+    assert not any(parse_qs(urlparse(href).query).get('object_id') == [c['entity_id']]
+        for href, label in _links(missing) if label == 'Inspect current role identity')
+
+
 @pytest.mark.parametrize('during_render',[False,True])
 def test_revoked_member_preview_withholds_sensitive_content(protected_assertion, monkeypatch, during_render):
     c = protected_assertion

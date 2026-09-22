@@ -21,9 +21,10 @@ PR #100 landed at the reference revision above, and post-merge Quality run
 and [brief](product-slices/continuity-a-case-notes.md#landing-receipt--september-21-2026)
 record final acceptance and preserve the earlier local validation limitations.
 
-No new product increment is selected by this receipt. Increments B/C remain
-follow-on work from the continuity review: B's explicit context-selection
-contract precedes C's recorded context in one existing task path.
+The A landing receipt selected no new product increment. Continuity B is now
+selected below and implemented locally, with acceptance and landing pending.
+B's explicit context-selection contract precedes C's recorded context in one
+existing task path; C remains unselected.
 
 Model/runtime changes, visual work/slice 21, Mac work/PR #34,
 PR #87, wider onboarding, later slice-19 work, deployment and supported-release
@@ -48,7 +49,7 @@ work. Slice 20 is landed as recorded below. The bounded Linux CPU contributor
 node path (B-lite) and Continuity A are Done. The next continuity step is B's
 selection contract before C's task integration.
 
-**Last updated:** 2026-09-21
+**Last updated:** 2026-09-22
 
 ## Continuity A landing receipt
 

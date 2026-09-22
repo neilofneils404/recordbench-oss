@@ -54,6 +54,13 @@ class MatterContextService:
             for role in roles:
                 repo.preflight('workbench_entity', matter_id, 'entity_id', role['entity_id'], budget, limit=1)
             roles = ar.roles(matter_id, object_id)
+            for role in roles:
+                # Resolve review metadata through the same authorized repository,
+                # after bounding every dependent identity above. Keep the recorded
+                # role snapshot distinct from the identity's current review state.
+                identity = ar.entities.get(matter_id, role['entity_id']) if role['current_revision'] is not None else None
+                role['current_status'] = identity['status'] if identity else None
+                role['current_origin'] = identity['origin'] if identity else None
             references = ar.accounts(matter_id, object_id)
             version = record['revision']
         available = self.entities.validate_references(references)

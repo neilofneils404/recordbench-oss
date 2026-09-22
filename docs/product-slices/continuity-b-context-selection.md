@@ -230,3 +230,44 @@ separate unselected task.
 **Single next action:** maintainer review of this bounded B diff and its existing
 application/publication gate findings, before separately authorizing publication
 and landing. Do not integrate C or bypass either gate to close B.
+
+## September 22 B inspection follow-up
+
+Review of local head `cce20b813402acae2dabd24e26f7a72cbceb5789` found that
+changed role dependencies showed the recorded identity name and revision but
+omitted the current identity's name and review status. Context inspection now
+distinguishes recorded and current names, types and revisions, displays current
+review status and origin, and links to the current identity by its stable ID.
+Deleted identities retain the recorded role with an explicit missing warning.
+Current review metadata is resolved through the existing authorized repository
+after dependency byte/count preflight; only its fingerprint is persisted.
+The richer role fingerprint conservatively invalidates prior local B role
+approvals; GET never upgrades them and explicit reconciliation remains required.
+No schema, model, generation, retrieval or infrastructure change accompanies this
+follow-up. The binding queue's opening text now agrees with its B-selected row.
+
+Executed with the same Python 3.12 environment, synthetic fixtures and `umask 022`:
+
+- `PYTHONPATH=src CASE_INTELLIGENCE_STORAGE_RESERVE_GIB=0 python -m pytest -q
+  tests/test_matter_context.py tests/test_matter_context_workflow.py`:
+  **20 passed in 11.72 seconds**. The new HTTP regression covers all five entity
+  review statuses, escaped current names, exact identity links, unchanged stored
+  approval and deliberate reconciliation.
+- The earlier 159-test focused command plus `tests/test_browser_acceptance_runner.py`:
+  **255 passed in 99.29 seconds**. The role regression was subsequently extended
+  with deletion/missing-identity assertions; that exact test passed separately
+  (**one passed in 1.47 seconds**).
+- `PYTHONPATH=src python scripts/run-browser-acceptance.py --archives
+  /path/to/verified-archives --output /tmp/recordbench-context-role-review-suite`:
+  **nine of nine journeys passed**, Chrome **153.0.8010.36**. B's seven checks
+  now include changed role inspection, dismissed-identity labeling, exact
+  identity navigation and explicit reconciliation in Light/Dusk and at 390 pixels.
+  Standalone B browser acceptance also passed before the complete runner.
+- `PYTHONPATH=src python scripts/context-storage-restore-drill.py`: **passed**
+  baseline upgrade, clean restore, historical answer scope preservation and
+  rollback with the matching pre-upgrade reader.
+- Compileall, whitespace checks and generic working-tree publication sanitation:
+  **passed**. Generic sanitation is not installed publication-guard clearance.
+
+Current full-application and outgoing-history results for this follow-up are
+recorded in the subsequent receipt; the previous failures are not waived.
