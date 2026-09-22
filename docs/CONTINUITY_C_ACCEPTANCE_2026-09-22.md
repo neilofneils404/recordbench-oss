@@ -1,8 +1,11 @@
 # Continuity C implementation and acceptance handoff — September 22, 2026
 
-C is implemented locally. The September 22 follow-up passed real configured-model
-acceptance on the fixed synthetic corpus. Publication, current-head Quality and
-landing remain pending; C is not Done. The [bounded contract](product-slices/continuity-c-recorded-context.md)
+C is **Done** at `3c814e37adf18a84de9191bad84e0e8a2745e525` in
+[PR #107](https://github.com/neilofneils404/recordbench-oss/pull/107). Full final-head
+Quality, requested hosted code review and fixed-corpus real-model acceptance
+passed. The [landing receipt](EXIT_ALPHA_CRUISE.md#continuity-c-landing-receipt)
+supersedes the historical pending-gate notes below. This does not authorize
+deployment or make a supported-release claim. The [bounded contract](product-slices/continuity-c-recorded-context.md)
 retains the selected scope and limitations.
 
 ## Revisions and prerequisite
@@ -232,7 +235,7 @@ in two C documentation paths. The exact current and historical bytes require a
 narrow owner-approved disposition; private deny terms and generic checks remain
 enabled. No public upload has occurred.
 
-## Remaining gates and one next action
+## Historical remaining gates before publication (superseded by landing)
 
 No C publication, hosted Quality, PR/native approval, merge, release or deployment
 occurred. Before any authorized push, the installed outgoing publication check

@@ -6,10 +6,10 @@ specs. When numeric slice order conflicts with this file, **this file wins**.
 
 ## Current state — September 22, 2026
 
-Reference upstream revision: `d21c1d4849b46b8ae85db19b4d2ce80c8a9669a8`.
+Reference upstream revision: `3c814e37adf18a84de9191bad84e0e8a2745e525`.
 Manual entities, entity discovery, events/assertions, the first single-run
 full-text synthesis adapter, graph exploration, Linux CPU B-lite and trusted
-matter continuity A and B are landed.
+matter continuity A, B and C are landed.
 Historical receipts below retain their original scope and evidence.
 
 **Trusted matter continuity A is Done**:
@@ -23,10 +23,17 @@ record final acceptance and preserve the earlier local validation limitations.
 
 **Trusted matter continuity B is Done**:
 [explicit, durable reviewer-owned context selection](product-slices/continuity-b-context-selection.md#landing-receipt--september-22-2026).
-PR #103 landed at the reference revision above after all six Quality gates passed.
+PR #103 landed at `d21c1d4` after all six Quality gates passed.
 Post-merge Quality run **35722012792** passed after the application-only retry;
 hosted Codex code review completed without actionable findings on the same head.
-B acceptance remains complete. The September 22 user task selects **C**: recorded selected context in the existing focused-answer path. Its bounded implementation and gates are tracked in [the C brief](product-slices/continuity-c-recorded-context.md).
+B acceptance remains complete.
+
+**Trusted matter continuity C is Done**:
+[recorded selected context in focused answers](product-slices/continuity-c-recorded-context.md).
+PR #107 landed at the reference revision above after full Quality, requested
+hosted code review and fixed-corpus real-model acceptance. The
+[landing receipt](#continuity-c-landing-receipt) records the evidence and limits.
+No further product increment is selected.
 
 Model/runtime changes, visual work/slice 21, Mac work/PR #34,
 PR #87, wider onboarding, later slice-19 work, deployment and supported-release
@@ -48,9 +55,38 @@ and subsequent delivery stages. Slice 19's first single-run adapter is landed
 as recorded below. Multiple-run aggregation, new questions, background material,
 matter memory, production imports and larger capacity remain separately scoped
 work. Slice 20 is landed as recorded below. The bounded Linux CPU contributor
-node path (B-lite) and Continuity A/B are Done. C's focused-answer integration is the sole selected product increment.
+node path (B-lite) and Continuity A/B/C are Done. No further product increment
+is selected.
 
 **Last updated:** 2026-09-22
+
+## Continuity C landing receipt
+
+[PR #107](https://github.com/neilofneils404/recordbench-oss/pull/107) landed on
+September 22, 2026 at `3c814e37adf18a84de9191bad84e0e8a2745e525` through a normal protected
+fast-forward. The installed outgoing publication guard passed before branch
+publication and before landing. All existing branch protections remained enabled.
+
+[Exact-head branch Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35775440687)
+and [PR integration Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35775533728)
+passed all jobs. Both application runs passed **3,329 tests, nine skipped**;
+PostgreSQL passed seven with zero skips. Browser, transcription, deployment,
+publication and secret checks passed.
+[Requested hosted Codex code review](https://github.com/neilofneils404/recordbench-oss/pull/107#issuecomment-5783033824)
+completed on the same head with no major issues and no unresolved review threads.
+
+The [real-model follow-up](CONTINUITY_C_ACCEPTANCE_2026-09-22.md#september-22-real-model-follow-up)
+passed all three fixed synthetic questions after intact-original prompt refinement.
+It preserves both attributed disputed accounts, distinct same-name identities,
+original citations and refusal of unsupported note-only claims. Earlier failed
+runs remain recorded. This accepts C's focused-answer increment only; other
+answer paths, Report compilation, model changes, deployment and supported-release
+claims remain outside it.
+
+The separate [post-merge Quality run](https://github.com/neilofneils404/recordbench-oss/actions/runs/35778435161)
+passed all jobs on the same landed revision: application **3,329 passed, nine
+skipped**, PostgreSQL seven passed with zero skips. This is independent of the
+passing branch and PR runs above.
 
 ## Continuity B landing receipt
 
@@ -242,7 +278,7 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 12 | **20b — Linux CPU node (B-lite):** fresh Ubuntu 24.04 x86-64 → service account + Docker → `./install` CPU/local/loopback HTTPS → doctor → first-admin browser sign-in and synthetic practice matter | **Done** — [brief](product-slices/20b-linux-cpu-node.md); [5m13s clean-node receipt and green Quality](LINUX_CPU_NODE_ACCEPTANCE_2026-09-19.md) |
 | 13 | **Continuity A:** connect existing Case notes to authoritative saved identities and events/assertions | **Done** — PR #100 at `dd367cc`; [landing receipt](#continuity-a-landing-receipt), Quality **35610419040** |
 | 14 | **Continuity B:** explicit, durable reviewer-owned context selection; no answer integration | **Done** — PR #103 at `d21c1d4`; [landing receipt](#continuity-b-landing-receipt), Quality **35722012792** |
-| 15 | **Continuity C:** explicit selected context in queued focused answers, immutable submission and dispatch receipts | **Implemented locally; acceptance pending** — [handoff](CONTINUITY_C_ACCEPTANCE_2026-09-22.md), fixed-corpus real-model gate passed; publication and landing pending |
+| 15 | **Continuity C:** explicit selected context in queued focused answers, immutable submission and dispatch receipts | **Done** — PR #107 at `3c814e3`; [landing receipt](#continuity-c-landing-receipt), fixed-corpus model acceptance and full Quality passed |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 The September 19 landing completes slice 20 under
@@ -251,7 +287,7 @@ The September 19 landing completes slice 20 under
 The bounded **20b B-lite** node path is Done with its dated clean-node and
 Quality receipt. Code-only contribution remains
 `make bootstrap/check`; running the product uses the existing `./install`.
-Continuity A and B are Done. C is Next / in progress; fixed-corpus model acceptance passed; publication and landing are not yet complete.
+Continuity A, B and C are Done. No next product increment is selected.
 Slice 21, further visual experiments and additional work on PR #34 or PR #87
 remain on hold. High-resolution retrieval work remains
 local and outside this PR. Existing text and transcript support is not native

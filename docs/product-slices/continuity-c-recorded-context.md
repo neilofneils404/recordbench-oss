@@ -1,8 +1,10 @@
 # Continuity C — recorded selected context in focused answers
 
-Selected September 22, 2026 by the user after B acceptance. Implemented locally;
-real configured-model fixed-corpus acceptance passed in the September 22 follow-up;
-publication and upstream landing remain pending, not Done. See the
+**Done — September 22, 2026.** PR #107 landed at
+`3c814e37adf18a84de9191bad84e0e8a2745e525` after full Quality, requested hosted code
+review and fixed-corpus real-model acceptance. The
+[landing receipt](../EXIT_ALPHA_CRUISE.md#continuity-c-landing-receipt) supersedes
+pre-landing status notes. See the
 [dated acceptance/handoff record](../CONTINUITY_C_ACCEPTANCE_2026-09-22.md).
 Implementation base: `dcee0cfb7912a4289faef5e8646fc33b82da128a`.
 B implementation PR #103 landed at `d21c1d4849b46b8ae85db19b4d2ce80c8a9669a8`;
