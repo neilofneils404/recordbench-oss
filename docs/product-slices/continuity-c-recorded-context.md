@@ -1,6 +1,8 @@
 # Continuity C — recorded selected context in focused answers
 
-Selected September 22, 2026 by the user after B acceptance. In progress; not Done.
+Selected September 22, 2026 by the user after B acceptance. Implemented locally;
+real-model acceptance remains outstanding, not Done. See the
+[dated acceptance/handoff record](../CONTINUITY_C_ACCEPTANCE_2026-09-22.md).
 Implementation base: `dcee0cfb7912a4289faef5e8646fc33b82da128a`.
 B implementation PR #103 landed at `d21c1d4849b46b8ae85db19b4d2ce80c8a9669a8`;
 its accepted landing receipt is `2a50ae6be36182d73c1d76d7896f68096bc18c29`.
