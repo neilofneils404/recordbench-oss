@@ -56,6 +56,7 @@
           </small>
           {% endif %}
           {% if message.payload.modality_coverage %}<small class="assistant-answer-coverage">Requested source coverage · {{ message.payload.modality_coverage.notice }}</small>{% endif %}
+          {% if message.payload.recorded_context_job %}<p><a href="/matters/{{ matter.slug }}/answer-jobs/{{ message.payload.recorded_context_job }}/context">Context supplied for this answer</a> · As submitted; inspect current changes and dispatch attempts. This is not proof of model attention.</p>{% endif %}
           {% if message.payload.kind == 'generated' %}
             <p>{{ message.payload.introduction }}</p>
             {% if message.payload.evidence_notice %}<small class="assistant-evidence-note">Machine transcript · verify wording and speaker identity against the recording.</small>{% endif %}
@@ -93,6 +94,7 @@
     </div>
 
     <div class="assistant-status{% if assistant.active_answer and assistant.active_answer.state in ['failed', 'cancelled'] %} is-terminal{% if assistant.active_answer.state == 'failed' %} is-failed{% endif %}{% endif %}" data-assistant-status data-status-url="{{ assistant.active_answer.status_url if assistant.active_answer else '' }}" data-state="{{ assistant.active_answer.state if assistant.active_answer else '' }}" {% if not assistant.active_answer %}hidden{% endif %} role="status">
+      {% if assistant.active_answer and assistant.active_answer.context_url %}<a href="{{ assistant.active_answer.context_url }}">Inspect submitted context and dispatch attempts</a>{% endif %}
       <span class="assistant-status-pulse" aria-hidden="true"></span>
       <span data-assistant-status-copy>{% if assistant.active_answer and assistant.active_answer.state in ['failed', 'cancelled'] %}{{ assistant.active_answer.message }}{% else %}{{ assistant.active_answer.stage_label if assistant.active_answer else 'Request saved' }}{% if assistant.active_answer and assistant.active_answer.queue_position %} · {{ assistant.active_answer.queue_position }} in queue{% endif %}{% endif %}</span>
       {% if assistant.active_answer and assistant.active_answer.can_cancel %}<button type="button" data-assistant-cancel data-action-url="{{ assistant.active_answer.cancel_url }}">Cancel</button>{% endif %}
@@ -115,6 +117,13 @@
         <option value="">All searchable sources ({{ assistant.searchable_source_count }})</option>
         {% for set in assistant.source_sets %}<option value="{{ set.source_set_id }}">{{ set.name }} ({{ set.source_count }})</option>{% endfor %}
       </select>
+      <details>
+        <summary>Optional saved context · {{ assistant.saved_context.entries|length }} selected</summary>
+        <label><input type="checkbox" name="use_saved_context" value="true"> Use my saved matter context</label>
+        <input type="hidden" name="expected_selection_revision" value="{{ assistant.saved_context.revision }}">
+        <p>Readiness and source scope are checked when submitted. <a href="/matters/{{ matter.slug }}/context">Review selected context</a>.</p>
+        <p>Off removes optional context for this question. Old chat history and normal source retrieval remain; start a new chat to isolate the choice.</p>
+      </details>
       <div>
         <label class="visually-hidden" for="assistant-question">Ask about this matter</label>
         <textarea id="assistant-question" name="question" rows="1" maxlength="2000" required placeholder="Ask about this matter…" {% if not assistant.matter_ready or (assistant.active_answer and assistant.active_answer.state in ['queued', 'running']) %}disabled{% endif %}></textarea>

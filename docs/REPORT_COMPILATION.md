@@ -392,3 +392,9 @@ The validator drains each cited source to completion even after all citations
 match, so a truncated container, unsupported trailing version, or extra content
 cannot produce a saved Report. Uncited trailing units are not retained or matched.
 An unreadable source returns a repair-or-rerun message without creating a Report.
+
+Recorded selected-context answers (continuity C) are excluded from direct Report
+copy and conversation-based compilation. The current Report material format
+cannot carry their submitted-context and dispatch receipt faithfully. These
+paths refuse the selection and direct the reviewer to export the answer with
+its receipt or choose other work. Human context does not become a Report citation.

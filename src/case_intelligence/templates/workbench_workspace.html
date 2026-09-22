@@ -328,6 +328,15 @@
                   <p>{{ message.payload.modality_coverage.notice }}</p>
                 </div>
                 {% endif %}
+                  {% if message.payload.context_supplied %}
+                  <details class="answer-notebook-context">
+                    <summary>Context supplied for this answer</summary>
+                    <p>As submitted: selection revision {{ message.payload.context_supplied.snapshot.selection_revision }} by {{ message.payload.context_supplied.snapshot.actor_id }}. {{ message.payload.context_supplied.notice }}</p>
+                    <p><a href="/matters/{{ matter.slug }}/answer-jobs/{{ message.payload.recorded_context_job }}/context">Inspect as-submitted context, current changes and actual dispatch manifest</a></p>
+                    <ul>{% for attempt in message.payload.context_supplied.attempts %}<li>Request {{ attempt.ordinal }} ({{ attempt.manifest.purpose }}): {{ attempt.state|replace('_', ' ') }}{% if attempt.manifest.repair %} (repair){% endif %}</li>{% else %}<li>No generation dispatch was recorded.</li>{% endfor %}</ul>
+
+                  </details>
+                  {% endif %}
                 {% if message.payload.kind == 'generated' %}
                   <p class="answer-introduction">{{ message.payload.introduction }}</p>
                   {% if message.payload.evidence_notice %}
@@ -403,10 +412,11 @@
                 <nav class="workflow-completion-bar answer-completion-bar" aria-label="Completed answer actions">
                   <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>{{ 'Investigation ready' if message.payload.workflow == 'research' else 'Answer ready' }}</strong><small>Citations stay attached</small></span></span>
                   <a href="#answer-support-{{ message.message_id }}">Review support</a>
-                  <a href="/matters/{{ matter.slug }}/reports/new?from=conversation:{{ conversation.conversation_id }}">Make report</a>
+                  {% if not message.payload.recorded_context_job %}<a href="/matters/{{ matter.slug }}/reports/new?from=conversation:{{ conversation.conversation_id }}">Make report</a>{% endif %}
                   {% if reports %}
-                  <details class="answer-report-menu"><summary>Save to report</summary><div>{% for report in reports %}<form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/from-answer/{{ conversation.conversation_id }}/{{ message.message_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_status" value="{{ report.status }}"><button type="submit">{{ report.title }}</button></form>{% endfor %}</div></details>
-                  {% else %}<a href="/matters/{{ matter.slug }}/reports">Save to report</a>{% endif %}
+                  {% if message.payload.recorded_context_job %}<p>Export this answer with its context receipt. Report copy cannot yet preserve that notice.</p>{% else %}
+                  <details class="answer-report-menu"><summary>Save to report</summary><div>{% for report in reports %}<form method="post" action="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/from-answer/{{ conversation.conversation_id }}/{{ message.message_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_status" value="{{ report.status }}"><button type="submit">{{ report.title }}</button></form>{% endfor %}</div></details>{% endif %}
+                  {% elif not message.payload.recorded_context_job %}<a href="/matters/{{ matter.slug }}/reports">Save to report</a>{% else %}<span>Export preserves the context receipt; Report copy is unavailable.</span>{% endif %}
                   <details><summary>Export</summary><div><a href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/export?format=docx" data-download>Word</a><a href="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/export?format=markdown" data-download>Markdown</a></div></details>
                   <a href="#matter-question">Continue reviewing</a>
                 </nav>
@@ -450,6 +460,7 @@
         <span class="answer-wait-spinner" aria-hidden="true"></span>
         <div class="answer-wait-body">
           <div class="answer-wait-heading">
+            {% if active_answer and active_answer.context_url %}<a href="{{ active_answer.context_url }}">Inspect submitted context and dispatch attempts</a>{% endif %}
             <strong data-answer-wait-title>{{ active_answer.stage_label if active_answer else 'Request sent' }}</strong>
             <span data-answer-wait-elapsed aria-hidden="true">Waiting 0 seconds</span>
           </div>
@@ -494,15 +505,24 @@
           {% for set in source_sets %}<option value="{{ set.source_set_id }}" {% if set.source_set_id == selected_source_set_id %}selected{% endif %}>{{ set.name }} ({{ set.source_count }})</option>{% endfor %}
         </select>
         <details class="composer-notebook-context">
-          <summary>Use case notes for orientation{% if confirmed_notebook_count %} · {{ confirmed_notebook_count }} confirmed{% endif %}</summary>
+          <summary>Optional context for this question{% if confirmed_notebook_count %} · {{ confirmed_notebook_count }} confirmed{% endif %}</summary>
           <div>
+        {% if saved_context is defined %}
+        <div>
+          <label><input type="checkbox" name="use_saved_context" value="true"> Use my saved matter context</label>
+          <input type="hidden" name="expected_selection_revision" value="{{ saved_context.revision }}">
+          <p>{{ saved_context.entries|length }} selected. {% if saved_context.rows|selectattr('state', 'ne', 'Unchanged')|list %}Review changes required.{% else %}Record approvals unchanged; source scope and model fit checked on submission and dispatch.{% endif %}
+          <a href="/matters/{{ matter.slug }}/context">Review selected context</a></p>
+          <p>Focused answers only. Choose one context mode. Off removes optional context for this request; it does not erase old conversation history or exclude normally retrieved sources. Use a new conversation to isolate that choice.</p>
+        </div>
+        {% endif %}
             <p>Case notes can help frame the question, but they never replace independent source support.</p>
             <label><input type="radio" name="notebook_mode" value="" checked> Do not use case notes</label>
             <label><input type="radio" name="notebook_mode" value="confirmed" {% if not confirmed_notebook_count %}disabled{% endif %}> Use confirmed items{% if confirmed_notebook_count %} (up to 50){% endif %}</label>
             {% if notebook_context_items %}
             <fieldset>
               <legend>Or check specific items</legend>
-              <p>Checking any item uses only those selections.</p>
+              <p>Choose specific items with confirmed mode off. Conflicting context modes are refused.</p>
               <div class="composer-notebook-items">
                 {% for item in notebook_context_items %}
                 <label><input type="checkbox" name="notebook_item" value="{{ item.item_id }}"><span><strong>{{ item.title }}</strong><small>{{ item.item_type|replace('_', ' ')|title }} · {{ item.status|replace('_', ' ')|title }}</small></span></label>

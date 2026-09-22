@@ -608,6 +608,12 @@ def _answer_blocks(message: MessageRecord) -> list[ExportBlock]:
     payload = message.payload
     kind = payload.get("kind")
     blocks: list[ExportBlock] = []
+    if payload.get('context_supplied'):
+        blocks.append(ExportBlock('Context supplied for this answer — as submitted', 'heading1'))
+        blocks.append(ExportBlock(payload['context_supplied']['notice'], 'note'))
+        # Complete JSON in the answer export preserves exact serialized requests,
+        # versions, attribution and omission reasons without inventing citations.
+        blocks.append(ExportBlock(json.dumps(payload['context_supplied'], ensure_ascii=False, indent=2), 'note'))
     source_coverage = payload.get("source_coverage")
     if (
         isinstance(source_coverage, Mapping)
@@ -1732,6 +1738,7 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
             "source_coverage": portable_coverage,
             "review_scope": portable_scope,
             "requested_source_coverage": portable_modality,
+            "context_supplied": payload.get("context_supplied"),
         }
     return result
 
@@ -2005,7 +2012,7 @@ def export_matter_bundle(
                     r"[A-Za-z0-9][A-Za-z0-9._/-]{0,240}",
                     path,
                 )
-                or kind not in {"investigation", "source_check", "intake_receipt", "full_text_review", "entity", "entity_discovery", "assertion", "context_selection"}
+                or kind not in {"investigation", "source_check", "intake_receipt", "full_text_review", "entity", "entity_discovery", "assertion", "context_selection", "answer_context"}
                 or ".." in path.split("/")
                 or path.casefold() in seen_additional_paths
                 or not isinstance(body, bytes)

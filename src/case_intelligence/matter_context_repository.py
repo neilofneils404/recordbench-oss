@@ -72,4 +72,4 @@ class MatterContextRepository:
             if size > 8 * 1024 * 1024:
                 raise ContextLimit('Context manifest exceeds the complete export limit.')
             selections.append(selection)
-        return dict(format='recordbench-context-selections-v1', consumed_by_answers=False, selections=selections)
+        return dict(format='recordbench-context-selections-v1', consumption='explicit focused-answer opt-in only; actual consumption is recorded per answer', selections=selections)

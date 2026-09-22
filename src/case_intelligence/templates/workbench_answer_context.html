@@ -1,0 +1,36 @@
+{% extends "workbench_base.html" %}
+{% block title %}Context supplied · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block content %}
+<main id="main-content" tabindex="-1" class="notebook-shell">
+  <h1>Context supplied for this answer</h1>
+  <p>{{ receipt.notice }}</p>
+  <p><a href="/matters/{{ matter.slug }}?conversation={{ receipt.snapshot.conversation_id }}">Return to answer</a> · <a href="?format=json">Download complete JSON receipt</a> · <a href="/matters/{{ matter.slug }}/context">Review saved selection</a></p>
+  <h2>As submitted</h2>
+  <p>By {{ receipt.snapshot.actor_id }} at {{ receipt.snapshot.submitted_at }}. Selection revision {{ receipt.snapshot.selection_revision }}.
+    {% if receipt.selection_now != receipt.snapshot.selection_revision %}The saved selection has since changed (now revision {{ receipt.selection_now }}).{% endif %}
+    These historical records remain unchanged. Later edits affect future questions.</p>
+  <p>Requested source set: {{ receipt.snapshot.source_set_id or 'All searchable sources' }}. Optional context is separate from old conversation history and normally retrieved sources.</p>
+  {% for row in receipt.snapshot.records %}
+  <article style="overflow-wrap:anywhere">
+    <h3>{{ row.record.title or row.record.display_name }}</h3>
+    <p>{{ row.entry.kind|replace('_',' ') }} · {{ row.entry.object_id }} · Approved version {{ row.entry.approval.version }} · Current state: {{ receipt.current_state[loop.index0].state }}</p>
+    <p>Human review: {{ row.record.status|replace('_',' ') }}. Origin: {{ row.record.origin }}. Orientation is not proof.</p>
+    <details><summary>Complete submitted record, roles and approval</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ row|tojson(indent=2) }}</pre></details>
+    <ul>{% for reference in row.references %}<li>{{ reference.stance or 'Attached original' }}{% if reference.attributed_to %} · {{ reference.attributed_to }}{% endif %} · {{ reference.source_name }} · {{ reference.location }}
+      {% if reference.support_token in available_support_tokens %}<a href="/matters/{{ matter.slug }}?support={{ reference.support_token }}#support-pane">Open original passage</a>{% else %}Original unavailable or changed; historical reference only.{% endif %}</li>
+      {% else %}<li>No attached originals. This reviewer context cannot support factual claims.</li>{% endfor %}</ul>
+  </article>
+  {% endfor %}
+  <h2>Actual runtime dispatch</h2>
+  <p>Prepared records precede transport. Dispatch attempted and transport failed can mean the runtime received the input. Completed means a transport response was received, not that the answer passed verification. Tokenization sends input to the same runtime during preparation; it is not answer generation.</p>
+  {% for attempt in receipt.attempts %}
+    <details><summary>Request {{ attempt.ordinal }} · {{ attempt.manifest.purpose }} · {{ attempt.state|replace('_',' ') }}{% if attempt.manifest.repair %} · repair{% endif %}</summary>
+      <p>Worker attempt {{ attempt.worker_attempt }}. Prepared {{ attempt.prepared_at }}{% if attempt.attempted_at %}; dispatch attempted {{ attempt.attempted_at }}{% endif %}{% if attempt.completed_at %}; response/state recorded {{ attempt.completed_at }}{% endif %}.</p>
+      {% if attempt.manifest.budget %}<p>{{ attempt.manifest.budget.input_tokens }} input tokens + {{ attempt.manifest.budget.reserved_output_tokens }} reserved output + {{ attempt.manifest.budget.safety_margin_tokens }} safety margin; runtime window {{ attempt.manifest.budget.runtime_window }}.</p>{% endif %}
+      <p>Configured model: {{ attempt.manifest.runtime.configured_model }}. Artifact revision/runtime version not reported by this adapter; see any returned model label below.</p>
+      <h3>Complete serialized request and admission manifest</h3>
+      <pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ attempt|tojson(indent=2) }}</pre>
+    </details>
+  {% else %}<p>No runtime dispatch recorded. The submitted snapshot does not establish that it was sent.</p>{% endfor %}
+</main>
+{% endblock %}

@@ -4005,6 +4005,8 @@ class CaseIntelligenceWorkbench:
         )
         if answer is None:
             raise KeyError(message_id)
+        if answer.payload.get('recorded_context_job'):
+            raise WorkspaceProblem('This answer has a context-supplied receipt. Export the answer with its receipt; Report copy cannot yet preserve that notice.')
         saved_citations = []
         payload = answer.payload
         claims = payload.get("claims")
@@ -4489,29 +4491,63 @@ class CaseIntelligenceWorkbench:
                 )
 
     def queue_answer(
-        self,
-        matter: MatterRecord,
-        conversation: ConversationRecord | None,
-        question: str,
-        request_key: str,
-        actor_id: str,
-        source_set_id: str | None = None,
-        notebook_mode: str | None = None,
-        notebook_item_ids: Sequence[str] = (),
-    ) -> tuple[AnswerJobRecord, bool]:
-        job, created = self.workspace.queue_answer_job(
-            matter.matter_id,
-            conversation.conversation_id if conversation is not None else None,
-            actor_id,
-            question,
-            request_key,
-            source_set_id,
-            notebook_mode,
-            notebook_item_ids,
-        )
+        self, matter, conversation, question, request_key, actor_id,
+        source_set_id=None, notebook_mode=None, notebook_item_ids=(), *,
+        use_saved_context=False, expected_selection_revision=None,
+        check_authority=lambda: None,
+    ):
+        from .answer_context import freeze
+        from .matter_context import MatterContextService
+        # Guard order is source then workspace; the callback executes inside the
+        # existing atomic job transaction, only for a new request key.
+        with self.source_store(matter).mutation_guard():
+            service = MatterContextService(self.assertion_service(matter))
+            def snapshot():
+                scope_ids = (self.workspace.source_set_document_ids(matter.matter_id, source_set_id)
+                             if source_set_id else None)
+                result = freeze(service, matter.matter_id, actor_id, expected_selection_revision,
+                                scope_ids, source_set_id)
+                from .answer_context import admit
+                admit(result, (), lambda ref: self._context_original(matter, ref),
+                      classify_question(question).excluded_evidence_kinds)
+                return result
+            job, created = self.workspace.queue_answer_job(
+                matter.matter_id, conversation.conversation_id if conversation else None,
+                actor_id, question, request_key, source_set_id, notebook_mode, notebook_item_ids,
+                use_saved_context=use_saved_context, snapshot_builder=snapshot,
+                check_authority=check_authority)
         if self.answers is not None:
             self.answers.notify()
         return job, created
+
+    def _context_original(self, matter, reference):
+        # Validate the complete reference (including its recorded prefix basis),
+        # then admit the full original through ordinary citation controls.
+        service = self.entity_service(matter)
+        if service.validate_references([reference]) != frozenset({0}):
+            return None
+        document = self.source_store(matter).get(reference['document_id'])
+        ordinal = int(reference['chunk_id'].removeprefix('chunk-'))
+        unit = document.parsed_units()[ordinal - 1]
+        citation = self._citation(matter, self._candidate(matter, document, unit, ordinal))
+        return self._current_workflow_citation(matter, citation)
+
+    def _validate_answer_context(self, matter, job, snapshot, citations=()):
+        from .answer_context import AnswerContextRepository, references
+        if (snapshot['matter_id'] != job.matter_id or snapshot['actor_id'] != job.actor_id or
+            snapshot['job_id'] != job.job_id or snapshot['conversation_id'] != job.conversation_id):
+            raise WorkspaceProblem('Accepted context does not match this answer request.')
+        with self.source_store(matter).mutation_guard(), self.workspace._lock:
+            AnswerContextRepository(self.workspace).fence(job)
+            if snapshot['source_set_id']:
+                ids = self.workspace.source_set_document_ids(matter.matter_id, snapshot['source_set_id'])
+                if sorted(ids) != snapshot['source_ids']:
+                    raise WorkspaceProblem('The selected source set changed. Submit a new request with a reviewed scope.')
+            refs = references(snapshot)
+            if self.entity_service(matter).validate_references(refs) != frozenset(range(len(refs))):
+                raise WorkspaceProblem('Selected original support changed or became unavailable. Repair the selection and submit again.')
+            if any(self._current_workflow_citation(matter, citation) is None for citation in citations):
+                raise WorkspaceProblem('An admitted original changed before dispatch or save. Submit a new request.')
 
     def _process_answer_job(
         self,
@@ -4558,6 +4594,13 @@ class CaseIntelligenceWorkbench:
                 for message in messages
                 if message.ordinal < question_message.ordinal
             )
+            from .answer_context import AnswerContextRepository, orientation, admit
+            from .recorded_generation import RecordedDispatch
+            context_repository = AnswerContextRepository(self.workspace)
+            with self.workspace._lock:
+                selected_snapshot = context_repository.snapshot(job.matter_id, job.job_id)
+            if selected_snapshot is not None:
+                self._validate_answer_context(matter, job, selected_snapshot)
             retrieval_query = self._retrieval_question(job.question, prior)
             notebook_mode, notebook_items = self.workspace.answer_notebook_context(
                 matter.matter_id, job.job_id
@@ -4605,6 +4648,20 @@ class CaseIntelligenceWorkbench:
                 ),
                 required_kinds=intent.required_evidence_kinds,
             )
+            recorded_dispatch = None
+            if selected_snapshot is not None:
+                with self.source_store(matter).mutation_guard(), self.workspace._lock:
+                    self._validate_answer_context(matter, job, selected_snapshot)
+                    citations, routes, omissions = admit(selected_snapshot, citations,
+                        lambda ref: self._context_original(matter, ref), intent.excluded_evidence_kinds)
+                notebook_context = orientation(selected_snapshot)
+                recorded_dispatch = RecordedDispatch(context_repository, job,
+                    lambda: self._validate_answer_context(matter, job, selected_snapshot, citations),
+                    dict(evidence=[dict(self._workflow_citation_payload(c), **route)
+                                   for c, route in zip(citations, routes)], omissions=omissions,
+                         selected_records='all; whole required support groups',
+                         retrieval='existing bounded focused retrieval; not exhaustive',
+                         history='existing last-six-message bounded history; independent of saved selection'))
             if cancelled():
                 raise AnswerJobFailure("Answer cancelled.")
             evidence = {
@@ -4637,6 +4694,7 @@ class CaseIntelligenceWorkbench:
                     history=history,
                     working_context=notebook_context,
                     stage_callback=generation_stage,
+                    **({"recorded_dispatch": recorded_dispatch} if recorded_dispatch is not None else {}),
                 )
             except GenerationGroundingRejected:
                 answer = self._verification_abstention()
@@ -4647,6 +4705,9 @@ class CaseIntelligenceWorkbench:
                     "Access to this matter was removed before the answer completed."
                 ) from exc
             payload = self._answer_payload(answer, evidence)
+            if selected_snapshot is not None:
+                payload['recorded_context_job'] = job.job_id
+                payload['recorded_context_attempt'] = job.attempts
             evidence_shape = modality_coverage(
                 job.question,
                 evidence,
@@ -4684,6 +4745,8 @@ class CaseIntelligenceWorkbench:
                 verified_answer=answer)
         except AnswerJobFailure:
             raise
+        except WorkspaceProblem as exc:
+            raise AnswerJobFailure(str(exc)) from exc
         except RetrievalUnavailable as exc:
             raise AnswerJobFailure(
                 "Search could not run. Your sources are still saved; try again in a moment."
@@ -4738,6 +4801,13 @@ class CaseIntelligenceWorkbench:
     ) -> MessageRecord | None:
         matter = self._matter_by_id(job.matter_id)
         with self.source_store(matter).mutation_guard():
+            if result.payload.get('recorded_context_job'):
+                from .answer_context import AnswerContextRepository
+                with self.workspace._lock:
+                    snapshot = AnswerContextRepository(self.workspace).snapshot(job.matter_id, job.job_id)
+                    if snapshot is None:
+                        raise AnswerJobFailure('The accepted context snapshot is unavailable.')
+                    self._validate_answer_context(matter, job, snapshot, result.citations)
             if any(
                 not isinstance(citation, WorkbenchCitation)
                 or self._current_workflow_citation(matter, citation) is None
@@ -6612,7 +6682,11 @@ def create_workbench_app(
             presentation = "quick"
         else:
             presentation = "matter"
+        from .matter_context_repository import MatterContextRepository
+        with bench.workspace._lock:
+            saved_context = MatterContextRepository(bench.workspace.assertion_repository()).selection(matter.matter_id, context.principal_id)
         return {
+            "saved_context": saved_context,
             "matter": matter,
             "conversation": conversation,
             "conversation_choices": conversation_choices,
@@ -7651,6 +7725,11 @@ def create_workbench_app(
                 )
             ],
         }
+
+        with bench.workspace._lock:
+            has_context = bench.workspace.connection.execute('SELECT 1 FROM workbench_answer_context WHERE job_id=? AND matter_id=?',
+                                                             (job.job_id, matter.matter_id)).fetchone()
+        projected['context_url'] = f'/matters/{matter.slug}/answer-jobs/{job.job_id}/context' if has_context else None
 
         origin = _source_review_return_href(matter.slug, request.query_params.get("entity_return_to", ""))
         for key in ("status_url", "result_url", "cancel_url", "retry_url", "workspace_url", "fragment_url", "open_url"):
@@ -10812,6 +10891,9 @@ def create_workbench_app(
         )
         source_overview = bench.source_library(matter, view="overview")
         media_activity = media_activity_projection(matter)
+        from .matter_context import MatterContextService
+        saved_context, _ = MatterContextService(bench.assertion_service(matter)).inspect(
+            matter.matter_id, matter.owner_id if administrator_override else context.principal_id)
         notebook_context_page = bench.workspace.notebook_page(
             matter.matter_id,
             matter.owner_id if administrator_override else context.principal_id,
@@ -10863,6 +10945,7 @@ def create_workbench_app(
                 "mode": mode,
                 "search_results": search_results,
                 "support": support_view,
+                "saved_context": saved_context,
                 "notebook_context_items": tuple(
                     item
                     for item in notebook_context_page.items
@@ -15424,6 +15507,24 @@ def create_workbench_app(
                 add_work_product(kind="context_selection", path="context/selections.json",
                     artifact=ExportArtifact(body=json.dumps(manifest, indent=2).encode("utf-8"),
                         media_type="application/json", filename="selections.json"))
+            from .answer_context import AnswerContextRepository
+            with repository.transaction(matter.matter_id, read_actor_id):
+                context_jobs = bench.workspace.connection.execute(
+                    'SELECT job_id FROM workbench_answer_context WHERE matter_id=? ORDER BY job_id LIMIT 1001',
+                    (matter.matter_id,)).fetchall()
+                if len(context_jobs) > 1000:
+                    raise WorkspaceProblem('Too many context receipts for a complete export.')
+                context_bytes = bench.workspace.connection.execute(
+                    'SELECT coalesce(sum(length(CAST(c.snapshot_json AS BLOB)) + '
+                    '(SELECT coalesce(sum(length(CAST(a.manifest_json AS BLOB))),0) FROM workbench_answer_context_attempt a WHERE a.job_id=c.job_id)),0) '
+                    'FROM workbench_answer_context c WHERE c.matter_id=?', (matter.matter_id,)).fetchone()[0]
+                if context_bytes > 8 * 1024 * 1024:
+                    raise WorkspaceProblem('Context receipts exceed the complete export bound. Export individual receipts.')
+                for row in context_jobs:
+                    receipt = AnswerContextRepository(bench.workspace).receipt(matter.matter_id, row[0])
+                    add_work_product(kind='answer_context', path=f'context/{row[0]}.json',
+                        artifact=ExportArtifact(body=json.dumps(receipt, indent=2).encode('utf-8'),
+                            media_type='application/json', filename=row[0] + '.json'))
             artifact = export_matter_bundle(
                 matter,
                 conversations,
@@ -15521,6 +15622,44 @@ def create_workbench_app(
         )
         return download_response(request, artifact)
 
+    @app.get('/matters/{slug}/answer-jobs/{job_id}/context')
+    def answer_context_receipt(request: Request, slug: str, job_id: str, format_name: str = Query("html", alias="format", pattern="^(html|json)$")):
+        from .answer_context import AnswerContextRepository
+        from .matter_context import MatterContextService
+        context = auth_context(request)
+        try:
+            matter = authorized_matter(request, slug)
+            administrator_override = getattr(request.state, 'administrator_matter_override', None) == matter.matter_id
+            read_actor = matter.owner_id if administrator_override else context.principal_id
+            with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
+                job_row = bench.workspace.connection.execute(
+                    'SELECT conversation_id FROM workbench_answer_job WHERE job_id=? AND matter_id=?',
+                    (job_id, matter.matter_id)).fetchone()
+                if job_row is None:
+                    raise KeyError(job_id)
+                bench.workspace.get_conversation_any(matter.matter_id, job_row[0])
+                receipt = AnswerContextRepository(bench.workspace).receipt(matter.matter_id, job_id)
+                if receipt is None:
+                    raise KeyError(job_id)
+                service = MatterContextService(bench.assertion_service(matter))
+                budget = service.budget()
+                receipt['current_state'] = [dict(kind=row['entry']['kind'], object_id=row['entry']['object_id'],
+                    state=service._row(matter.matter_id, read_actor, row['entry'], budget)['state'])
+                    for row in receipt['snapshot']['records']]
+                receipt['selection_now'] = service.repository.selection(matter.matter_id, receipt['snapshot']['actor_id'])['revision']
+                from .answer_context import references
+                refs = references(receipt['snapshot'])
+                indexes = service.entities.validate_references(refs)
+                available = {refs[i]['support_token'] for i in indexes}
+                response = (JSONResponse(receipt, headers={'Cache-Control': 'no-store'}) if format_name == 'json' else
+                    templates.TemplateResponse(request=request, name='workbench_answer_context.html',
+                        context={**base_context(request, matter), 'matter': matter, 'receipt': receipt,
+                                 'available_support_tokens': available}, headers={'Cache-Control':'no-store'}))
+                refresh_context_authority(request, slug, context, administrator_override)
+                return response
+        except KeyError as exc:
+            raise HTTPException(404, 'Answer context is unavailable') from exc
+
     @app.post(
         "/matters/{slug}/ask",
         dependencies=[Depends(require_csrf)],
@@ -15534,6 +15673,8 @@ def create_workbench_app(
         source_set: str = Form("", max_length=80),
         notebook_mode: str = Form("", max_length=24),
         notebook_item: list[str] = Form(default=[]),
+        use_saved_context: bool = Form(False),
+        expected_selection_revision: int | None = Form(None),
         review_task: str = Form("answer", pattern="^(answer|research)$"),
     ):
         wants_json = "application/json" in request.headers.get("accept", "")
@@ -15541,6 +15682,10 @@ def create_workbench_app(
         origin = _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
         try:
             matter = authorized_matter(request, slug)
+            if use_saved_context and (notebook_mode or notebook_item or review_task != 'answer'):
+                raise WorkspaceProblem('Saved context is available only for focused answers and cannot be combined with another context mode.')
+            if notebook_item and notebook_mode not in ('', 'selected'):
+                raise WorkspaceProblem('Choose one legacy notebook context mode.')
             if source_set:
                 try:
                     bench.workspace.source_set(matter.matter_id, source_set)
@@ -15648,6 +15793,9 @@ def create_workbench_app(
                 source_set or None,
                 selected_notebook_mode,
                 selected_notebook_items,
+                use_saved_context=use_saved_context,
+                expected_selection_revision=expected_selection_revision,
+                check_authority=lambda: refresh_context_authority(request, slug, context, False),
             )
             projected = answer_projection(request, matter, job)
             if active is None and created:

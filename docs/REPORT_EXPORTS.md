@@ -81,8 +81,27 @@ Continuity B adds `context/selections.json` to complete matter bundles and their
 existing additional-work-product inventory. It includes all owners' selection
 headers, revisions, ordered typed references, approval fingerprints and
 attribution. Knowledge remains shared; owner-specific selections are not private
-notes. The manifest explicitly says selections are not consumed by answers.
+notes. The manifest describes explicit opt-in consumption; per-answer receipts record actual dispatch.
 It does not claim current support availability or retain authoritative fact
 copies. Shared knowledge is exported through its existing separate artifacts.
 A manifest exceeding 1,000 selection owners or 8 MiB fails the complete export;
 it is never silently omitted. Note-only export behavior is unchanged.
+
+## Context supplied with focused answers
+
+Continuity C answer/conversation Word and Markdown exports and complete-bundle
+answer JSON include the full submitted context and runtime dispatch receipt.
+Complete bundles additionally include `context/answer-job-*.json` for unfinished
+or failed work. Exact originals and available runtime/model labels remain
+separate from reviewer orientation. A receipt records supplied input, not proof
+of model attention or immutable per-response model attestation. Prepared,
+tokenization, generation, repair, transport failure and completion stay distinct.
+Later knowledge changes do not rewrite the historical input. The inspector
+separately labels current freshness and source availability.
+
+Selection manifests now describe explicit focused-answer consumption; actual
+consumption is per answer. Note-only exports remain note-only. Direct answer
+copy and conversation-to-Report compilation refuse C answers because those
+paths cannot preserve their receipt. Context labels never become citations.
+Existing export authority, source verification and complete-bundle limits apply;
+receipt limits fail clearly rather than dropping an essential section.

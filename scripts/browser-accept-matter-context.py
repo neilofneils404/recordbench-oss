@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from fastapi.testclient import TestClient
 import uvicorn
 from selenium import webdriver
+from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -69,7 +70,7 @@ def main():
                 options.add_argument(flag)
             driver = webdriver.Chrome(service=Service(str(args.chromedriver)),options=options)
             driver.set_page_load_timeout(30)
-            wait = WebDriverWait(driver,20)
+            wait = WebDriverWait(driver,20, ignored_exceptions=(StaleElementReferenceException,))
             wait.until(lambda _: server.started)
             def body():
                 return driver.find_element(By.TAG_NAME,'body').text
@@ -86,8 +87,8 @@ def main():
                 assert driver.execute_script('return document.documentElement.scrollWidth <= innerWidth')
             driver.get(base+path)
             assert 'Working note about Alex' in body() and 'Unchanged' in body()
-            assert 'Not yet consumed by answers.' in body()
-            record('Restart retains the approved note selection with explicit non-consumption and no generator')
+            assert 'Saved selections change answers only when' in body()
+            record('Restart retains approved selection and explains explicit opt-in; selection operations call no generator')
             for identifier in (context['person'],context['other']):
                 inspect('entity',identifier)
                 activate(button('Use as context'))
@@ -172,6 +173,60 @@ def main():
             no_overflow()
             assert not driver.find_elements(By.ID,'selected-'+context['other'])
             record('390-pixel mobile inspection preserves complete support labels and usable removal controls')
+            # C uses a deterministic transport fixture, not a real model gate.
+            from case_intelligence import generation
+            from case_intelligence.generation import GroundedGenerationService, OpenAICompatibleGenerator
+            class SyntheticClient(OpenAICompatibleGenerator):
+                @property
+                def available(self):
+                    return True
+            original_transport = generation._bounded_json_request
+            def synthetic_transport(url, payload, **kwargs):
+                if url.endswith('/tokenize'):
+                    return dict(count=2400, max_model_len=8192, tokens=list(range(2400)))
+                import re
+                passages = re.findall(r'\[(S\d+)\] \[DOCUMENT\] [^\n]+\n([^\n]+)', payload['messages'][1]['content'])
+                claims = [dict(text=text.split('. ')[0]+('.' if not text.split('. ')[0].endswith('.') else ''), evidence_ids=[identifier]) for identifier,text in passages[:2]]
+                answer = dict(answerable=True,claims=claims,limitation=None,missing_information='')
+                return dict(model='synthetic-browser-model',usage=dict(prompt_tokens=2400),choices=[dict(message=dict(content=json.dumps(answer)))])
+            generation._bounded_json_request = synthetic_transport
+            try:
+                bench.generator = GroundedGenerationService(SyntheticClient('http://127.0.0.1:18080','synthetic-browser-model',disable_thinking=True))
+                service = MatterContextService(bench.assertion_service(matter))
+                selection, _ = service.inspect(matter.matter_id,knowledge.ACTOR)
+                service.change(matter.matter_id,knowledge.ACTOR,expected_revision=selection['revision'],action='clear')
+                selection,candidate = service.inspect(matter.matter_id,knowledge.ACTOR,kind='assertion',object_id=assertion_id)
+                service.change(matter.matter_id,knowledge.ACTOR,expected_revision=selection['revision'],action='add',kind='assertion',object_id=assertion_id,approval=candidate['approval'])
+                conversation = bench.workspace.create_conversation(matter.matter_id, 'Synthetic C new conversation', actor_id=knowledge.ACTOR)
+                driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride',{})
+                driver.get(base+f'/matters/{context["slug"]}?conversation={conversation.conversation_id}')
+                driver.find_element(By.CSS_SELECTOR,'.composer-notebook-context > summary').send_keys(Keys.ENTER)
+                checkbox = driver.find_element(By.NAME,'use_saved_context')
+                assert not checkbox.is_selected()
+                checkbox.send_keys(Keys.SPACE)
+                question = driver.find_element(By.ID,'matter-question')
+                question.send_keys('What do Morgan Sample and Riley Demo say about the parcel delivery?')
+                driver.find_element(By.CSS_SELECTOR,'button[name=review_task][value=answer]').send_keys(Keys.ENTER)
+                wait.until(lambda _: 'Context supplied for this answer' in body())
+                assert 'Morgan Sample' in body() and 'Riley Demo' in body()
+                assert not driver.find_element(By.NAME,'use_saved_context').is_selected()
+                record('C is off by default; keyboard submission in a new conversation retains competing originals and a supplied-context notice')
+                details = next(e for e in driver.find_elements(By.TAG_NAME,'summary') if e.text == 'Context supplied for this answer')
+                details.send_keys(Keys.ENTER)
+                activate(driver.find_element(By.LINK_TEXT,'Inspect as-submitted context, current changes and actual dispatch manifest'))
+                assert 'As submitted' in body() and 'tokenization' in body() and 'generation' in body()
+                no_overflow()
+                driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride',dict(width=390,height=844,deviceScaleFactor=1,mobile=False))
+                for detail in driver.find_elements(By.CSS_SELECTOR,'main details'):
+                    detail.find_element(By.TAG_NAME,'summary').send_keys(Keys.ENTER)
+                no_overflow()
+                assert 'runtime window 8192' in body()
+                driver.save_screenshot(str(output/'context-supplied-mobile.png'))
+                activate(driver.find_elements(By.LINK_TEXT,'Open original passage')[0])
+                assert driver.find_element(By.ID,'support-pane')
+                record('C receipt exposes exact dispatch and budget, complete submitted groups and original navigation at 390 pixels; mocks do not qualify model quality')
+            finally:
+                generation._bounded_json_request = original_transport
             (output/'receipt.json').write_text(json.dumps(dict(synthetic_only=True,passed=True,checks=checks,
                 browser=driver.capabilities.get('browserVersion'),screenshots=sorted(p.name for p in output.glob('*.png'))),indent=2))
         except Exception as exc:

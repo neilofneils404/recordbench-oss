@@ -51,7 +51,7 @@ def test_http_selection_conflicts_sources_exports_no_model_and_reload(connection
         assert page.headers['cache-control'] == 'no-store'
         draft = form(page, 'add')
         saved = client.post(path, data=draft)
-        assert saved.status_code == 200 and 'Not yet consumed by answers.' in saved.text
+        assert saved.status_code == 200 and 'Saved selections change answers only when' in saved.text
         stale = client.post(path, data=draft)
         assert stale.status_code == 409 and 'Your unsaved choice' in stale.text
         assert identifier in stale.text
@@ -65,7 +65,7 @@ def test_http_selection_conflicts_sources_exports_no_model_and_reload(connection
         assert client.get(back).status_code == 200
     with zipfile.ZipFile(io.BytesIO(client.get(f'/matters/{slug}/export').content)) as archive:
         manifest = json.loads(archive.read('context/selections.json'))
-        assert manifest['consumed_by_answers'] is False
+        assert 'explicit focused-answer opt-in' in manifest['consumption']
         assert len(manifest['selections'][0]['entries']) == 3
     notes = client.get(f'/matters/{slug}/notebook/export?format=markdown')
     assert notes.status_code == 200 and 'recordbench-context-selections' not in notes.text

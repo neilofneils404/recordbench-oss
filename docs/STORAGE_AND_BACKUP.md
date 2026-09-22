@@ -286,3 +286,25 @@ matching-reader rollback with synthetic state. The HTTP acceptance additionally
 restores a stopped complete runtime and follows original-source links before
 export and purge. See the [bounded brief](product-slices/continuity-b-context-selection.md)
 for executed evidence and outstanding acceptance.
+
+## Focused-answer context receipts
+
+Continuity C adds paired migration `0036_answer_context.sql`: immutable submitted
+selection snapshots and per-runtime-request manifests/outcomes, cascading with
+the existing answer job and matter purge. Include them in the same complete,
+stopped control/runtime backup. Tokenization, generation, repair, failed and
+cancelled attempts are retained; restart never substitutes the current selection.
+Knowledge deletion does not erase historical submitted/dispatched text. Matter
+purge removes it. Sixteen recorded runtime requests per answer (including
+preparation/tokenization) bound retries; each manifest is at most 128 KiB and the
+snapshot at most 512 KiB. Complete conversation reads and matter receipt exports
+preflight an 8 MiB aggregate bound and refuse excess rather than omit receipts.
+
+`python scripts/context-storage-restore-drill.py --answer-context` upgrades the
+accepted B revision, checks clean restore of prepared C receipts and legacy
+notebook scopes, and verifies pre-upgrade rollback using the matching B reader.
+The synthetic C HTTP regression also restores the entire stopped runtime with
+original paths unavailable, reopens original support and exports, then purges.
+These do not replace an operator's own encrypted backup/replacement-host drill.
+Stop writers before upgrade. Mixed-version writers are unsupported; rollback
+uses the verified pre-upgrade complete backup and matching application revision.

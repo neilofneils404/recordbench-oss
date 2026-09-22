@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Synthetic baseline upgrade, clean restore and matching-version rollback."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,10 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = '0d59d5fe4f7be575a66039274415de945a6d5db5'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--answer-context', action='store_true')
+args = parser.parse_args()
+BASELINE = 'd21c1d4849b46b8ae85db19b4d2ce80c8a9669a8' if args.answer_context else '0d59d5fe4f7be575a66039274415de945a6d5db5'
 ACTOR = 'synthetic-context-reviewer'
 with tempfile.TemporaryDirectory(prefix='recordbench-context-upgrade-') as temporary:
     root = Path(temporary)
@@ -48,6 +52,19 @@ s=WorkspaceStore(Path(sys.argv[1])); actor='synthetic-context-reviewer'; s.upser
     selection,candidate = context.inspect(matter_id,ACTOR,kind='notebook_item',object_id=note_id)
     context.change(matter_id,ACTOR,expected_revision=0,action='add',kind='notebook_item',object_id=note_id,approval=candidate['approval'])
     expected = context.repository.export(matter_id)
+    if args.answer_context:
+        from case_intelligence.answer_context import AnswerContextRepository, freeze
+        answer_job, _ = store.queue_answer_job(matter_id, None, ACTOR, 'Synthetic recorded context',
+            'answer-request-'+'c'*32, use_saved_context=True,
+            snapshot_builder=lambda: freeze(context,matter_id,ACTOR,1,None,None))
+        # Storage fixture: one prepared input; no dispatch is claimed.
+        claimed = store.claim_answer_job('synthetic-storage-worker')
+        if claimed.job_id != answer_job.job_id:
+            store.fail_answer_job(claimed.job_id,'Synthetic old job stopped')
+            claimed = store.claim_answer_job('synthetic-storage-worker')
+        repo = AnswerContextRepository(store)
+        repo.prepare(claimed,dict(format='synthetic-storage-preparation',request={'messages':[]}))
+        expected_answer = repo.receipt(matter_id,answer_job.job_id)
     upgraded = root/'upgraded-backup.sqlite'
     with sqlite3.connect(upgraded) as target:
         store.connection.backup(target)
@@ -62,12 +79,16 @@ s=WorkspaceStore(Path(sys.argv[1])); actor='synthetic-context-reviewer'; s.upser
     assert restored.answer_notebook_context(matter_id,job_id)[1][0].body == 'Original orientation'
     assert restored.connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
     assert not restored.connection.execute('PRAGMA foreign_key_check').fetchall()
+    if args.answer_context:
+        assert AnswerContextRepository(restored).receipt(matter_id,answer_job.job_id) == expected_answer
     restored.close()
     verify = '''from pathlib import Path
 from case_intelligence.workspace_store import WorkspaceStore
 import sys
 s=WorkspaceStore(Path(sys.argv[1])); assert s.answer_notebook_context(sys.argv[2],sys.argv[3])[1][0].body=='Original orientation'; assert s.connection.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='workbench_context_selection'").fetchone()[0]==0; s.close()
 '''
+    if args.answer_context:
+        verify = verify.replace("name='workbench_context_selection'", "name='workbench_answer_context'")
     subprocess.run([sys.executable,'-c',verify,str(preupgrade),matter_id,job_id],env=env,check=True)
     print(json.dumps(dict(synthetic_only=True,baseline=BASELINE,upgrade=True,clean_restore=True,
-                         historical_answer_scope=True,matching_preupgrade_rollback=True,mixed_version_writers=False)))
+                         historical_answer_scope=True,answer_context=args.answer_context,matching_preupgrade_rollback=True,mixed_version_writers=False)))

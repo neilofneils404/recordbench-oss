@@ -116,6 +116,6 @@ class AnswerCoordinator:
 
     def _finish_failure(self, job: AnswerJobRecord, message: str) -> None:
         try:
-            self.workspace.fail_answer_job(job.job_id, message[:240])
+            self.workspace.fail_answer_job(job.job_id, message[:240], expected_attempt=job.attempts)
         except Exception:
             pass

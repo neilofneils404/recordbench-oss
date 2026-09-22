@@ -1078,6 +1078,8 @@ class WorkspaceStore:
         self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
         migration = resources.files("case_intelligence").joinpath("migrations/sqlite/0035_matter_context_selection.sql").read_text(encoding="utf-8")
         self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
+        migration = resources.files("case_intelligence").joinpath("migrations/sqlite/0036_answer_context.sql").read_text(encoding="utf-8")
+        self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
         from .full_text_review_budget import backfill_legacy_ledgers
         backfill_legacy_ledgers(self)
         session_columns = {
@@ -3768,6 +3770,13 @@ class WorkspaceStore:
     def messages(self, matter_id: str, conversation_id: str) -> tuple[MessageRecord, ...]:
         self.get_conversation_any(matter_id, conversation_id)
         with self._lock:
+            context_bytes = self.connection.execute(
+                'SELECT coalesce(sum(length(CAST(c.snapshot_json AS BLOB)) + '
+                '(SELECT coalesce(sum(length(CAST(a.manifest_json AS BLOB))),0) FROM workbench_answer_context_attempt a WHERE a.job_id=c.job_id)),0) '
+                'FROM workbench_answer_context c JOIN workbench_answer_job j ON j.job_id=c.job_id '
+                'WHERE j.matter_id=? AND j.conversation_id=?', (matter_id, conversation_id)).fetchone()[0]
+            if context_bytes > 8 * 1024 * 1024:
+                raise WorkspaceProblem('Conversation context exceeds the complete read/export bound. Inspect individual answer receipts.')
             rows = self.connection.execute(
                 "SELECT message_id,conversation_id,ordinal,role,content,payload_json,created_at "
                 "FROM workbench_message WHERE conversation_id=? ORDER BY ordinal",
@@ -3781,6 +3790,12 @@ class WorkspaceStore:
                 raise RuntimeError("stored conversation payload is invalid") from exc
             if not isinstance(payload, dict):
                 raise RuntimeError("stored conversation payload is invalid")
+            if payload.get('recorded_context_job'):
+                from .answer_context import AnswerContextRepository
+                with self._lock:
+                    payload['context_supplied'] = AnswerContextRepository(self).receipt(matter_id, payload['recorded_context_job'])
+                if payload['context_supplied'] is None:
+                    raise WorkspaceProblem('The saved answer context record is unavailable.')
             result.append(
                 MessageRecord(
                     row["message_id"],
@@ -8793,6 +8808,8 @@ class WorkspaceStore:
         source_set_id: str | None = None,
         notebook_mode: str | None = None,
         notebook_item_ids: Sequence[str] = (),
+        *, use_saved_context: bool = False, snapshot_builder=None,
+        check_authority=lambda: None,
     ) -> tuple[AnswerJobRecord, bool]:
         """Persist one question and its answer job in the same transaction.
 
@@ -8831,6 +8848,10 @@ class WorkspaceStore:
             raise WorkspaceProblem("Choose at least one notebook item for answer context.")
         if context_mode != "selected" and context_item_ids:
             raise WorkspaceProblem("Selected notebook items require selected context mode.")
+        if use_saved_context and (context_mode or context_item_ids):
+            raise WorkspaceProblem("Choose saved matter context OR legacy notebook context, not simultaneous modes.")
+        if use_saved_context and snapshot_builder is None:
+            raise WorkspaceProblem("Saved context requires authorized snapshot admission.")
         now = self._now()
         job_id = f"answer-job-{uuid.uuid4().hex}"
         question_message_id = f"message-{uuid.uuid4().hex}"
@@ -8841,6 +8862,8 @@ class WorkspaceStore:
             # begin its IMMEDIATE transaction, allowing two process-local
             # stores to observe the same missing key.
             self.connection.execute("BEGIN IMMEDIATE")
+            check_authority()
+            self.membership(matter_id, actor)
             if selected_conversation_id is None:
                 prior_draft = self.connection.execute(
                     "SELECT * FROM workbench_answer_job WHERE actor_id=? AND matter_id=? "
@@ -8863,6 +8886,14 @@ class WorkspaceStore:
                 (actor, matter_id, selected_conversation_id, idempotency_key),
             ).fetchone()
             if existing is not None:
+                active = self.connection.execute(
+                    "SELECT 1 FROM workbench_conversation c JOIN workbench_conversation_organization o ON o.conversation_id=c.conversation_id "
+                    "WHERE c.matter_id=? AND c.conversation_id=? AND o.state='active'", (matter_id, selected_conversation_id)).fetchone()
+                if active is None:
+                    raise KeyError(selected_conversation_id)
+                has_context = self.connection.execute('SELECT 1 FROM workbench_answer_context WHERE job_id=?', (existing['job_id'],)).fetchone() is not None
+                if has_context != use_saved_context:
+                    raise WorkspaceProblem('That request already belongs to a different context mode.')
                 existing_scope = self.connection.execute(
                     "SELECT source_set_id FROM workbench_answer_source_scope WHERE job_id=?",
                     (existing["job_id"],),
@@ -9001,6 +9032,16 @@ class WorkspaceStore:
                     context_item_ids,
                     now,
                 )
+            if use_saved_context:
+                from .matter_context_repository import serialized
+                snapshot = snapshot_builder()
+                snapshot.update(job_id=job_id, conversation_id=selected_conversation_id, request_key=idempotency_key)
+                encoded_snapshot = serialized(snapshot)
+                if len(encoded_snapshot.encode('utf-8')) > 512 * 1024:
+                    raise WorkspaceProblem('The complete submitted context exceeds its storage bound. Reduce the selection.')
+                self.connection.execute('INSERT INTO workbench_answer_context VALUES (?,?,?)',
+                                        (job_id, matter_id, encoded_snapshot))
+            check_authority()
             self._append_answer_event_locked(
                 job_id,
                 state="queued",
@@ -9250,6 +9291,9 @@ class WorkspaceStore:
             ).fetchone()
             if job is None:
                 raise KeyError(job_id)
+            if payload.get('recorded_context_job'):
+                if payload['recorded_context_job'] != job_id or payload.get('recorded_context_attempt') != job['attempts']:
+                    raise WorkspaceProblem('This answer worker was superseded before saving.')
             if job["state"] == "succeeded" and job["result_message_id"]:
                 row = self.connection.execute(
                     "SELECT message_id,conversation_id,ordinal,role,content,payload_json,created_at "
@@ -9345,7 +9389,7 @@ class WorkspaceStore:
             now,
         )
 
-    def fail_answer_job(self, job_id: str, message: str) -> AnswerJobRecord:
+    def fail_answer_job(self, job_id: str, message: str, *, expected_attempt: int | None = None) -> AnswerJobRecord:
         value = self._safe_text(
             message, label="Answer status", maximum=240, required=False
         ) or "The answer could not be completed. Try again."
@@ -9356,6 +9400,8 @@ class WorkspaceStore:
             ).fetchone()
             if row is None:
                 raise KeyError(job_id)
+            if expected_attempt is not None and row['attempts'] != expected_attempt:
+                return self._answer_job(row)
             if row["state"] != "running":
                 return self._answer_job(row)
             cancelled = bool(row["cancellation_requested"])

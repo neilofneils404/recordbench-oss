@@ -181,3 +181,24 @@ session maintenance retains its existing behavior. Rendered previews/conflicts
 are reauthorized before return. Administrator visibility remains read-only
 without membership. CSRF applies to selection writes; GET does not create
 selection or knowledge state. B calls no model and changes no answer inputs.
+
+## Recorded context in focused answers
+
+Continuity C is explicit opt-in on the existing queued focused-answer route.
+The existing source-then-control lock order binds the approved selection to the
+request key. Replays return that snapshot. Source-set membership, every required
+original, current principal/provider authority, cancellation and worker attempts
+fence dispatch and final save. No write lock extends through inference. Stale
+workers cannot mark a newer worker's answer failed. Historical snapshots are not
+current authority and survive knowledge edits only within the existing matter
+retention boundary.
+
+Typed context is untrusted orientation. It cannot merge identities, confirm
+assertions, change access or supply evidence. Whole supporting/competing groups
+must pass scope, version, kind and budget checks together. The existing verifier
+still applies; C additionally requires each accepted claim/limitation to match a
+contiguous original span, after the existing transcript attribution handling.
+This deliberately limits paraphrasing. Prompt injection fixtures and span checks
+do not prove general model safety or usefulness. Runtime tokenizer and inference
+requests have separate immutable receipts, with actual transport states and
+returned metadata. Credentials/headers and case text never enter general logs.

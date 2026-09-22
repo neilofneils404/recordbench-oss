@@ -347,6 +347,8 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
     def claims(payload, prefix, title, revision, origin, ledger=None, fallback=""):
         if not isinstance(payload, Mapping):
             raise WorkspaceProblem("A saved answer is malformed. Reopen it before compiling a report.")
+        if payload.get('recorded_context_job'):
+            raise WorkspaceProblem('Export this answer with its context-supplied receipt. Report compilation cannot yet preserve that notice; choose different saved work.')
         values = payload.get("claims", [])
         if not isinstance(values, list):
             raise WorkspaceProblem("A saved answer has unreadable findings.")
