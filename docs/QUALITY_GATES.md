@@ -59,7 +59,10 @@ claimed as passes. Fresh full Quality and hosted review outcomes are recorded on
 
 ## Verify a documentation-only run
 
-For a qualifying PR, inspect both the branch-push and pull-request runs:
+For a qualifying same-repository PR, inspect both the branch-push and pull-request
+runs. For a PR from a contributor's fork, the upstream pull-request run is the
+authoritative evidence: no upstream branch-push run is expected, and the fork
+does not need Actions enabled. In the applicable runs, verify:
 
 - `change-scope` reports plain documentation only.
 - `publication-scan` and `secret-scan` both pass.
