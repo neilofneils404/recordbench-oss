@@ -134,7 +134,7 @@ The first full application attempt was deliberately interrupted at **636 passed,
 one skipped** to incorporate the transaction-ownership correction; it is not a
 full-suite pass. Final full-suite and final browser evidence follow below.
 
-## Final implementation evidence and handoff
+## Initial implementation evidence and handoff
 
 Implementation revision: `2567f974d46604c0870131d4f2c1e72bac27fb2a`.
 Persistence/contract commit: `4e6888caa3cd80cbb4aba47d9cb21e30776cbd86`.
@@ -221,13 +221,13 @@ Generation, prompts, retrieval, historical notebook scopes, model behavior,
 deployment and unrelated working-tree edits are unchanged. No push, PR, merge,
 release, installation or deployment was performed.
 
-Outstanding gates: the failed full application result; installed publication
+Outstanding gates at that revision: the failed full application result; installed publication
 clearance; current candidate hosted Quality/maintainer acceptance and authorized
 landing. No hosted review was requested automatically. This is implemented local
 B, **not Done**, a supported release or deployment acceptance. C remains a
 separate unselected task.
 
-**Single next action:** maintainer review of this bounded B diff and its existing
+**Next action recorded at that revision:** maintainer review of this bounded B diff and its existing
 application/publication gate findings, before separately authorizing publication
 and landing. Do not integrate C or bypass either gate to close B.
 
@@ -271,3 +271,49 @@ Executed with the same Python 3.12 environment, synthetic fixtures and `umask 02
 
 Current full-application and outgoing-history results for this follow-up are
 recorded in the subsequent receipt; the previous failures are not waived.
+
+### Current acceptance receipt and handoff
+
+Implementation revision: `fa6df35f1b5058c231bd308756372eca10fb3c92`.
+This receipt is a subsequent documentation-only commit.
+
+The complete application command was executed again against the follow-up:
+
+```console
+umask 022
+PYTHONPATH=src CASE_INTELLIGENCE_STORAGE_RESERVE_GIB=0 python -m pytest -q
+```
+
+Result: **3,268 passed, nine skipped in 800.05 seconds**, exit 0. This includes
+the final deletion assertions added to the role regression. The current local
+application gate passes. The two earlier baseline-reproduced failures did not
+recur; their diagnostic evidence above remains relevant to maintainer review,
+and no unrelated correction was made. The nine skips retain the same opt-in
+PostgreSQL/model and encrypted-backup meanings documented above. The separately
+executed PostgreSQL, encrypted-backup and transcription evidence is from the
+initial implementation; those suites were not repeated for this inspection-only
+follow-up. The baseline-upgrade/clean-restore drill was repeated and passed.
+
+The installed outgoing-history guard was executed against `fa6df35` without a
+push and **blocked**. Its current-tree scanner reports the same eight rule/path
+findings as the untouched implementation-base archive. This is diagnostic, not
+clearance. No deny values, guard settings or dispositions were changed or added
+to the repository. The independent Gitleaks working-tree scan passed with no
+leaks. A read-only `git ls-remote origin refs/heads/main` confirmed public main
+still points to `91a97d2ef2b7d4733551a9189bd9c2c7c50c692c`; no newer upstream
+work needs reconciliation. The original checkout's unrelated work is unchanged.
+
+Local evidence logs for this follow-up: `/tmp/recordbench-context-role-review-application.log`,
+`/tmp/recordbench-context-role-review-focused.log`,
+`/tmp/recordbench-context-role-missing.log`,
+`/tmp/recordbench-context-role-review-suite/summary.json`,
+`/tmp/recordbench-context-role-review-restore.log` and
+`/tmp/recordbench-context-role-review-publication.log`. These are local execution
+artifacts, not committed runtime state or published attachments.
+
+**Outstanding gates and next action:** maintainer disposition of the installed
+publication guard's existing findings, followed by separately authorized
+publication and current-candidate Quality/maintainer landing checks. No push,
+PR, merge, release or deployment occurred. B remains implemented locally,
+**not Done**; saved selections are not consumed by answers. Stop at B; C remains
+a separate task.
