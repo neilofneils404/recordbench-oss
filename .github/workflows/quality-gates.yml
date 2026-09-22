@@ -94,23 +94,26 @@ jobs:
           SCOPE_RESULT: ${{ needs.change-scope.result }}
           PUBLICATION_RESULT: ${{ needs.publication-scan.result }}
         run: test "$SCOPE_RESULT" = success && test "$PUBLICATION_RESULT" = success
-      - name: Record documentation-only acceptance
-        if: ${{ needs.change-scope.outputs.docs_only == 'true' }}
-        run: echo 'Plain documentation only; application tests are not applicable. Publication and secret checks remain required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Check out integration candidate
-        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Verify integration checkout
-        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         env:
           EXPECTED_INTEGRATION_SHA: ${{ github.sha }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"
       - name: Select Python 3.12
-        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install lightweight documentation test dependencies
+        if: ${{ needs.change-scope.outputs.docs_only == 'true' }}
+        run: python -m pip install --disable-pip-version-check 'pytest>=8,<9'
+      - name: Run documentation and scope contracts
+        if: ${{ needs.change-scope.outputs.docs_only == 'true' }}
+        run: python -m pytest -q tests/test_documentation.py tests/test_quality_change_scope.py
+      - name: Record documentation-only acceptance
+        if: ${{ needs.change-scope.outputs.docs_only == 'true' }}
+        run: echo 'Documentation and scope contracts passed; the full application suite is not applicable. Publication and secret checks remain required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Install document and media test dependencies
         if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         run: |

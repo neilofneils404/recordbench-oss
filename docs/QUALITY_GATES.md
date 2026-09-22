@@ -4,8 +4,11 @@ Plain documentation changes do not start the application, PostgreSQL,
 transcription, deployment-contract or browser suites. They still run exact-head
 publication inspection of the complete outgoing history, independent secret
 scanning, and the existing native review policy. The required `application`
-check records that tests are not applicable only after scope classification and
-publication inspection succeed. The other suite jobs report explicitly skipped;
+check runs lightweight documentation and scope contract tests using only pytest,
+then records that the full application suite is not applicable. This preserves
+required-file, release-boundary, security-text and backup/restore documentation
+checks without installing the application or browser dependencies. Scope
+classification and publication inspection must also succeed. The other suite jobs report explicitly skipped;
 this is not a claim that their tests ran. Required check names and branch
 protections remain unchanged.
 
@@ -43,3 +46,12 @@ PostgreSQL report validation and browser-runner failure contracts. Actionlint
 **1.7.7** (checksum-verified upstream archive) accepted the workflow. The generic
 working-tree publication scan passed. Hosted full-suite and documentation-only
 workflow execution remain required evidence before accepting the CI change.
+
+Hosted review identified an obsolete publication-job contract assertion and the
+need to retain documentation contracts on the fast path. Both were corrected.
+The expanded targeted set passed **177 tests in 9.34 seconds**. A fresh virtual
+environment containing only pytest passed the fast-path **32 tests in 1.10
+seconds**; a synthetic missing-README experiment was correctly rejected.
+Actionlint and the generic publication scan passed again. The superseded hosted
+runs were cancelled once the failing contract was identified; they are not
+claimed as passes. The corrected head requires fresh full Quality and review.

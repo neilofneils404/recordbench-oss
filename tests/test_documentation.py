@@ -89,8 +89,14 @@ def test_pull_request_jobs_test_the_merge_and_scan_the_exact_head_separately() -
     )
     exact_ref = "ref: ${{ github.event.pull_request.head.sha || github.sha }}"
     assert workflow.count(exact_ref) == 1
-    assert "path: _publication_head" in workflow
-    assert "working-directory: _publication_head" in workflow
+    publication_job = workflow.split("\n  publication-scan:\n", 1)[1].split("\n  secret-scan:\n", 1)[0]
+    application_job = workflow.split("\n  application:\n", 1)[1].split("\n  postgres-integration:\n", 1)[0]
+    assert exact_ref in publication_job
+    assert exact_ref not in application_job
+    assert "needs: [change-scope, publication-scan]" in application_job
+    assert "EXPECTED_PUBLICATION_SHA:" in publication_job
+    assert "python scripts/check-publication-candidate.py" in publication_job
+    assert "python -m pytest -q tests/test_documentation.py tests/test_quality_change_scope.py" in application_job
     assert workflow.count("EXPECTED_INTEGRATION_SHA: ${{ github.sha }}") == 5
     assert workflow.count('test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"') == 5
     assert "python scripts/check-publication-candidate.py" in workflow
