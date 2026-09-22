@@ -1,8 +1,8 @@
 # Continuity C implementation and acceptance handoff — September 22, 2026
 
-C is implemented locally. Real configured-model acceptance is outstanding; this
-record is not permission to publish, merge, release or deploy, and does not mark C
-Done. The [bounded contract](product-slices/continuity-c-recorded-context.md)
+C is implemented locally. The September 22 follow-up passed real configured-model
+acceptance on the fixed synthetic corpus. Publication, current-head Quality and
+landing remain pending; C is not Done. The [bounded contract](product-slices/continuity-c-recorded-context.md)
 retains the selected scope and limitations.
 
 ## Revisions and prerequisite
@@ -136,7 +136,7 @@ separately here. These facts identify the failure but do not turn that full run
 into a pass. That run began before the final dispatch refinement and the last two
 C regressions were collected; the final 48-test focused run includes them.
 
-## Actual model gate
+## Initial model gate (superseded by the follow-up below)
 
 `python scripts/accept-answer-context-model.py --output RESULT.json` returned
 **exit 2**, `adapter: UnavailableGenerator`, `configured: false`,
@@ -159,6 +159,79 @@ identity separation. The strict exact-span gate and the supported runtime's
 chat-tokenization/usage contract need particular live evaluation. Failure or runtime
 unavailability leaves acceptance outstanding.
 
+## September 22 real-model follow-up
+
+The user authorized continuing acceptance with the existing configured runtime.
+Only the fixed synthetic corpus and a disposable OSS application workspace were
+used. No model, deployment configuration or live application state changed.
+Runtime connection information, exact model artifact/runtime evidence and raw
+receipts remain outside this repository; they are not public attachments.
+
+The first actual run passed disagreement and unsupported-hypothesis checks but
+failed the identity question: the model removed the descriptive phrase from the
+middle of the original sentence, and both attempts failed the unchanged exact-span
+verifier. That is a failed model run, not acceptance. The C-only prompt now
+explicitly requires an intact original sentence, including internal descriptive
+phrases, and repeats that instruction beside the evidence. No verification rule,
+model setting, token budget, source scope or legacy prompt was weakened.
+
+A synthetic regression confirms that an abbreviated identity claim is rejected,
+the intact original succeeds on the single repair, both attempts are recorded,
+and the two same-name identity IDs remain distinct. The focused C/generation
+suite passed **49 tests**. The acceptance script now also opens each citation,
+checks exact original identity/version/digest and wording, requires successful
+jobs, and rejects parcel content in the unrelated-identity answer.
+
+Two subsequent normal-application runs passed all three fixed questions. The
+second used the strengthened citation checks:
+
+| Question | Inspected outcome | Latency |
+| --- | --- | --- |
+| Disputed delivery | Both attributed accounts retained, each citing its own exact original; raw ambiguous date preserved | 3.806 seconds |
+| Same-name museum volunteer | Intact museum/postcard sentence with its own source; no parcel attribution or identity merge | 2.046 seconds |
+| Unsourced helicopter hypothesis | Not supported; no factual claim or citation manufactured from the note | 1.777 seconds |
+
+All three original links returned HTTP 200. Prepared and completed tokenization
+and generation receipts were inspected; admission counts matched actual response
+usage, with input plus reserved output and margin inside the runtime window.
+No repair was needed in either passing run. This is acceptance of these three
+synthetic questions with the observed configured model, not a general model-quality,
+paraphrase, throughput, deployment or supported-release claim. The earlier failure
+and unavailable-runtime attempt remain part of the record.
+
+## Follow-up revisions and final local checks
+
+- Intact-original prompt and strengthened real-model harness: `631ce90f90409370803b1933432247e6feab5226`.
+- Authority-revocation fixture serialization: `6c85121b537b4cb6443a15d8747cc2d2a1b7f30b`.
+
+The follow-up full application run completed with **3,328 passed, nine skipped,
+one failed** in 848.25 seconds. The failure was
+`test_notebook_rechecks_live_local_authority_after_render[True-disable_principal-context]`:
+SQLite reported “cannot commit - no transaction is active” at the fixture's direct
+write. That fixture lacked the workspace lock required by CONTRIBUTING; B's dated
+record already documents the same baseline race. The correction adds the lock to
+that test transaction only; application authorization behavior is unchanged.
+
+After correction, `python -m pytest -q tests/test_matter_knowledge_workflow.py
+tests/test_answer_context.py tests/test_generation.py tests/test_review_acceptance_pack.py
+--tb=short` passed **102 tests** in 76.99 seconds, including the failing parameter
+and all C tests. This focused pass does not relabel the earlier full run as green;
+final-current-head full Quality remains required before landing.
+
+Additional follow-up checks passed: the existing pinned browser's nine B/C checks,
+194 transcription tests, 32 documentation/scope tests, compilation, all Compose
+contracts, whitespace validation, generic publication inspection and independent
+redacted Gitleaks working-tree inspection. An initial documentation command named
+a nonexistent test file and collected no tests; the corrected command using
+`tests/test_quality_change_scope.py` produced the 32-test pass.
+
+The worktree initially inherited an older publication guard. The already-approved
+newer installation retained all prior dispositions and corrected that setup.
+Its outgoing-history inspection now finds only public repository-link literals
+in two C documentation paths. The exact current and historical bytes require a
+narrow owner-approved disposition; private deny terms and generic checks remain
+enabled. No public upload has occurred.
+
 ## Remaining gates and one next action
 
 No C publication, hosted Quality, PR/native approval, merge, release or deployment
@@ -168,7 +241,7 @@ separate inspection. Hosted review remains optional unless a maintainer applies
 `require-hosted-review`. Local diagnostics do not waive current-head Quality or
 branch protections.
 
-**Next action:** run the retained fixed-corpus script with the existing approved
-runtime available through normal application configuration, then review and record
-its actual receipts and semantic outcomes; keep C unaccepted until that model gate
-and current-head Quality/publication/review gates are satisfied.
+**Next action:** complete the final-current-head Quality, outgoing publication
+inspection and review gates, then land C and record its exact upstream acceptance.
+The installed publication preflight currently blocks outgoing history; inspect and
+resolve its exact findings without bypass before any push.

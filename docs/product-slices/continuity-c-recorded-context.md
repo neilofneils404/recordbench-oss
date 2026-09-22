@@ -1,7 +1,8 @@
 # Continuity C — recorded selected context in focused answers
 
 Selected September 22, 2026 by the user after B acceptance. Implemented locally;
-real-model acceptance remains outstanding, not Done. See the
+real configured-model fixed-corpus acceptance passed in the September 22 follow-up;
+publication and upstream landing remain pending, not Done. See the
 [dated acceptance/handoff record](../CONTINUITY_C_ACCEPTANCE_2026-09-22.md).
 Implementation base: `dcee0cfb7912a4289faef5e8646fc33b82da128a`.
 B implementation PR #103 landed at `d21c1d4849b46b8ae85db19b4d2ce80c8a9669a8`;
@@ -41,8 +42,9 @@ itself sends input to the same configured runtime before inference; it is part
 of preparation. The runtime must retain ordinary oversize rejection, with prompt
 truncation disabled. [vLLM's tokenization contract](https://docs.vllm.ai/en/v0.15.1/api/vllm/entrypoints/serve/tokenize/protocol/)
 and [input validation](https://docs.vllm.ai/en/v0.15.1/api/vllm/entrypoints/openai/engine/serving/)
-document these endpoint semantics. Live supported-profile validation remains
-required; deterministic transport tests do not establish model usefulness.
+document these endpoint semantics. The dated follow-up records live
+configured-profile validation; deterministic transport tests alone do not
+establish model usefulness.
 Both endpoints explicitly use `add_generation_prompt=true` and
 `add_special_tokens=false`, matching the documented
 [chat completion defaults](https://docs.vllm.ai/en/v0.15.1/api/vllm/entrypoints/openai/chat_completion/protocol/)
@@ -67,8 +69,9 @@ Acceptance requires synthetic service, HTTP, concurrency, browser and restore
 coverage, current Quality/publication gates, and a small real configured-model
 new-conversation corpus with identity separation, disagreement and unsupported
 claim checks. Runtime unavailability leaves that last gate outstanding rather
-than substituting mocks or another model. No push, merge, release or deployment
-is authorized by this implementation request.
+than substituting mocks or another model. The initial implementation task did
+not authorize publication or deployment; subsequent maintainer authorization
+and the repository publication/review gates govern landing.
 
 Implementation refinement: tokenizer requests are also recorded before transport,
 so an oversize request still exposes what preparation sent. Sixteen runtime
@@ -77,4 +80,7 @@ The normal chat response must report the same input-token count as admission;
 a mismatch retains the completed dispatch but refuses answer acceptance. C adds
 an exact-original-span gate after the existing verifier, including limitations,
 to prevent overlap scoring from importing context-only nouns into facts. Useful
-paraphrase capacity is deliberately constrained and needs real-model acceptance.
+paraphrase capacity is deliberately constrained. Live acceptance caught shortened
+identity wording; explicit intact-sentence instructions now preserve the original
+description while keeping the verifier unchanged. The dated receipt limits the
+passing result to its fixed synthetic corpus.

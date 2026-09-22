@@ -242,7 +242,7 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 12 | **20b — Linux CPU node (B-lite):** fresh Ubuntu 24.04 x86-64 → service account + Docker → `./install` CPU/local/loopback HTTPS → doctor → first-admin browser sign-in and synthetic practice matter | **Done** — [brief](product-slices/20b-linux-cpu-node.md); [5m13s clean-node receipt and green Quality](LINUX_CPU_NODE_ACCEPTANCE_2026-09-19.md) |
 | 13 | **Continuity A:** connect existing Case notes to authoritative saved identities and events/assertions | **Done** — PR #100 at `dd367cc`; [landing receipt](#continuity-a-landing-receipt), Quality **35610419040** |
 | 14 | **Continuity B:** explicit, durable reviewer-owned context selection; no answer integration | **Done** — PR #103 at `d21c1d4`; [landing receipt](#continuity-b-landing-receipt), Quality **35722012792** |
-| 15 | **Continuity C:** explicit selected context in queued focused answers, immutable submission and dispatch receipts | **Implemented locally; acceptance pending** — [handoff](CONTINUITY_C_ACCEPTANCE_2026-09-22.md), real configured-model gate outstanding |
+| 15 | **Continuity C:** explicit selected context in queued focused answers, immutable submission and dispatch receipts | **Implemented locally; acceptance pending** — [handoff](CONTINUITY_C_ACCEPTANCE_2026-09-22.md), fixed-corpus real-model gate passed; publication and landing pending |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 The September 19 landing completes slice 20 under
@@ -251,7 +251,7 @@ The September 19 landing completes slice 20 under
 The bounded **20b B-lite** node path is Done with its dated clean-node and
 Quality receipt. Code-only contribution remains
 `make bootstrap/check`; running the product uses the existing `./install`.
-Continuity A and B are Done. C is Next / in progress; model acceptance and landing are not yet complete.
+Continuity A and B are Done. C is Next / in progress; fixed-corpus model acceptance passed; publication and landing are not yet complete.
 Slice 21, further visual experiments and additional work on PR #34 or PR #87
 remain on hold. High-resolution retrieval work remains
 local and outside this PR. Existing text and transcript support is not native
