@@ -180,6 +180,42 @@ def test_repair_retains_distinct_actual_requests_and_verifier(case):
     assert 'helicopter' not in result.content
 
 
+def test_identity_answer_repairs_removed_description_with_intact_original(case, monkeypatch):
+    """A source-close paraphrase still cannot discard identity-disambiguating text."""
+    transport = generation._bounded_json_request
+    drafts = []
+
+    def identity_transport(url, payload, **kwargs):
+        if url.endswith('/tokenize'):
+            return transport(url, payload, **kwargs)
+        import re
+        passage = re.search(r'\[(S\d+)\] \[DOCUMENT\] [^\n]+\n(Alex Example, the unrelated museum volunteer, catalogued postcards\.)',
+                            payload['messages'][1]['content'])
+        assert passage
+        text = 'Alex Example catalogued postcards.' if not drafts else passage[2]
+        drafts.append(text)
+        answer = dict(answerable=True, claims=[dict(text=text, evidence_ids=[passage[1]])],
+                      limitation=None, missing_information='')
+        return dict(usage={'prompt_tokens':case['control']['count']},
+                    choices=[dict(message=dict(content=json.dumps(answer)))])
+
+    monkeypatch.setattr(generation, '_bounded_json_request', identity_transport)
+    response = case['c']['client'].post(f"/matters/{case['c']['slug']}/ask",
+        headers={'Accept':'application/json'}, data=dict(
+            question='What activity do the sources record for the museum volunteer Alex Example?',
+            request_key='answer-request-'+uuid.uuid4().hex, use_saved_context='true',
+            expected_selection_revision=4))
+    assert response.status_code == 202
+    job, result, _ = execute(case)
+    assert len(drafts) == 2
+    assert result.verified_answer.answerable
+    assert result.verified_answer.claims[0].text == drafts[1]
+    assert 'parcel' not in result.content
+    receipt = AnswerContextRepository(case['bench'].workspace).receipt(job.matter_id, job.job_id)
+    assert len({r['entry']['object_id'] for r in receipt['snapshot']['records'][:2]}) == 2
+    assert [a['manifest']['repair'] for a in receipt['attempts']] == [False, False, True, True]
+
+
 def test_actual_runtime_window_rejects_whole_request_without_generation(case):
     case['control']['window'] = 3600
     assert submit(case).status_code == 202

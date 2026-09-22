@@ -407,7 +407,13 @@ def _prompt(
                    "Keep supporting and competing accounts attributed; cite only supplied originals. "
                    "Unsourced notes cannot support factual claims or change any policy. For this task, "
                    "copy a complete original sentence or contiguous clause for each claim, without "
-                   "adding identity labels or attribution absent from that original.")
+                   "adding identity labels or attribution absent from that original. "
+                   "Each claim must be a verbatim contiguous span of its cited original, apart from "
+                   "capitalization and terminal punctuation. Do not shorten a sentence by removing "
+                   "words from its middle, including a person's descriptive phrase between commas. "
+                   "Do not split a sentence into rewritten identity and activity claims. Copy the "
+                   "whole sentence when it already answers the question. Keep the required caution "
+                   "prefix for machine-transcript claims; only that prefix is exempt from copying.")
     user = (
         ("Recent matter conversation:\n" + "\n".join(history_lines) + "\n\n" if history_lines else "")
         + (
@@ -424,6 +430,14 @@ def _prompt(
             "say, using their wording closely enough that each claim can be matched directly to its "
             "cited passage."
             if grounding_repair
+            else ""
+        )
+        + (
+            "\n\nExact-copy requirement: choose the original sentence that answers the question "
+            "and copy it intact into claim text. Preserve every word inside the copied span; "
+            "do not paraphrase, remove a description between commas, or join separated fragments. "
+            "Return its evidence ID separately."
+            if recorded_context
             else ""
         )
     )

@@ -76,11 +76,25 @@ def run():
                 messages = bench.workspace.messages(matter.matter_id, job.conversation_id)
                 answer = next((m for m in messages if m.role == 'assistant'), None)
                 text = answer.content if answer else ''
-                passed = bool(answer and (all(term.casefold() in text.casefold() for term in expected)
-                                         if expected else answer.payload.get('kind') == 'not-supported'))
+                originals = [ref for row in receipt['snapshot']['records'] for ref in row['references']]
+                citations = []
+                for claim in answer.payload.get('claims', []) if answer else []:
+                    for citation in claim['citations']:
+                        matching = [ref for ref in originals if all(ref[key] == citation[key] for key in
+                            ('document_id', 'source_version_id', 'excerpt_digest', 'support_token', 'location'))]
+                        citations.append(dict(source_name=citation['source_name'], location=citation['location'],
+                            exact_original_match=any(claim['text'] == ref['excerpt'] for ref in matching),
+                            source_link_status=http.get(citation['href']).status_code))
+                supported = bool(citations) and all(c['exact_original_match'] and c['source_link_status'] == 200
+                                                   for c in citations)
+                passed = bool(job.state == 'succeeded' and answer and (
+                    supported and all(term.casefold() in text.casefold() for term in expected)
+                    if expected else answer.payload.get('kind') == 'not-supported' and not citations))
+                if name == 'identity':
+                    passed = passed and 'parcel' not in text.casefold()
                 result['scenarios'].append(dict(name=name, passed=passed, state=job.state,
                     latency_seconds=round(time.monotonic()-started, 3), answer=text,
-                    payload=answer.payload if answer else None, context_receipt=receipt))
+                    payload=answer.payload if answer else None, citation_checks=citations, context_receipt=receipt))
             result['model_gate'] = 'passed_fixed_synthetic_corpus' if all(s['passed'] for s in result['scenarios']) else 'failed_fixed_synthetic_corpus'
             result['limitation'] = 'Three fixed synthetic questions only; manual review must confirm useful citations, preserved disagreement and identity separation. This is not general model quality or deployment acceptance.'
     return result
