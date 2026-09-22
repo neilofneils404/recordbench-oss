@@ -44,8 +44,9 @@ Initial local verification: **171 tests passed in 9.71 seconds** across scope
 classification, publication candidate/history inspection, publication rules,
 PostgreSQL report validation and browser-runner failure contracts. Actionlint
 **1.7.7** (checksum-verified upstream archive) accepted the workflow. The generic
-working-tree publication scan passed. Hosted full-suite and documentation-only
-workflow execution remain required evidence before accepting the CI change.
+working-tree publication scan passed. PR #105 is the implementation review; its
+full Quality runs and the documentation-only follow-up provide the hosted
+execution record.
 
 Hosted review identified an obsolete publication-job contract assertion and the
 need to retain documentation contracts on the fast path. Both were corrected.
@@ -54,4 +55,24 @@ environment containing only pytest passed the fast-path **32 tests in 1.10
 seconds**; a synthetic missing-README experiment was correctly rejected.
 Actionlint and the generic publication scan passed again. The superseded hosted
 runs were cancelled once the failing contract was identified; they are not
-claimed as passes. The corrected head requires fresh full Quality and review.
+claimed as passes. Fresh full Quality and hosted review outcomes are recorded on PR #105.
+
+## Verify a documentation-only run
+
+For a qualifying PR, inspect both the branch-push and pull-request runs:
+
+- `change-scope` reports plain documentation only.
+- `publication-scan` and `secret-scan` both pass.
+- `application` passes its dependency checks and the lightweight documentation
+  and scope tests. It records that the full application suite is not applicable.
+  Application bootstrap, system/media dependency setup, compilation and the
+  full-suite test step are skipped.
+- `postgres-integration`, `transcription`, `deployment-contract` and
+  `synthetic-browser` are skipped without starting their runners or services.
+- The native review-policy status and approval still apply before merge.
+
+After landing, the default-branch push should produce the same outcome. A skipped
+suite is expected only when the scope check proved the documentation allowance;
+it must never be reported as an executed test pass. Record run IDs and observed
+outcomes in the PR rather than creating another receipt commit solely to record
+the preceding receipt's checks.
