@@ -21,6 +21,9 @@ from tests.test_evidence_graph_workflow import connections
 from tests.test_matter_context import add
 from tests.test_matter_notebook import WEB_ACTOR
 
+REAL_JSON_REQUEST = generation._bounded_json_request
+REAL_JSON_GET = generation._bounded_json_get
+
 
 @pytest.fixture
 def case(connections, monkeypatch):
@@ -95,7 +98,15 @@ def test_new_conversation_complete_context_citations_receipts_and_exports(case):
     assert manifest['serialized_utf8_sha256'] == hashlib.sha256(encode_request(manifest['request'])).hexdigest()
     assert manifest['request'] == case['calls'][-1][1]
     assert manifest['budget']['input_tokens'] + 1200 + 256 <= manifest['budget']['runtime_window']
-    assert orientation(receipt['snapshot']) in manifest['request']['messages'][1]['content']
+    supplied_orientation = orientation(receipt['snapshot'], result.citations)
+    assert supplied_orientation in manifest['request']['messages'][1]['content']
+    supplied_accounts = json.loads(supplied_orientation)['records'][2]['accounts']
+    assert {account['stance'] for account in supplied_accounts} == {'supporting', 'competing'}
+    assert len({account['evidence_id'] for account in supplied_accounts}) == 2
+    for account, original in zip(supplied_accounts, event['references']):
+        citation = result.citations[int(account['evidence_id'][1:]) - 1]
+        assert citation.document_id == original['document_id']
+        assert citation.support_token == original['support_token']
     assert manifest['request']['chat_template_kwargs'] == {'enable_thinking':False}
     assert 'helicopter' not in result.content
     assert all(c['document_id'] for c in manifest['admission']['evidence'])
@@ -543,3 +554,59 @@ def test_impossible_group_refused_before_loading_originals():
                  location='Page 1',unit_number=1,excerpt_digest='d',support_token=str(i)) for i in range(13)]
     with pytest.raises(WorkspaceProblem, match='complete selected support group'):
         admit(dict(records=[dict(references=refs)]), (), lambda ref: pytest.fail('Must reject before resolving originals'), ())
+
+
+def test_recorded_wire_matches_actual_local_http_transport(case, monkeypatch):
+    """Use real urllib and HTTP; this tokenizer/model is still explicitly synthetic."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import re
+    wires = []
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+        def reply(self, payload):
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header('Content-Type','application/json')
+            self.send_header('Content-Length',str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def do_GET(self):
+            self.reply(dict(data=[dict(id='synthetic-http-model')]))
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers['Content-Length']))
+            wires.append(body)
+            payload = json.loads(body)
+            if self.path == '/tokenize':
+                self.reply(dict(count=2400,max_model_len=8192,tokens=list(range(2400))))
+                return
+            passages = re.findall(r'\[(S\d+)\] \[DOCUMENT\] [^\n]+\n([^\n]+)', payload['messages'][1]['content'])
+            answer = dict(answerable=True,claims=[dict(text=text,evidence_ids=[identifier]) for identifier,text in passages[:3]],
+                          limitation=None,missing_information='')
+            self.reply(dict(model='synthetic-http-model',usage=dict(prompt_tokens=2400),
+                            choices=[dict(message=dict(content=json.dumps(answer)))]))
+    server = ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread = threading.Thread(target=server.serve_forever,daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setattr(generation,'_bounded_json_request',REAL_JSON_REQUEST)
+        monkeypatch.setattr(generation,'_bounded_json_get',REAL_JSON_GET)
+        case['bench'].generator = GroundedGenerationService(OpenAICompatibleGenerator(
+            f'http://127.0.0.1:{server.server_port}','synthetic-http-model',disable_thinking=True))
+        assert submit(case).status_code == 202
+        job, result, _ = execute(case)
+        assert result.verified_answer.answerable
+        receipt = AnswerContextRepository(case['bench'].workspace).receipt(job.matter_id,job.job_id)
+        assert len(wires) == len(receipt['attempts']) == 2
+        tokenizer_request, generation_request = map(json.loads, wires)
+        for key, expected in (('add_generation_prompt', True), ('add_special_tokens', False)):
+            assert tokenizer_request[key] is generation_request[key] is expected
+        assert tokenizer_request['chat_template_kwargs'] == generation_request['chat_template_kwargs']
+        for wire, attempt in zip(wires,receipt['attempts']):
+            assert wire == attempt['manifest']['serialized_request_utf8'].encode('utf-8')
+            assert hashlib.sha256(wire).hexdigest() == attempt['manifest']['serialized_utf8_sha256']
+            assert attempt['state'] == 'completed'
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

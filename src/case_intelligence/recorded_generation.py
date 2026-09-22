@@ -64,8 +64,13 @@ class RecordedDispatch:
 
     def send(self, client, request, repair):
         from .generation import GenerationUnavailable
+        # Pin the same chat-template controls on both endpoints: relying on
+        # different adapter defaults would invalidate complete-request admission.
+        request['add_generation_prompt'] = True
+        request['add_special_tokens'] = False
         token_request = dict(model=request['model'], messages=request['messages'],
-                             add_generation_prompt=True, add_special_tokens=True)
+                             add_generation_prompt=request['add_generation_prompt'],
+                             add_special_tokens=request['add_special_tokens'])
         if 'chat_template_kwargs' in request:
             token_request['chat_template_kwargs'] = request['chat_template_kwargs']
         try:

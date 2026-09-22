@@ -4654,7 +4654,7 @@ class CaseIntelligenceWorkbench:
                     self._validate_answer_context(matter, job, selected_snapshot)
                     citations, routes, omissions = admit(selected_snapshot, citations,
                         lambda ref: self._context_original(matter, ref), intent.excluded_evidence_kinds)
-                notebook_context = orientation(selected_snapshot)
+                notebook_context = orientation(selected_snapshot, citations)
                 recorded_dispatch = RecordedDispatch(context_repository, job,
                     lambda: self._validate_answer_context(matter, job, selected_snapshot, citations),
                     dict(evidence=[dict(self._workflow_citation_payload(c), **route)

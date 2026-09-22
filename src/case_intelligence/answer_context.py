@@ -42,13 +42,23 @@ def freeze(service, matter_id, actor_id, revision, scope_ids, source_set_id):
     return result
 
 
-def orientation(snapshot):
+def orientation(snapshot, evidence=None):
     from .generation import MAX_WORKING_CONTEXT_CHARS
     # Reference text appears ONLY in the separately verified evidence packet.
+    def account(ref):
+        result = {key: ref[key] for key in ('stance', 'attributed_to') if key in ref}
+        if evidence is not None:
+            matches = [f'S{i}' for i, citation in enumerate(evidence, 1)
+                       if all(getattr(citation, key) == ref[key] for key in
+                              ('document_id', 'source_version_id', 'chunk_id', 'location',
+                               'excerpt_digest', 'support_token'))]
+            if len(matches) != 1:
+                raise WorkspaceProblem('A selected account has no unique admitted original. Repair the selected context before submitting.')
+            result['evidence_id'] = matches[0]
+        return result
     records = [dict(kind=row['entry']['kind'], object_id=row['entry']['object_id'],
                     record=row['record'], roles=row['roles'],
-                    accounts=[{key: ref[key] for key in ('stance', 'attributed_to') if key in ref}
-                              for ref in row['references']]) for row in snapshot['records']]
+                    accounts=[account(ref) for ref in row['references']]) for row in snapshot['records']]
     value = serialized(dict(format=FORMAT, records=records))
     if len(value) > MAX_WORKING_CONTEXT_CHARS:
         raise WorkspaceProblem('Whole selected records exceed the context ceiling. Remove records; no partial record was supplied.')

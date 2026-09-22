@@ -41,6 +41,10 @@ truncation disabled. [vLLM's tokenization contract](https://docs.vllm.ai/en/v0.1
 and [input validation](https://docs.vllm.ai/en/v0.15.1/api/vllm/entrypoints/openai/engine/serving/)
 document these endpoint semantics. Live supported-profile validation remains
 required; deterministic transport tests do not establish model usefulness.
+Both endpoints explicitly use `add_generation_prompt=true` and
+`add_special_tokens=false`, matching the documented
+[chat completion defaults](https://docs.vllm.ai/en/v0.15.1/api/vllm/entrypoints/openai/chat_completion/protocol/)
+without depending on differences between adapter defaults.
 
 “Context supplied” describes application dispatch, not model attention or
 immutable per-response model attestation. Exact request JSON, wire digest, budget,
