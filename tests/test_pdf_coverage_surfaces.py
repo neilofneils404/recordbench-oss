@@ -228,16 +228,16 @@ def test_pdf_coverage_survives_search_answer_and_exports_without_reprocessing(tm
         ledger = FullTextReviewLedger(bench.workspace)
         coverage = ledger.coverage(matter.matter_id, ACTOR, run.run_id)
         assert coverage['processed_characters'] == coverage['inventoried_characters'] > 0
-        assert PDF_COVERAGE_NOTICE in coverage['notice']
+        assert PDF_SAVED_RESULT_NOTICE in coverage['notice']
         page = client.get(f'/matters/{slug}/full-review/{run.run_id}/text')
         assert page.status_code == 200 and PDF_COVERAGE_NOTICE in page.text
         for format_name in ('json', 'csv'):
             exported = client.get(f'/matters/{slug}/full-review/{run.run_id}/text/export', params={'format': format_name})
-            assert exported.status_code == 200 and PDF_COVERAGE_NOTICE in exported.text
+            assert exported.status_code == 200 and PDF_SAVED_RESULT_NOTICE in exported.text
             if format_name == 'json':
                 records = exported.json()['records']
                 method = next(row for row in records if row['record_type'] == 'method')
-                assert PDF_COVERAGE_NOTICE in method['notice']
+                assert PDF_SAVED_RESULT_NOTICE in method['notice']
                 source = next(row for row in records if row['record_type'] == 'source')
                 assert source['extraction_note'] == '1 page ready and searchable'
         bundle = client.get(f'/matters/{slug}/export')

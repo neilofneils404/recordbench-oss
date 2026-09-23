@@ -233,8 +233,9 @@ class FullTextReviewLedger:
             counts['source'].get('unavailable') or counts['source'].get('invalidated') or
             any(counts['unit'].get(state) for state in ('failed','pending','empty','invalidated')))
         notice = 'Every extracted text range has its own recorded outcome. Missing extraction and failed analysis remain separate. Completion does not establish that every relevant fact was recognized.'
-        from .pdf_coverage import PDF_COVERAGE_NOTICE
-        notice += ' ' + PDF_COVERAGE_NOTICE
+        # Conditional wording covers frozen/removed sources without a population scan.
+        from .pdf_coverage import PDF_SAVED_RESULT_NOTICE
+        notice += ' ' + PDF_SAVED_RESULT_NOTICE
         return {'mode': 'full_text', 'policy': json.loads(settings[0]), 'sources': counts['source'], 'units': counts['unit'],
                 'chunks': counts['chunk'], 'inventoried_characters': characters, 'processed_characters': processed,
                 'inventory_complete': unresolved == 0, 'unresolved_inventory_sources': unresolved,
@@ -387,8 +388,8 @@ def _iter_text_export(workspace, matter_id, actor_id, run_id, format_name, *, ad
             method = dict(run)
             method['policy'] = json.loads(method.pop('policy_json'))
             notice = 'Full extracted-text coverage, with overlapping context. Canonical character ranges are not double-counted. Failed, empty, unavailable and invalidated work remains incomplete. Recognition of every relevant fact is not established.'
-            from .pdf_coverage import PDF_COVERAGE_NOTICE
-            notice += ' ' + PDF_COVERAGE_NOTICE
+            from .pdf_coverage import PDF_SAVED_RESULT_NOTICE
+            notice += ' ' + PDF_SAVED_RESULT_NOTICE
             yield {'record_type': 'method', **method, 'notice': notice}
             budget = db.execute('SELECT * FROM workbench_text_review_budget WHERE run_id=?',(run_id,)).fetchone()
             if budget is not None:

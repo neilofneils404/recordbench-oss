@@ -115,6 +115,80 @@ def test_inline_image_is_counted_without_pixel_decoding(tmp_path):
     assert page.image_coverage == pytest.approx(0.64)
 
 
+@pytest.mark.parametrize(("color_space", "color_operator", "paint"), [
+    (b"cs", b"scn", b"f"),
+    (b"CS", b"SCN", b"S"),
+])
+def test_stamped_image_painted_by_pattern_has_unknown_evidence(tmp_path, color_space, color_operator, paint):
+    source = tmp_path / "synthetic-pattern.pdf"
+    stamp = "SYNTHETIC RECEIVED STAMP WITH MANY NATIVE CHARACTERS"
+    _pdf(source, native=stamp)
+    writer = PdfWriter()
+    page = writer.add_page(PdfReader(source).pages[0])
+    resources = page["/Resources"]
+    pattern = _stream(b"q 80 0 0 80 10 10 cm /Scan Do Q")
+    pattern.update({
+        NameObject("/Type"): NameObject("/Pattern"),
+        NameObject("/PatternType"): NumberObject(1),
+        NameObject("/PaintType"): NumberObject(1),
+        NameObject("/TilingType"): NumberObject(1),
+        NameObject("/BBox"): _array([0, 0, 100, 100]),
+        NameObject("/XStep"): NumberObject(100),
+        NameObject("/YStep"): NumberObject(100),
+        NameObject("/Resources"): DictionaryObject({NameObject("/XObject"): resources["/XObject"]}),
+    })
+    resources[NameObject("/Pattern")] = DictionaryObject({NameObject("/Body"): writer._add_object(pattern)})
+    # Only the pattern cell contains an image Do; the page paints the pattern
+    # and then its native stamp. No image bytes need decoding for selection.
+    commands = b"q /Pattern " + color_space + b" /Body " + color_operator + b" 0 0 100 100 re " + paint + b" Q\n"
+    page[NameObject("/Contents")] = writer._add_object(_stream(commands + page.get_contents().get_data()))
+    writer.write(source)
+    extracted, = _read_pages(source)
+    assert extracted.text == stamp
+    assert extracted.image_coverage == 0.0
+    assert extracted.image_evidence_known is False
+
+
+@pytest.mark.parametrize(("color_space", "color_operator"), [(b"cs", b"scn"), (b"CS", b"SCN")])
+def test_numeric_colors_with_native_text_remain_known_without_images(tmp_path, color_space, color_operator):
+    source = tmp_path / "synthetic-numeric-colors.pdf"
+    _pdf(source, b"/DeviceRGB " + color_space + b" 0 0 0 " + color_operator,
+         "Useful native text with ordinary numeric colors.")
+    page, = _read_pages(source)
+    assert page.image_evidence_known is True
+    assert page.image_coverage == 0.0
+
+
+def test_stamped_type3_glyph_image_has_unknown_evidence(tmp_path):
+    source = tmp_path / "synthetic-type3.pdf"
+    stamp = "SYNTHETIC RECEIVED STAMP WITH MANY NATIVE CHARACTERS"
+    _pdf(source, native=stamp)
+    writer = PdfWriter()
+    page = writer.add_page(PdfReader(source).pages[0])
+    resources = page["/Resources"]
+    glyph = _stream(b"1000 0 d0 q 1000 0 0 1000 0 0 cm /Scan Do Q")
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type3"),
+        NameObject("/FontBBox"): _array([0, 0, 1000, 1000]),
+        NameObject("/FontMatrix"): _array([0.001, 0, 0, 0.001, 0, 0]),
+        NameObject("/CharProcs"): DictionaryObject({NameObject("/A"): writer._add_object(glyph)}),
+        NameObject("/Encoding"): DictionaryObject({NameObject("/Differences"): ArrayObject([NumberObject(65), NameObject("/A")])}),
+        NameObject("/FirstChar"): NumberObject(65),
+        NameObject("/LastChar"): NumberObject(65),
+        NameObject("/Widths"): _array([1000]),
+        NameObject("/Resources"): DictionaryObject({NameObject("/XObject"): resources["/XObject"]}),
+    })
+    resources["/Font"][NameObject("/ImageGlyph")] = writer._add_object(font)
+    commands = b"BT /ImageGlyph 80 Tf 10 10 Td (A) Tj ET\n"
+    page[NameObject("/Contents")] = writer._add_object(_stream(commands + page.get_contents().get_data()))
+    writer.write(source)
+    extracted, = _read_pages(source)
+    assert stamp in extracted.text
+    assert extracted.image_coverage == 0.0
+    assert extracted.image_evidence_known is False
+
+
 def test_form_image_placement_uses_form_and_parent_matrices_and_bbox(tmp_path):
     source = tmp_path / "synthetic-form.pdf"
     form = _stream(b"/Scan Do")

@@ -14,6 +14,8 @@ images and nested Form objects. Overlap, skew and nonrectangular clipping can
 cause overestimation. The traversal stops at 50,000 operations, 256 image
 placements, 64 Forms, depth 8 or graphics stack depth 64; unsupported or exhausted
 inspection records unknown evidence.
+Named pattern colors and Type3 fonts also record unknown evidence because their
+paint procedures can contain images outside the inspected page/Form paths.
 
 Expanded OCR selects a page when it has fewer than 20 native alphanumeric
 characters, images cover at least 10 percent of the page, or image evidence is
@@ -51,9 +53,10 @@ intentional blank from an unreadable scan.
 Sources and the source viewer retain this status. Catalog-based PDF coverage
 notices conservatively cover every catalog PDF, including historical sources,
 and reach readiness, exact searches including zero results, questions,
-investigations and their exports. Full-text review analyzes retained text;
-PDF original-content completeness remains unknown even when every extracted
-range was processed. Answer coverage is partial even with zero excluded files;
+investigations and their exports. Full-text review analyzes retained text.
+When PDFs participated, original-content completeness remains unknown even when
+every extracted range was processed. Answer coverage is partial even with zero
+excluded files;
 full-text analysis-gap counters still describe retained-text work, with an
 additional original-PDF completeness caution. Review the original PDF before
 relying on missing terms.
@@ -75,8 +78,9 @@ operation, and source-byte verification remains mandatory.
 ## Regression evidence
 
 The generated synthetic image-PDF suite exercises real ingestion, CPU OCR and
-exact phrase search for long/short stamps, image-only pages, native text, small
-logos, mixed regions/pages and existing text layers. Blank-page exclusions and
+exact phrase search for long/short stamps, image-only pages, pattern-painted
+images, native text, small logos, mixed regions/pages and existing text layers.
+Blank-page exclusions and
 rotated-page selection, native preservation and coverage cautions are also
 checked, along with original bytes, digest, source version, page locators and
 restart behavior. Outcome tests

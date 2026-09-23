@@ -16,7 +16,7 @@ import sys
 import pytest
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (
-    DecodedStreamObject, DictionaryObject, NameObject, NumberObject,
+    ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject,
 )
 
 from case_intelligence import pilot_uploads
@@ -104,6 +104,31 @@ def _image(writer, page, raster, *, width=612, height=792, left=0, bottom=0):
     page[NameObject("/Contents")] = writer._add_object(stream)
 
 
+def _paint_image_as_pattern(writer, page):
+    """Paint the existing raster via a colored tiling pattern, not a page Do."""
+    resources = page["/Resources"]
+    pattern = DecodedStreamObject()
+    pattern.set_data(page.get_contents().get_data())
+    pattern.update({
+        NameObject("/Type"): NameObject("/Pattern"),
+        NameObject("/PatternType"): NumberObject(1),
+        NameObject("/PaintType"): NumberObject(1),
+        NameObject("/TilingType"): NumberObject(1),
+        NameObject("/BBox"): ArrayObject([NumberObject(value) for value in (0, 0, 612, 792)]),
+        NameObject("/XStep"): NumberObject(612),
+        NameObject("/YStep"): NumberObject(792),
+        NameObject("/Resources"): DictionaryObject({
+            NameObject("/XObject"): resources.pop(NameObject("/XObject")),
+        }),
+    })
+    resources[NameObject("/Pattern")] = DictionaryObject({
+        NameObject("/ScannedBody"): writer._add_object(pattern),
+    })
+    stream = DecodedStreamObject()
+    stream.set_data(b"q /Pattern cs /ScannedBody scn 0 0 612 792 re f Q")
+    page[NameObject("/Contents")] = writer._add_object(stream)
+
+
 def synthetic_image_pdf(tmp_path, pages, *, pdftoppm=_PDFTOPPM):
     """Build final image/native pages; images contain no PDF text operators.
 
@@ -122,6 +147,8 @@ def synthetic_image_pdf(tmp_path, pages, *, pdftoppm=_PDFTOPPM):
                 left=specification.get("image_left", 0),
                 bottom=specification.get("image_bottom", 0),
             )
+            if specification.get("pattern"):
+                _paint_image_as_pattern(writer, page)
         elif specification.get("logo"):
             _image(writer, page, (16, 16, b"\x00" * 256), width=28, height=28, left=545, bottom=735)
         if specification.get("native"):
@@ -166,6 +193,26 @@ def test_stamped_scan_ingest_recovers_image_body_and_preserves_native_stamp(tmp_
     store, document = _ingest(tmp_path, monkeypatch, payload)
     _assert_phrase(document, "cobalt meadow", 1)
     _assert_phrase(document, stamp[0], 1)
+    assert document.digest == hashlib.sha256(payload).hexdigest()
+    assert (store.files / document.stored_name).read_bytes() == payload
+
+
+@_REAL_OCR
+def test_pattern_painted_scan_reaches_exact_search_and_preserves_long_stamp(tmp_path, monkeypatch):
+    stamp = "SYNTHETIC LONG PATTERN STAMP WITH MANY NATIVE CHARACTERS"
+    payload = synthetic_image_pdf(tmp_path, [{
+        "image": "indigo valley", "pattern": True, "native": [stamp],
+    }])
+    page = PdfReader(io.BytesIO(payload)).pages[0]
+    assert "/Pattern" in page["/Resources"]
+    assert "/XObject" not in page["/Resources"]
+    assert "indigo valley" not in page.extract_text()
+    assert stamp in page.extract_text()
+    store, document = _ingest(tmp_path, monkeypatch, payload)
+    _assert_phrase(document, "indigo valley", 1)
+    _assert_phrase(document, stamp, 1)
+    assert "OCR attempted on 1" in document.message
+    assert "Complete page reading is not established" in document.message
     assert document.digest == hashlib.sha256(payload).hexdigest()
     assert (store.files / document.stored_name).read_bytes() == payload
 

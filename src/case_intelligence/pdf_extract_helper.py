@@ -64,7 +64,7 @@ def page_image_evidence(page: object, reader: object) -> tuple[float, bool]:
     Page rotation does not change the fraction of the page occupied by an image.
     Parsing itself remains inside the existing resource-limited child process.
     """
-    from pypdf.generic import ContentStream, DictionaryObject
+    from pypdf.generic import ContentStream, DictionaryObject, NameObject
 
     area = 0.0
     operations = placements = forms = 0
@@ -90,6 +90,21 @@ def page_image_evidence(page: object, reader: object) -> tuple[float, bool]:
                 matrix = stack.pop()
             elif operator == b"cm":
                 matrix = _compose(_numbers(operands, 6), matrix)
+            elif operator in {b"scn", b"SCN"} and any(
+                isinstance(operand, NameObject) for operand in operands
+            ):
+                # A named pattern can paint images without any page-level Do.
+                # Do not decode or expand its repeated cells merely to select
+                # OCR. Numeric colors alone do not imply a pattern.
+                raise ValueError("pattern image evidence is unknown")
+            elif operator == b"Tf":
+                if len(operands) != 2:
+                    raise ValueError("invalid font reference")
+                font = resources["/Font"][operands[0]].get_object()
+                if font.get("/Subtype") == "/Type3":
+                    # Type3 glyph programs can paint images, too. Their text
+                    # extraction does not establish absence of image content.
+                    raise ValueError("glyph image evidence is unknown")
             elif operator in {b"Do", b"INLINE IMAGE"}:
                 if operator == b"Do":
                     if len(operands) != 1:
