@@ -325,7 +325,7 @@
                 {% if message.payload.modality_coverage %}
                 <div class="answer-source-coverage" role="note">
                   <strong>Requested source coverage · {{ message.payload.modality_coverage.mode|title }}</strong>
-                  <p>{{ message.payload.modality_coverage.notice }}</p>
+                  <p>{{ modality_coverage_notice(message.payload.modality_coverage.notice) }}</p>
                 </div>
                 {% endif %}
                   {% if message.payload.context_supplied %}
@@ -398,7 +398,7 @@
                   {% if message.payload.source_matches %}
                   <div class="answer-source-matches">
                     <strong>Related source passages</strong>
-                    <p>These passages were retrieved from this matter, but they are not presented as a verified generated answer.</p>
+                    <p>These retrieved passages need direct review; no generated answer is shown.</p>
                     <div class="citation-list">
                       {% for citation in message.payload.source_matches %}
                       <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>

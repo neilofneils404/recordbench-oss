@@ -41,3 +41,38 @@ def research_content(value: object, answer: object) -> str:
     text = value if isinstance(value, str) else ""
     introduction = answer.get("introduction", "") if isinstance(answer, Mapping) else ""
     return answer_content(text, introduction) if isinstance(introduction, str) else text
+
+
+def modality_coverage_notice(value: object) -> str:
+    """Present exact historical generated notices without altering saved receipts.
+
+    Only complete known boilerplate in the modality-notice field is replaced;
+    quoted wording, extensions, and custom notices retain their original text.
+    """
+    if not isinstance(value, str):
+        return ""
+    for names in ("written", "spoken", "written and spoken"):
+        if value == f"This answer includes source-verified {names} support.":
+            return (f"This answer cites {names} passages. "
+                "Check each claim against the original sources.")
+        if value == (
+            f"This result is partial: {names} evidence reached the answer packet, but "
+            f"no source-verified {names} claim was retained. Review the matching source "
+            "or refine the question before treating the comparison as complete."
+        ):
+            return (
+                f"This result is partial: {names} evidence reached the answer packet, but "
+                "no generated claim citing those passages was retained. Review the matching source "
+                "or refine the question before treating the comparison as complete."
+            )
+        if value == (
+            f"This result is partial: no matching {names} evidence was retrieved in "
+            "the selected passages. Review the supported result and search that source "
+            "type directly before treating the comparison as complete."
+        ):
+            return (
+                f"This result is partial: no matching {names} evidence was retrieved in "
+                "the selected passages. Review the generated result and search that source "
+                "type directly before treating the comparison as complete."
+            )
+    return value

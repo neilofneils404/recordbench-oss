@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from html import escape as xml_escape
 from typing import Mapping, Sequence
 
-from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, research_content
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, modality_coverage_notice, research_content
 from .branding import PRODUCT_NAME
 from .workspace_store import (
     ConversationRecord,
@@ -633,6 +633,11 @@ def _answer_blocks(message: MessageRecord) -> list[ExportBlock]:
                 else "Answer basis"
             )
             blocks.append(ExportBlock(f"{prefix}: {scope_notice}", "note"))
+    modality = payload.get("modality_coverage")
+    if isinstance(modality, Mapping):
+        notice = _plain(modality_coverage_notice(modality.get("notice")))
+        if notice:
+            blocks.append(ExportBlock(f"Requested source coverage: {notice}", "note"))
     if kind == "generated":
         blocks.append(ExportBlock(GENERATED_REVIEW_NOTICE, "note"))
         introduction = answer_introduction(_plain(payload.get("introduction")))
@@ -1256,7 +1261,7 @@ def export_research(
                     "result": "Complete"
                     if modality.get("mode") == "complete"
                     else "Partial",
-                    "notice": _plain(modality.get("notice")),
+                    "notice": _plain(modality_coverage_notice(modality.get("notice"))),
                 }
 
         coverage = result.get("coverage")
@@ -1381,6 +1386,11 @@ def export_research(
     evidence_notice = _plain((result.get("answer") or {}).get("evidence_notice"))
     if evidence_notice:
         blocks.append(ExportBlock(evidence_notice, "note"))
+    modality = (result.get("answer") or {}).get("modality_coverage")
+    if isinstance(modality, Mapping):
+        notice = _plain(modality_coverage_notice(modality.get("notice")))
+        if notice:
+            blocks.append(ExportBlock(f"Requested source coverage: {notice}", "note"))
     hierarchy = result.get("hierarchical_synthesis")
     if isinstance(hierarchy, Mapping):
         from .hierarchical_synthesis import synthesis_notice
@@ -1723,7 +1733,7 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
                     modality_coverage.get("missing_evidence_kinds"), list
                 )
                 else [],
-                "notice": _plain(modality_coverage.get("notice")),
+                "notice": _plain(modality_coverage_notice(modality_coverage.get("notice"))),
             }
         result["answer"] = {
             "review_notice": GENERATED_REVIEW_NOTICE if payload.get("kind") == "generated" else "",

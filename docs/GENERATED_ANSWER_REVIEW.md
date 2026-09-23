@@ -33,6 +33,16 @@ to Reports carry the generated-text notice; the saved investigation, claims,
 citations and source bytes remain unchanged. Research instructions and progress
 describe citation/text checks, not verified meaning.
 
+Written/spoken coverage notices describe which passages were cited or absent;
+complete coverage does not establish that the generated claims are correct.
+Known historical coverage notices receive the same wording in saved-answer and
+research views, readable exports and portable JSON. This changes presentation
+only: saved notices, coverage metrics and evidence remain unchanged, and custom
+notices are preserved. Assistant readiness means sources can be used for an
+answer, not that a future answer will preserve their meaning. New compiled Report
+coverage labels answer-service calls as attempts, including unavailable or
+rejected calls; older saved Report text remains historical content.
+
 Use each claim's citation to open the source and compare the wording, participant
 roles, qualifications and surrounding context. Multiple citations do not establish
 that their details belong to the same event. For transcripts, check the recording
@@ -45,7 +55,8 @@ It does not change the generator, verifier acceptance algorithm, citation basis,
 or storage schema. Direct inline excerpt comparison and real-model evaluation
 remain separate sections with their own acceptance evidence. Saved research
 records and human-authored text remain historical content; only known generated
-leading introductions and the surrounding review notice receive current presentation.
+leading introductions, coverage notices and surrounding review guidance receive
+current presentation.
 
 ## Synthetic regression
 
@@ -65,3 +76,10 @@ extracted source units must remain byte-for-byte/equality unchanged. Mismatched
 raw introductions, summary claims and per-search findings are refused by exports
 and Report copies and hidden on the research page, even when presentation would
 otherwise make two inconsistent saved strings look identical.
+
+`tests/test_modality_confidence_presentation.py` checks complete, partial and
+unavailable coverage in new responses and historical views/exports, with unchanged
+raw payloads, source bytes and ledgers. Exact-match and custom-notice controls
+prevent rewriting quoted or reviewer-authored text.
+`tests/test_generated_workflow_confidence.py` covers the ready assistant, served
+readiness script, retrieved-passage abstention and unavailable compilation calls.

@@ -648,7 +648,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     category_counts = "; ".join(f"{category}: {sum(category in values for values in source_categories.values())} of {len(source_rows)}"
                                 for category, _question in queries)
     ledger = (f"Selected saved work: {len(selected_work)}. Expanded findings compiled: {len(selected)} of {len(materials)}. "
-              f"Mode: {status.replace('_', ' ')}. Verified answer-service calls: {calls}; source passages analyzed in all required categories: {len(analyzed)} of {len(source_rows)}. "
+              f"Mode: {status.replace('_', ' ')}. Answer-service calls attempted: {calls}; source passages analyzed in all required categories: {len(analyzed)} of {len(source_rows)}. "
               f"Source category checks: {category_counts}. "
               f"Uncompiled saved items: {len(uncompiled_materials)}; omitted saved items: {len(omitted_materials)}; omitted sections: {omitted_sections}; "
               f"unavailable model calls: {unavailable}; rejected answer-service calls: {rejected_calls}; "

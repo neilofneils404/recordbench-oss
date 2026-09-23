@@ -9,6 +9,32 @@ matter through **Case team**.
 RecordBench has three deployment modes. All use opaque server-side sessions,
 CSRF protection, explicit matter membership, and attributed audit events.
 
+## Explicit startup mode
+
+The app factory, identity service and workbench CLI require an explicit
+`CASE_INTELLIGENCE_AUTH_MODE` (or the factory's `auth_mode` argument). Missing,
+empty and unknown modes stop startup before the app initializes runtime state.
+An explicitly empty argument does not fall back to the environment. Installed
+Compose operation sets `RECORDBENCH_ALLOW_CONTAINER_BIND=1` and accepts only
+`local`, `oidc` or `kerberos`, including when manually restarted on loopback.
+The existing secure-cookie and provider configuration checks still apply.
+
+For deliberate synthetic development only, use:
+
+```console
+CASE_INTELLIGENCE_AUTH_MODE=preview recordbench-workbench --host 127.0.0.1
+```
+
+`test` is also an explicit isolated test mode. Both development modes deny
+non-loopback HTTP clients before login, identity selection or matter access;
+the in-process TestClient peer remains available to synthetic tests. Do not
+reverse-proxy a development listener or expose it to staff. The supported CLI
+ignores forwarded peer headers; installed Kerberos identity still requires its
+separate authenticated proxy secret and group checks.
+
+Doctor compares saved and effective authentication without adding auth details
+to `/health`; see [authentication diagnostics](AUTHENTICATION_DIAGNOSTICS.md).
+
 ## Local accounts
 
 Local mode stores only Argon2id password hashes in an owner-only JSON file. The

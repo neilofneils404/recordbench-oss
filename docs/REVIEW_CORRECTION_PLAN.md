@@ -1,12 +1,14 @@
 # Independent review correction plan
 
 Status snapshot, September 23, 2026: seven portable correction packets have
-standalone CI receipts. **#112 is merged** at
-`0534e5c1a508d916d667588ad9886b0292e02702`; the other six remain draft and open.
+standalone CI receipts. **#112 and #111 are merged**; protected main is now
+`2d066094d36d2ed7ac368c8d7c8654b8b39d0772`. The other five remain draft and open.
 The packet heads below record the initial integration audit; follow-up corrections
 and base updates require fresh receipts.
 Integration review and final-candidate validation are in progress. Independent
-local security review and genuine full-head maintainer acceptance remain required.
+local security review remains required. The maintainer has explicitly authorized
+sequential merges once the technical review, CI and publication gates pass;
+additional per-commit confirmation is not required.
 Hosted security review is not required for this correction series, following the
 maintainer's revised instruction after no verifiable security result. Track the
 bounded packets and remaining product acceptance in
@@ -17,8 +19,9 @@ Authoritative planning baseline: GitHub OSS `main` at
 `a33d93b5302fc0f726f361ae2e3341883a4bdd77`, verified with `git ls-remote` and
 an isolated fresh checkout. This is exactly the external review's commit.
 The seven standalone packets started from that same revision. Protected main
-subsequently advanced to `0534e5c1a508d916d667588ad9886b0292e02702` through #112's
-accepted, guarded fast-forward at 14:34 UTC on September 23. Refresh GitHub and
+subsequently advanced through #112 at 14:34 UTC and #111 at 15:07 UTC on
+September 23, both accepted, guarded fast-forwards. Current main is
+`2d066094d36d2ed7ac368c8d7c8654b8b39d0772`. Refresh GitHub and
 record the actual base and candidate before each update or merge, preserving
 unrelated work. The receipts below do not validate later corrections, base updates,
 or the future combined candidate.
@@ -90,7 +93,9 @@ before a ready transition; required checks and branch protections are unchanged.
 
 This integration still requires final-head hosted **code** review, a documented
 independent **local security** review, reconciled findings, required CI,
-publication inspection and genuine full-head maintainer acceptance. The optional
+publication inspection and the maintainer's standing merge authorization. Record
+each actual full head and its evidence before merging; this authorization does
+not assert independent human inspection of every later revision. The optional
 policy bot approval records policy eligibility only; it substitutes for none of
 those reviews. Keep each PR draft until its actual candidate meets these gates.
 Use the [public-alpha](PUBLIC_ALPHA.md) policy for any future strict hosted-review
@@ -127,8 +132,18 @@ the corresponding change is merged.
   records. A subsequent GET-path correction validates all succeeded legacy/current
   results before presentation and hides malformed derived text without rewriting
   storage. Three raw-mismatch GET cases failed before that guard; 185 related
-  research/synthesis/report/confidence/documentation checks now pass. Fresh review
-  and CI must replace the earlier-head receipts before merge.
+  research/synthesis/report/confidence/documentation checks passed on that head.
+  Further review identified written/spoken coverage notices that still promised
+  source verification. Current and exact historical notices now describe cited
+  passages without changing saved evidence or coverage metrics. Assistant readiness
+  guidance and new compiled Report call counts also use bounded wording. The
+  candidate incorporates accepted #112/#111 main. Its focused integration runs
+  passed 217 research/report checks and 764 authentication/retention checks, with
+  one optional encrypted-backup integration skip. Both restore drills passed.
+  Independent review passed 90 targeted regressions plus 256 differential coverage
+  cases without changing any non-notice metric. These overlapping runs are scoped
+  evidence; fresh final-head review and Linux CI must replace earlier-head receipts
+  before merge.
 
 - **[#111](https://github.com/neilofneils404/recordbench-oss/pull/111) — R5 retention/recovery.**
   Serializes purge, work admission, extension and retry checks; includes synthetic clean-restore evidence and an expired-matter recovery runbook. Retention policy is unchanged.
@@ -139,8 +154,15 @@ the corresponding change is merged.
   Updated candidate `2d066094d36d2ed7ac368c8d7c8654b8b39d0772` incorporates accepted
   #112 main without conflicts. Its 764 combined checks passed with one optional
   encrypted-backup integration skip; both restore drills and independent local
-  integration/security review passed. Current-head CI/code review and acceptance
-  remain required; the links above describe the original standalone head.
+  integration/security review passed. **Merged at this updated head** after
+  explicit maintainer acceptance. Both final application suites passed 3,448
+  tests with nine skips. The PR browser run had two navigation/scroll wait
+  failures while the byte-identical push tree passed; one targeted retry passed
+  all nine journeys without changing assertions or timeouts. See updated
+  [push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35876182108),
+  [PR Quality, attempt 2](https://github.com/neilofneils404/recordbench-oss/actions/runs/35876192930/attempts/2),
+  and [code review](https://github.com/neilofneils404/recordbench-oss/pull/111#issuecomment-5797035751).
+  The earlier links above describe the original standalone head.
 
 - **[#112](https://github.com/neilofneils404/recordbench-oss/pull/112) — R3/R6 authentication/cache.**
   Requires explicit auth, restricts preview/test access, checks effective installed mode, and exercises actual account-writer changes. Overlayfs/tmpfs and installed providers remain open.

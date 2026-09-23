@@ -55,7 +55,7 @@
             {% if message.payload.review_scope.collection_wide_request or message.payload.review_scope.broad_summary_request %}<span>{{ message.payload.review_scope.notice }}</span>{% endif %}
           </small>
           {% endif %}
-          {% if message.payload.modality_coverage %}<small class="assistant-answer-coverage">Requested source coverage · {{ message.payload.modality_coverage.notice }}</small>{% endif %}
+          {% if message.payload.modality_coverage %}<small class="assistant-answer-coverage">Requested source coverage · {{ modality_coverage_notice(message.payload.modality_coverage.notice) }}</small>{% endif %}
           {% if message.payload.recorded_context_job %}<p><a href="/matters/{{ matter.slug }}/answer-jobs/{{ message.payload.recorded_context_job }}/context">Context supplied for this answer</a> · As submitted; inspect current changes and dispatch attempts. This is not proof of model attention.</p>{% endif %}
           {% if message.payload.kind == 'generated' %}
             <p>{{ answer_introduction(message.payload.introduction) }}</p>
@@ -132,7 +132,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-3.2-7.3L3 10.5 21 3Zm-10.7 10.7L15 9"/></svg>
         </button>
       </div>
-      <small data-assistant-readiness-hint>{% if assistant.readiness.partial_query %}{{ assistant.readiness.coverage_notice }}{% elif assistant.matter_ready %}Answers stay grounded in the selected matter sources.{% elif assistant.readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ assistant.readiness.guidance }}{% endif %}</small>
+      <small data-assistant-readiness-hint>{% if assistant.readiness.partial_query %}{{ assistant.readiness.coverage_notice }}{% elif assistant.matter_ready %}Generated answers use selected passages; check claims against the original sources.{% elif assistant.readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ assistant.readiness.guidance }}{% endif %}</small>
     </form>
   </div>
 </aside>
