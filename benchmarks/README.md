@@ -105,3 +105,12 @@ snapshot. The speaker test-node, media helper-file, and aggregate content digest
 were refreshed together. Case definitions, case fingerprint, expected speaker
 behavior, and fixture bytes are unchanged. Receipts remain distinguishable by
 content fingerprint; the integrity checks still reject undeclared changes.
+
+September 23, 2026 OCR receipt correction: the bounded-page OCR regression now
+returns the typed OCR outcome from its injected recognizer and checks the new
+coverage message. Its generated text and exact page-locator assertions remain
+unchanged. The affected test-node, upload-test file, and aggregate content
+digests were refreshed together. The schema, pack identifier, case definitions,
+case fingerprint, and fixture bytes are unchanged; the content fingerprint
+distinguishes these test bytes from earlier receipts. The integrity checks still
+reject undeclared test or fixture changes.
