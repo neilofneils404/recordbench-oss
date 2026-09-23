@@ -168,7 +168,8 @@
         {% endif %}
       {% if active_research.state == 'succeeded' and not research_stale and not research_synthesis_invalid %}
       <section class="research-result">
-        <header class="workflow-section-heading"><div><p class="eyebrow">Verified synthesis</p><h2>{{ "Full-text synthesis" if full_text_synthesis else "Investigation brief" }}</h2></div></header>
+        <header class="workflow-section-heading"><div><p class="eyebrow">Generated synthesis · needs review</p><h2>{{ "Full-text synthesis" if full_text_synthesis else "Investigation brief" }}</h2></div></header>
+        <p class="workflow-caution" role="note">{{ generated_review_notice }}</p>
         <nav class="workflow-completion-bar" aria-label="Completed synthesis actions">
           <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>{{ "Synthesis ready" if full_text_synthesis else "Investigation ready" }}</strong><small>{{ active_research.result.evidence|length }} supporting passage{% if active_research.result.evidence|length != 1 %}s{% endif %}</small></span></span>
           <a href="#research-support">Review support</a>

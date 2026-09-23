@@ -43,6 +43,7 @@ from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_introduction
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
 from .exact_search import QuerySyntaxError, parse_query
 from .exact_search_results import (
@@ -283,7 +284,7 @@ ANSWER_STAGE_MESSAGES = {
     "reranking": "Comparing matching passages for relevance.",
     "generating": "Drafting only from the selected case support.",
     "repairing": "Rewriting the draft in source-close language for verification.",
-    "verifying": "Checking every claim and citation against the retrieved record.",
+    "verifying": "Checking citation references and text consistency; meaning still needs human review.",
 }
 
 
@@ -6114,6 +6115,8 @@ def create_workbench_app(
     app.state.identity = identity
     templates = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
     templates.env.globals.update(
+        answer_introduction=answer_introduction,
+        generated_review_notice=GENERATED_REVIEW_NOTICE,
         product_name=PRODUCT_NAME,
         product_tagline=PRODUCT_TAGLINE,
         citation_href=_workspace_citation_href,

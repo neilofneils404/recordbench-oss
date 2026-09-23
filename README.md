@@ -167,8 +167,10 @@ separate because it freezes a population and produces one decision per source.
    passages, combines keyword and semantic results, and reranks the candidates
    for the question being asked.
 5. **Answering:** A local generation model answers from the selected material.
-   RecordBench checks source support, shows citations and collection coverage,
-   and reports important limitations instead of hiding them.
+   RecordBench checks citation references and text consistency, shows citations
+   and collection coverage, and reports important limitations instead of hiding
+   them. These checks do not establish that generated claims are correct;
+   [review each claim against the originals](docs/GENERATED_ANSWER_REVIEW.md).
 6. **Human work product:** The reviewer can inspect the source, save useful
    material, export it, or correct machine-generated transcript labels before
    anything is treated as finished work.

@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Protocol, Sequence
 from urllib.parse import urlparse
 
+from .answer_presentation import (
+    GENERATED_ANSWER_INTRODUCTION,
+    GENERATED_TRANSCRIPT_INTRODUCTION,
+)
 from .review_budget import DEFAULT_REVIEW_BUDGET
 from .review_quality import answer_advances_objective, classify_question
 from .service_endpoints import validate_service_endpoint
@@ -1332,17 +1336,9 @@ class GroundedGenerationService:
             for claim in accepted
         )
         introduction = (
-            (
-                "The machine transcript supports this orientation:"
-                if len(accepted) == 1
-                else "The machine transcript supports these orientation points:"
-            )
+            GENERATED_TRANSCRIPT_INTRODUCTION
             if transcript_only_claims
-            else (
-                "The searchable sources support this answer:"
-                if len(accepted) == 1
-                else "The searchable sources support these findings:"
-            )
+            else GENERATED_ANSWER_INTRODUCTION
         )
         source_limitation = limitation
         verification_notice = ""

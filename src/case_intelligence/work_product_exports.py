@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from html import escape as xml_escape
 from typing import Mapping, Sequence
 
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_introduction
 from .branding import PRODUCT_NAME
 from .workspace_store import (
     ConversationRecord,
@@ -633,7 +634,8 @@ def _answer_blocks(message: MessageRecord) -> list[ExportBlock]:
             )
             blocks.append(ExportBlock(f"{prefix}: {scope_notice}", "note"))
     if kind == "generated":
-        introduction = _plain(payload.get("introduction"))
+        blocks.append(ExportBlock(GENERATED_REVIEW_NOTICE, "note"))
+        introduction = answer_introduction(_plain(payload.get("introduction")))
         if introduction:
             blocks.append(ExportBlock(introduction))
         evidence_notice = _plain(payload.get("evidence_notice"))
@@ -1322,6 +1324,7 @@ def export_research(
                 "exported_at": created,
                 "matter": {"name": matter.display_name},
                 "investigation": {
+                    "review_notice": GENERATED_REVIEW_NOTICE,
                     "title": job.title,
                     "question": job.question,
                     "status": job.state.replace("_", " ").title(),
@@ -1370,7 +1373,11 @@ def export_research(
         blocks.append(ExportBlock(json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2), "metadata"))
     summary = _plain(result.get("summary"))
     if summary:
-        blocks.extend((ExportBlock("Verified synthesis", "heading1"), ExportBlock(summary)))
+        blocks.extend((
+            ExportBlock("Generated synthesis · needs review", "heading1"),
+            ExportBlock(GENERATED_REVIEW_NOTICE, "note"),
+            ExportBlock(summary),
+        ))
     evidence_notice = _plain((result.get("answer") or {}).get("evidence_notice"))
     if evidence_notice:
         blocks.append(ExportBlock(evidence_notice, "note"))
@@ -1717,8 +1724,9 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
                 "notice": _plain(modality_coverage.get("notice")),
             }
         result["answer"] = {
+            "review_notice": GENERATED_REVIEW_NOTICE if payload.get("kind") == "generated" else "",
             "kind": payload.get("kind") if payload.get("kind") in {"generated", "not-supported", "error"} else "saved",
-            "introduction": _plain(payload.get("introduction")),
+            "introduction": answer_introduction(_plain(payload.get("introduction"))),
             "claims": [
                 {
                     "text": _plain(claim.get("text")),

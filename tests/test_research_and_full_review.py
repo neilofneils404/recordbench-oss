@@ -1162,7 +1162,7 @@ def test_review_workspace_runs_exports_and_final_bundle_include_new_work_product
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             research_result = client.get(research_url)
-            if "Verified synthesis" in research_result.text:
+            if 'aria-label="Completed synthesis actions"' in research_result.text:
                 break
             time.sleep(0.02)
         assert "Evidence record" in research_result.text
