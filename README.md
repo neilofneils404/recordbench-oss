@@ -167,14 +167,24 @@ separate because it freezes a population and produces one decision per source.
    passages, combines keyword and semantic results, and reranks the candidates
    for the question being asked.
 5. **Answering:** A local generation model answers from the selected material.
-   RecordBench checks source support, shows citations and collection coverage,
-   and reports important limitations instead of hiding them.
+   RecordBench checks citation references and text consistency, shows citations
+   and collection coverage, and reports important limitations instead of hiding
+   them. These checks do not establish that generated claims are correct;
+   [review each claim against the originals](docs/GENERATED_ANSWER_REVIEW.md).
 6. **Human work product:** The reviewer can inspect the source, save useful
    material, export it, or correct machine-generated transcript labels before
    anything is treated as finished work.
 
 A failed source remains visible and is excluded from searching until repaired;
 it does not prevent the rest of the matter from being used.
+
+This revision includes seven portable corrections covering answer confidence,
+authentication, retention safety, source-text presentation, PDF OCR coverage,
+cited-excerpt comparison, and a frozen claim-evaluation harness. The
+[independent review correction plan](docs/REVIEW_CORRECTION_PLAN.md) links their
+implementation and review records and tracks the remaining installed, model,
+recovery, and policy acceptance work. These changes do not close
+[issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109).
 
 ## What RecordBench uses
 
@@ -189,7 +199,7 @@ information live in [`config/models.json`](config/models.json).
 | **Tesseract and Poppler** | Render and OCR scanned PDF pages and image evidence. |
 | **Granite Embedding English R2** | Converts passages and questions into vectors for meaning-based retrieval. |
 | **GTE ModernBERT reranker** | Reorders candidate passages so the strongest evidence reaches the answering model. |
-| **Qwen3.5 4B or 9B through vLLM** | Generates local source-grounded answers, summaries, and review assistance. |
+| **Qwen3.5 4B or 9B through vLLM** | Generates local answers, summaries, and review assistance from selected passages for source review. |
 | **WhisperX and faster-whisper large-v3** | Transcribe media and align transcript text to timestamps. |
 | **Optional pyannote diarization** | Separates anonymous speaker clusters when its separately gated models are enabled. |
 | **FFmpeg** | Probes media, prepares browser-compatible playback, and creates requested clips. |
@@ -280,9 +290,9 @@ for either method.
 ## Data and repository boundaries
 
 The current alpha uses temporary review workspaces. Matter bytes live under the
-operator-selected managed storage path. Closing a matter can permanently
-remove that workspace, so users should export and verify anything they need to
-retain. The complete matter bundle includes saved Reports, preserving their
+operator-selected managed storage path. Manual closure or scheduled expiry can
+permanently remove that workspace, so users should export and verify anything
+they need to retain. The complete matter bundle includes saved Reports, preserving their
 edits, order, draft/final state, and source appendices in Word and Markdown.
 If saved work exceeds export limits or Report sources cannot be verified,
 no complete bundle is returned. Use **Check export** from Work product or the
@@ -294,9 +304,15 @@ validates again.
 [Report export and recovery](docs/REPORT_EXPORTS.md)
 describes limits and interrupted-close recovery. Bundles are ordinary portable
 documents, not a package that can be imported back into RecordBench.
-Deletion refuses active work, requires the exact matter name plus a permanent
-deletion acknowledgement, preserves originals outside RecordBench, and leaves
-only content-minimized attributed audit and closure records.
+Manual **Close matter** refuses active work and requires the exact matter name
+plus a permanent-deletion acknowledgement. Scheduled retention follows a separate
+path: new matters default to 30 days of review plus seven days of export grace,
+after which enabled maintenance can delete them without another confirmation.
+Maintenance defers deletion while work is active and runs its first pass at
+startup. Restoring a backup preserves the original deadlines, which may already
+be due; follow [expired-matter recovery](docs/EXPIRED_MATTER_RECOVERY.md) before
+starting the restored application. Both deletion paths preserve originals outside
+RecordBench and leave only content-minimized attributed audit and closure records.
 
 No case data, organization secrets, internal accounts, private deployment
 coordinates, certificates, or credentials belong in this repository.

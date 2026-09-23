@@ -7,7 +7,11 @@ stack:
 - quality: Qwen3.5 9B when the selected generator device has sufficient VRAM;
 - Granite Embedding English R2 for dense retrieval;
 - GTE ModernBERT cross-encoder for reranking;
-- deterministic source-support verification after generation.
+- deterministic checks of citation references and text consistency after generation.
+
+These checks do not establish that generated claims preserve source meaning or
+are correct. Compare each claim with the original sources using the
+[generated-answer review guidance](GENERATED_ANSWER_REVIEW.md).
 
 Automatic selection considers visible GPU memory and whether transcription
 shares the generator device. Operators may select a tier and GPU layout
@@ -34,8 +38,9 @@ change scores, cross a matter boundary, or bypass citation validation.
 
 An explicit request for both written and spoken support reserves evidence space
 for each kind when matching passages are retrieved. The independent verifier
-requires transcript-only claims to use transcript-accurate language and rejects
-machine-transcript attribution on document or mixed-source claims. If both
+requires a machine-transcript caution prefix on transcript-only claims and rejects
+machine-transcript attribution on document or mixed-source claims. This wording
+check does not establish that the claim accurately describes the recording. If both
 kinds do not survive retrieval and verification, the result is visibly partial.
 Broad matter summaries use several bounded retrieval facets, diversify sources,
 omit disclaimer-only passages, and disclose that the result is sampled

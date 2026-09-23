@@ -1301,7 +1301,7 @@ def test_dual_modal_answer_resolves_page_and_timestamp_support(tmp_path):
             "available_evidence_kinds": ["written"],
             "used_evidence_kinds": ["written"],
             "missing_evidence_kinds": [],
-            "notice": "This answer includes source-verified written support.",
+            "notice": "This answer cites written passages. Check each claim against the original sources.",
         }
         document_only_citations = [
             citation
@@ -1532,7 +1532,7 @@ def test_media_answer_repairs_to_a_verified_timestamped_transcript_claim(tmp_pat
         )
         assert any(
             event.stage == "generating"
-            and event.message == "Rewriting the draft in source-close language for verification."
+            and event.message == "Rewriting the draft closer to the cited text for consistency checks."
             for event in events
         )
 
@@ -2222,14 +2222,14 @@ def test_transcript_overview_export_requires_current_exact_timestamps(
         if corruption == "citation":
             payload = json.loads(json.dumps(summary.payload))
             payload["claims"][0]["citations"][0]["start_ms"] += 1
-            with bench.workspace.connection:
+            with bench.workspace._lock, bench.workspace.connection:
                 bench.workspace.connection.execute(
                     "UPDATE workbench_media_summary SET payload_json=? "
                     "WHERE transcript_id=?",
                     (json.dumps(payload), summary.transcript_id),
                 )
         else:
-            with bench.workspace.connection:
+            with bench.workspace._lock, bench.workspace.connection:
                 bench.workspace.connection.execute(
                     "UPDATE workbench_media_summary SET basis_digest=? "
                     "WHERE transcript_id=?",

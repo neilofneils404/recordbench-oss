@@ -1,0 +1,22 @@
+{% macro cited_context(matter_slug, conversation_id, message_id, passage, citation_index, citation) -%}
+{% set context_url = '/matters/' ~ matter_slug ~ '/conversations/' ~ conversation_id ~ '/messages/' ~ message_id ~ '/cited-context/' ~ passage ~ '/' ~ citation_index %}
+<details class="cited-context" data-cited-context data-context-url="{{ context_url }}">
+  <summary>Compare cited context<span class="visually-hidden"> from {{ citation.source_name }} · {{ citation.location }}</span></summary>
+  <div class="cited-context-panel">
+    <p class="cited-context-status" data-context-status role="status" aria-live="polite">Open the comparison page to read this cited context.</p>
+    <div data-context-result hidden>
+      <p class="cited-context-source" data-context-source></p>
+      <blockquote class="cited-context-excerpt" data-context-excerpt tabindex="0" aria-label="Cited source excerpt"></blockquote>
+      <dl class="cited-context-basis">
+        <div><dt>Cited source version</dt><dd data-context-version></dd></div>
+        <div><dt>Full cited unit digest</dt><dd data-context-digest></dd></div>
+      </dl>
+      <a data-context-source-link hidden>Open full source (current view)</a>
+    </div>
+    <div class="cited-context-actions">
+      <button type="button" data-context-retry hidden>Try again</button>
+      <a href="{{ context_url }}">Open comparison page</a>
+    </div>
+  </div>
+</details>
+{%- endmacro %}

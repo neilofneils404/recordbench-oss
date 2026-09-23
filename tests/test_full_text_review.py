@@ -422,6 +422,34 @@ def test_frozen_policy_limits_inventory_and_calls_without_refunding_restart(froz
         reopened.close()
 
 
+def test_non_pdf_frozen_review_keeps_pdf_caution_conditional(frozen):
+    from case_intelligence.full_text_review import iter_text_export
+    from case_intelligence.pdf_coverage import PDF_COVERAGE_NOTICE, PDF_SAVED_RESULT_NOTICE
+    store, matter, run, decision = frozen
+    ledger = FullTextReviewLedger(store)
+    ledger.inventory(run, decision, [PilotUnit(1, 'Synthetic text-only source.')], current_source=lambda: True)
+    chunk = ledger.unit_chunks(run.run_id, decision.document_id, 1)[0]
+    ledger.record(run, decision, chunk, state='processed', label='exclude',
+                  rationale='Synthetic text checked.', current_source=lambda: True)
+    before = tuple(store.connection.execute(
+        'SELECT source_kind,source_version_id,source_basis_digest,extraction_note '
+        'FROM workbench_text_review_source WHERE run_id=?', (run.run_id,)).fetchone())
+    assert before[0] == 'TXT'
+    coverage = ledger.coverage(matter.matter_id, ACTOR, run.run_id)
+    assert not coverage['has_gaps'] and coverage['inventory_complete']
+    assert PDF_COVERAGE_NOTICE not in coverage['notice']
+    assert PDF_SAVED_RESULT_NOTICE in coverage['notice']
+    assert 'If this saved result used PDFs,' in coverage['notice']
+    for format_name in ('json', 'csv'):
+        exported = b''.join(iter_text_export(store, matter.matter_id, ACTOR, run.run_id, format_name)).decode()
+        assert PDF_COVERAGE_NOTICE not in exported
+        assert PDF_SAVED_RESULT_NOTICE in exported
+    after = tuple(store.connection.execute(
+        'SELECT source_kind,source_version_id,source_basis_digest,extraction_note '
+        'FROM workbench_text_review_source WHERE run_id=?', (run.run_id,)).fetchone())
+    assert after == before
+
+
 def test_compact_locator_utf8_charge_zero_units_and_constant_poll(frozen):
     from case_intelligence.full_text_review import compact_locator
     store, matter, run, decision = frozen

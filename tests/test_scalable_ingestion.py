@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from case_intelligence.generation import UnavailableGenerator
 from case_intelligence.ingestion import IngestionCoordinator
-from case_intelligence.pilot_uploads import PilotStore
+from case_intelligence.pilot_uploads import PdfOcrResult, PilotStore
 from case_intelligence.review_bench_v2 import PdfPage
 from case_intelligence.source_locations import (
     RegisteredSourceLocation,
@@ -368,9 +368,9 @@ def test_expanded_ocr_processes_more_than_legacy_25_page_cap(tmp_path, monkeypat
         lambda _path: tuple(PdfPage(number, "") for number in range(1, 31)),
     )
 
-    def recognize(_path: Path, page_number: int) -> str:
+    def recognize(_path: Path, page_number: int) -> PdfOcrResult:
         attempted.append(page_number)
-        return f"Recognized synthetic page {page_number}"
+        return PdfOcrResult(f"Recognized synthetic page {page_number}", "recognized")
 
     monkeypatch.setattr("case_intelligence.pilot_uploads._ocr_pdf_page", recognize)
     store = PilotStore(tmp_path / "store")

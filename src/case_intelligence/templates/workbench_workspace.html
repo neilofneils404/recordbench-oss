@@ -1,4 +1,5 @@
 {% extends "workbench_base.html" %}
+{% from "workbench_cited_context_macros.html" import cited_context %}
 
 {% block title %}{{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}workspace-page {% if support %}support-is-open{% endif %} {% if support and support.evidence_kind == 'transcript' %}support-media-is-open{% endif %}{% endblock %}
@@ -155,6 +156,7 @@
         <a data-conversation-coverage-action href="{{ readiness.sources_url }}">Review sources</a>
       </div>
 
+      {% if messages and readiness.pdf_presentation_notice %}<p class="notice" role="note">{{ readiness.pdf_presentation_notice }}</p>{% endif %}
       <div class="conversation-workspace">
         <aside class="conversation-history" aria-label="Saved conversations" data-conversation-library>
           <div class="conversation-history-heading">
@@ -325,7 +327,7 @@
                 {% if message.payload.modality_coverage %}
                 <div class="answer-source-coverage" role="note">
                   <strong>Requested source coverage · {{ message.payload.modality_coverage.mode|title }}</strong>
-                  <p>{{ message.payload.modality_coverage.notice }}</p>
+                  <p>{{ modality_coverage_notice(message.payload.modality_coverage.notice) }}</p>
                 </div>
                 {% endif %}
                   {% if message.payload.context_supplied %}
@@ -338,7 +340,8 @@
                   </details>
                   {% endif %}
                 {% if message.payload.kind == 'generated' %}
-                  <p class="answer-introduction">{{ message.payload.introduction }}</p>
+                  <p class="answer-introduction">{{ answer_introduction(message.payload.introduction) }}</p>
+                  <p class="workflow-caution" role="note">{{ generated_review_notice }}</p>
                   {% if message.payload.evidence_notice %}
                   <div class="answer-evidence-notice" role="note">
                     <strong>Machine transcript</strong>
@@ -349,7 +352,7 @@
                   <details class="answer-context-summary">
                     <summary>Used {{ message.payload.notebook_context.count }} user-selected notebook item{% if message.payload.notebook_context.count != 1 %}s{% endif %} as orientation</summary>
                     <ul>{% for item in message.payload.notebook_context['items'] %}<li><span>{{ item.item_type|replace('_', ' ')|title }}</span> {{ item.title }}</li>{% endfor %}</ul>
-                    <p>Notebook items helped frame retrieval. Every answer claim still required independent source support.</p>
+                    <p>Notebook items helped frame retrieval. Each claim has cited sources and still needs human review.</p>
                   </details>
                   {% endif %}
                   <ol class="answer-claims" id="answer-support-{{ message.message_id }}">
@@ -362,8 +365,9 @@
                         <button type="submit">Save passage to case notes</button>
                       </form>
                       {% if claim.citations %}
-                      <div class="citation-list">
+                      <div class="citation-list cited-context-list">
                         {% for citation in claim.citations %}
+                        <div class="cited-context-item">
                         <div class="citation-with-save">
                           <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">
                             {% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}
@@ -374,6 +378,8 @@
                             <button type="submit" aria-label="Save {{ citation.source_name }} {{ citation.location }} to notebook">Save</button>
                           </form>
                         </div>
+                        {{ cited_context(matter.slug, conversation.conversation_id, message.message_id, 'claim-' ~ claim_index, loop.index0, citation) }}
+                        </div>
                         {% endfor %}
                       </div>
                       {% endif %}
@@ -382,22 +388,25 @@
                   </ol>
                   {% if message.payload.limitation %}
                   <div class="answer-limitation">
-                    <p><strong>Limitation:</strong> {{ message.payload.limitation.text }}</p>
+                    <p><strong>Limitation:</strong> {{ answer_limitation(message.payload) }}</p>
                     {% if message.payload.limitation.citations %}
-                    <div class="citation-list">
+                    <div class="citation-list cited-context-list">
                       {% for citation in message.payload.limitation.citations %}
+                      <div class="cited-context-item">
                       <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
+                      {{ cited_context(matter.slug, conversation.conversation_id, message.message_id, 'limitation', loop.index0, citation) }}
+                      </div>
                       {% endfor %}
                     </div>
                     {% endif %}
                   </div>
                   {% endif %}
                 {% elif message.payload.kind == 'not-supported' %}
-                  <p class="answer-not-supported">{{ message.payload.missing_information or message.content }}</p>
+                  <p class="answer-not-supported">{{ rejected_answer_notice(message.payload.missing_information or message.content) }}</p>
                   {% if message.payload.source_matches %}
                   <div class="answer-source-matches">
                     <strong>Related source passages</strong>
-                    <p>These passages were retrieved from this matter, but they are not presented as a verified generated answer.</p>
+                    <p>These retrieved passages need direct review; no generated answer is shown.</p>
                     <div class="citation-list">
                       {% for citation in message.payload.source_matches %}
                       <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
@@ -474,7 +483,7 @@
             <li data-answer-stage="retrieving"><span>1</span>Find relevant support</li>
             <li data-answer-stage="reranking"><span>2</span>Order it for relevance</li>
             <li data-answer-stage="generating"><span>3</span>Draft from the best support</li>
-            <li data-answer-stage="verifying"><span>4</span>Verify claims and citations</li>
+            <li data-answer-stage="verifying"><span>4</span>Check citations and text</li>
           </ol>
           <div class="answer-wait-actions">
             <button

@@ -17,8 +17,9 @@ to the supplied topic and omits machine material that did not support an accepte
 finding. Unsupported model citation identifiers never become report citations.
 
 Each model request uses original cited source passages through the existing
-independently verified generation service. The compiler attaches only the source
-references used by each accepted claim. Human notes remain human-authored review;
+generation service, which applies citation and text-consistency checks. Those
+checks do not establish that a claim is correct. The compiler attaches only the
+source references used by each accepted claim. Human notes remain human-authored review;
 disputed and unfinished decisions stay in separate visible sections. Saved gaps
 and coverage limits are retained as attributed prior review, not new source
 findings. Material identities and revisions appear after the `Review basis:`
@@ -272,10 +273,10 @@ retry or select one relevant saved item. A single-item fallback is visibly label
 unfiltered, with topic relevance not checked. Plain-language coverage is visible
 in the draft; technical counters remain after the `Review basis:` delimiter.
 
-The `model_calls` counter and call policy count verified answer-service calls.
-The existing generation service can make one additional source-close repair
-request inside each call; this is part of its established verification contract.
-It is not a count of raw model-server requests. Coverage records this unit
+The `model_calls` counter and call policy count attempted answer-service calls,
+including rejected or unavailable calls. The existing generation service can make
+one additional source-close repair request inside each call as part of its
+citation/text checks. The counter is not a count of raw model-server requests. Coverage records this unit
 explicitly rather than presenting repair requests as unbounded or nonexistent.
 
 Optional focus applies to Timeline and People/Places/Things source prompts and

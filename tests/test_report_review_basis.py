@@ -109,7 +109,7 @@ def test_abstention_retains_explicitly_unverified_source_matches(workspace):
     potential = [item for item in sections if item.heading.startswith("Potential sources")]
     assert len(potential) == 2
     for section in potential:
-        assert "not verified as findings" in section.body
+        assert "no generated finding citing them was retained" in section.body
         assert len(bench.workspace.report_citations(matter.matter_id, report.report_id, section.section_id)) == 1
     response = client.get(f"/matters/{matter.slug}/reports/{report.report_id}/export?format=markdown")
     assert response.status_code == 200 and "Potential sources requiring review" in response.text
@@ -331,7 +331,7 @@ def test_rejected_pass_preserves_matches_omitted_from_synthesis(workspace, monke
     report = convert(client, bench, matter, finished)
     sections = bench.workspace.report_sections(matter.matter_id, report.report_id)
     potential = next(item for item in sections if item.heading == "Potential sources from evidence pass 1")
-    assert "not verified as findings" in potential.body
+    assert "no generated finding citing them was retained" in potential.body
     assert bench.workspace.report_citations(matter.matter_id, report.report_id, potential.section_id)[0].support_token == citation.support_token
 
 

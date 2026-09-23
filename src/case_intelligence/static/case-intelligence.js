@@ -11,6 +11,112 @@
   const desktopRailMedia = window.matchMedia("(min-width: 901px)");
   const railPreferenceKey = "case-intelligence:matter-rail-collapsed";
 
+  // Match controls-to-spaces-v1 at this DOM boundary. Structured excerpts and
+  // their full-unit digests remain exact; the Unicode flag preserves valid
+  // supplementary characters while replacing lone surrogate code points.
+  const presentCitedText = (value) => typeof value === "string"
+    ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\ud800-\udfff\ufffe\uffff]/gu, " ")
+    : "";
+  const citedContextRequests = new WeakMap();
+  const clearCitedContext = (details) => {
+    citedContextRequests.get(details)?.abort();
+    citedContextRequests.delete(details);
+    details.removeAttribute("aria-busy");
+    details.querySelector("[data-context-result]").hidden = true;
+    ["source", "excerpt", "version", "digest"].forEach((field) => {
+      details.querySelector(`[data-context-${field}]`).textContent = "";
+    });
+    const sourceLink = details.querySelector("[data-context-source-link]");
+    sourceLink.hidden = true;
+    sourceLink.removeAttribute("href");
+    const retry = details.querySelector("[data-context-retry]");
+    retry.hidden = true;
+    retry.removeAttribute("aria-disabled");
+    details.querySelector("[data-context-status]").textContent = "";
+  };
+
+  const loadCitedContext = async (details) => {
+    const retry = details.querySelector("[data-context-retry]");
+    const retryHadFocus = document.activeElement === retry;
+    clearCitedContext(details);
+    if (!details.open || !details.isConnected) return;
+    const controller = new AbortController();
+    citedContextRequests.set(details, controller);
+    details.setAttribute("aria-busy", "true");
+    const status = details.querySelector("[data-context-status]");
+    status.textContent = "Checking access and cited source version…";
+    if (retryHadFocus) {
+      retry.hidden = false;
+      retry.setAttribute("aria-disabled", "true");
+      retry.focus({ preventScroll: true });
+    }
+    const isCurrent = () => (
+      details.open && details.isConnected && citedContextRequests.get(details) === controller
+    );
+    const finishRetry = (visible) => {
+      if (!visible && document.activeElement === retry) details.querySelector("summary").focus({ preventScroll: true });
+      retry.hidden = !visible;
+      retry.removeAttribute("aria-disabled");
+    };
+    try {
+      const response = await fetch(`${details.dataset.contextUrl}?format=json`, {
+        cache: "no-store",
+        credentials: "same-origin",
+        redirect: "error",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error("Cited context unavailable");
+      const context = await response.json();
+      if (!isCurrent()) return;
+      if (!context || !["available", "unavailable"].includes(context.state)) throw new Error("Invalid cited context");
+      status.textContent = typeof context.notice === "string" ? context.notice : "";
+      if (context.state === "unavailable") {
+        if (!status.textContent) status.textContent = "Cited context is unavailable. Review the comparison page for details.";
+        finishRetry(true);
+        return;
+      }
+      if (typeof context.excerpt !== "string" || !context.excerpt) throw new Error("Missing cited context");
+      const text = presentCitedText;
+      details.querySelector("[data-context-source]").textContent = [text(context.source_name), text(context.location)].filter(Boolean).join(" · ");
+      details.querySelector("[data-context-excerpt]").textContent = Array.from(presentCitedText(context.excerpt)).slice(0, 6000).join("");
+      details.querySelector("[data-context-version]").textContent = text(context.source_version_id) || "Not recorded";
+      details.querySelector("[data-context-digest]").textContent = text(context.excerpt_digest) || "Not recorded";
+      if (typeof context.source_href === "string" && context.source_href.startsWith("/matters/")) {
+        const sourceURL = new URL(context.source_href, window.location.origin);
+        if (sourceURL.origin === window.location.origin) {
+          const sourceLink = details.querySelector("[data-context-source-link]");
+          sourceLink.href = sourceURL.href;
+          sourceLink.hidden = false;
+        }
+      }
+      details.querySelector("[data-context-result]").hidden = false;
+      if (!status.textContent) status.textContent = "Cited context loaded. Compare it with the passage above.";
+      finishRetry(false);
+    } catch (_error) {
+      if (!isCurrent()) return;
+      status.textContent = "Cited context could not be loaded. Try again or open the comparison page.";
+      finishRetry(true);
+    } finally {
+      if (isCurrent()) details.removeAttribute("aria-busy");
+    }
+  };
+
+  // Capture native toggle events so replaced assistant fragments work as well.
+  document.addEventListener("toggle", (event) => {
+    const details = event.target;
+    if (!(details instanceof HTMLDetailsElement) || !details.matches("[data-cited-context]")) return;
+    if (details.open) loadCitedContext(details);
+    else clearCitedContext(details);
+  }, true);
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const retry = event.target.closest("[data-context-retry]");
+    if (!retry || retry.getAttribute("aria-disabled") === "true") return;
+    const details = retry.closest("[data-cited-context]");
+    if (details?.open) loadCitedContext(details);
+  });
+
   const readSessionValue = (key) => {
     if (!key) return "";
     try {
@@ -3743,7 +3849,7 @@
       hint.textContent = readiness.partial_query === true
         ? readiness.coverage_notice || "Answers use the searchable sources; affected sources are excluded."
         : ready
-          ? "Answers stay grounded in the selected matter sources."
+          ? "Generated answers use selected passages; check claims against the original sources."
           : readiness.state === "preparing"
             ? "Questions will be available when active preparation finishes."
             : readiness.guidance || "No source is searchable yet.";
