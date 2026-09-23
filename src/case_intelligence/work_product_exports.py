@@ -48,6 +48,10 @@ _TEXT_PRESENTATION_NOTICE = (
     "Unsupported control or Unicode characters were replaced with spaces for this export. "
     "Original source text and saved citation references are unchanged."
 )
+_DOCX_LINE_ENDING_NOTICE = (
+    "Carriage-return line endings were normalized to line breaks in this Word document. "
+    "Original source text and saved citation references are unchanged."
+)
 
 _PORTABLE_REVIEW_METRICS = (
     "sample_total",
@@ -1009,7 +1013,11 @@ def _xml_text(value: str) -> str:
     and their digest/locator basis remain unchanged.
     """
 
-    return xml_escape(presentation_text(value), quote=False)
+    # XML normalizes literal CR (including CRLF) before exposing text to a
+    # reader. A reference preserves the supported character through parsing;
+    # introduce it after escaping so literal source text such as "&#13;" stays
+    # literal instead of becoming a character reference of its own.
+    return xml_escape(presentation_text(value), quote=False).replace("\r", "&#13;")
 
 
 def _paragraph_xml(block: ExportBlock) -> str:
@@ -1025,15 +1033,18 @@ def _paragraph_xml(block: ExportBlock) -> str:
     }
     style = style_map.get(block.style, "Normal")
     runs: list[str] = []
-    lines = block.text.split("\n") or [""]
+    lines = block.text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     for index, line in enumerate(lines):
         if index:
             runs.append("<w:r><w:br/></w:r>")
-        runs.append(
-            '<w:r><w:t xml:space="preserve">'
-            + _xml_text(line)
-            + "</w:t></w:r>"
-        )
+        for part_index, part in enumerate(line.split("\t")):
+            if part_index:
+                runs.append("<w:r><w:tab/></w:r>")
+            runs.append(
+                '<w:r><w:t xml:space="preserve">'
+                + _xml_text(part)
+                + "</w:t></w:r>"
+            )
     return f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr>{"".join(runs)}</w:p>'
 
 
@@ -1050,12 +1061,17 @@ def blocks_to_docx(
         or presentation_text(created_at) != created_at
         or any(presentation_text(block.text) != block.text for block in blocks)
     )
+    notices: list[ExportBlock] = []
     if normalized:
-        if total + len(_TEXT_PRESENTATION_NOTICE) > MAX_EXPORT_TEXT_CHARS:
+        notices.append(ExportBlock(_TEXT_PRESENTATION_NOTICE, "note"))
+    if any("\r" in block.text for block in blocks):
+        notices.append(ExportBlock(_DOCX_LINE_ENDING_NOTICE, "note"))
+    if notices:
+        if total + sum(len(notice.text) for notice in notices) > MAX_EXPORT_TEXT_CHARS:
             raise ExportProblem(
                 "This export is too large to prepare at once. Export the conversations individually."
             )
-        blocks = (*blocks, ExportBlock(_TEXT_PRESENTATION_NOTICE, "note"))
+        blocks = (*blocks, *notices)
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -1065,10 +1081,12 @@ def blocks_to_docx(
         '<w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr>'
         "</w:body></w:document>"
     )
+    # Larger title glyphs can consume an implicit half-inch tab stop in Word
+    # readers. Explicit one-inch stops keep title word boundaries visible.
     styles = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:sz w:val="22"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Subtitle"/><w:rPr><w:b/><w:color w:val="0A1630"/><w:sz w:val="38"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Subtitle"/><w:pPr><w:tabs><w:tab w:val="left" w:pos="1440"/><w:tab w:val="left" w:pos="2880"/><w:tab w:val="left" w:pos="4320"/><w:tab w:val="left" w:pos="5760"/><w:tab w:val="left" w:pos="7200"/><w:tab w:val="left" w:pos="8640"/><w:tab w:val="left" w:pos="10080"/></w:tabs></w:pPr><w:rPr><w:b/><w:color w:val="0A1630"/><w:sz w:val="38"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="46566E"/><w:sz w:val="26"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="280" w:after="100"/></w:pPr><w:rPr><w:b/><w:color w:val="0A1630"/><w:sz w:val="27"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="ListBullet"><w:name w:val="List Bullet"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="420" w:hanging="240"/></w:pPr></w:style>

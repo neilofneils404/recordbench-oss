@@ -26,7 +26,7 @@ bounded save/export correction does not close it.
 
 This presentation correction leaves original uploaded bytes, file digests,
 existing extraction text, source versions, passage
-digests, support tokens and locator offsets are unchanged. Notebook, Report and
+digests, support tokens and locator offsets unchanged. Notebook, Report and
 analysis citation snapshots now retain exact bounded source text, including
 leading/trailing whitespace and its Unicode normalization form. A display copy
 must never be hashed or substituted into an original-reference comparison.
@@ -51,6 +51,13 @@ replacing it with a generic retry suggestion. Existing draft recovery and
 source-change checks still apply.
 
 DOCX serialization applies the policy before XML escaping, including metadata.
+In the document body, CRLF and bare CR become LF, each represented by one explicit
+Word line break. A separate note reports that line-ending normalization when it
+occurs. Body tabs use explicit Word tab nodes, with one-inch tab stops in the
+larger title style to retain visible word separation. Metadata
+retains supported characters exactly; carriage returns use XML character references
+so an XML parser cannot silently change them to LF. Literal text such as `&#13;`
+remains literal. Both normalization notes count toward the existing export limit.
 Markdown and work-product CSV exports use the same presentation policy. DOCX and Markdown
 include a note when this serialization changes text; CSV keeps its existing
 table shape. Structured JSON and full-text ledger CSV retain exact source
@@ -58,6 +65,12 @@ snapshots and ledger text; these structured records are not display copies. The 
 DOCX serializer covers answers, conversations, notebooks, Reports, bundles,
 investigations, every-source checks, full-text reviews and transcripts. A
 portable work-product bundle remains distinct from an importable node backup.
+Transcript Markdown uses the common text escaping and replacement notice while
+retaining its existing export capacity and timestamp layout. Transcript TXT,
+SRT, VTT and CSV also apply the presentation policy;
+CSV formula protection follows that projection. Transcript JSON retains the
+saved text exactly, including in bundles, and export never updates transcript
+revisions, original machine text, timestamp locations or digest bases.
 
 ## Regression evidence and limits
 
@@ -82,6 +95,10 @@ failure; it does not establish corruption of a production DOCX. Native Mac
 media-preflight limitations and exact-candidate hosted Linux results are recorded
 in the pull request. Supported installation, scanner, real-model, hardware and
 full-node recovery acceptance remain separate gates.
+Legacy transcript route regressions seed a synthetic admitted source and saved
+revision, then verify individual downloads and bundled Markdown/JSON against
+the unchanged stored transcript and original bytes. They do not establish that
+today's recording intake or transcript edit validators admit these controls.
 
 This implements R4/revised F5 in
 [the independent review tracker](https://github.com/neilofneils404/recordbench-oss/issues/109).

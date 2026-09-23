@@ -87,6 +87,90 @@ def test_ordinary_unicode_does_not_receive_a_normalization_notice():
     assert _docx_text(body) == UNICODE_TEXT
 
 
+@pytest.mark.parametrize("line_ending", ["\r", "\r\n", "\n"])
+def test_docx_body_normalizes_line_endings_with_notice_and_metadata_stays_exact(line_ending):
+    value = f"before{line_ending}after\t& <literal> &#13;"
+    block = ExportBlock(value)
+    body = blocks_to_docx((block,), title=value, created_at=STAMP)
+    _docx_text(body)  # Check every package XML part before reading its text.
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        document = ElementTree.fromstring(archive.read("word/document.xml"))
+        core = ElementTree.fromstring(archive.read("docProps/core.xml"))
+    word = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    paragraph = document.find(f".//{word}p")
+    assert paragraph is not None
+    # Body line endings become one explicit break and tabs remain explicit;
+    # metadata retains its CR via a reference rather than XML normalization.
+    round_trip = "".join(
+        {word + "br": "\n", word + "tab": "\t"}.get(node.tag, node.text or "")
+        for node in paragraph.iter() if node.tag in {word + "t", word + "br", word + "tab"}
+    )
+    assert round_trip == "before\nafter\t& <literal> &#13;"
+    assert len(paragraph.findall(f".//{word}br")) == 1
+    assert len(paragraph.findall(f".//{word}tab")) == 1
+    title = core.find("{http://purl.org/dc/elements/1.1/}title")
+    assert title is not None and title.text == value
+    assert block.text == value
+    assert "replaced with spaces" not in _docx_text(body)
+    assert ("Carriage-return line endings were normalized" in _docx_text(body)) == ("\r" in value)
+
+
+def test_docx_body_tabs_are_explicit_and_do_not_trigger_a_normalization_notice():
+    value = "\tbefore\t\tafter\t"
+    body = blocks_to_docx((ExportBlock(value, "title"),), title=value, created_at=STAMP)
+    _docx_text(body)
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        document = ElementTree.fromstring(archive.read("word/document.xml"))
+        core = ElementTree.fromstring(archive.read("docProps/core.xml"))
+        styles = ElementTree.fromstring(archive.read("word/styles.xml"))
+    word = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    paragraph = document.find(f".//{word}p")
+    assert paragraph is not None
+    assert len(document.findall(f".//{word}p")) == 1
+    assert len(paragraph.findall(f".//{word}tab")) == 4
+    assert "".join(
+        "\t" if node.tag == word + "tab" else node.text or ""
+        for node in paragraph.iter() if node.tag in {word + "t", word + "tab"}
+    ) == value
+    assert all("\t" not in (node.text or "") for node in paragraph.iter(word + "t"))
+    title = core.find("{http://purl.org/dc/elements/1.1/}title")
+    assert title is not None and title.text == value
+    title_style = styles.find(f"{word}style[@{word}styleId='Title']")
+    assert title_style is not None
+    # The render regression was a title word filling the implicit half-inch
+    # tab stop; provide explicit wider stops for the larger title glyphs.
+    stops = title_style.findall(f"{word}pPr/{word}tabs/{word}tab")
+    assert [stop.attrib[word + "pos"] for stop in stops] == [
+        str(position) for position in range(1440, 10081, 1440)
+    ]
+    assert all(stop.attrib[word + "val"] == "left" for stop in stops)
+
+
+def test_docx_metadata_carriage_returns_do_not_trigger_body_normalization_notice():
+    body = blocks_to_docx((ExportBlock("unchanged body"),), title="before\rafter", created_at=STAMP)
+    assert _docx_text(body) == "unchanged body"
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        core = ElementTree.fromstring(archive.read("docProps/core.xml"))
+    title = core.find("{http://purl.org/dc/elements/1.1/}title")
+    assert title is not None and title.text == "before\rafter"
+
+
+@pytest.mark.parametrize("value", ["before\rafter", "before\r\nafter\x1b"])
+def test_docx_size_bound_includes_all_normalization_notices(monkeypatch, value):
+    from case_intelligence import work_product_exports
+
+    notices = work_product_exports._DOCX_LINE_ENDING_NOTICE
+    if "\x1b" in value:
+        notices += work_product_exports._TEXT_PRESENTATION_NOTICE
+    total = len(value) + len(notices)
+    monkeypatch.setattr(work_product_exports, "MAX_EXPORT_TEXT_CHARS", total)
+    body = blocks_to_docx((ExportBlock(value),), title="Synthetic title", created_at=STAMP)
+    assert "Carriage-return line endings were normalized" in _docx_text(body)
+    monkeypatch.setattr(work_product_exports, "MAX_EXPORT_TEXT_CHARS", total - 1)
+    with pytest.raises(ExportProblem, match="too large"):
+        blocks_to_docx((ExportBlock(value),), title="Synthetic title", created_at=STAMP)
+
+
 def _legacy_notebook(matter):
     item = NotebookItemRecord(
         item_id="notebook-" + "1" * 32, matter_id=matter.matter_id,
