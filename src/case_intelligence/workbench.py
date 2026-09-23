@@ -43,7 +43,7 @@ from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
-from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, research_content
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
 from .exact_search import QuerySyntaxError, parse_query
 from .exact_search_results import (
@@ -6121,6 +6121,7 @@ def create_workbench_app(
     templates = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
     templates.env.globals.update(
         answer_introduction=answer_introduction,
+        research_content=research_content,
         generated_review_notice=GENERATED_REVIEW_NOTICE,
         product_name=PRODUCT_NAME,
         product_tagline=PRODUCT_TAGLINE,

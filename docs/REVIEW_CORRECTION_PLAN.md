@@ -1,16 +1,23 @@
 # Independent review correction plan
 
-Status: implementation started. Track sections in
-[issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109).
-R1a.1 implements the first confidence-language mitigation; validation is recorded
-in its pull request. Remaining sections stay open until their own evidence passes.
+Status snapshot, September 23, 2026: seven portable correction packets have
+standalone CI receipts and remain **draft, open and unmerged**. The heads below
+record the initial integration audit; follow-up corrections require fresh receipts.
+Integration review and final-candidate validation are in progress. Dedicated
+security-review completion (or a verified documented quota exception) and genuine
+full-head maintainer acceptance remain pending. Track the bounded packets and
+remaining product acceptance in
+[issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109); this plan
+does not close that issue or claim installed/GPU/release acceptance.
 
 Authoritative planning baseline: GitHub OSS `main` at
 `a33d93b5302fc0f726f361ae2e3341883a4bdd77`, verified with `git ls-remote` and
 an isolated fresh checkout. This is exactly the external review's commit.
-Implementation uses an isolated checkout of that verified upstream revision.
-Refresh GitHub and record the actual candidate before each new section, preserving
-unrelated local work.
+The seven standalone packets started from that same revision, which remains the
+verified protected-main baseline for this integration snapshot. Refresh GitHub and
+record the actual base and candidate before each update or merge, preserving
+unrelated work. The receipts below do not validate later corrections, base updates,
+or the future combined candidate.
 
 ## Objective and evidence boundary
 
@@ -25,8 +32,10 @@ scanner stand-in. It is useful defect evidence, but is not a supported x86-64
 installation, real-model evaluation, scanner acceptance, or GPU acceptance.
 The source checkout was current GitHub OSS code; the limitation is the runtime
 test environment, not the freshness of that source. Its reproduction package and
-logs have not been inspected in this planning pass.
-Reported test totals and hosted CI are attributed reports, not new verified results.
+logs were not inspected in the initial planning pass. The packets use independently
+written synthetic regressions. External-report test totals remain attributed
+reports; the separately inspected GitHub Quality receipts below are evidence for
+their recorded standalone heads only.
 
 A GPU is unnecessary to demonstrate a deterministic verifier accepting supplied
 text, a PDF OCR-selection error, a save-handler exception, or an authentication
@@ -47,12 +56,121 @@ for a current-candidate end-to-end reproduction.
 
 | Track | External finding and current-code evidence | Disposition / initial priority | Completion state |
 | --- | --- | --- | --- |
-| R1 / F1 | Meaning-changing claims reportedly pass through `/ask`. `generation._verify_text` still uses term overlap, numbers, quotes and negation; generated lead-ins still say sources support the answer. The research template still says “Verified synthesis.” | High: reproduce; correct confidence contract and source inspection. Measure semantic quality separately. | Open |
-| R2 / F2 | A stamped scan reportedly skips OCR and misses a known term. `PilotStore` PDF extraction still selects expanded OCR using a text-strength threshold of 20 and counts nonempty units as searchable pages. | High: reproduce; correct OCR selection and coverage reporting. | Open |
-| R3 / F4 | Unset auth reportedly allows passwordless preview access over a container network. Identity and app factories still default to preview; CLI container binding does not check auth mode. Installer doctor does not compare effective auth mode. | Prompt security hardening: verify entry points and impact, then fail closed for installed service operation. | Open |
-| R4 / revised F5 | Source control characters reportedly cause a case-note 500, report rejection, and repeated answer failure. `_safe_text` rejects controls; `save_support_notebook` catches `KeyError` but not `WorkspaceProblem`; DOCX serialization only XML-escapes text. | Medium: reproduce save failures; define provenance-preserving text handling and serializer defense. Reachable DOCX corruption is not established. | Open |
-| R5 / F3 | Scheduled purge is deliberate. Current maintenance calls `purge_due_matters`; architecture documents a temporary workspace. The review corrected its lifetime claim: the extension horizon rolls forward. | Policy decision plus recovery investigation. Missing automatic export is not itself a defect. | Open |
-| R6 | A reported account-cache timestamp test fails on overlayfs but passes on tmpfs. | Security-relevant investigation: determine whether stale authorization is reachable on a supported filesystem. | Open; impact unproven |
+| R1 / F1 | Meaning-changing claims reportedly pass through `/ask`. `generation._verify_text` still uses term overlap, numbers, quotes and negation; generated lead-ins still say sources support the answer. The research template still says “Verified synthesis.” | High: reproduce; correct confidence contract and source inspection. Measure semantic quality separately. | Portable packet prepared; integration and acceptance open |
+| R2 / F2 | A stamped scan reportedly skips OCR and misses a known term. `PilotStore` PDF extraction still selects expanded OCR using a text-strength threshold of 20 and counts nonempty units as searchable pages. | High: reproduce; correct OCR selection and coverage reporting. | Portable packet prepared; integration and acceptance open |
+| R3 / F4 | Unset auth reportedly allows passwordless preview access over a container network. Identity and app factories still default to preview; CLI container binding does not check auth mode. Installer doctor does not compare effective auth mode. | Prompt security hardening: verify entry points and impact, then fail closed for installed service operation. | Portable packet prepared; integration and acceptance open |
+| R4 / revised F5 | Source control characters reportedly cause a case-note 500, report rejection, and repeated answer failure. `_safe_text` rejects controls; `save_support_notebook` catches `KeyError` but not `WorkspaceProblem`; DOCX serialization only XML-escapes text. | Medium: reproduce save failures; define provenance-preserving text handling and serializer defense. Reachable DOCX corruption is not established. | Portable packet prepared; integration and acceptance open |
+| R5 / F3 | Scheduled purge is deliberate. Current maintenance calls `purge_due_matters`; architecture documents a temporary workspace. The review corrected its lifetime claim: the extension horizon rolls forward. | Policy decision plus recovery investigation. Missing automatic export is not itself a defect. | Portable packet prepared; integration and acceptance open |
+| R6 | A reported account-cache timestamp test fails on overlayfs but passes on tmpfs. | Security-relevant investigation: determine whether stale authorization is reachable on a supported filesystem. | Actual-writer tests prepared; filesystem comparison and impact open |
+
+## Packet receipts and integration order
+
+All seven heads below have passing branch-push and pull-request Quality runs,
+including application, PostgreSQL, synthetic-browser, transcription, deployment,
+publication, secret and scope checks. Pull-request runtime jobs exercise GitHub's
+integration candidate; publication scanning binds to the PR head. Each also has a
+completed code review for its recorded head. The audit identified a final-head
+research-presentation finding in #110, corrected by the follow-up in this packet.
+Five earlier #113 discussions were reconciled and resolved after checking their
+fixes; a completed review alone does not mean all findings are cleared.
+These are standalone receipts, not an integrated-product result. Earlier failed,
+timed-out or incomplete attempts and native-platform limitations remain in each
+PR; a passing later run does not turn those attempts into passing evidence.
+
+The initial policy bot approvals used the optional-review mode. They did not prove
+completed code/security review or independent maintainer acceptance. All seven
+PRs now carry `require-hosted-review` while remaining draft with auto-merge off.
+This correction integration enforces the maintainer's stricter requirement: final-commit hosted
+code review plus security review (or the documented verified security-quota
+exception), reconciled findings, required CI and later full-head maintainer
+acceptance. In
+particular, #115's security request has no verified security-specific completion;
+a generic clean code-review reply is not that receipt and proves no quota exception.
+
+The renewed review also identified a #113 resource-bound follow-up: tab-heavy
+DOCX content must be bounded before serialized XML/run expansion. That correction
+requires its own regression and fresh candidate validation.
+
+Integration review also identified two #115 follow-ups: apply the source-text
+presentation policy to fetched excerpts without changing exact JSON/digests, and
+hold the existing response lease through the final HTML/JSON body byte so matter
+purge cannot overlap delivery. Both require synthetic regressions and renewed
+final-head evidence; the standalone #115 receipts below predate these corrections.
+
+Feature-document links outside this packet use immutable PR-head permalinks until
+the corresponding change is merged.
+
+- **[#110](https://github.com/neilofneils404/recordbench-oss/pull/110) — R1a.1 confidence presentation.**
+  Known historical/current answer presentation, synthesis wording and Report-copy cautions; semantic verification is unchanged.
+  Head: `e7e38b2eebc0c6fab8890effa22c6c3f14051790`.
+  [Push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35851940103);
+  [PR Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35851944311);
+  [generated-answer review](GENERATED_ANSWER_REVIEW.md). The follow-up correction
+  in this packet normalizes matching historical research introductions across
+  views, per-search findings, exports and new Report copies while retaining saved
+  records. Its fresh review and CI must replace the earlier-head receipts before merge.
+
+- **[#111](https://github.com/neilofneils404/recordbench-oss/pull/111) — R5 retention/recovery.**
+  Serializes purge, work admission, extension and retry checks; includes synthetic clean-restore evidence and an expired-matter recovery runbook. Retention policy is unchanged.
+  Head: `1c86f96d5f4027e56f0705b9a15af618a557f16d`.
+  [Push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35853955393);
+  [PR Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35853961013);
+  [expired-matter recovery](https://github.com/neilofneils404/recordbench-oss/blob/1c86f96d5f4027e56f0705b9a15af618a557f16d/docs/EXPIRED_MATTER_RECOVERY.md).
+
+- **[#112](https://github.com/neilofneils404/recordbench-oss/pull/112) — R3/R6 authentication/cache.**
+  Requires explicit auth, restricts preview/test access, checks effective installed mode, and exercises actual account-writer changes. Overlayfs/tmpfs and installed providers remain open.
+  Head: `0534e5c1a508d916d667588ad9886b0292e02702`.
+  [Push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35852516468);
+  [PR Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35852585836);
+  [authentication diagnostics](https://github.com/neilofneils404/recordbench-oss/blob/0534e5c1a508d916d667588ad9886b0292e02702/docs/AUTHENTICATION_DIAGNOSTICS.md).
+
+- **[#113](https://github.com/neilofneils404/recordbench-oss/pull/113) — R4 source controls.**
+  Preserves source snapshots while projecting unsupported controls safely for derived prose and readable exports; handles older saved data. Versioned TXT extraction remains open.
+  Head: `ae7e6d370bf7d19d8ea7ad81ebc4317e963cde40`.
+  [Push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35858843237);
+  [PR Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35858849986);
+  [source-text presentation](https://github.com/neilofneils404/recordbench-oss/blob/ae7e6d370bf7d19d8ea7ad81ebc4317e963cde40/docs/SOURCE_TEXT_PRESENTATION.md).
+
+- **[#114](https://github.com/neilofneils404/recordbench-oss/pull/114) — R2 PDF OCR/coverage.**
+  Uses bounded image evidence for OCR selection and carries incomplete-extraction cautions through current/historical views and exports without replacing old citation bases.
+  Head: `4c359d8d17336515c8e2da888bdf45bc444a8fdf`.
+  [Push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35857450513);
+  [PR Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35857455322);
+  [PDF OCR coverage](https://github.com/neilofneils404/recordbench-oss/blob/4c359d8d17336515c8e2da888bdf45bc444a8fdf/docs/PDF_OCR_COVERAGE.md).
+
+- **[#115](https://github.com/neilofneils404/recordbench-oss/pull/115) — R1a.2 cited excerpts.**
+  Adds authorized exact-citation comparison for saved focused-answer claims and limitations, including a no-JavaScript page. Broader investigation/synthesis/export comparisons remain open.
+  Head: `b02f678cc522f923e0fc8bfb436065174a414ed5`.
+  [Push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35867968552);
+  [PR Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35867975537);
+  [cited-excerpt comparison](https://github.com/neilofneils404/recordbench-oss/blob/b02f678cc522f923e0fc8bfb436065174a414ed5/docs/CITED_EXCERPT_COMPARISON.md).
+
+- **[#116](https://github.com/neilofneils404/recordbench-oss/pull/116) — R1b evaluation harness.**
+  Freezes 11 synthetic packets and 27 labeled candidates; separates injected verifier probes from real-model capture and independent human grading. No real-model acceptance is established.
+  Head: `7ac28c4c0c3ccd76af61e529f31c87bf0e9fcc81`.
+  [Push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35858146179);
+  [PR Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35858152957);
+  [claim evaluation](https://github.com/neilofneils404/recordbench-oss/blob/7ac28c4c0c3ccd76af61e529f31c87bf0e9fcc81/docs/CLAIM_EVALUATION.md).
+
+Proposed sequential merge order: **#112 → #111 → #110 → #113 → #114 → #115 → #116**.
+Establish auth and lifecycle boundaries first, then common answer presentation,
+source-text projection, PDF extraction coverage, cited-context comparison and the
+evaluation harness. Recheck factory/test callers after #112; worker admissions
+and storage locks after #111; historical views, exports and citation provenance
+across #110/#113/#114/#115; and production generation behavior with #116. This
+order is a review plan, not permission to skip any unresolved gate.
+
+After every protected merge, verify remote main, the merged PR and ancestry before
+updating the next branch. A changed head/base requires validation of the resulting
+candidate and renewed required review evidence. Preserve each PR as a separately
+reviewable change; do not combine the seven into an unreviewed composite merge.
+
+The frozen acceptance pack overlaps #110, #114 and #115. Their standalone receipts
+retain the same case definitions, selected node IDs and synthetic fixture bytes;
+#114 changes its selected OCR node for the typed outcome and coverage assertions.
+Before refreshing combined test-file/node digests and the aggregate fingerprint,
+review the resulting test definitions and fixture bytes. Never resolve a digest
+conflict by choosing one branch's fingerprint or blindly rehashing altered cases.
 
 ## Execution sequence
 
@@ -84,13 +202,21 @@ usability work; do not overwrite its templates or styles.
 
 ## R1 — Honest answer confidence and inspectable sources
 
-- **R1a.1: confidence presentation** — first correction underway; see
-  [generated-answer review](GENERATED_ANSWER_REVIEW.md). Keep claims and stored
-  provenance unchanged while warning readers in current and historical views.
-- **R1a.2: excerpt comparison** — open. Resolve and display bounded excerpts from
-  authorized, exact source references without duplicating full source units in
-  saved answer payloads or bypassing source-version checks.
-- **R1b: model evaluation** — open. No real-model acceptance follows from R1a.
+- **R1a.1: confidence presentation** — portable packet in #110; integration
+  corrections and final-candidate acceptance remain open. See
+  [generated-answer review](GENERATED_ANSWER_REVIEW.md). The follow-up correction
+  in this packet normalizes matching historical research introductions across
+  views, per-search findings, exports and new Report copies while retaining saved
+  records. Its fresh review and CI must replace the earlier-head receipts before merge. Preserve claims, stored
+  provenance and reviewer decisions while warning readers in historical/current
+  views and exports.
+- **R1a.2: excerpt comparison** — focused-answer packet in #115; broader
+  investigation/full-text synthesis and excerpt/export comparisons remain open.
+  Resolve bounded context from authorized exact references without duplicating
+  full source units in saved payloads or bypassing source-version checks.
+- **R1b: model evaluation** — portable harness and frozen rubric in #116;
+  real-model, learned-retrieval, offline, hardware and human-rubric acceptance
+  remain open. Neither the harness nor R1a establishes semantic verification.
 
 **Inspect:** `src/case_intelligence/generation.py`, its callers including synthesis,
 answer rendering, `templates/workbench_research.html`, saved conversations, Report
@@ -229,8 +355,10 @@ Confirm unmanaged originals stay outside deletion. Test extension versus purge,
 work finishing during purge, restart, and late workers attempting to save.
 Restore an expired synthetic matter into an isolated target with maintenance held
 until inspection; then deliberately test maintenance activation and document the
-outcome. A repeated purge after restore is currently a hypothesis, not a finding.
-Include current Continuity B/C selection and request-receipt state (migrations
+outcome. The #111 synthetic drill confirms that restore preserves expired
+deadlines and the first enabled maintenance pass can purge them immediately;
+this is existing retention behavior, not a new policy choice. Include current
+Continuity B/C selection and request-receipt state (migrations
 0035/0036) in complete-runtime restore and purge checks. Use the matching reader;
 never validate rollback by opening upgraded stores with the older local checkout.
 
@@ -297,24 +425,37 @@ set by the maintainer for this work. Do not change review policy as part of thes
 fixes. Each implementation section must have its own reviewed change and receipt;
 tracking an issue or publishing a draft PR does not establish acceptance.
 
-## Initial evidence and first implementation section
+## Remaining acceptance and receipt maintenance
 
-- Verified GitHub `main` matches the external review SHA, then inspected relevant
-  implementation paths and architecture/security/installation/recovery contracts
-  in the fresh upstream checkout, including the newer recorded-context safeguards.
-- External scripts/logs remain uninspected; the first correction uses independently
-  written synthetic regressions. All eight initial confidence-presentation checks
-  failed against the unchanged reviewed baseline. The four adversarial outputs
-  were accepted with the old assurance; legacy views and exports lacked the new
-  review notice.
-- R1a.1's first focused run passed 73 checks covering generation, new confidence
-  regressions, Word/Markdown exports, frozen acceptance-pack integrity and recorded
-  context. Final-candidate broader results belong in the PR receipt.
-- Hosted code review identified remaining legacy text in portable conversation
-  JSON and remaining synthesis/progress assurances. Strengthened regressions
-  reproduced both; their corrections extend the focused suite to 94 passing
-  checks with a documented test-only storage-reserve override. Renewed exact-head
-  review and CI still determine acceptance.
-- R1a.2 excerpt comparison, semantic verification improvement, real-model error
-  measurement and installed/GPU acceptance remain open. No release readiness or
-  deployment claim follows from this first mitigation.
+- **R1a:** finish integration corrections and validate historical/current answer,
+  investigation and synthesis presentation. The focused-answer comparison packet
+  does not complete broader investigation/full-text synthesis or export comparison
+  surfaces. Preserve exact cited context and source authority when combining it
+  with control-character presentation.
+- **R1b:** run the real generator and learned retrieval components on an authorized
+  isolated target, with exact revisions/licenses, offline and hardware evidence,
+  independent human rubric approval and preregistered release thresholds. The
+  frozen injected probes report verifier behavior only, not generation quality.
+- **R2:** representative recognition quality and clean installed CPU acceptance
+  remain open. The Mac real-tool probe substituted executable paths and an
+  unsupported resource limit. An upside-down page was selected but incorrectly
+  recognized; selection and preserved stamps do not establish rotated-scan quality.
+- **R3/R6:** clean installed Linux/container and applicable provider acceptance,
+  plus the reported overlayfs/tmpfs comparison, remain open. Actual-writer tests
+  did not reproduce stale authority on APFS; that does not resolve other filesystems.
+- **R4:** versioned TXT extraction/reprocessing remains a separate follow-up.
+  Existing `splitlines()` interpretation and saved source bases are preserved.
+  Synthetic restore and DOCX rendering evidence do not establish full-node recovery
+  or Microsoft Word acceptance.
+- **R5:** retention defaults, rolling extensions, warning delivery, deletion
+  confirmation and any automatic-export/backup policy remain explicit product
+  decisions. Synthetic clean restore covers the portable correction; encrypted
+  replacement-host recovery, real PostgreSQL backup import and installed acceptance
+  remain separate. A restored expired deadline is preserved, so hold maintenance
+  for inspection as the recovery runbook requires.
+
+Keep #109 open. After each merge, add its verified resulting main commit and exact
+review/CI receipts, distinguish merged code from remaining product acceptance,
+and recheck links and the next branch's base. Update this plan through reviewed
+changes; never pre-record a future merge or reuse these standalone receipts as
+proof that a later integration correction passed.

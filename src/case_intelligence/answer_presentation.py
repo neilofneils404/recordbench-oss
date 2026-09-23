@@ -1,5 +1,7 @@
 """Confidence language for generated work, including older saved answers."""
 
+from collections.abc import Mapping
+
 GENERATED_ANSWER_INTRODUCTION = "Generated answer for source review:"
 GENERATED_TRANSCRIPT_INTRODUCTION = "Generated orientation from a machine transcript:"
 GENERATED_REVIEW_NOTICE = (
@@ -32,3 +34,10 @@ def answer_content(value: str, introduction: str) -> str:
     ):
         return corrected + value[len(introduction):]
     return value
+
+
+def research_content(value: object, answer: object) -> str:
+    """Present a saved summary/finding without altering its validated record."""
+    text = value if isinstance(value, str) else ""
+    introduction = answer.get("introduction", "") if isinstance(answer, Mapping) else ""
+    return answer_content(text, introduction) if isinstance(introduction, str) else text

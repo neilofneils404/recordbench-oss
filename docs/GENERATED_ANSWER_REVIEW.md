@@ -20,8 +20,15 @@ The original saved message remains unchanged.
 
 Portable conversation JSON updates both the structured introduction and the
 matching leading introduction in the full generated message text. It does not
-replace quoted occurrences inside claims or alter user-authored messages. Research
-instructions and progress describe citation/text checks, not verified meaning.
+replace quoted occurrences inside claims or alter user-authored messages.
+Historical investigation summaries and per-search findings receive the same
+leading-introduction treatment in the research view, Word/Markdown/JSON exports,
+complete bundles and newly copied Report sections. The structured exported answer
+introduction is also normalized. Exact saved-result and source-ledger validation
+runs against the original record before any export presentation change. Copies
+to Reports carry the generated-text notice; the saved investigation, claims,
+citations and source bytes remain unchanged. Research instructions and progress
+describe citation/text checks, not verified meaning.
 
 Use each claim's citation to open the source and compare the wording, participant
 roles, qualifications and surrounding context. Multiple citations do not establish
@@ -33,8 +40,9 @@ This is the first R1a mitigation in the [review correction plan](REVIEW_CORRECTI
 tracked in [issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109).
 It does not change the generator, verifier acceptance algorithm, citation basis,
 or storage schema. Direct inline excerpt comparison and real-model evaluation
-remain separate open sections. Saved research summaries and human-authored text
-remain historical content; the surrounding review notice is current presentation.
+remain separate sections with their own acceptance evidence. Saved research
+records and human-authored text remain historical content; only known generated
+leading introductions and the surrounding review notice receive current presentation.
 
 ## Synthetic regression
 
@@ -45,3 +53,9 @@ paraphrase and fabricated-detail controls check continued usability and rejectio
 HTTP rendering and Word/Markdown exports check historical answers without mutating
 their stored payloads. These are deterministic software checks, not a measurement
 of the installed model's error rate or GPU acceptance.
+
+`tests/test_historical_research_confidence.py` recreates four historical
+introductions on a saved investigation and checks its research view, all three
+export formats, complete bundle and Report copy. A custom-introduction control
+and quoted-text check prevent broad replacement. The original result JSON and
+extracted source units must remain byte-for-byte/equality unchanged.

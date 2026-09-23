@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from html import escape as xml_escape
 from typing import Mapping, Sequence
 
-from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, research_content
 from .branding import PRODUCT_NAME
 from .workspace_store import (
     ConversationRecord,
@@ -1235,7 +1235,7 @@ def export_research(
                 )
             safe_answer = {
                 "outcome": "Supported" if answer.get("answerable") else "Not supported",
-                "introduction": _plain(answer.get("introduction")),
+                "introduction": answer_introduction(_plain(answer.get("introduction"))),
                 "claims": claims,
                 "missing_information": _plain(answer.get("missing_information")),
                 "evidence_notice": _plain(answer.get("evidence_notice")),
@@ -1293,7 +1293,7 @@ def export_research(
                     "selected_passages": item.get("selected_passages"),
                     "motivating_source": motivating_source(item.get("motivating_support_token")),
                     "status": _plain(item.get("status")).replace("_", " ").title(),
-                    "finding": _plain(item.get("text")),
+                    "finding": _plain(research_content(item.get("text"), item.get("answer"))),
                 }
             )
         supporting_sources = tuple(
@@ -1330,7 +1330,7 @@ def export_research(
                     "status": job.state.replace("_", " ").title(),
                     "created_at": job.created_at,
                     "finished_at": job.finished_at,
-                    "synthesis": _plain(result.get("summary")),
+                    "synthesis": _plain(research_content(result.get("summary"), result.get("answer"))),
                     "answer": safe_answer,
                     "coverage": safe_coverage,
                     "review_budget": job.review_budget,
@@ -1371,7 +1371,7 @@ def export_research(
         blocks.append(ExportBlock(receipt["human_decisions"]["notice"], "note"))
         blocks.append(ExportBlock("Complete input receipt", "heading2"))
         blocks.append(ExportBlock(json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2), "metadata"))
-    summary = _plain(result.get("summary"))
+    summary = _plain(research_content(result.get("summary"), result.get("answer")))
     if summary:
         blocks.extend((
             ExportBlock("Generated synthesis · needs review", "heading1"),
@@ -1421,7 +1421,7 @@ def export_research(
             for source in result.get("evidence", []):
                 if token and source.get("support_token") == token:
                     blocks.append(ExportBlock(f"Search motivated by: {_plain(source.get('source_name'))} — {_plain(source.get('location'))}", "citation"))
-            blocks.append(ExportBlock(_plain(item.get("text")) or "No supported finding.", "normal"))
+            blocks.append(ExportBlock(_plain(research_content(item.get("text"), item.get("answer"))) or "No supported finding.", "normal"))
     pending = result.get("pending_searches")
     if isinstance(pending, list) and pending:
         blocks.append(ExportBlock("Unsearched proposals", "heading1"))

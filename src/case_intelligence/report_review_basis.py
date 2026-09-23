@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Callable, Iterable, Mapping
 
+from .answer_presentation import GENERATED_REVIEW_NOTICE, research_content
 from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, ResearchJobRecord, ReviewDecisionRecord, ReviewRunRecord, WorkspaceProblem, is_full_text_synthesis
 
 MAX_DETAIL_DECISIONS = 50
@@ -81,9 +82,9 @@ def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
         _section("Review question", job.question),
         _section(
             "Investigation findings" if supported else "Investigation outcome: needs review",
-            str(result.get("summary") or "No supported synthesis was saved.") + (
+            (research_content(result.get("summary"), answer) or "No supported synthesis was saved.") + (
                 "" if supported else "\n\nThis run did not record an answerable, source-supported synthesis."
-            ),
+            ) + "\n\n" + GENERATED_REVIEW_NOTICE,
             citations_for(answer),
         ),
     ]
@@ -95,7 +96,8 @@ def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
             f"Evidence pass {index}",
             f"Search: {item.get('query', '')}\n"
             f"Recorded outcome: {str(item.get('status', 'unknown')).replace('_', ' ')}\n\n"
-            f"{item.get('text') or 'No finding was saved for this pass.'}",
+            + (research_content(item.get("text"), item.get("answer")) or "No finding was saved for this pass.")
+            + ("\n\n" + GENERATED_REVIEW_NOTICE if isinstance(item.get("answer"), Mapping) else ""),
             citations_for(item.get("answer")),
         ))
         sections.extend(potential_sources(item.get("answer"), f"Potential sources from evidence pass {index}"))
