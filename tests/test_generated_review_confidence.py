@@ -145,3 +145,58 @@ def test_saved_answer_page_and_assistant_warn_without_mutating_history(tmp_path)
         current = next(message for message in bench.workspace.messages(matter.matter_id, conversation.conversation_id)
                        if message.message_id == saved.message_id)
         assert current.payload == _payload()
+
+
+@pytest.mark.parametrize("kind,introduction", [
+    ("generated", LEGACY_INTRODUCTION),
+    ("generated", "The searchable sources support these findings:"),
+    ("generated", "The machine transcript supports this orientation:"),
+    ("generated", "The machine transcript supports these orientation points:"),
+    ("generated", INTRODUCTION),
+    ("search", "Synthetic search result:"),
+])
+def test_save_to_report_preserves_history_and_marks_generated_copy(tmp_path, kind, introduction):
+    app = create_workbench_app(tmp_path / "runtime", auth_mode="test")
+    with TestClient(app) as client:
+        created = client.post("/matters", data={"name": "Synthetic report copy"},
+                              follow_redirects=False)
+        slug = created.headers["location"].split("/")[2]
+        bench = app.state.workbench
+        actor = "development-taylor-morgan"
+        matter = bench.matter(slug, actor)
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        # A historical saved shape; citation validation has separate regressions.
+        payload = {"kind": kind, "introduction": introduction, "claims": []}
+        content = introduction + "\n\nSynthetic historical text for review."
+        saved = bench.workspace.append_message(matter.matter_id, conversation.conversation_id,
+                                               "assistant", content, payload)
+        report = bench.workspace.create_report(matter.matter_id, actor, "Synthetic copied answer")
+        copied = client.post(
+            f"/matters/{slug}/reports/{report.report_id}/from-answer/"
+            f"{conversation.conversation_id}/{saved.message_id}",
+            data={"expected_status": report.status}, follow_redirects=False,
+        )
+        assert copied.status_code == 303, copied.text
+        section, = bench.workspace.report_sections(matter.matter_id, report.report_id)
+        assert section.origin_id == saved.message_id
+        if kind == "generated":
+            assert NOTICE in section.body
+            assert "Synthetic historical text for review." in section.body
+            assert "sources support" not in section.body and "transcript supports" not in section.body
+        else:
+            assert section.body == content
+        for fmt in ("markdown", "docx"):
+            exported = client.get(f"/matters/{slug}/reports/{report.report_id}/export?format={fmt}")
+            assert exported.status_code == 200
+            if fmt == "docx":
+                with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                    rendered = " ".join(ElementTree.fromstring(archive.read("word/document.xml")).itertext())
+            else:
+                rendered = exported.text
+            assert "Synthetic historical text for review." in rendered
+            if kind == "generated":
+                assert NOTICE in rendered
+                assert "sources support" not in rendered and "transcript supports" not in rendered
+        current = next(message for message in bench.workspace.messages(matter.matter_id, conversation.conversation_id)
+                       if message.message_id == saved.message_id)
+        assert current == saved

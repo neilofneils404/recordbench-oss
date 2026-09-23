@@ -1532,7 +1532,7 @@ def test_media_answer_repairs_to_a_verified_timestamped_transcript_claim(tmp_pat
         )
         assert any(
             event.stage == "generating"
-            and event.message == "Rewriting the draft in source-close language for verification."
+            and event.message == "Rewriting the draft closer to the cited text for consistency checks."
             for event in events
         )
 

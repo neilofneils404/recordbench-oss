@@ -14,6 +14,9 @@ source identifiers, and reviewer history are not rewritten. Word and Markdown
 answer/conversation exports carry the notice, as do synthesis exports; portable
 conversation and investigation JSON expose a review notice. Reports retain their
 existing instruction to verify statements against original sources.
+Saving a generated answer to a Report also normalizes its leading introduction
+and includes the generated-text review notice in the new section and its exports.
+The original saved message remains unchanged.
 
 Portable conversation JSON updates both the structured introduction and the
 matching leading introduction in the full generated message text. It does not

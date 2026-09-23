@@ -43,7 +43,7 @@ from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
-from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_introduction
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
 from .exact_search import QuerySyntaxError, parse_query
 from .exact_search_results import (
@@ -4038,13 +4038,18 @@ class CaseIntelligenceWorkbench:
             ),
             "",
         )
+        body = answer.content
+        if payload.get("kind") == "generated":
+            introduction = payload.get("introduction")
+            body = answer_content(body, introduction if isinstance(introduction, str) else "")
+            body = GENERATED_REVIEW_NOTICE + "\n\n" + body
         return self.workspace.add_report_section(
             matter.matter_id,
             report_id,
             actor_id,
             expected_status=expected_status,
             heading=question[:200] or conversation.title,
-            body=answer.content,
+            body=body,
             origin="answer",
             origin_id=answer.message_id,
             citations=citations,
