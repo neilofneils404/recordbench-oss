@@ -115,6 +115,7 @@ def test_health_records_useful_cpu_capability_without_claiming_failed_model_read
         "capabilities": {"source_review": "ready", "malware_scan": "ready", "answering": "temporarily unavailable", "search": "word search only"}}
     monkeypatch.setattr(installer.urllib.request, "urlopen", lambda *a, **kw: io.BytesIO(json.dumps(payload).encode()))
     monkeypatch.setattr(installer, "_login_reachable", lambda root: True)
+    monkeypatch.setattr(installer, "_probe", lambda command: subprocess.CompletedProcess(command, 0, '{"auth_mode": "local"}', ""))
     clock = iter([0, 0, 1, 2, 901])
     monkeypatch.setattr(installer.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(installer.time, "sleep", lambda _: None)
