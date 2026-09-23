@@ -37,9 +37,10 @@ replacing it with a generic retry suggestion. Existing draft recovery and
 source-change checks still apply.
 
 DOCX serialization applies the policy before XML escaping, including metadata.
-Markdown and CSV exports use the same presentation policy. DOCX and Markdown
+Markdown and work-product CSV exports use the same presentation policy. DOCX and Markdown
 include a note when this serialization changes text; CSV keeps its existing
-table shape. Structured JSON retains exact escaped source snapshots. The common
+table shape. Structured JSON and full-text ledger CSV retain exact source
+snapshots and ledger text; these structured records are not display copies. The common
 DOCX serializer covers answers, conversations, notebooks, Reports, bundles,
 investigations, every-source checks, full-text reviews and transcripts. A
 portable work-product bundle remains distinct from an importable node backup.

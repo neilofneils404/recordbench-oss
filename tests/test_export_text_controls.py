@@ -8,12 +8,15 @@ import io
 import json
 import zipfile
 from dataclasses import replace
+from types import SimpleNamespace
 from xml.etree import ElementTree
 
 import pytest
 from fastapi.testclient import TestClient
 from markupsafe import Markup
 
+from case_intelligence.generation import GroundedGenerationService
+from case_intelligence.managed_storage import StoragePolicy
 from case_intelligence.media_evidence import export_transcript
 from case_intelligence.workbench import create_workbench_app
 from case_intelligence.work_product_exports import (
@@ -260,7 +263,7 @@ def test_http_legacy_note_presentation_keeps_html_escaping_and_stored_text(tmp_p
         assert response.status_code == 303
         item = bench.workspace.all_notebook_items(matter.matter_id, actor)[0]
         # Emulate an older saved row; rendering must not rewrite its text.
-        with bench.workspace.connection:
+        with bench.workspace._lock, bench.workspace.connection:
             bench.workspace.connection.execute(
                 "UPDATE workbench_notebook_item SET body=? WHERE item_id=?", (raw, item.item_id),
             )
@@ -275,3 +278,69 @@ def test_http_legacy_note_presentation_keeps_html_escaping_and_stored_text(tmp_p
         # Jinja's trusted, already-escaped markup keeps its existing boundary.
         template = page.template.environment.from_string("{{ value }}")
         assert template.render(value=Markup("<em>left\x1aright</em>")) == "<em>left right</em>"
+
+
+def test_full_text_review_exports_hydrate_controls_without_rewriting_frozen_ledger(tmp_path):
+    actor = "development-taylor-morgan"
+    raw = LEGACY_TEXT + " " + UNICODE_TEXT
+    app = create_workbench_app(tmp_path / "runtime", auth_mode="test",
+                              storage_policy=StoragePolicy(reserve_bytes=0))
+    with TestClient(app) as client:
+        bench = app.state.workbench
+        for coordinator in (bench.answers, bench.research, bench.full_review):
+            coordinator.close()
+        matter = bench.create_matter("Synthetic full text controls", "", actor)
+        sources = bench.source_store(matter)
+        document, _ = sources.store_stream("Synthetic controls.txt", "text/plain", io.BytesIO(raw.encode()))
+        bench._sync_source_catalog(matter, [document])
+        _, version = bench.workspace.create_review_criterion(
+            matter.matter_id, actor, title="Find the synthetic text",
+            instructions="Include the passage that mentions before and after.",
+        )
+        queued = bench.workspace.queue_review_run(
+            matter.matter_id, actor, version.criterion_version_id,
+            run_kind="full", review_mode="full_text",
+        )
+        run = bench.workspace.claim_review_run("synthetic-full-text-worker")
+        assert run.run_id == queued.run_id
+        decision = bench.workspace.next_review_decision(run.run_id)
+        bench.generator = GroundedGenerationService(SimpleNamespace(
+            available=True,
+            classify_source=lambda **kwargs: {
+                "decision": "include", "rationale": kwargs["evidence"][0].excerpt,
+                "evidence_ids": ["S1"],
+            },
+        ))
+        outcome = bench._process_review_decision(run, decision, lambda: False)
+        assert outcome.decision == "included"
+        bench._record_review_decision(run, decision, outcome)
+        bench._finish_review_run(run)
+        before = bench.workspace.review_decisions_for_export(matter.matter_id, actor, run.run_id)
+
+        # The HTTP export hydrates compact full-text locators from the exact
+        # frozen source before passing that derived copy to the DOCX serializer.
+        route = f"/matters/{matter.slug}/full-review/{run.run_id}"
+        response = client.get(route + "/export?format=docx")
+        assert response.status_code == 200, response.text
+        rendered = _docx_text(response.content)
+        assert PRESENTED_TEXT in rendered and UNICODE_TEXT in rendered
+        assert LEGACY_TEXT not in rendered
+        portable = client.get(route + "/export?format=json")
+        assert portable.status_code == 200
+        assert portable.json()["decisions"][0]["citations"][0]["excerpt"] == raw
+
+        ledger_response = client.get(route + "/text/export?format=json")
+        assert ledger_response.status_code == 200
+        records = ledger_response.json()["records"]
+        unit = next(row for row in records if row["record_type"] == "unit")
+        saved_range = next(row for row in records if row["record_type"] == "range")
+        assert unit["unit_digest"] == hashlib.sha256(raw.encode()).hexdigest()
+        assert saved_range["rationale"] == raw
+        assert (saved_range["coverage_start"], saved_range["coverage_end"]) == (0, len(raw))
+        ledger_csv = client.get(route + "/text/export?format=csv")
+        assert ledger_csv.status_code == 200
+        csv_range = next(row for row in csv.DictReader(io.StringIO(ledger_csv.text))
+                         if row["Record type"] == "range")
+        assert json.loads(csv_range["Saved record JSON"])["rationale"] == raw
+        assert bench.workspace.review_decisions_for_export(matter.matter_id, actor, run.run_id) == before
+        assert sources.source_path(document.document_id, verify_digest=True).read_bytes() == raw.encode()
