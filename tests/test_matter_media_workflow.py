@@ -2222,14 +2222,14 @@ def test_transcript_overview_export_requires_current_exact_timestamps(
         if corruption == "citation":
             payload = json.loads(json.dumps(summary.payload))
             payload["claims"][0]["citations"][0]["start_ms"] += 1
-            with bench.workspace.connection:
+            with bench.workspace._lock, bench.workspace.connection:
                 bench.workspace.connection.execute(
                     "UPDATE workbench_media_summary SET payload_json=? "
                     "WHERE transcript_id=?",
                     (json.dumps(payload), summary.transcript_id),
                 )
         else:
-            with bench.workspace.connection:
+            with bench.workspace._lock, bench.workspace.connection:
                 bench.workspace.connection.execute(
                     "UPDATE workbench_media_summary SET basis_digest=? "
                     "WHERE transcript_id=?",
