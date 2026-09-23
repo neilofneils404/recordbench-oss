@@ -3,10 +3,11 @@
 Status snapshot, September 23, 2026: seven portable correction packets have
 standalone CI receipts and remain **draft, open and unmerged**. The heads below
 record the initial integration audit; follow-up corrections require fresh receipts.
-Integration review and final-candidate validation are in progress. Dedicated
-security-review completion (or a verified documented quota exception) and genuine
-full-head maintainer acceptance remain pending. Track the bounded packets and
-remaining product acceptance in
+Integration review and final-candidate validation are in progress. Independent
+local security review and genuine full-head maintainer acceptance remain required.
+Hosted security review is not required for this correction series, following the
+maintainer's revised instruction after no verifiable security result. Track the
+bounded packets and remaining product acceptance in
 [issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109); this plan
 does not close that issue or claim installed/GPU/release acceptance.
 
@@ -77,15 +78,20 @@ These are standalone receipts, not an integrated-product result. Earlier failed,
 timed-out or incomplete attempts and native-platform limitations remain in each
 PR; a passing later run does not turn those attempts into passing evidence.
 
-The initial policy bot approvals used the optional-review mode. They did not prove
-completed code/security review or independent maintainer acceptance. All seven
-PRs now carry `require-hosted-review` while remaining draft with auto-merge off.
-This correction integration enforces the maintainer's stricter requirement: final-commit hosted
-code review plus security review (or the documented verified security-quota
-exception), reconciled findings, required CI and later full-head maintainer
-acceptance. In
-particular, #115's security request has no verified security-specific completion;
-a generic clean code-review reply is not that receipt and proves no quota exception.
+The maintainer revised this series' requirement after hosted security commands
+returned only code-review receipts. Hosted security review is **not required**
+for these seven corrections; this is not a security pass or a quota exception.
+The `require-hosted-review` label was removed only after confirming every PR was
+draft with auto-merge disabled. The existing policy gate must finish revalidation
+before a ready transition; required checks and branch protections are unchanged.
+
+This integration still requires final-head hosted **code** review, a documented
+independent **local security** review, reconciled findings, required CI,
+publication inspection and genuine full-head maintainer acceptance. The optional
+policy bot approval records policy eligibility only; it substitutes for none of
+those reviews. Keep each PR draft until its actual candidate meets these gates.
+Use the [public-alpha](PUBLIC_ALPHA.md) policy for any future strict hosted-review
+opt-in; no repository-wide review implementation is changed here.
 
 The renewed review also identified a #113 resource-bound follow-up: tab-heavy
 DOCX content must be bounded before serialized XML/run expansion. That correction
