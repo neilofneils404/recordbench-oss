@@ -62,6 +62,7 @@ Probes make no model/network calls. The receipt reports full code commit,
 dirty-tree state, implementation hashes, OS, architecture, Python version, fixture
 fingerprint, configured generator/embedding/reranker revisions and licenses, and
 all case-level outputs and verdicts. It omits machine names and local paths.
+Evaluation JSON inputs and receipt files use UTF-8 on every platform.
 All model execution and offline-model readiness remain explicitly unexercised.
 Exit zero means the harness completed, not that quality targets passed; inspect
 the metrics. Existing output files are never overwritten.
@@ -110,6 +111,9 @@ At least one parsed response records `parsed_responses_observed_not_inference_at
 even a malformed response or abstention is only response evidence, not inference
 or quality attestation. Failed requests cannot establish whether inference ran.
 Record actual runtime/GPU/driver details without private hostnames or paths.
+Artifact digests and supplied offline-evidence digests must be JSON strings with
+64 lowercase hexadecimal characters. Unexercised offline readiness keeps its
+evidence digest null. Ollama identity observations also require a string digest.
 Runtime declarations and the initial capture metadata must encode as finite UTF-8
 JSON before the first identity observation or model request. Invalid Unicode in
 metadata therefore cannot consume all planned requests before receipt creation fails.

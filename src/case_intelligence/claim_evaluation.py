@@ -241,7 +241,7 @@ def validate_receipt(receipt):
 
 
 def model_records(profile, *, generator_exercised):
-    manifest = json.loads((ROOT / "config/models.json").read_text())
+    manifest = json.loads((ROOT / "config/models.json").read_text(encoding="utf-8"))
     records = []
     for role in ("generator", "embedding", "reranker"):
         entry = next(item for item in manifest["models"] if item["role"] == role
@@ -442,17 +442,22 @@ def validate_runtime(runtime):
     for field in ("runtime_name", "runtime_version", "accelerator", "driver"):
         if not isinstance(runtime[field], str) or not 1 <= len(runtime[field]) <= 160:
             raise ValueError("Runtime description is missing or too long.")
+    if any(not isinstance(runtime[field], str)
+           for field in ("upstream_model_id", "upstream_revision", "license")):
+        raise ValueError("Runtime upstream provenance fields must be strings.")
     memory = runtime["accelerator_memory_gib"]
     if type(memory) not in (int, float) or not 0 <= memory <= 100_000:
         raise ValueError("Record actual accelerator memory (0 for CPU).")
-    if not re.fullmatch(r"[0-9a-f]{64}", str(runtime["model_artifact_sha256"])):
+    if (not isinstance(runtime["model_artifact_sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", runtime["model_artifact_sha256"])):
         raise ValueError("Record the immutable loaded artifact SHA-256.")
-    if runtime["offline_readiness"] not in {"not_exercised", "operator_attested"}:
+    if (not isinstance(runtime["offline_readiness"], str)
+        or runtime["offline_readiness"] not in {"not_exercised", "operator_attested"}):
         raise ValueError("Offline readiness must be not_exercised or operator_attested.")
     evidence = runtime["offline_evidence_sha256"]
     if ((runtime["offline_readiness"] == "not_exercised" and evidence is not None)
         or (runtime["offline_readiness"] == "operator_attested"
-            and not re.fullmatch(r"[0-9a-f]{64}", str(evidence)))):
+            and (not isinstance(evidence, str) or not re.fullmatch(r"[0-9a-f]{64}", evidence)))):
         raise ValueError("Offline attestation requires a separate evidence digest.")
 
 

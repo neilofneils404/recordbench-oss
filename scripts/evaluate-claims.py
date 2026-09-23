@@ -58,8 +58,8 @@ def local_client(backend, endpoint, model, artifact_digest):
             if backend == "ollama":
                 payload = _bounded_json_get(f"{client.endpoint}/api/tags", timeout=5, opener=opener)
                 matches = [item for item in payload.get("models", []) if item.get("name") == model]
-                valid = (len(matches) == 1
-                         and str(matches[0].get("digest", "")).removeprefix("sha256:") == artifact_digest)
+                valid = (len(matches) == 1 and isinstance(matches[0].get("digest"), str)
+                         and matches[0]["digest"].removeprefix("sha256:") == artifact_digest)
             else:
                 payload = _bounded_json_get(f"{client.endpoint}/v1/models", timeout=5, opener=opener)
                 matches = [item for item in payload.get("data", []) if item.get("id") == model]
@@ -102,15 +102,15 @@ def main(argv=None):
     if args.command == "probes":
         result = evaluation.run_probes()
     elif args.command == "capture":
-        runtime = json.loads(args.runtime_profile.read_text())
+        runtime = json.loads(args.runtime_profile.read_text(encoding="utf-8"))
         evaluation.validate_runtime(runtime)
         client, check = local_client(args.backend, args.endpoint, args.model, runtime["model_artifact_sha256"])
         result = evaluation.capture(client, profile=args.profile, runtime=runtime,
                                     repetitions=args.repetitions, identity_check=check)
     else:
-        receipt = json.loads(args.capture.read_text())
+        receipt = json.loads(args.capture.read_text(encoding="utf-8"))
         result = (evaluation.grade_template(receipt) if args.command == "grade-template" else
-                  evaluation.score_capture(receipt, json.loads(args.grades.read_text())))
+                  evaluation.score_capture(receipt, json.loads(args.grades.read_text(encoding="utf-8"))))
     evaluation.write_new(args.output, result)
     print(json.dumps({"mode": result.get("mode", args.command),
                       "receipt_sha256": result.get("receipt_sha256"),
