@@ -326,6 +326,8 @@ def validate_execution_metadata(receipt):
         except (OSError, subprocess.CalledProcessError, ValueError, UnicodeError) as exc:
             raise ValueError("Clean capture requires readable committed evaluation inputs.") from exc
         if not matches:
+            if name == "config/models.json":
+                raise ValueError("Clean capture model catalog disagrees with its committed evaluation inputs.")
             raise ValueError("Clean capture fingerprints disagree with its committed evaluation inputs.")
 
 
