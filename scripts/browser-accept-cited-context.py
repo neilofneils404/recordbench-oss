@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import io
 import json
+import os
 from pathlib import Path
 import socket
 import sys
@@ -101,7 +102,10 @@ def seed(runtime):
         document_payload = message.payload
         response = client.post(f'/matters/{matter.slug}/uploads', files=[
             ('files', ('Generated Cedar recording.wav', synthetic_pcm(), 'audio/wav'))], follow_redirects=False)
-        assert response.status_code == 303
+        assert response.status_code == 303, (
+            f'Generated WAV upload returned HTTP {response.status_code}; '
+            f'ffprobe_ready={os.access("/usr/bin/ffprobe", os.X_OK)}; '
+            f'ffmpeg_ready={os.access("/usr/bin/ffmpeg", os.X_OK)}')
         deadline = time.monotonic() + 15
         continued_inspections = set()
         recording = None
