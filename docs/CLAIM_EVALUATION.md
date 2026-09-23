@@ -187,9 +187,18 @@ Grades bind to the exact capture and rubric digests. Scoring refuses stale,
 missing, duplicate or extra samples/claim grades and altered verifier results.
 It also checks the complete recorded generation protocol and each prompt against
 the frozen case and adapter settings, plus the declared model catalog and fixed
-scope/acceptance fields. Failure rows cannot carry generated-output fields that
-would otherwise disappear from human grading. Parsed-response evidence, row states,
-verifier outcomes and typed aggregate counters must agree.
+scope/acceptance fields. Generated rows require JSON objects, as both production
+adapters do; arrays and scalar responses cannot become generated grading samples.
+Failure rows cannot carry generated-output fields that would otherwise disappear
+from human grading. Parsed-response evidence, row states, verifier outcomes and
+typed aggregate counters must agree.
+Execution metadata must retain its complete typed shape and a valid UTC capture
+timestamp. The recorded Git revision must be available locally when grading; the
+harness does not fetch it. For a capture recorded as clean, implementation hashes,
+model-manifest digest and frozen-suite digest must also match that revision's
+committed files. Dirty captures remain explicit
+and bound to their captured implementation hashes; grading does not require the
+reviewer's operating system, Python version or checkout state to match the capture.
 Use the captured code revision; code-fingerprint changes require an explicit new
 evaluation, not silent regrading with different verification. Hashes detect edits
 and bind artifacts; they are not signatures or independent runtime attestation.

@@ -36,6 +36,8 @@ IDENTITY_LIMITATION = (
     "loaded weights; artifact and upstream revision linkage remains operator-declared. "
     "Identity observations do not establish inference execution."
 )
+IMPLEMENTATION_PATHS = ("src/case_intelligence/generation.py",
+                        "src/case_intelligence/claim_evaluation.py", "scripts/evaluate-claims.py")
 
 
 def adapter_name(client):
@@ -128,6 +130,8 @@ def validate_capture_row(row):
         or row["elapsed_ms"] < 0 or type(row["parsed_response_received"]) is not bool):
         raise ValueError("Invalid capture sample identity, timing or parsed-response evidence.")
     if generated:
+        if not isinstance(row["raw"], dict):
+            raise ValueError("Generated samples must retain JSON object output.")
         if (row["parsed_response_received"] is not True
             or type(row["schema_valid"]) is not bool or not isinstance(row["verification"], dict)):
             raise ValueError("Generated samples require complete parsed output evidence.")
@@ -209,15 +213,7 @@ def validate_receipt(receipt):
             system, user = _prompt(case["question"], evidence, (), "", grounding_repair=False)
             if not json_equal(row.get("prompt"), {"system": system, "user": user}):
                 raise ValueError("Capture sample prompt differs from the frozen case protocol.")
-        # Verification is code-sensitive. Score with the recorded implementation;
-        # do not silently replay a later verifier against an old capture.
-        fingerprints = receipt["execution"]["implementation_sha256"]
-        if set(fingerprints) != {"src/case_intelligence/generation.py",
-                                "src/case_intelligence/claim_evaluation.py", "scripts/evaluate-claims.py"}:
-            raise ValueError("Incomplete implementation fingerprints.")
-        for name, recorded in fingerprints.items():
-            if hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != recorded:
-                raise ValueError("Score with the captured implementation; code fingerprint changed.")
+        validate_execution_metadata(receipt)
         for row in rows:
             if row["state"] == "generated":
                 evidence = tuple(EvidenceItem(**item) for item in cases[row["case_id"]]["evidence"])
@@ -266,10 +262,71 @@ def execution_metadata():
         "working_tree_dirty": bool(subprocess.check_output(
             ["git", "status", "--porcelain"], cwd=ROOT)),
         "implementation_sha256": {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-            for name in ("src/case_intelligence/generation.py",
-                         "src/case_intelligence/claim_evaluation.py",
-                         "scripts/evaluate-claims.py")},
+            for name in IMPLEMENTATION_PATHS},
     }
+
+
+def validate_execution_metadata(receipt):
+    execution = receipt.get("execution")
+    required = {"os", "os_release", "architecture", "python", "git_commit",
+                "working_tree_dirty", "implementation_sha256"}
+    if not isinstance(execution, dict) or set(execution) != required:
+        raise ValueError("Capture execution metadata must contain exactly the recorded fields.")
+    # Platform strings describe the capture host, not the machine grading it.
+    # platform may report an empty string when a platform detail is unknown.
+    if (any(not isinstance(execution[key], str) for key in ("os", "os_release", "architecture", "python"))
+        or type(execution["working_tree_dirty"]) is not bool):
+        raise ValueError("Capture execution environment fields have invalid types.")
+    commit = execution["git_commit"]
+    if (not isinstance(commit, str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit)
+        or not commit.strip("0")):
+        raise ValueError("Capture execution requires a nonzero full Git commit ID.")
+    timestamp = receipt.get("created_at")
+    if (not isinstance(timestamp, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:\+00:00|Z)", timestamp)):
+        raise ValueError("Capture timestamp must be an ISO timestamp in UTC.")
+    try:
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Capture timestamp is invalid.") from exc
+    fingerprints = execution["implementation_sha256"]
+    if (not isinstance(fingerprints, dict) or set(fingerprints) != set(IMPLEMENTATION_PATHS)
+        or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+               for value in fingerprints.values())):
+        raise ValueError("Capture execution has incomplete or invalid implementation fingerprints.")
+    # Verification is code-sensitive even for a capture from a dirty checkout.
+    for name, recorded in fingerprints.items():
+        if hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != recorded:
+            raise ValueError("Score with the captured implementation; code fingerprint changed.")
+    # Read literal local objects. Denying every transport also protects older
+    # Git versions that do not understand the no-lazy-fetch environment flag.
+    git_environment = {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_NO_REPLACE_OBJECTS": "1",
+                       "GIT_ALLOW_PROTOCOL": ""}
+    try:
+        kind = subprocess.check_output(["git", "cat-file", "-t", commit], cwd=ROOT,
+                                       text=True, stderr=subprocess.DEVNULL, env=git_environment).strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError("Captured Git commit is not available locally; use its recorded repository.") from exc
+    if kind != "commit":
+        raise ValueError("Capture execution Git ID must identify an available commit object.")
+    if execution["working_tree_dirty"]:
+        return
+    # A clean declaration must agree with its committed inputs. A dirty capture
+    # records its base commit and current hashes without making that clean claim.
+    for name in (*IMPLEMENTATION_PATHS, "config/models.json", "benchmarks/r1b-claims-v2.json"):
+        try:
+            content = subprocess.check_output(["git", "cat-file", "blob", f"{commit}:{name}"],
+                                              cwd=ROOT, stderr=subprocess.DEVNULL, env=git_environment)
+            if name in fingerprints:
+                matches = hashlib.sha256(content).hexdigest() == fingerprints[name]
+            else:
+                expected = (receipt["models"].get("manifest_sha256")
+                            if name == "config/models.json" else receipt["suite_sha256"])
+                matches = digest(json.loads(content)) == expected
+        except (OSError, subprocess.CalledProcessError, ValueError, UnicodeError) as exc:
+            raise ValueError("Clean capture requires readable committed evaluation inputs.") from exc
+        if not matches:
+            raise ValueError("Clean capture fingerprints disagree with its committed evaluation inputs.")
 
 
 def base_receipt(mode, profile):
@@ -451,6 +508,8 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
                     # boundary exceptions remain outside this data-error catch.
                     raise GenerationRejected("Model response could not be parsed.") from exc
                 row["parsed_response_received"] = True
+                if not isinstance(raw, dict):
+                    raise GenerationRejected("Model output is not a JSON object.")
                 try:
                     json.dumps(raw, ensure_ascii=False, allow_nan=False).encode("utf-8")
                 except (TypeError, ValueError, UnicodeError) as exc:
