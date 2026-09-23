@@ -8,10 +8,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import re
 import subprocess
+import tempfile
 import time
 
 from jsonschema import Draft202012Validator
@@ -79,6 +81,25 @@ def validate_receipt(receipt):
     if receipt.get("schema_version") != 1:
         raise ValueError("Unsupported receipt schema.")
     if receipt.get("mode") == "model_capture":
+        runtime = receipt.get("runtime")
+        if (not isinstance(runtime, dict)
+            or runtime.get("basis") != "operator_declared_not_independently_verified"):
+            raise ValueError("Runtime provenance must retain its operator-declared basis.")
+        validate_runtime({key: value for key, value in runtime.items() if key != "basis"})
+        try:
+            generator = receipt["models"]["components"][0]
+            pinned_generator = model_records(
+                generator["profile"], generator_exercised=False)["components"][0]
+        except (KeyError, IndexError, TypeError, StopIteration) as exc:
+            raise ValueError("Capture must select a documented pinned model profile.") from exc
+        # A checksum is not an attestation: revalidate the declarations against
+        # the recorded profile's repository pin, as capture does before calls.
+        if (generator.get("role") != "generator"
+            or any(runtime[key] != pinned_generator[field]
+                   or generator.get(field) != pinned_generator[field]
+                   for key, field in (("upstream_model_id", "model_id"),
+                                      ("upstream_revision", "revision"), ("license", "license")))):
+            raise ValueError("Declared artifact provenance must match the selected pinned model profile.")
         repetitions = receipt.get("configuration", {}).get("repetitions")
         if type(repetitions) is not int or not 1 <= repetitions <= 20:
             raise ValueError("Capture repetitions invalid.")
@@ -360,8 +381,8 @@ def generation_counts(rows):
         "attempts": len(rows),
         "generated": sum(row["state"] == "generated" for row in rows),
         "schema_invalid": sum(not row["schema_valid"] for row in rows if row["state"] == "generated"),
-        "abstained": sum(isinstance(row.get("raw"), dict) and row["raw"].get("answerable") is False
-                         for row in rows),
+        "abstained": sum(row["verification"]["response"]["ordinary"]["state"] == "abstained"
+                         for row in rows if row["state"] == "generated"),
     }
 
 
@@ -429,5 +450,25 @@ def write_new(path, payload):
     # Complete serialization first: invalid values must not reserve a path with
     # a truncated artifact that cannot be retried under the no-overwrite policy.
     serialized = (json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
-    with path.open("xb") as stream:
-        stream.write(serialized)
+    temporary = None
+    try:
+        # Keep unfinished bytes private and off the final path. A same-directory
+        # hard link publishes the closed file atomically without replacing even
+        # a concurrently created destination or an existing symlink.
+        with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent,
+                prefix=".claim-receipt-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(serialized)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path)
+    except BaseException:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                # Cleanup cannot replace the original write/install failure.
+                pass
+        raise
+    else:
+        temporary.unlink(missing_ok=True)

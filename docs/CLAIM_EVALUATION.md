@@ -132,12 +132,17 @@ between checks. Any missing/mismatched identity aborts without a quality receipt
 The capture API itself requires matched identity snapshots from its checker and
 records the method, model/artifact observations, boundary count and limitations.
 A no-op checker is refused before generation. Grading also validates that identity
-record; bypassing the CLI cannot omit it. As with any injected transport, a caller
+record and the complete runtime declaration, including the selected generator's
+pinned model ID, revision and license; bypassing the CLI cannot omit these checks.
+As with any injected transport, a caller
 fabricating snapshot values is not independent runtime evidence.
 
 Choose repetitions in advance (1–20). Capture records exact prompts and response
 schema, raw parsed output including discarded claims/limitations, failure types,
-schema-invalid responses, abstentions and timings. It uses production temperature
+schema-invalid responses, abstentions and timings. An abstention is counted only
+when the ordinary production verifier records an abstained response. A contradictory
+`answerable: false` response containing claims is rejected, even when it satisfies
+the JSON schema, and is not counted as an abstention. It uses production temperature
 0.1 and output-token budget; adapters do not set seeds, so reproducibility means
 repeatable protocol and retained outputs, not identical stochastic answers.
 Ollama uses the production 8192 context setting; compatible API context capacity
@@ -198,5 +203,8 @@ Identity methods are bound to the production adapter: Ollama requires tag-digest
 snapshots; the compatible adapter uses model-ID snapshots with its explicit
 weight-attestation limitation. Non-finite values and unpaired Unicode surrogates
 from permissive JSON parsing are failed generation attempts. Artifact serialization
-and UTF-8 encoding complete before reserving a new output path, so invalid values
-cannot leave a truncated receipt.
+and UTF-8 encoding complete before writing. The complete receipt is written and
+closed in a temporary file beside its destination, then installed without replacing
+an existing path. A failed write or close cannot publish a partial final receipt.
+Cleanup is attempted; interruption or cleanup failure can leave a private temporary
+file. Existing destinations remain untouched.
