@@ -3849,7 +3849,7 @@
       hint.textContent = readiness.partial_query === true
         ? readiness.coverage_notice || "Answers use the searchable sources; affected sources are excluded."
         : ready
-          ? "Answers stay grounded in the selected matter sources."
+          ? "Generated answers use selected passages; check claims against the original sources."
           : readiness.state === "preparing"
             ? "Questions will be available when active preparation finishes."
             : readiness.guidance || "No source is searchable yet.";

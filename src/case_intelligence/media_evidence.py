@@ -25,6 +25,7 @@ from .media_preflight import (
     inspect_recording,
 )
 from .branding import PRODUCT_NAME
+from .derived_text import presentation_text
 from .generation import GenerationRejected, GenerationUnavailable
 from .pilot_uploads import PilotDocument, PilotStore, PilotUnit, UploadProblem
 from .service_endpoints import validate_service_endpoint
@@ -39,6 +40,8 @@ from .workspace_store import (
 from .work_product_exports import (
     DOCX_MEDIA_TYPE,
     ExportBlock,
+    _TEXT_PRESENTATION_NOTICE,
+    _markdown_escape,
     blocks_to_docx,
     blocks_to_markdown,
 )
@@ -1142,7 +1145,7 @@ def _portable_transcript_segments(
 
 
 def _portable_csv_value(value: object) -> str:
-    text = str(value)
+    text = presentation_text(str(value))
     if text.lstrip().startswith(("=", "+", "-", "@")):
         return "'" + text
     return text
@@ -1268,20 +1271,26 @@ def export_transcript(
             f"[{item.start}–{item.end}] {item.speaker}: {item.text}"
             for item in portable_segments
         ]
-        return MediaExport(("\n".join(lines) + "\n").encode("utf-8"), "text/plain; charset=utf-8", ".txt")
+        return MediaExport(presentation_text("\n".join(lines) + "\n").encode("utf-8"), "text/plain; charset=utf-8", ".txt")
     if kind == "markdown":
-        lines = [f"# Transcript — {source_name}", ""]
+        # Keep the transcript's existing capacity and timestamp layout. The
+        # generic block serializer has a lower whole-document size limit.
+        lines = [f"# Transcript — {_markdown_escape(source_name)}", ""]
         for item in portable_segments:
             lines.extend(
                 [
-                    f"**{item.start}–{item.end} · {item.speaker} "
+                    f"**{item.start}–{item.end} · {_markdown_escape(item.speaker)} "
                     f"({item.speaker_status})**",
                     "",
-                    item.text,
+                    _markdown_escape(item.text),
                     "",
                 ]
             )
-        return MediaExport("\n".join(lines).encode("utf-8"), "text/markdown; charset=utf-8", ".md")
+        markdown = "\n".join(lines)
+        presented = presentation_text(markdown)
+        if presented != markdown:
+            presented += f"\n**Note:** {_TEXT_PRESENTATION_NOTICE}\n"
+        return MediaExport(presented.encode("utf-8"), "text/markdown; charset=utf-8", ".md")
     if kind == "docx":
         created = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         blocks: list[ExportBlock] = [
@@ -1325,7 +1334,7 @@ def export_transcript(
                 blocks.append(f"{index}\n{start} --> {end}\n{item.speaker}: {item.text}")
         prefix = "WEBVTT\n\n" if kind == "vtt" else ""
         return MediaExport(
-            (prefix + "\n\n".join(blocks) + "\n").encode("utf-8"),
+            presentation_text(prefix + "\n\n".join(blocks) + "\n").encode("utf-8"),
             "text/vtt; charset=utf-8" if kind == "vtt" else "application/x-subrip",
             ".vtt" if kind == "vtt" else ".srt",
         )

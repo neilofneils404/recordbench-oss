@@ -2597,8 +2597,67 @@ _STARTUP_REMEDY = (
 )
 
 
+def _installed_auth_mode(root: Path, installation: Mapping[str, object]) -> str:
+    """Compare installation intent with saved configuration without echoing values."""
+    expected = installation.get("auth")
+    path = root / "config" / "recordbench.env"
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError("saved authentication mode is unavailable")
+    saved = _dotenv(path).get("CASE_INTELLIGENCE_AUTH_MODE")
+    if not isinstance(expected, str) or expected not in {"local", "oidc", "kerberos"} or saved != expected:
+        raise RuntimeError("saved authentication mode disagrees with application configuration")
+    return str(expected)
+
+
+# The proof never leaves the app container, enters argv, or appears in output.
+# A direct HTTP connection avoids proxy environment variables and redirects.
+_AUTH_MODE_PROBE = """import hashlib, hmac, http.client, json
+try:
+    with open('/var/lib/recordbench/runtime/identity-session.key', 'rb') as stream:
+        key = stream.read(33)
+    if len(key) != 32:
+        raise ValueError()
+    proof = hmac.new(key, b'recordbench/auth-mode-diagnostic/v1', hashlib.sha256).hexdigest()
+    connection = http.client.HTTPConnection('127.0.0.1', 8786, timeout=5)
+    try:
+        connection.request('GET', '/internal/auth-mode', headers={'X-RecordBench-Auth-Diagnostic': proof})
+        response = connection.getresponse()
+        content = response.read(4097)
+        if response.status != 200 or len(content) > 4096:
+            raise ValueError()
+        payload = json.loads(content)
+        if not isinstance(payload, dict) or set(payload) != {'auth_mode'}:
+            raise ValueError()
+        if payload['auth_mode'] not in ('local', 'oidc', 'kerberos', 'preview', 'test'):
+            raise ValueError()
+    finally:
+        connection.close()
+    print(json.dumps(payload))
+except Exception:
+    raise SystemExit(1)
+"""
+
+
+def _running_auth_mode(root: Path, installation: Mapping[str, object]) -> str | None:
+    """Read the live IdentityService; process environment is not effective state."""
+    command = [*_compose(root, installation.get("profiles", [])),
+               "exec", "-T", "app", "python", "-c", _AUTH_MODE_PROBE]
+    try:
+        result = _probe(command)
+        if result.returncode != 0 or len(result.stdout) > 4096:
+            return None
+        payload = json.loads(result.stdout)
+        if not isinstance(payload, dict) or set(payload) != {"auth_mode"}:
+            return None
+        mode = payload["auth_mode"]
+        return mode if mode in ("local", "oidc", "kerberos", "preview", "test") else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def _wait_health(console: Console, root: Path) -> None:
     settings, _ = _installed_release(root)
+    expected_auth = _installed_auth_mode(root, settings)
     env = _dotenv(root / "compose.env")
     host = _valid_host(str(settings["server_name"]))
     port = int(env.get("RECORDBENCH_HTTPS_PORT", "8443"))
@@ -2625,19 +2684,26 @@ def _wait_health(console: Console, root: Path) -> None:
         except (OSError, ValueError, subprocess.CalledProcessError, http.client.HTTPException) as exc:
             last = exc.__class__.__name__
         if isinstance(payload, dict) and payload.get("product") == "RecordBench":
+            effective_auth = _running_auth_mode(root, settings)
+            if effective_auth is not None and effective_auth != expected_auth:
+                raise RuntimeError(
+                    f"running authentication mode {effective_auth} disagrees with installed mode {expected_auth}; "
+                    "restore the intended authentication configuration and recreate the app before retrying doctor"
+                )
             storage, capabilities = payload.get("storage", {}), payload.get("capabilities", {})
             base_ready = (payload.get("status") in {"ok", "degraded"} and isinstance(storage, dict)
                           and storage.get("status") == "ready" and isinstance(capabilities, dict)
                           and capabilities.get("source_review") == "ready"
                           and capabilities.get("malware_scan") in {"ready", "not required"})
-            login_ready = _login_reachable(root)
+            login_reachable = _login_reachable(root)
+            login_ready = login_reachable and effective_auth == expected_auth
             selected_ready = base_ready and _selected_capabilities_ready(payload, str(settings.get("models", "none")))
             _install_phase(root, "running", "complete")
             _install_phase(root, "basic_review", "complete" if base_ready else "incomplete")
             _install_phase(root, "login_reachable", "complete" if login_ready else "incomplete")
             _install_phase(root, "selected_capabilities", "complete" if selected_ready else "incomplete")
             if selected_ready and login_ready:
-                console.ok("Application health, selected capabilities and sign-in endpoint passed")
+                console.ok(f"Application health, selected capabilities and sign-in endpoint passed; authentication mode :: {expected_auth}")
                 if payload.get("status") == "degraded":
                     console.warn("Basic review is available; an unselected optional capability remains unavailable")
                 return
@@ -2646,7 +2712,9 @@ def _wait_health(console: Console, root: Path) -> None:
                 last += "; storage reserve is unsatisfied: restore free space above the configured reserve; image builds may have consumed it"
             if isinstance(capabilities, dict) and capabilities.get("malware_scan") not in {"ready", "not required"}:
                 last += "; malware scanning is unavailable: inspect clamav-updater logs and fresh daily.* signatures"
-            if not login_ready:
+            if effective_auth is None:
+                last += "; running authentication mode is unavailable: verify the app supports protected authentication diagnostics and recreate it with the intended configuration"
+            if not login_reachable:
                 last += "; sign-in endpoint is not reachable"
         if time.monotonic() >= next_report:
             console.note(f"health consensus pending :: {last}")
@@ -2662,13 +2730,17 @@ def _doctor(console: Console, args: argparse.Namespace, root: Path) -> None:
         if not path.is_file() or path.is_symlink():
             raise RuntimeError(f"required node file is unavailable: {path}")
         console.ok(f"control file :: {path.name}")
-    config = json.loads((root / "installation.json").read_text(encoding="utf-8"))
+    config, _ = _installed_release(root)
+    expected_auth = _installed_auth_mode(root, config)
+    console.ok(f"saved authentication mode :: {expected_auth}")
     profiles = list(config.get("profiles", []))
     compose = _compose(root, profiles)
     _run(console, [*compose, "config", "--quiet"], dry_run=args.dry_run)
     _run(console, [*compose, "ps"], dry_run=args.dry_run)
     if not args.dry_run:
         _wait_health(console, root)
+    else:
+        console.note("Dry run: running authentication mode and live health are not verified")
     if not args.dry_run:
         installation, _ = _installed_release(root)
         _record_prepared_phases(root, installation)

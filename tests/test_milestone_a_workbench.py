@@ -184,7 +184,7 @@ def test_full_matter_upload_search_generated_answer_support_and_restart(tmp_path
         assert "Find relevant support" in workspace.text
         assert "Order it for relevance" in workspace.text
         assert "Draft from the best support" in workspace.text
-        assert "Verify claims and citations" in workspace.text
+        assert "Check citations and text" in workspace.text
 
         search = client.get(
             f"/matters/{slug}", params={"mode": "search", "q": "canvas bag inventory"}

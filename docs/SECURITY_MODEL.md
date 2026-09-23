@@ -30,7 +30,7 @@ passages** evaluates retrieved passages within each frozen source. **Review all
 extracted text** records every available text range and preserves extraction and
 analysis gaps; neither establishes recognition of every relevant fact.
 
-Matter closure is a separate, deliberate application policy: either the matter
+Manual **Close matter** is a deliberate application action: either the matter
 owner or an authenticated RecordBench administrator may request permanent
 deletion. Cross-owner administrator action is labelled explicitly and is
 attributed to that administrator. The close workflow keeps a final export
@@ -38,6 +38,15 @@ available, refuses active work, requires exact-name and permanent-deletion
 confirmation, preserves originals outside managed matter storage, removes the
 complete workbench projection, and retains only content-minimized audit and
 closure records.
+
+Scheduled retention can delete a matter without another confirmation. New
+matters default to 30 days of review followed by seven days of export grace;
+enabled maintenance can then claim deletion when no work is active. Its first
+pass runs at application startup. Restored backups retain their original
+deadlines and may already be due, so hold maintenance in the isolated target
+before starting it and follow [expired-matter recovery](EXPIRED_MATTER_RECOVERY.md).
+Owners and administrators can extend active matters. Matters without a stored
+schedule remain unscheduled.
 
 Report vulnerabilities privately under [SECURITY.md](../SECURITY.md). Do not
 attach case files, transcripts, credentials, or internal topology to a report.

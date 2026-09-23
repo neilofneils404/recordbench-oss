@@ -13,7 +13,10 @@ from datetime import datetime, timezone
 from html import escape as xml_escape
 from typing import Mapping, Sequence
 
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, answer_limitation, modality_coverage_notice, research_content, rejected_answer_content, rejected_answer_notice, review_rejection_notice
 from .branding import PRODUCT_NAME
+from .derived_text import presentation_text
+from .pdf_coverage import PDF_SAVED_RESULT_NOTICE
 from .workspace_store import (
     ConversationRecord,
     MatterRecord,
@@ -40,9 +43,42 @@ ZIP_MEDIA_TYPE = "application/zip"
 CSV_MEDIA_TYPE = "text/csv; charset=utf-8"
 JSON_MEDIA_TYPE = "application/json; charset=utf-8"
 MAX_EXPORT_TEXT_CHARS = 10_000_000
+MAX_DOCX_XML_BYTES = 100 * 1024 * 1024
+MAX_DOCX_RUNS = 250_000
 MAX_WORKFLOW_EXPORT_BYTES = 100 * 1024 * 1024
 MAX_BUNDLE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 MAX_READABLE_REVIEW_DECISIONS = 500
+_TEXT_PRESENTATION_NOTICE = (
+    "Unsupported control or Unicode characters were replaced with spaces for this export. "
+    "Original source text and saved citation references are unchanged."
+)
+_DOCX_LINE_ENDING_NOTICE = (
+    "Carriage-return line endings were normalized to line breaks in this Word document. "
+    "Original source text and saved citation references are unchanged."
+)
+_DOCX_CAPACITY_MESSAGE = (
+    "This Word export contains too much text or formatting to prepare safely. "
+    "Export a smaller selection or choose Markdown."
+)
+_DOCX_STYLE_MAP = {
+    "title": "Title", "subtitle": "Subtitle", "heading1": "Heading1",
+    "bullet": "ListBullet", "citation": "Citation", "note": "Note",
+    "metadata": "Metadata", "footer": "Footer",
+}
+_DOCX_TEXT_RUN_OPEN = '<w:r><w:t xml:space="preserve">'
+_DOCX_TEXT_RUN_CLOSE = "</w:t></w:r>"
+_DOCX_TAB_RUN = "<w:r><w:tab/></w:r>"
+_DOCX_BREAK_RUN = "<w:r><w:br/></w:r>"
+_DOCX_DOCUMENT_OPEN = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    '<w:body>'
+)
+_DOCX_DOCUMENT_CLOSE = (
+    '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
+    '<w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr>'
+    "</w:body></w:document>"
+)
 
 _PORTABLE_REVIEW_METRICS = (
     "sample_total",
@@ -103,7 +139,8 @@ def safe_file_stem(value: str, fallback: str = "recordbench-export") -> str:
 def _plain(value: object) -> str:
     if not isinstance(value, str):
         return ""
-    return "\n".join(line.rstrip() for line in value.replace("\r", "").split("\n")).strip()
+    lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return "\n".join(line.rstrip() for line in lines).strip()
 
 
 def _staff_label(value: object) -> str:
@@ -118,6 +155,24 @@ def _staff_actor_label(display_name: object) -> str:
     return _plain(display_name) or "Staff member"
 
 
+def _source_excerpt(value: object) -> str:
+    """Keep structured source snapshots exact; reject limits without truncation."""
+
+    if not isinstance(value, str):
+        return ""
+    if len(value) > MAX_WORKFLOW_EXPORT_BYTES:
+        raise ExportProblem("A source excerpt exceeds the export limit. Export a smaller selection.")
+    try:
+        encoded_size = len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ExportProblem(
+            "A source excerpt contains invalid Unicode. Review its saved support before exporting again."
+        ) from exc
+    if encoded_size > MAX_WORKFLOW_EXPORT_BYTES:
+        raise ExportProblem("A source excerpt exceeds the export limit. Export a smaller selection.")
+    return value
+
+
 def _portable_review_citation(value: object) -> dict[str, str] | None:
     """Whitelist the fields needed to resolve exported every-source support."""
 
@@ -126,7 +181,7 @@ def _portable_review_citation(value: object) -> dict[str, str] | None:
     citation = {
         "source_name": _plain(value.get("source_name")),
         "location": _plain(value.get("location")),
-        "excerpt": _plain(value.get("excerpt")),
+        "excerpt": _source_excerpt(value.get("excerpt")),
     }
     if not citation["source_name"] or not citation["location"]:
         return None
@@ -149,7 +204,7 @@ def _review_citation_text(citation: Mapping[str, str]) -> str:
         for part in (
             citation.get("source_name", ""),
             citation.get("location", ""),
-            citation.get("excerpt", ""),
+            _plain(citation.get("excerpt", "")),
         )
         if part
     )
@@ -384,12 +439,17 @@ def _validate_research_export_scope(
             raise ExportProblem(
                 "An investigation citation did not match its evidence ledger."
             )
-        for key in ("matter_id", "document_id", "source_version_id", "excerpt"):
+        for key in ("matter_id", "document_id", "source_version_id"):
             supplied = value.get(key)
             if supplied not in (None, "") and _plain(supplied) != _plain(source.get(key)):
                 raise ExportProblem(
                     "An investigation citation did not match its evidence ledger."
                 )
+        supplied_excerpt = value.get("excerpt")
+        if supplied_excerpt not in (None, "") and supplied_excerpt != source.get("excerpt"):
+            raise ExportProblem(
+                "An investigation citation did not match its evidence ledger."
+            )
 
     def validate_citation_list(value: object) -> int:
         if not isinstance(value, list):
@@ -451,7 +511,7 @@ def _validate_research_export_scope(
     _answer_citations, answer_text = validate_answer(answer)
     if result.get("summary") != answer_text:
         raise ExportProblem(
-            "The investigation synthesis does not match its verified answer."
+            "The investigation synthesis does not match its saved answer."
         )
     hierarchy = result.get("hierarchical_synthesis")
     if hierarchy is not None or job.plan.get("synthesis_version") == 1:
@@ -484,7 +544,7 @@ def _validate_research_export_scope(
             citation_count += answer_citations
             if item.get("text") != pass_text:
                 raise ExportProblem(
-                    "An investigation finding does not match its verified answer."
+                    "An investigation finding does not match its saved answer."
                 )
         else:
             expected_text = {
@@ -632,8 +692,14 @@ def _answer_blocks(message: MessageRecord) -> list[ExportBlock]:
                 else "Answer basis"
             )
             blocks.append(ExportBlock(f"{prefix}: {scope_notice}", "note"))
+    modality = payload.get("modality_coverage")
+    if isinstance(modality, Mapping):
+        notice = _plain(modality_coverage_notice(modality.get("notice")))
+        if notice:
+            blocks.append(ExportBlock(f"Requested source coverage: {notice}", "note"))
     if kind == "generated":
-        introduction = _plain(payload.get("introduction"))
+        blocks.append(ExportBlock(GENERATED_REVIEW_NOTICE, "note"))
+        introduction = answer_introduction(_plain(payload.get("introduction")))
         if introduction:
             blocks.append(ExportBlock(introduction))
         evidence_notice = _plain(payload.get("evidence_notice"))
@@ -651,13 +717,13 @@ def _answer_blocks(message: MessageRecord) -> list[ExportBlock]:
                     blocks.append(ExportBlock(f"Source: {citation}", "citation"))
         limitation = payload.get("limitation")
         if isinstance(limitation, Mapping):
-            text = _plain(limitation.get("text"))
+            text = _plain(answer_limitation(payload))
             if text:
                 blocks.append(ExportBlock(f"Limitation: {text}", "note"))
             for citation in _citations(limitation.get("citations")):
                 blocks.append(ExportBlock(f"Source: {citation}", "citation"))
     elif kind == "not-supported":
-        text = _plain(payload.get("missing_information")) or message.content
+        text = _plain(rejected_answer_notice(payload.get("missing_information"))) or rejected_answer_notice(message.content)
         blocks.append(ExportBlock(text, "note"))
         for citation in _citations(payload.get("source_matches")):
             blocks.append(ExportBlock(f"Related source passage: {citation}", "citation"))
@@ -675,6 +741,7 @@ def answer_blocks(
     question: MessageRecord | None = None,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> tuple[ExportBlock, ...]:
     if (
         conversation.matter_id != matter.matter_id
@@ -699,6 +766,8 @@ def answer_blocks(
             )
         )
     blocks.append(ExportBlock(f"{PRODUCT_NAME} answer", "heading1"))
+    if presentation_notice:
+        blocks.append(ExportBlock(presentation_notice, "note"))
     blocks.extend(_answer_blocks(answer))
     blocks.append(
         ExportBlock(
@@ -715,6 +784,7 @@ def conversation_blocks(
     messages: Sequence[MessageRecord],
     *,
     exported_at: str | None = None,
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> tuple[ExportBlock, ...]:
     if (
         conversation.matter_id != matter.matter_id
@@ -730,6 +800,8 @@ def conversation_blocks(
         ExportBlock(f"Exported from {PRODUCT_NAME} at {exported_at or _now()}.", "metadata"),
     ]
     question_number = 0
+    if presentation_notice:
+        blocks.append(ExportBlock(presentation_notice, "note"))
     answer_number = 0
     for message in messages:
         if message.role == "user":
@@ -828,7 +900,7 @@ def notebook_blocks(
 
 
 def _csv_safe(value: object) -> str:
-    text = _plain(value)
+    text = presentation_text(_plain(value))
     if text.lstrip().startswith(("=", "+", "-", "@")):
         return "'" + text
     return text
@@ -905,6 +977,10 @@ def matter_report_blocks(
             ExportBlock("Source inventory", "heading1"),
         )
     )
+    if any(source.get("kind") == "PDF" for source in sources):
+        from .pdf_coverage import PDF_COVERAGE_NOTICE
+
+        blocks.append(ExportBlock(PDF_COVERAGE_NOTICE, "note"))
     if sources:
         for source in sources:
             label = _plain(source.get("name")) or "Unnamed source"
@@ -938,8 +1014,11 @@ def _markdown_escape(value: str) -> str:
 def blocks_to_markdown(blocks: Sequence[ExportBlock]) -> bytes:
     parts: list[str] = []
     total = 0
+    normalized = False
     for block in blocks:
-        value = _markdown_escape(block.text)
+        presented = presentation_text(block.text)
+        normalized = normalized or presented != block.text
+        value = _markdown_escape(presented)
         total += len(value)
         if total > MAX_EXPORT_TEXT_CHARS:
             raise ExportProblem(
@@ -960,32 +1039,102 @@ def blocks_to_markdown(blocks: Sequence[ExportBlock]) -> bytes:
         else:
             rendered = value
         parts.append(rendered)
+    if normalized:
+        if total + len(_TEXT_PRESENTATION_NOTICE) > MAX_EXPORT_TEXT_CHARS:
+            raise ExportProblem(
+                "This export is too large to prepare at once. Export the conversations individually."
+            )
+        parts.append(f"**Note:** {_TEXT_PRESENTATION_NOTICE}")
     return ("\n\n".join(parts).rstrip() + "\n").encode("utf-8")
 
 
+def _xml_text(value: str) -> str:
+    """Escape derived text only after replacing characters XML cannot carry.
+
+    HTML escaping alone leaves XML-invalid controls and surrogate code points
+    intact. Keep this defense at serialization so historical stored citations
+    and their digest/locator basis remain unchanged.
+    """
+
+    # XML normalizes literal CR (including CRLF) before exposing text to a
+    # reader. A reference preserves the supported character through parsing;
+    # introduce it after escaping so literal source text such as "&#13;" stays
+    # literal instead of becoming a character reference of its own.
+    return xml_escape(presentation_text(value), quote=False).replace("\r", "&#13;")
+
+
+def _paragraph_open(block: ExportBlock) -> str:
+    style = _DOCX_STYLE_MAP.get(block.style, "Normal")
+    return f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr>'
+
+
+def _xml_text_byte_count(value: str, *, body: bool = False) -> int:
+    """Count escaped UTF-8 bytes without constructing an expanded XML string."""
+
+    total = 0
+    for start in range(0, len(value), 16_384):
+        part = presentation_text(value[start:start + 16_384])
+        total += (len(part.encode("utf-8")) + 4 * part.count("&")
+                  + 3 * (part.count("<") + part.count(">")))
+        if body:
+            # Body delimiters become runs, counted separately. Removing both
+            # CR/LF bytes also handles a CRLF pair split across these chunks.
+            total -= part.count("\t") + part.count("\r") + part.count("\n")
+        else:
+            total += 4 * part.count("\r")  # _xml_text emits &#13;.
+        if total > MAX_DOCX_XML_BYTES:
+            raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+    return total
+
+
+def _check_docx_capacity(
+    blocks: Sequence[ExportBlock], *, title: str, created_at: str, fixed_xml_bytes: int,
+) -> None:
+    """Reject expanded XML and run-list growth before allocating either one."""
+
+    xml_bytes = fixed_xml_bytes
+    for value in (title, PRODUCT_NAME, created_at):
+        # One input character needs at least one escaped byte, even when the
+        # presentation policy replaces it. Refuse huge metadata before copying.
+        if xml_bytes + len(value) > MAX_DOCX_XML_BYTES:
+            raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+        xml_bytes += _xml_text_byte_count(value)
+    runs = 0
+    for block in blocks:
+        tabs = block.text.count("\t")
+        breaks = (block.text.count("\n") + block.text.count("\r")
+                  - block.text.count("\r\n"))
+        text_runs = 1 + tabs + breaks
+        runs += text_runs + tabs + breaks
+        if runs > MAX_DOCX_RUNS:
+            raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+        xml_bytes += (
+            len(_paragraph_open(block)) + len("</w:p>")
+            + text_runs * (len(_DOCX_TEXT_RUN_OPEN) + len(_DOCX_TEXT_RUN_CLOSE))
+            + tabs * len(_DOCX_TAB_RUN) + breaks * len(_DOCX_BREAK_RUN)
+        )
+        if xml_bytes > MAX_DOCX_XML_BYTES:
+            raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+        xml_bytes += _xml_text_byte_count(block.text, body=True)
+    if xml_bytes > MAX_DOCX_XML_BYTES:
+        raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+
+
 def _paragraph_xml(block: ExportBlock) -> str:
-    style_map = {
-        "title": "Title",
-        "subtitle": "Subtitle",
-        "heading1": "Heading1",
-        "bullet": "ListBullet",
-        "citation": "Citation",
-        "note": "Note",
-        "metadata": "Metadata",
-        "footer": "Footer",
-    }
-    style = style_map.get(block.style, "Normal")
     runs: list[str] = []
-    lines = block.text.split("\n") or [""]
+    lines = block.text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     for index, line in enumerate(lines):
         if index:
-            runs.append("<w:r><w:br/></w:r>")
-        runs.append(
-            '<w:r><w:t xml:space="preserve">'
-            + xml_escape(line, quote=False)
-            + "</w:t></w:r>"
-        )
-    return f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr>{"".join(runs)}</w:p>'
+            runs.append(_DOCX_BREAK_RUN)
+        for part_index, part in enumerate(line.split("\t")):
+            if part_index:
+                runs.append(_DOCX_TAB_RUN)
+            runs.append(
+                _DOCX_TEXT_RUN_OPEN
+                + _xml_text(part)
+                + _DOCX_TEXT_RUN_CLOSE
+            )
+    return _paragraph_open(block) + "".join(runs) + "</w:p>"
 
 
 def blocks_to_docx(
@@ -996,19 +1145,28 @@ def blocks_to_docx(
         raise ExportProblem(
             "This export is too large to prepare at once. Export the conversations individually."
         )
-    document = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        '<w:body>'
-        + "".join(_paragraph_xml(block) for block in blocks)
-        + '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
-        '<w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr>'
-        "</w:body></w:document>"
+    normalized = (
+        presentation_text(title) != title
+        or presentation_text(created_at) != created_at
+        or any(presentation_text(block.text) != block.text for block in blocks)
     )
+    notices: list[ExportBlock] = []
+    if normalized:
+        notices.append(ExportBlock(_TEXT_PRESENTATION_NOTICE, "note"))
+    if any("\r" in block.text for block in blocks):
+        notices.append(ExportBlock(_DOCX_LINE_ENDING_NOTICE, "note"))
+    if notices:
+        if total + sum(len(notice.text) for notice in notices) > MAX_EXPORT_TEXT_CHARS:
+            raise ExportProblem(
+                "This export is too large to prepare at once. Export the conversations individually."
+            )
+        blocks = (*blocks, *notices)
+    # Larger title glyphs can consume an implicit half-inch tab stop in Word
+    # readers. Explicit one-inch stops keep title word boundaries visible.
     styles = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:sz w:val="22"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Subtitle"/><w:rPr><w:b/><w:color w:val="0A1630"/><w:sz w:val="38"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Subtitle"/><w:pPr><w:tabs><w:tab w:val="left" w:pos="1440"/><w:tab w:val="left" w:pos="2880"/><w:tab w:val="left" w:pos="4320"/><w:tab w:val="left" w:pos="5760"/><w:tab w:val="left" w:pos="7200"/><w:tab w:val="left" w:pos="8640"/><w:tab w:val="left" w:pos="10080"/></w:tabs></w:pPr><w:rPr><w:b/><w:color w:val="0A1630"/><w:sz w:val="38"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="46566E"/><w:sz w:val="26"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="280" w:after="100"/></w:pPr><w:rPr><w:b/><w:color w:val="0A1630"/><w:sz w:val="27"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="ListBullet"><w:name w:val="List Bullet"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="420" w:hanging="240"/></w:pPr></w:style>
@@ -1034,11 +1192,25 @@ def blocks_to_docx(
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>"""
-    core = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    core_template = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-<dc:title>{xml_escape(title, quote=False)}</dc:title><dc:creator>{PRODUCT_NAME}</dc:creator>
-<dcterms:created xsi:type="dcterms:W3CDTF">{xml_escape(created_at, quote=False)}</dcterms:created>
+<dc:title>{title}</dc:title><dc:creator>{creator}</dc:creator>
+<dcterms:created xsi:type="dcterms:W3CDTF">{created_at}</dcterms:created>
 </cp:coreProperties>"""
+    fixed_parts = (
+        content_types, package_rels, document_rels, styles,
+        core_template.format(title="", creator="", created_at=""),
+        _DOCX_DOCUMENT_OPEN, _DOCX_DOCUMENT_CLOSE,
+    )
+    _check_docx_capacity(
+        blocks, title=title, created_at=created_at,
+        fixed_xml_bytes=sum(len(part.encode("utf-8")) for part in fixed_parts),
+    )
+    document = (_DOCX_DOCUMENT_OPEN + "".join(_paragraph_xml(block) for block in blocks)
+                + _DOCX_DOCUMENT_CLOSE)
+    core = core_template.format(
+        title=_xml_text(title), creator=_xml_text(PRODUCT_NAME), created_at=_xml_text(created_at),
+    )
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("[Content_Types].xml", content_types)
@@ -1072,9 +1244,11 @@ def export_answer(
     format_name: str,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> ExportArtifact:
     created = exported_at or _now()
-    blocks = answer_blocks(matter, conversation, answer, question, exported_at=created)
+    blocks = answer_blocks(matter, conversation, answer, question, exported_at=created,
+                           presentation_notice=presentation_notice)
     stem = safe_file_stem(f"{matter.display_name}-{conversation.title}-answer")
     return _artifact(blocks, stem=stem, format_name=format_name, created_at=created)
 
@@ -1086,9 +1260,11 @@ def export_conversation(
     format_name: str,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> ExportArtifact:
     created = exported_at or _now()
-    blocks = conversation_blocks(matter, conversation, messages, exported_at=created)
+    blocks = conversation_blocks(matter, conversation, messages, exported_at=created,
+                                 presentation_notice=presentation_notice)
     stem = safe_file_stem(f"{matter.display_name}-{conversation.title}")
     return _artifact(blocks, stem=stem, format_name=format_name, created_at=created)
 
@@ -1120,6 +1296,7 @@ def export_report(
     format_name: str,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> ExportArtifact:
     created = exported_at or _now()
     _validate_report_export_scope(matter, report, sections)
@@ -1135,6 +1312,8 @@ def export_report(
         blocks.extend(
             (ExportBlock("Purpose", "heading1"), ExportBlock(report.purpose))
         )
+    if presentation_notice:
+        blocks.append(ExportBlock(presentation_notice, "note"))
     for index, (section, citations) in enumerate(sections, 1):
         blocks.append(ExportBlock(f"{index}. {section.heading}", "heading1"))
         if section.body:
@@ -1173,6 +1352,7 @@ def export_research(
     format_name: str,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> ExportArtifact:
     """Export one durable research run with its evidence and coverage ledger."""
 
@@ -1199,7 +1379,7 @@ def export_research(
                 "location": location,
                 "source_type": "Spoken" if kind == "transcript" else "Written",
             }
-            excerpt = _plain(value.get("excerpt"))
+            excerpt = _source_excerpt(value.get("excerpt"))
             if excerpt:
                 citation["excerpt"] = excerpt
             if "hierarchical_synthesis" in result:
@@ -1233,15 +1413,15 @@ def export_research(
                 )
             safe_answer = {
                 "outcome": "Supported" if answer.get("answerable") else "Not supported",
-                "introduction": _plain(answer.get("introduction")),
+                "introduction": answer_introduction(_plain(answer.get("introduction"))),
                 "claims": claims,
-                "missing_information": _plain(answer.get("missing_information")),
+                "missing_information": _plain(rejected_answer_notice(answer.get("missing_information"))) if answer.get("answerable") is False else _plain(answer.get("missing_information")),
                 "evidence_notice": _plain(answer.get("evidence_notice")),
             }
             limitation = answer.get("limitation")
             if isinstance(limitation, Mapping):
                 safe_answer["limitation"] = {
-                    "text": _plain(limitation.get("text")),
+                    "text": _plain(answer_limitation(answer)),
                     "sources": tuple(
                         safe
                         for citation in mapping_items(limitation.get("citations"))
@@ -1254,7 +1434,7 @@ def export_research(
                     "result": "Complete"
                     if modality.get("mode") == "complete"
                     else "Partial",
-                    "notice": _plain(modality.get("notice")),
+                    "notice": _plain(modality_coverage_notice(modality.get("notice"))),
                 }
 
         coverage = result.get("coverage")
@@ -1291,7 +1471,7 @@ def export_research(
                     "selected_passages": item.get("selected_passages"),
                     "motivating_source": motivating_source(item.get("motivating_support_token")),
                     "status": _plain(item.get("status")).replace("_", " ").title(),
-                    "finding": _plain(item.get("text")),
+                    "finding": _plain(research_content(item.get("text"), item.get("answer"))),
                 }
             )
         supporting_sources = tuple(
@@ -1321,13 +1501,15 @@ def export_research(
                 "product": PRODUCT_NAME,
                 "exported_at": created,
                 "matter": {"name": matter.display_name},
+                **({"presentation_notice": presentation_notice} if presentation_notice else {}),
                 "investigation": {
+                    "review_notice": GENERATED_REVIEW_NOTICE,
                     "title": job.title,
                     "question": job.question,
                     "status": job.state.replace("_", " ").title(),
                     "created_at": job.created_at,
                     "finished_at": job.finished_at,
-                    "synthesis": _plain(result.get("summary")),
+                    "synthesis": _plain(research_content(result.get("summary"), result.get("answer"))),
                     "answer": safe_answer,
                     "coverage": safe_coverage,
                     "review_budget": job.review_budget,
@@ -1358,6 +1540,8 @@ def export_research(
         ExportBlock(job.question),
     ]
     blocks.append(ExportBlock(job.review_budget_description, "note"))
+    if presentation_notice:
+        blocks.append(ExportBlock(presentation_notice, "note"))
     if "full_text_synthesis_input" in result:
         from .full_text_synthesis import input_notice
         receipt = result["full_text_synthesis_input"]
@@ -1368,12 +1552,21 @@ def export_research(
         blocks.append(ExportBlock(receipt["human_decisions"]["notice"], "note"))
         blocks.append(ExportBlock("Complete input receipt", "heading2"))
         blocks.append(ExportBlock(json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2), "metadata"))
-    summary = _plain(result.get("summary"))
+    summary = _plain(research_content(result.get("summary"), result.get("answer")))
     if summary:
-        blocks.extend((ExportBlock("Verified synthesis", "heading1"), ExportBlock(summary)))
+        blocks.extend((
+            ExportBlock("Generated synthesis · needs review", "heading1"),
+            ExportBlock(GENERATED_REVIEW_NOTICE, "note"),
+            ExportBlock(summary),
+        ))
     evidence_notice = _plain((result.get("answer") or {}).get("evidence_notice"))
     if evidence_notice:
         blocks.append(ExportBlock(evidence_notice, "note"))
+    modality = (result.get("answer") or {}).get("modality_coverage")
+    if isinstance(modality, Mapping):
+        notice = _plain(modality_coverage_notice(modality.get("notice")))
+        if notice:
+            blocks.append(ExportBlock(f"Requested source coverage: {notice}", "note"))
     hierarchy = result.get("hierarchical_synthesis")
     if isinstance(hierarchy, Mapping):
         from .hierarchical_synthesis import synthesis_notice
@@ -1414,7 +1607,7 @@ def export_research(
             for source in result.get("evidence", []):
                 if token and source.get("support_token") == token:
                     blocks.append(ExportBlock(f"Search motivated by: {_plain(source.get('source_name'))} — {_plain(source.get('location'))}", "citation"))
-            blocks.append(ExportBlock(_plain(item.get("text")) or "No supported finding.", "normal"))
+            blocks.append(ExportBlock(_plain(research_content(item.get("text"), item.get("answer"))) or "No supported finding.", "normal"))
     pending = result.get("pending_searches")
     if isinstance(pending, list) and pending:
         blocks.append(ExportBlock("Unsearched proposals", "heading1"))
@@ -1483,11 +1676,11 @@ def export_full_review(
                     _csv_safe(item.source_name),
                     _csv_safe(item.source_kind),
                     _staff_label(item.machine_decision),
-                    _csv_safe(item.rationale),
+                    _csv_safe(review_rejection_notice(item.rationale)),
                     _csv_safe(
                         "; ".join(_review_citation_text(citation) for citation in citations)
                     ),
-                    _csv_safe(item.error_message),
+                    _csv_safe(review_rejection_notice(item.error_message)),
                     "yes" if item.validation_sample else "no",
                     _staff_label(item.human_decision),
                     _csv_safe(item.human_note),
@@ -1534,9 +1727,9 @@ def export_full_review(
                         "source_name": item.source_name,
                         "source_kind": item.source_kind,
                         "recordbench_label": _staff_label(item.machine_decision),
-                        "rationale": item.rationale,
+                        "rationale": review_rejection_notice(item.rationale),
                         "citations": _portable_review_citations(item.citations),
-                        "attention_note": item.error_message,
+                        "attention_note": review_rejection_notice(item.error_message),
                         "validation_sample": bool(item.validation_sample),
                         "staff_decision": _staff_label(item.human_decision),
                         "staff_note": item.human_note,
@@ -1598,7 +1791,7 @@ def export_full_review(
             )
         )
         if item.rationale:
-            blocks.append(ExportBlock(item.rationale))
+            blocks.append(ExportBlock(review_rejection_notice(item.rationale)))
         if item.human_decision:
             blocks.append(
                 ExportBlock(
@@ -1634,6 +1827,10 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
     }
     if message.role == "assistant":
         payload = message.payload
+        if payload.get("kind") == "generated":
+            result["content"] = answer_content(message.content, _plain(payload.get("introduction")), payload)
+        if payload.get("kind") == "not-supported":
+            result["content"] = rejected_answer_content(message.content, payload)
         source_coverage = payload.get("source_coverage")
         portable_coverage: dict[str, object] = {}
         if isinstance(source_coverage, Mapping):
@@ -1714,11 +1911,12 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
                     modality_coverage.get("missing_evidence_kinds"), list
                 )
                 else [],
-                "notice": _plain(modality_coverage.get("notice")),
+                "notice": _plain(modality_coverage_notice(modality_coverage.get("notice"))),
             }
         result["answer"] = {
+            "review_notice": GENERATED_REVIEW_NOTICE if payload.get("kind") == "generated" else "",
             "kind": payload.get("kind") if payload.get("kind") in {"generated", "not-supported", "error"} else "saved",
-            "introduction": _plain(payload.get("introduction")),
+            "introduction": answer_introduction(_plain(payload.get("introduction"))),
             "claims": [
                 {
                     "text": _plain(claim.get("text")),
@@ -1729,10 +1927,10 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
             ]
             if isinstance(payload.get("claims"), list)
             else [],
-            "limitation": _plain(payload.get("limitation", {}).get("text"))
+            "limitation": _plain(answer_limitation(payload)) if payload.get("kind") == "generated" else _plain(payload.get("limitation", {}).get("text"))
             if isinstance(payload.get("limitation"), Mapping)
             else "",
-            "missing_information": _plain(payload.get("missing_information")),
+            "missing_information": _plain(rejected_answer_notice(payload.get("missing_information"))) if payload.get("kind") == "not-supported" else _plain(payload.get("missing_information")),
             "evidence_notice": _plain(payload.get("evidence_notice")),
             "source_matches": list(_citations(payload.get("source_matches"))),
             "source_coverage": portable_coverage,
@@ -1757,6 +1955,7 @@ def export_matter_bundle(
     exported_at: str | None = None,
 ) -> ExportArtifact:
     created = exported_at or _now()
+    presentation_notice = PDF_SAVED_RESULT_NOTICE
     report = matter_report_blocks(
         matter,
         conversations,
@@ -1811,7 +2010,8 @@ def export_matter_bundle(
                 suffix += 1
             used_names.add(candidate.casefold())
             blocks = conversation_blocks(
-                matter, conversation, messages, exported_at=created
+                matter, conversation, messages, exported_at=created,
+                presentation_notice=presentation_notice,
             )
             markdown_path = f"conversations/{candidate}.md"
             docx_path = f"conversations/{candidate}.docx"
@@ -1835,6 +2035,7 @@ def export_matter_bundle(
                     "created_at": conversation.created_at,
                     "updated_at": conversation.updated_at,
                     "messages": [_portable_message(message) for message in messages],
+                    **({"presentation_notice": presentation_notice} if presentation_notice else {}),
                 }
             )
         notebook_report = notebook_blocks(
@@ -1863,7 +2064,7 @@ def export_matter_bundle(
                     {
                         "name": reference.source_name,
                         "location": reference.location,
-                        "excerpt": reference.excerpt,
+                        "excerpt": _source_excerpt(reference.excerpt),
                     }
                     for reference in references
                 ],

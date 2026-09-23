@@ -42,6 +42,8 @@ def _media_timestamp(milliseconds: int) -> str:
 class PdfPage:
     page_number: int
     text: str
+    image_coverage: float = 0.0
+    image_evidence_known: bool = False
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,8 @@ def extract_pdf_pages(path: Path) -> tuple[PdfPage, ...]:
         payload = json.loads(completed.stdout.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("PDF could not be extracted") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("PDF extraction returned invalid output")
     error = payload.get("error")
     if error == "encrypted":
         raise ValueError("Encrypted PDFs are not accepted in this pilot.")
@@ -131,15 +135,21 @@ def extract_pdf_pages(path: Path) -> tuple[PdfPage, ...]:
     result: list[PdfPage] = []
     total = 0
     for index, item in enumerate(pages, 1):
-        if not isinstance(item, dict) or item.get("page_number") != index or not isinstance(item.get("text"), str):
+        if (not isinstance(item, dict) or type(item.get("page_number")) is not int
+                or item["page_number"] != index or not isinstance(item.get("text"), str)):
             raise ValueError("PDF extraction returned invalid output")
+        image_coverage = item.get("image_coverage")
+        image_evidence_known = item.get("image_evidence_known")
+        if (type(image_coverage) not in (int, float) or not 0 <= image_coverage <= 1
+                or not math.isfinite(image_coverage) or type(image_evidence_known) is not bool):
+            raise ValueError("PDF extraction returned invalid image evidence")
         text = item["text"]
         if len(text) > 250_000:
             raise ValueError("That PDF exceeds the pilot extraction limits.")
         total += len(text)
         if total > 5_000_000:
             raise ValueError("That PDF exceeds the pilot extraction limits.")
-        result.append(PdfPage(index, text))
+        result.append(PdfPage(index, text, float(image_coverage), image_evidence_known))
     return tuple(result)
 
 

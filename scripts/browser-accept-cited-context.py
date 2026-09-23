@@ -48,6 +48,10 @@ STATEMENTS = (
     'The synthetic Elm observer paused the exercise.',
     'The synthetic Pine note says the cause remains unresolved.',
 )
+METADATA_NAME = 'Generated historical\x1a\x1b source.txt'
+METADATA_LOCATION = 'Synthetic\x7f historical location'
+PRESENTED_METADATA_NAME = 'Generated historical   source.txt'
+PRESENTED_METADATA_LOCATION = 'Synthetic  historical location'
 NAMES = ('Generated Cedar reading.txt', 'Generated Birch reference.txt',
          'Generated Elm observation.txt', 'Generated Pine limitation.txt')
 CONTROL_TEXT = 'Synthetic separators: left\x1amiddle\x1bright\x7f end; café e\u0301 a\u200db.\n'
@@ -108,6 +112,17 @@ def seed(runtime):
             conversations.append(conversation.conversation_id)
             messages.append(message.message_id)
         document_payload = message.payload
+        # An older saved citation can retain display controls even though its
+        # metadata no longer matches the current source. It must stay unavailable
+        # and retain its raw snapshot while the fallback displays readable text.
+        metadata_payload = json.loads(json.dumps(document_payload))
+        metadata_payload['claims'][0]['citations'][0].update(
+            source_name=METADATA_NAME, location=METADATA_LOCATION)
+        metadata_conversation = bench.workspace.create_conversation(matter.matter_id,
+            'Generated historical metadata', actor_id=ACTOR)
+        metadata_message = bench.workspace.append_message(matter.matter_id,
+            metadata_conversation.conversation_id, 'assistant',
+            'Synthetic historical citation metadata.', metadata_payload)
         response = client.post(f'/matters/{matter.slug}/uploads', files=[
             ('files', ('Generated Cedar recording.wav', synthetic_pcm(), 'audio/wav'))], follow_redirects=False)
         assert response.status_code == 303, (
@@ -149,6 +164,10 @@ def seed(runtime):
         return dict(slug=matter.slug, conversations=conversations, messages=messages,
                     document_id=documents[0].document_id, payload=document_payload,
                     exact_excerpt=citations[0].excerpt[:6_000], exact_digest=exact_digest,
+                    metadata_path=(f'/matters/{matter.slug}/conversations/{metadata_conversation.conversation_id}'
+                        f'/messages/{metadata_message.message_id}/cited-context/claim-0/0'),
+                    metadata_conversation=metadata_conversation.conversation_id,
+                    metadata_message=metadata_message.message_id, metadata_payload=metadata_payload,
                     transcript_conversation=transcript_conversation.conversation_id,
                     transcript_message=transcript_message.message_id, newer_message=newer_message.message_id)
 
@@ -226,6 +245,16 @@ def main():
                 wait.until(lambda _: card.get_attribute('open') is not None)
                 wait.until(lambda _: excerpt(card).is_displayed() and bool(excerpt(card).text))
 
+            def context_json(path):
+                return driver.execute_async_script('''
+                    const done = arguments[arguments.length - 1];
+                    fetch(arguments[0] + '?format=json', {cache: 'no-store', credentials: 'same-origin'})
+                        .then(response => {
+                            if (!response.ok) throw new Error('Synthetic context API request failed');
+                            return response.json();
+                        }).then(done, error => done({error: String(error)}));
+                ''', path)
+
             def no_overflow():
                 assert driver.execute_script('return document.documentElement.scrollWidth <= innerWidth'), 'Page overflows horizontally'
                 assert driver.execute_script('return [...document.querySelectorAll("[data-cited-context][open]")].every(e => e.scrollWidth <= e.clientWidth + 1)'), 'Comparison overflows horizontally'
@@ -282,14 +311,7 @@ def main():
             assert len(requests) == 2
             # Fetch the structured response independently of its DOM projection:
             # controls and the full-unit digest must retain the saved source basis.
-            raw_context = driver.execute_async_script('''
-                const done = arguments[arguments.length - 1];
-                fetch(arguments[0] + '?format=json', {cache: 'no-store', credentials: 'same-origin'})
-                    .then(response => {
-                        if (!response.ok) throw new Error('Synthetic context API request failed');
-                        return response.json();
-                    }).then(done, error => done({error: String(error)}));
-            ''', first.get_attribute('data-context-url'))
+            raw_context = context_json(first.get_attribute('data-context-url'))
             assert raw_context.get('state') == 'available', raw_context
             assert raw_context['excerpt'] == seeded['exact_excerpt'] == SOURCES[0][:6_000]
             assert CONTROL_TEXT in raw_context['excerpt'] and CONTROL_TEXT not in displayed
@@ -334,13 +356,32 @@ def main():
             assert STATEMENTS[0] in driver.find_element(By.TAG_NAME, 'body').text
             record('Expanded comparisons fit 390- and 320-pixel widths; the unobstructed keyboard link opens the full current source')
 
+            metadata_context = context_json(seeded['metadata_path'])
+            assert metadata_context['state'] == 'unavailable'
+            assert metadata_context['source_name'] == METADATA_NAME
+            assert metadata_context['location'] == METADATA_LOCATION
+            assert metadata_context['excerpt_digest'] == seeded['exact_digest']
+            assert not metadata_context['excerpt'] and not metadata_context['source_href']
             driver.execute_cdp_cmd('Emulation.setScriptExecutionDisabled', {'value': True})
             driver.get(base + fallback)
             assert STATEMENTS[0] in driver.find_element(By.TAG_NAME, 'body').text
             assert '&lt;script&gt;window.syntheticInjection=true&lt;/script&gt;' in driver.page_source
             assert not driver.find_elements(By.CSS_SELECTOR, 'img[src="x"]')
+            assert driver.find_element(By.CSS_SELECTOR, '.cited-context-excerpt').get_attribute('textContent') == expected
+            assert driver.find_elements(By.CSS_SELECTOR, 'main.cited-context-page h2')[1].get_attribute('textContent') == (
+                raw_context['source_name'] + ' · ' + raw_context['location'])
+            assert [item.get_attribute('textContent') for item in driver.find_elements(By.CSS_SELECTOR,
+                'main.cited-context-page details code')] == [raw_context['source_version_id'], seeded['exact_digest']]
+            driver.get(base + seeded['metadata_path'])
+            assert driver.find_elements(By.CSS_SELECTOR, 'main.cited-context-page h2')[1].get_attribute('textContent') == (
+                PRESENTED_METADATA_NAME + ' · ' + PRESENTED_METADATA_LOCATION)
+            assert not driver.find_elements(By.CSS_SELECTOR, '.cited-context-excerpt')
+            saved_metadata = app.state.workbench.workspace.messages(
+                app.state.workbench.matter(seeded['slug'], ACTOR).matter_id, seeded['metadata_conversation'])[-1]
+            assert saved_metadata.message_id == seeded['metadata_message']
+            assert saved_metadata.payload == seeded['metadata_payload']
             driver.execute_cdp_cmd('Emulation.setScriptExecutionDisabled', {'value': False})
-            record('The direct comparison page remains readable without JavaScript and escapes source markup')
+            record('The direct comparison page projects excerpts and historical display metadata without JavaScript, escapes markup, and preserves raw JSON, digest and saved citation basis')
 
             driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride', {})
             # Full-source navigation can remember its default chat; reset only
@@ -365,8 +406,13 @@ def main():
 
             for width in (390, 320):
                 driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', dict(width=width, height=844, deviceScaleFactor=1, mobile=False))
+                # A breakpoint change updates the saved assistant display state.
+                # Let its media-query callback and layout finish before deciding
+                # whether the native keyboard expansion is needed.
+                driver.execute_async_script('const done = arguments[arguments.length - 1]; requestAnimationFrame(() => requestAnimationFrame(() => done()));')
                 if not summary(cards(dock)[0]).is_displayed():
                     driver.find_element(By.CSS_SELECTOR, '[data-assistant-expand]').send_keys(Keys.ENTER)
+                wait.until(lambda _: summary(cards(dock)[0]).is_displayed())
                 long_card = cards(dock)[0]
                 if long_card.get_attribute('open') is not None:
                     summary(long_card).send_keys(Keys.ENTER)

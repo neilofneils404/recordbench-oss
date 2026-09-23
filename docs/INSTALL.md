@@ -540,6 +540,11 @@ Run:
 ./install doctor --root /srv/recordbench
 ```
 
+Doctor compares the installation's expected authentication mode with the saved
+configuration and the running app's protected diagnostic. Missing diagnostics
+or disagreement cannot pass health acceptance; see
+[installed authentication diagnostics](AUTHENTICATION_DIAGNOSTICS.md).
+
 Then use only synthetic fixtures to verify login, matter creation, document
 OCR, search, cited answers, video playback, transcription/diarization, exports,
 matter closure, and cleanup. Validate GPU memory and concurrent workloads

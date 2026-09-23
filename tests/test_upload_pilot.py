@@ -103,7 +103,8 @@ def test_pdf_upload_page_navigation_and_persistence_restart(tmp_path):
     runtime = tmp_path / "runtime"
     with TestClient(create_app(runtime)) as client:
         response = _upload(client, "evidence.pdf", PDF.read_bytes(), "application/pdf")
-        assert "3 pages ready and searchable" in response.text
+        assert "3 of 3 pages with searchable text" in response.text
+        assert "Complete page reading is not established" in response.text
         search = client.get("/matters/pilot", params={"q": "blue canvas bag"})
         assert "evidence.pdf · Page 3" in search.text
         document_id = search.text.split("/matters/pilot/sources/", 1)[1].split("?page=3", 1)[0]
@@ -135,11 +136,11 @@ def test_selective_cpu_ocr_recovers_blank_page_and_preserves_page_citation(tmp_p
     monkeypatch.setattr(
         pilot_uploads,
         "_ocr_pdf_page",
-        lambda source, page: "The violet folder was scanned on page one.",
+        lambda source, page: pilot_uploads.PdfOcrResult("The violet folder was scanned on page one.", "recognized"),
     )
     with TestClient(create_app(tmp_path / "runtime")) as client:
         response = _upload(client, "scan.pdf", stream.getvalue(), "application/pdf")
-        assert "text recognized on 1 page" in response.text
+        assert "OCR returned text: 1" in response.text
         search = client.get("/matters/pilot", params={"q": "violet folder scanned"})
         assert "scan.pdf · Page 1" in search.text
         path = "/matters/pilot/sources/" + search.text.split("/matters/pilot/sources/", 1)[1].split('"', 1)[0]
@@ -157,7 +158,7 @@ def test_selective_ocr_attempts_at_most_25_blank_pages(tmp_path, monkeypatch):
     monkeypatch.setattr(
         pilot_uploads,
         "_ocr_pdf_page",
-        lambda source, page: attempts.append(page) or "",
+        lambda source, page: attempts.append(page) or pilot_uploads.PdfOcrResult(status="no_text"),
     )
     store = PilotStore(tmp_path / "pilot")
     document, _ = store.store_stream(
@@ -257,7 +258,7 @@ def test_mixed_pdf_viewer_preserves_original_page_total(tmp_path, monkeypatch):
             ),
         )
         response = _upload(client, "mixed.pdf", b"%PDF-1.7\nsynthetic", "application/pdf")
-        assert "2 of 3 pages ready" in response.text
+        assert "2 of 3 pages with searchable text" in response.text
         search = client.get("/matters/pilot", params={"q": "amber notebook page three"})
         path = "/matters/pilot/sources/" + search.text.split("/matters/pilot/sources/", 1)[1].split('"', 1)[0]
         source = client.get(path)

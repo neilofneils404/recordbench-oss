@@ -10,7 +10,12 @@ a separate comparison page remains available without JavaScript.
 The text is **cited context, not proof that a claim is supported**. Check the
 claim's meaning, qualifications and attribution against each source. This is a
 source-inspection aid, not semantic verification or real-model acceptance.
-The confidence-presentation correction in PR #110 remains a separate change.
+Known service-authored omission wording in the displayed generated limitation
+uses the confidence presentation from PR #110, in both the comparison page and
+its structured response. Source qualifications, custom text and generated claims
+retain their wording. The saved payload and raw citation fields are still used
+for source validation; this display change does not alter the returned source
+excerpt, source version or full-unit digest.
 
 ## Exact source basis and bounds
 
@@ -68,6 +73,8 @@ source changes, authorization, escaping, bounds and unchanged saved payloads.
 `tests/test_answer_cited_context_leases.py` covers deletion deferral through the
 final response-body send and lease cleanup on rendering, send and cancellation
 failures.
+`tests/test_cited_context_confidence.py` checks current and historical limitation
+presentation, custom/quoted text, unchanged raw evidence and unavailable sources.
 `scripts/browser-accept-cited-context.py` exercises real browser rendering,
 keyboard controls, independent citations, narrow widths, failure recovery and
 transcript playback/return navigation with synthetic text and audio sources and

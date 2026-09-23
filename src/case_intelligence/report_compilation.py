@@ -45,6 +45,9 @@ class CompilationMaterial:
     date_label: str = ""
     category: str = ""
     review_details: str = ""
+    # Bind original generated boilerplate when its presentation is updated.
+    # This participates in input fingerprints, never Report prose.
+    source_snapshot_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -367,7 +370,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             if cancelled is not None and cancelled():
                 raise CompilationProblem("Report compilation cancelled.")
             if not isinstance(classified, VerifiedAnswer):
-                raise CompilationProblem("Review classification requires independently verified model answers.")
+                raise CompilationProblem("Review classification requires structured answer-service responses.")
             rejected += classified.omitted_claims
             # A qualified relevance answer cannot establish that any omitted
             # review record is unrelated. Preserve the batch as unchecked.
@@ -423,7 +426,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             if cancelled is not None and cancelled():
                 raise CompilationProblem("Report compilation cancelled.")
             if not isinstance(answer, VerifiedAnswer):
-                raise CompilationProblem("The compiler requires independently verified model answers.")
+                raise CompilationProblem("The compiler requires structured answer-service responses.")
             rejected += answer.omitted_claims
             incomplete_answer = bool(answer.omitted_claims or answer.duplicate_claims)
             valid_claims = []
@@ -648,7 +651,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
     category_counts = "; ".join(f"{category}: {sum(category in values for values in source_categories.values())} of {len(source_rows)}"
                                 for category, _question in queries)
     ledger = (f"Selected saved work: {len(selected_work)}. Expanded findings compiled: {len(selected)} of {len(materials)}. "
-              f"Mode: {status.replace('_', ' ')}. Verified answer-service calls: {calls}; source passages analyzed in all required categories: {len(analyzed)} of {len(source_rows)}. "
+              f"Mode: {status.replace('_', ' ')}. Answer-service calls attempted: {calls}; source passages analyzed in all required categories: {len(analyzed)} of {len(source_rows)}. "
               f"Source category checks: {category_counts}. "
               f"Uncompiled saved items: {len(uncompiled_materials)}; omitted saved items: {len(omitted_materials)}; omitted sections: {omitted_sections}; "
               f"unavailable model calls: {unavailable}; rejected answer-service calls: {rejected_calls}; "

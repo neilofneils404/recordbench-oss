@@ -158,7 +158,7 @@
     "test_node_sha256": {
       "tests/test_generation.py::test_empty_evidence_abstains_without_calling_model": "532352d1610eaa0b4c8772f04102a1f4a0c5b5654447dc60ed15db51ebeb6d3e",
       "tests/test_matter_management.py": "865bd6179727c4d275ac8e89458cf93610926474712ad059a97d3b0fef4ed085",
-      "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support": "431f508ab42aad406e842d86c6366597894e9cb1a0830f1a58ccf876832b0913",
+      "tests/test_matter_media_workflow.py::test_dual_modal_answer_resolves_page_and_timestamp_support": "858424dd2c99d0517ba830ad09ffb52289072446fb7cd1d78c4e575783d530d8",
       "tests/test_matter_media_workflow.py::test_failed_optional_overview_explains_cause_retries_and_independence": "e2739a13d5bdf9319fc76c424958f366961bff6949fe213fbc5aede088fe2503",
       "tests/test_matter_media_workflow.py::test_media_upload_transcript_review_range_citations_exports_and_clips": "141dc1cca74285ae991a9f23bf333cef83451fb049d5d781fe02aa7550458dba",
       "tests/test_matter_media_workflow.py::test_speaker_review_browser_contract_preserves_player_scroll_and_focus": "7955f04e150e91e0fa9549f733efbff67a55372d4e31735d46888df1beeee5e8",
@@ -180,7 +180,7 @@
       "tests/test_review_quality.py::test_source_reference_exact_time_accepts_a_grounded_first_draft": "3de5f5519f1e965d71027234e8a63c6d1b1b0120e671e389a94d8bc732d86b10",
       "tests/test_review_quality.py::test_workbench_broad_answer_search_merges_facets_and_drops_disclaimer_only": "cb929a88898baf9ea05f645a91816f5a0f577cdcad10ec1d823eb60dba3f5018",
       "tests/test_review_quality.py::test_workbench_excluded_modality_is_dropped_before_bounded_backfill": "504132ebc34e51df1b1714276f25a15ec7b0a232d20d8c3a5cc7d04178f33dc8",
-      "tests/test_upload_pilot.py::test_selective_cpu_ocr_recovers_blank_page_and_preserves_page_citation": "30df09447c6b158f2141cd09da23c6dddefc44bea8770d6d8120bf580f69759d",
+      "tests/test_upload_pilot.py::test_selective_cpu_ocr_recovers_blank_page_and_preserves_page_citation": "ab479ea1d54ae848aa35dd19abd9c0bec753e4c37856a3b6f098e96d82dff53e",
       "tests/test_upload_pilot.py::test_source_click_revalidates_version_and_excerpt_digest": "3fafbb585d7cbb7d080513b07ee49742c1389ef91913f114695519d68d5cf9c6",
       "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6",
       "tests/test_work_product_exports.py::test_anonymous_speaker_labels_match_projection_every_export_and_bundle": "2e15e0dad3793305902d4fd7e87c203e8f1df95631e67b1b2ba03dcd60923692"
@@ -188,12 +188,12 @@
     "test_file_sha256": {
       "tests/test_generation.py": "17d7434cd3e1c41b03792a82a146f0fee4fc0c25bad7158d21fe0d00bcbcd2f9",
       "tests/test_matter_management.py": "865bd6179727c4d275ac8e89458cf93610926474712ad059a97d3b0fef4ed085",
-      "tests/test_matter_media_workflow.py": "8138adba8274bdeebd00900933085bc227fd93769fdadc9d84267768ebea870f",
-      "tests/test_research_and_full_review.py": "1f9aec6191d6e99ca59c5647d1f2b3389404447f5c466ae66674769c2648bddf",
+      "tests/test_matter_media_workflow.py": "060ec3c1501ac5624d2c5d04f61607a41c41fdfd6806a7caec3bf1212bc71465",
+      "tests/test_research_and_full_review.py": "52e6d64ba0f9ad7f6b5e056344c409339473242fd1f72507baffff7a6dfe70cd",
       "tests/test_review_acceptance_pack.py": "b30d2e361499432e4a6593bca6014fa603fd2b16f3b0985cc77344d436d47cc8",
       "tests/test_review_conversation_continuity.py": "7dacc1cf6fda1ba3879a957e52b8fb811df1e8453e5817b43498b27a9de11940",
       "tests/test_review_quality.py": "2c37d4c9af59f79d00df3ed044499343496c7e9ac065b9293f195036a065e8da",
-      "tests/test_upload_pilot.py": "5353c212152b0fc4fb3852373f0f7d20392a8593d4c13b10fe43dbdf6e996b18",
+      "tests/test_upload_pilot.py": "1b5fc2f7caf739423ef27c73557906e7d1a02e7fedf311f4260999f28817b179",
       "tests/test_video_frame_ocr_contract.py": "e579b30ed86445a093ac6ddee03aade3f5ac2edefe4b1252836112efbe33dfc6",
       "tests/test_work_product_exports.py": "edd684480d213b0892e2290e532e9a830a6f23b4a10bd8d07ff868f70bd10258"
     },
@@ -202,6 +202,6 @@
       "src/case_intelligence/demo_data/synthetic_case_report.pdf": "1ff22292da788d1fe8512b897e7e9db98d642767ccd6f1ed30e271b041fc840a",
       "src/case_intelligence/static/demo-audio.wav": "4d24de1f7f3d8417b80dc7d92b9f0a919a0bc304719cfaa7a330588d2cb0f2fd"
     },
-    "content_fingerprint": "1bee92937587a2df3ace379e5bca26c7d19746a81c472af6547d510de14fa431"
+    "content_fingerprint": "871284fd08433774d7ea6cb2d7a58bc885076b4fe6a5825c170076fdc595b308"
   }
 }

@@ -10,6 +10,7 @@ import re
 from collections.abc import Mapping
 from urllib.parse import urlencode
 
+from .answer_presentation import answer_limitation
 from .workspace_store import WorkspaceProblem
 
 
@@ -62,7 +63,8 @@ def saved_cited_context(bench, matter, conversation_id, message_id, passage, cit
         raise KeyError(citation_index)
     result = {
         "state": "unavailable", "excerpt": "", "source_href": "",
-        "passage_text": selected["text"], "notice": UNAVAILABLE_NOTICE,
+        "passage_text": answer_limitation(payload) if passage == "limitation" else selected["text"],
+        "notice": UNAVAILABLE_NOTICE,
         **{key: str(citation.get(key) or "")[:maximum] for key, maximum in (
             ("source_name", 300), ("location", 300),
             ("source_version_id", 64), ("excerpt_digest", 64),
