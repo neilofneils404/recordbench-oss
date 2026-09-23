@@ -124,8 +124,11 @@ so combined processing/email coverage can reach both affected and ready sources.
 No schema or source registry shape changes; older passages and indexes are not
 silently rewritten or assigned a new citation basis.
 
-Accepted documents then enter extraction. Text PDFs use native extraction;
-missing-text pages use bounded CPU OCR. Media enters the durable media queue,
+Accepted documents then enter extraction. PDFs retain native text; expanded
+bounded CPU OCR also selects pages using image-placement evidence so long
+stamps cannot hide scanned bodies. [PDF extraction coverage](PDF_OCR_COVERAGE.md)
+distinguishes searchable text from complete page reading and retains skipped,
+failed, timed-out and capped outcomes. Media enters the durable media queue,
 which performs a bounded offline recording check before processor submission.
 An existing cancelled queue state plus source/version-bound inspection metadata
 holds playback-only or review-needed recordings without claiming transcript

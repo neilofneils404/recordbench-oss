@@ -155,6 +155,7 @@
         <a data-conversation-coverage-action href="{{ readiness.sources_url }}">Review sources</a>
       </div>
 
+      {% if messages and readiness.pdf_presentation_notice %}<p class="notice" role="note">{{ readiness.pdf_presentation_notice }}</p>{% endif %}
       <div class="conversation-workspace">
         <aside class="conversation-history" aria-label="Saved conversations" data-conversation-library>
           <div class="conversation-history-heading">

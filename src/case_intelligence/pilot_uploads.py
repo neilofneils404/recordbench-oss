@@ -234,8 +234,14 @@ class RawUploadLimitMiddleware:
         await self._respond(send, 413, b"Upload request is too large. Choose fewer or smaller files.")
 
 
-def _ocr_pdf_page(source: Path, page_number: int) -> str:
-    """Recognize one bounded page with installed CPU tools; return empty on failure."""
+@dataclass(frozen=True)
+class PdfOcrResult:
+    text: str = ""
+    status: str = "failed"
+
+
+def _ocr_pdf_page(source: Path, page_number: int) -> PdfOcrResult:
+    """Recognize a bounded page, retaining the reason no text was obtained."""
     environment = {
         "PATH": "/usr/bin:/bin",
         "LANG": "C.UTF-8",
@@ -253,17 +259,16 @@ def _ocr_pdf_page(source: Path, page_number: int) -> str:
             timeout=OCR_TIMEOUT_SECONDS,
             env=environment,
         )
-        if (
-            rendered.returncode != 0
-            or not rendered.stdout
-            or len(rendered.stdout) > MAX_OCR_RASTER_BYTES
-        ):
-            return ""
+        if len(rendered.stdout) > MAX_OCR_RASTER_BYTES:
+            return PdfOcrResult(status="output_limit")
+        if rendered.returncode != 0 or not rendered.stdout:
+            return PdfOcrResult(status="failed")
         language = os.getenv("CASE_INTELLIGENCE_OCR_LANGUAGE", "eng").strip()
         if not re.fullmatch(r"[A-Za-z0-9_+-]{1,40}", language):
             language = "eng"
-        candidates: list[str] = []
-        for page_segmentation_mode in ("6", "3"):
+        # Automatic orientation/layout first; block fallback is only for an empty
+        # result. Length is not a quality score and never replaces native text.
+        for page_segmentation_mode in ("1", "6"):
             recognized = subprocess.run(
                 [
                     "/usr/bin/tesseract", "stdin", "stdout", "-l", language,
@@ -275,16 +280,43 @@ def _ocr_pdf_page(source: Path, page_number: int) -> str:
                 timeout=OCR_TIMEOUT_SECONDS,
                 env=environment,
             )
-            if recognized.returncode != 0 or len(recognized.stdout) > MAX_PDF_PAGE_CHARS:
-                continue
+            if len(recognized.stdout) > MAX_PDF_PAGE_CHARS:
+                return PdfOcrResult(status="output_limit")
+            if recognized.returncode != 0:
+                return PdfOcrResult(status="failed")
             text = recognized.stdout.decode("utf-8", errors="strict").strip()
-            if len(text) <= MAX_PDF_PAGE_CHARS:
-                candidates.append(text)
-            if sum(character.isalnum() for character in text) >= 40:
-                break
-        return max(candidates, key=lambda value: sum(character.isalnum() for character in value), default="")
-    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
-        return ""
+            if any(character.isalnum() for character in text):
+                return PdfOcrResult(text=text, status="recognized")
+        return PdfOcrResult(status="no_text")
+    except subprocess.TimeoutExpired:
+        return PdfOcrResult(status="timed_out")
+    except (OSError, UnicodeDecodeError):
+        return PdfOcrResult(status="failed")
+
+
+def _combine_pdf_text(native: str, recognized: str) -> str:
+    """Keep native bytes of derived text; append distinct recognized lines."""
+    if not native:
+        return recognized.strip()
+
+    def normalized(value: str) -> str:
+        return " ".join(value.casefold().split())
+
+    if normalized(native) == normalized(recognized):
+        return native
+    # Set membership keeps merging linear in bounded input size, including
+    # OCR output containing many short lines. Do not scan the whole native
+    # page once for every recognized line.
+    existing = {normalized(line) for line in native.splitlines()}
+    additions: list[str] = []
+    for line in recognized.splitlines():
+        line = line.strip()
+        key = normalized(line)
+        if not key or key in existing:
+            continue
+        additions.append(line)
+        existing.add(key)
+    return native + ("\n\n" + "\n".join(additions) if additions else "")
 
 
 @dataclass(frozen=True)
@@ -2031,18 +2063,44 @@ class PilotStore:
             ).strip().casefold()
             ocr_enabled = ocr_mode in {"selective", "expanded"}
             ocr_limit = MAX_OCR_PAGES if ocr_mode == "selective" else self._expanded_ocr_limit()
-            recovered = 0
             attempted = 0
+            native_pages = 0
+            outcomes: dict[str, int] = {}
+            # Native extraction has already passed these bounds. OCR additions
+            # must share them rather than multiplying the document text budget.
+            total_chars = sum(len(page.text.strip()) for page in pages)
             units: list[PilotUnit] = []
             for page in pages:
                 text = page.text.strip()
-                weak = not text or (ocr_mode == "expanded" and self._text_strength(text) < 20)
-                if weak and ocr_enabled and attempted < ocr_limit:
-                    attempted += 1
-                    recognized = _ocr_pdf_page(source, page.page_number)
-                    if self._text_strength(recognized) > self._text_strength(text):
-                        text = recognized
-                        recovered += 1
+                native_pages += bool(text)
+                candidate = (
+                    self._text_strength(text) < 20
+                    or getattr(page, "image_coverage", 0.0) >= 0.10
+                    or not getattr(page, "image_evidence_known", False)
+                )
+                if candidate:
+                    if not ocr_enabled:
+                        outcome = "disabled"
+                    elif ocr_mode == "selective" and text:
+                        outcome = "selection"
+                    elif attempted >= ocr_limit:
+                        outcome = "page_limit"
+                    else:
+                        attempted += 1
+                        result = _ocr_pdf_page(source, page.page_number)
+                        outcome = result.status
+                        if result.status == "recognized":
+                            combined = _combine_pdf_text(text, result.text)
+                            addition = len(combined) - len(text)
+                            if (
+                                len(combined) > MAX_PDF_PAGE_CHARS
+                                or total_chars + addition > MAX_PDF_TOTAL_CHARS
+                            ):
+                                outcome = "output_limit"
+                            else:
+                                total_chars += addition
+                                text = combined
+                    outcomes[outcome] = outcomes.get(outcome, 0) + 1
                 if text:
                     units.append(
                         PilotUnit(
@@ -2055,32 +2113,27 @@ class PilotStore:
                     progress("Recognizing pages" if attempted else "Extracting pages", page.page_number, len(pages))
             if len(units) > MAX_PDF_CHUNKS:
                 raise UploadProblem("That PDF contains too many searchable sections.")
-            if not units:
-                document.state = "needs_ocr"
-                document.message = "Needs OCR — this PDF has no searchable text."
-                document.units = []
-                return
             document.units = [asdict(unit) for unit in units]
             document.page_count = len(pages)
-            document.state = "ready"
-            missing = len(pages) - len(units)
-            if missing:
-                remaining = (
-                    "remain unreadable after OCR"
-                    if ocr_mode == "expanded"
-                    else f"need{' ' if missing != 1 else 's '}OCR"
-                )
-                document.message = (
-                    f"{len(units)} of {len(pages)} pages ready and searchable; "
-                    f"{missing} page{'s' if missing != 1 else ''} {remaining}"
-                )
-            elif recovered:
-                document.message = (
-                    f"{len(pages)} pages ready and searchable; "
-                    f"text recognized on {recovered} page{'s' if recovered != 1 else ''}"
-                )
-            else:
-                document.message = f"{len(pages)} pages ready and searchable"
+            document.state = "ready" if units else "needs_ocr"
+            notes = [
+                f"{len(units)} of {len(pages)} pages with searchable text",
+                f"native text on {native_pages}",
+                f"OCR attempted on {attempted}",
+            ]
+            labels = {
+                "recognized": "OCR returned text",
+                "disabled": "OCR skipped (disabled)",
+                "selection": "OCR skipped (selective mode)",
+                "page_limit": "OCR skipped (page limit)",
+                "timed_out": "OCR timed out",
+                "failed": "OCR failed",
+                "no_text": "OCR returned no text",
+                "output_limit": "OCR text/raster limit reached",
+            }
+            notes.extend(f"{label}: {outcomes[key]}" for key, label in labels.items() if outcomes.get(key))
+            notes.append("Complete page reading is not established.")
+            document.message = ("Needs OCR. " if not units else "") + "; ".join(notes)
             return
         if document.media_type == DOCX_MEDIA_TYPE:
             from .docx_extract import extract_docx_sections

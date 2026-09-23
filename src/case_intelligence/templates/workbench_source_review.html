@@ -40,8 +40,8 @@
 
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
-  {% if email_coverage_notice %}
-  <div class="notice" role="note" aria-label="Email attachment coverage">{{ email_coverage_notice }}</div>
+  {% if source_coverage_notice %}
+  <div class="notice" role="note" aria-label="Source extraction coverage">{{ source_coverage_notice }}</div>
   {% endif %}
 
   {% if source.embedded_content_href %}

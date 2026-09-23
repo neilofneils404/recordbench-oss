@@ -14,6 +14,7 @@ from html import escape as xml_escape
 from typing import Mapping, Sequence
 
 from .branding import PRODUCT_NAME
+from .pdf_coverage import PDF_SAVED_RESULT_NOTICE
 from .workspace_store import (
     ConversationRecord,
     MatterRecord,
@@ -675,6 +676,7 @@ def answer_blocks(
     question: MessageRecord | None = None,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = "",
 ) -> tuple[ExportBlock, ...]:
     if (
         conversation.matter_id != matter.matter_id
@@ -699,6 +701,8 @@ def answer_blocks(
             )
         )
     blocks.append(ExportBlock(f"{PRODUCT_NAME} answer", "heading1"))
+    if presentation_notice:
+        blocks.append(ExportBlock(presentation_notice, "note"))
     blocks.extend(_answer_blocks(answer))
     blocks.append(
         ExportBlock(
@@ -715,6 +719,7 @@ def conversation_blocks(
     messages: Sequence[MessageRecord],
     *,
     exported_at: str | None = None,
+    presentation_notice: str = "",
 ) -> tuple[ExportBlock, ...]:
     if (
         conversation.matter_id != matter.matter_id
@@ -730,6 +735,8 @@ def conversation_blocks(
         ExportBlock(f"Exported from {PRODUCT_NAME} at {exported_at or _now()}.", "metadata"),
     ]
     question_number = 0
+    if presentation_notice:
+        blocks.append(ExportBlock(presentation_notice, "note"))
     answer_number = 0
     for message in messages:
         if message.role == "user":
@@ -905,6 +912,10 @@ def matter_report_blocks(
             ExportBlock("Source inventory", "heading1"),
         )
     )
+    if any(source.get("kind") == "PDF" for source in sources):
+        from .pdf_coverage import PDF_COVERAGE_NOTICE
+
+        blocks.append(ExportBlock(PDF_COVERAGE_NOTICE, "note"))
     if sources:
         for source in sources:
             label = _plain(source.get("name")) or "Unnamed source"
@@ -1072,9 +1083,11 @@ def export_answer(
     format_name: str,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = "",
 ) -> ExportArtifact:
     created = exported_at or _now()
-    blocks = answer_blocks(matter, conversation, answer, question, exported_at=created)
+    blocks = answer_blocks(matter, conversation, answer, question, exported_at=created,
+                           presentation_notice=presentation_notice)
     stem = safe_file_stem(f"{matter.display_name}-{conversation.title}-answer")
     return _artifact(blocks, stem=stem, format_name=format_name, created_at=created)
 
@@ -1086,9 +1099,11 @@ def export_conversation(
     format_name: str,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = "",
 ) -> ExportArtifact:
     created = exported_at or _now()
-    blocks = conversation_blocks(matter, conversation, messages, exported_at=created)
+    blocks = conversation_blocks(matter, conversation, messages, exported_at=created,
+                                 presentation_notice=presentation_notice)
     stem = safe_file_stem(f"{matter.display_name}-{conversation.title}")
     return _artifact(blocks, stem=stem, format_name=format_name, created_at=created)
 
@@ -1120,6 +1135,7 @@ def export_report(
     format_name: str,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = "",
 ) -> ExportArtifact:
     created = exported_at or _now()
     _validate_report_export_scope(matter, report, sections)
@@ -1135,6 +1151,8 @@ def export_report(
         blocks.extend(
             (ExportBlock("Purpose", "heading1"), ExportBlock(report.purpose))
         )
+    if presentation_notice:
+        blocks.append(ExportBlock(presentation_notice, "note"))
     for index, (section, citations) in enumerate(sections, 1):
         blocks.append(ExportBlock(f"{index}. {section.heading}", "heading1"))
         if section.body:
@@ -1173,6 +1191,7 @@ def export_research(
     format_name: str,
     *,
     exported_at: str | None = None,
+    presentation_notice: str = "",
 ) -> ExportArtifact:
     """Export one durable research run with its evidence and coverage ledger."""
 
@@ -1321,6 +1340,7 @@ def export_research(
                 "product": PRODUCT_NAME,
                 "exported_at": created,
                 "matter": {"name": matter.display_name},
+                **({"presentation_notice": presentation_notice} if presentation_notice else {}),
                 "investigation": {
                     "title": job.title,
                     "question": job.question,
@@ -1358,6 +1378,8 @@ def export_research(
         ExportBlock(job.question),
     ]
     blocks.append(ExportBlock(job.review_budget_description, "note"))
+    if presentation_notice:
+        blocks.append(ExportBlock(presentation_notice, "note"))
     if "full_text_synthesis_input" in result:
         from .full_text_synthesis import input_notice
         receipt = result["full_text_synthesis_input"]
@@ -1757,6 +1779,7 @@ def export_matter_bundle(
     exported_at: str | None = None,
 ) -> ExportArtifact:
     created = exported_at or _now()
+    presentation_notice = PDF_SAVED_RESULT_NOTICE if any(source.get("kind") == "PDF" for source in sources) else ""
     report = matter_report_blocks(
         matter,
         conversations,
@@ -1811,7 +1834,8 @@ def export_matter_bundle(
                 suffix += 1
             used_names.add(candidate.casefold())
             blocks = conversation_blocks(
-                matter, conversation, messages, exported_at=created
+                matter, conversation, messages, exported_at=created,
+                presentation_notice=presentation_notice,
             )
             markdown_path = f"conversations/{candidate}.md"
             docx_path = f"conversations/{candidate}.docx"
@@ -1835,6 +1859,7 @@ def export_matter_bundle(
                     "created_at": conversation.created_at,
                     "updated_at": conversation.updated_at,
                     "messages": [_portable_message(message) for message in messages],
+                    **({"presentation_notice": presentation_notice} if presentation_notice else {}),
                 }
             )
         notebook_report = notebook_blocks(

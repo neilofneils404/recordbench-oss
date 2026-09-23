@@ -575,6 +575,7 @@ class MatterReadinessRecord:
     playback_only_count: int = 0
     recording_review_count: int = 0
     email_count: int = 0
+    pdf_count: int = 0
 
     @property
     def can_query(self) -> bool:
@@ -585,7 +586,9 @@ class MatterReadinessRecord:
 
     @property
     def partial_query(self) -> bool:
-        return self.can_query and (self.attention_count > 0 or self.email_count > 0)
+        return self.can_query and (
+            self.attention_count > 0 or self.email_count > 0 or self.pdf_count > 0
+        )
 
 
 @dataclass(frozen=True)
@@ -6153,6 +6156,8 @@ class WorkspaceStore:
                 "AND source_state='needs_review') AS recording_review_count,"
                 "(SELECT COUNT(*) FROM workbench_source_catalog WHERE matter_id=:matter_id "
                 "AND media_type='message/rfc822') AS email_count,"
+                "(SELECT COUNT(*) FROM workbench_source_catalog WHERE matter_id=:matter_id "
+                "AND media_type='application/pdf') AS pdf_count,"
                 "COALESCE(MAX(updated_at),(SELECT updated_at FROM workbench_matter "
                 "WHERE matter_id=:matter_id)) AS updated_at FROM combined",
                 {"matter_id": matter_id},
@@ -6193,6 +6198,7 @@ class WorkspaceStore:
                 playback_only_count=int(row["playback_only_count"] or 0),
                 recording_review_count=int(row["recording_review_count"] or 0),
                 email_count=int(row["email_count"] or 0),
+                pdf_count=int(row["pdf_count"] or 0),
             )
             self._matter_readiness_cache[matter_id] = (cache_token, record)
             return record

@@ -44,6 +44,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
+from .pdf_coverage import PDF_SAVED_RESULT_NOTICE
 from .exact_search import QuerySyntaxError, parse_query
 from .exact_search_results import (
     ExactSearchBackend, ExactSearchChanged, ExactSearchPage, ExactSearchUnavailable, ReferenceExactSearchBackend,
@@ -331,13 +332,17 @@ def _source_coverage(
         from .extended_extract import EMAIL_COVERAGE_NOTICE
 
         notice = " ".join(part for part in (notice, EMAIL_COVERAGE_NOTICE) if part)
+    if readiness.pdf_count:
+        from .pdf_coverage import PDF_COVERAGE_NOTICE
+
+        notice = " ".join(part for part in (notice, PDF_COVERAGE_NOTICE) if part)
     if changed_since_retrieval:
         notice = " ".join(part for part in (notice,
             "Sources changed after the search started. This result may not include newly added or changed material. "
             "Run the question again when the sources you need are searchable.",
         ) if part)
     return {
-        "mode": "partial" if partial or readiness.email_count or changed_since_retrieval else "complete",
+        "mode": "partial" if partial or readiness.email_count or readiness.pdf_count or changed_since_retrieval else "complete",
         "searchable_count": readiness.searchable_count,
         "total_count": readiness.total_count,
         "excluded_count": excluded,
@@ -2135,6 +2140,8 @@ class CaseIntelligenceWorkbench:
     @staticmethod
     def _source_state(document: PilotDocument) -> tuple[str, str]:
         if document.state == "ready":
+            if document.media_type == "application/pdf" and document.message:
+                return document.message, "ready"
             if "remain unreadable" in document.message or "no searchable text" in document.message:
                 return document.message, "ready"
             return "Searchable", "ready"
@@ -3579,9 +3586,13 @@ class CaseIntelligenceWorkbench:
         """Resolve citations once, then render formats inside the same boundary."""
 
         def render() -> tuple[ExportArtifact, ...]:
+            has_pdf = (any(source.matter_id == matter.matter_id and source.media_type == "application/pdf"
+                           for source in frozen_source_catalog) if frozen_source_catalog is not None
+                       else self.workspace.matter_readiness(matter.matter_id).pdf_count > 0)
             return tuple(
                 export_report(
-                    matter, report, sections, format_name, exported_at=exported_at
+                    matter, report, sections, format_name, exported_at=exported_at,
+                    presentation_notice=PDF_SAVED_RESULT_NOTICE if has_pdf else "",
                 )
                 for format_name in format_names
             )
@@ -3802,12 +3813,15 @@ class CaseIntelligenceWorkbench:
             self._assert_frozen_research_ledger(
                 matter, job, frozen_source_catalog
             )
-            return export_research(matter, job, format_name)
+            return export_research(matter, job, format_name,
+                presentation_notice=PDF_SAVED_RESULT_NOTICE if any(
+                    source.media_type == "application/pdf" for source in frozen_source_catalog) else "")
 
         store = self.source_store(matter)
         with store.mutation_guard():
             self._assert_current_research_ledger(matter, job)
-            return export_research(matter, job, format_name)
+            return export_research(matter, job, format_name,
+                presentation_notice=PDF_SAVED_RESULT_NOTICE if self.workspace.matter_readiness(matter.matter_id).pdf_count else "")
 
     def _assert_frozen_research_ledger(
         self,
@@ -6473,7 +6487,7 @@ def create_workbench_app(
             action_label = "View sources"
             action_url = f"/matters/{matter.slug}/setup?view=list#source-library"
 
-        if readiness.email_count and readiness.state == "ready":
+        if (readiness.email_count or readiness.pdf_count) and readiness.state == "ready":
             summary = (
                 "1 source has searchable text." if readiness.searchable_count == 1
                 else f"{readiness.searchable_count:,} sources have searchable text."
@@ -6600,6 +6614,7 @@ def create_workbench_app(
             "partial_query": readiness.partial_query,
             "excluded_count": int(coverage["excluded_count"]),
             "coverage_notice": str(coverage["notice"]),
+            "pdf_presentation_notice": PDF_SAVED_RESULT_NOTICE if readiness.pdf_count else "",
             "headline": headline,
             "summary": summary,
             "guidance": guidance,
@@ -10747,6 +10762,8 @@ def create_workbench_app(
                 "collections": bench.workspace.source_collections(matter.matter_id),
                 "selected_source_set": source_set, "selected_collection": collection,
                 "results": results, "links": links, "error": action_error,
+                "extraction_coverage_notice": str(_source_coverage(
+                    bench.workspace.matter_readiness(matter.matter_id))["notice"]),
                 "previews": {item.document_id: item.previews for item in results.items} if results else {},
             })
 
@@ -12305,9 +12322,9 @@ def create_workbench_app(
                     bench._citation(matter, bench._candidate(matter, source.document, source.unit, source.unit_index)).support_token
                     if source.unit and source.document.state == "ready" else ""
                 ),
-                "email_coverage_notice": (
+                "source_coverage_notice": (
                     str(_source_coverage(bench.workspace.matter_readiness(matter.matter_id))["notice"])
-                    if source.document.media_type in EMAIL_MEDIA_TYPES else ""
+                    if source.document.media_type in EMAIL_MEDIA_TYPES or source.document.media_type == "application/pdf" else ""
                 ),
                 "source_sequence": source_sequence,
                 "notice": notice,
@@ -15212,7 +15229,8 @@ def create_workbench_app(
             )
             messages = bench.workspace.messages(matter.matter_id, conversation_id)
             artifact = export_conversation(
-                matter, conversation, messages, format_name
+                matter, conversation, messages, format_name,
+                presentation_notice=PDF_SAVED_RESULT_NOTICE if bench.workspace.matter_readiness(matter.matter_id).pdf_count else "",
             )
         except KeyError as exc:
             raise HTTPException(404, "Matter or conversation not found") from exc
@@ -15261,7 +15279,8 @@ def create_workbench_app(
                 None,
             )
             artifact = export_answer(
-                matter, conversation, answer, question, format_name
+                matter, conversation, answer, question, format_name,
+                presentation_notice=PDF_SAVED_RESULT_NOTICE if bench.workspace.matter_readiness(matter.matter_id).pdf_count else "",
             )
         except (KeyError, StopIteration) as exc:
             raise HTTPException(404, "Saved answer not found") from exc

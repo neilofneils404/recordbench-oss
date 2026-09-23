@@ -61,6 +61,7 @@
   </section>
 
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+  {% if extraction_coverage_notice %}<div class="notice" role="note" aria-label="Source extraction coverage">{{ extraction_coverage_notice }}</div>{% endif %}
   {% if results %}
   <section class="find-results" aria-labelledby="find-results-heading">
     <header class="find-results-heading"><div><h2 id="find-results-heading">{{ results.total }} source{{ '' if results.total == 1 else 's' }} found</h2>
