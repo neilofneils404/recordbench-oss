@@ -62,6 +62,7 @@ from .identity import (
     LocalAccountSettings,
     LocalAuthenticationError,
     local_principal_enabled,
+    resolve_auth_mode,
     OidcAuthenticationError,
     OidcProviderClient,
     OidcSettings,
@@ -6046,6 +6047,7 @@ def create_workbench_app(
     malware_scanner: MalwareScanner | None = None,
     malware_scan_mode: str | None = None,
 ) -> FastAPI:
+    selected_auth_mode = resolve_auth_mode(auth_mode)
     if background_ingestion is None:
         background_ingestion = os.getenv("CASE_INTELLIGENCE_BACKGROUND_INGESTION", "0") == "1"
     if ingestion_workers is None:
@@ -6060,7 +6062,6 @@ def create_workbench_app(
             answer_workers = 2
     # Recovery coordinators start in the workbench constructor. Install the
     # live account boundary before they can inspect any restored local jobs.
-    selected_auth_mode = (auth_mode or os.getenv("CASE_INTELLIGENCE_AUTH_MODE", "preview")).strip().lower()
     if selected_auth_mode == "local":
         local_settings = local_settings or LocalAccountSettings.from_env()
     bench = CaseIntelligenceWorkbench(
@@ -6099,7 +6100,7 @@ def create_workbench_app(
         identity = IdentityService(
             bench.workspace,
             bench.runtime_dir,
-            auth_mode=auth_mode,
+            auth_mode=selected_auth_mode,
             secure_cookie=secure_cookie,
             local_settings=local_settings,
             oidc_settings=oidc_settings,
@@ -6165,6 +6166,19 @@ def create_workbench_app(
 
     @app.middleware("http")
     async def identity_boundary(request: Request, call_next):
+        if request.url.path == "/internal/auth-mode":
+            if (
+                request.method != "GET"
+                or request.client is None
+                or request.client.host not in {"127.0.0.1", "::1"}
+                or not identity.auth_diagnostic_authorized(request.headers.get("X-RecordBench-Auth-Diagnostic"))
+            ):
+                return Response(status_code=404, headers={"Cache-Control": "no-store"})
+            return JSONResponse({"auth_mode": identity.auth_mode}, headers={"Cache-Control": "no-store"})
+        if identity.auth_mode in {"preview", "test"} and (
+            request.client is None or request.client.host not in {"127.0.0.1", "::1", "testclient"}
+        ):
+            return PlainTextResponse("Development authentication is loopback-only.", status_code=403)
         request.state.request_id = f"request-{uuid.uuid4().hex}"
         public = (
             request.url.path == "/health"
@@ -15974,11 +15988,16 @@ def main() -> None:
         parser.error(
             "non-loopback binding is allowed only in the isolated container profile"
         )
+    try:
+        selected_auth_mode = resolve_auth_mode()
+    except RuntimeError as exc:
+        parser.error(str(exc))
     uvicorn.run(
-        create_workbench_app(args.runtime),
+        create_workbench_app(args.runtime, auth_mode=selected_auth_mode),
         host=args.host,
         port=args.port,
         access_log=False,
+        proxy_headers=False,
     )
 
 
