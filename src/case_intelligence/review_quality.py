@@ -402,13 +402,14 @@ def modality_coverage(
     unavailable = tuple(kind for kind in missing if kind not in available)
     if not missing:
         names = " and ".join(labels[kind] for kind in required)
-        notice = f"This answer includes source-verified {names} support."
+        notice = (f"This answer cites {names} passages. "
+            "Check each claim against the original sources.")
         mode = "complete"
     elif unavailable:
         names = " and ".join(labels[kind] for kind in unavailable)
         notice = (
             f"This result is partial: no matching {names} evidence was retrieved in "
-            "the selected passages. Review the supported result and search that source "
+            "the selected passages. Review the generated result and search that source "
             "type directly before treating the comparison as complete."
         )
         mode = "partial"
@@ -416,7 +417,7 @@ def modality_coverage(
         names = " and ".join(labels[kind] for kind in missing)
         notice = (
             f"This result is partial: {names} evidence reached the answer packet, but "
-            f"no source-verified {names} claim was retained. Review the matching source "
+            "no generated claim citing those passages was retained. Review the matching source "
             "or refine the question before treating the comparison as complete."
         )
         mode = "partial"

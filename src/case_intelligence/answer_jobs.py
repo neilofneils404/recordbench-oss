@@ -5,7 +5,7 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
-from .workspace_store import AnswerJobRecord, WorkspaceStore
+from .workspace_store import AnswerJobRecord, WorkspaceProblem, WorkspaceStore
 from .generation import VerifiedAnswer
 
 
@@ -107,6 +107,10 @@ class AnswerCoordinator:
         except _AnswerCancelled:
             self._finish_failure(job, "Answer cancelled.")
         except AnswerJobFailure as exc:
+            self._finish_failure(job, str(exc))
+        except WorkspaceProblem as exc:
+            # Expected save failures carry a staff-safe recovery action. A
+            # generic retry instruction would repeat permanent text/size errors.
             self._finish_failure(job, str(exc))
         except Exception:
             self._finish_failure(

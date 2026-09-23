@@ -1103,11 +1103,19 @@ def test_full_review_uses_two_bounded_source_slots(tmp_path):
     store.close()
 
 
-def test_review_workspace_runs_exports_and_final_bundle_include_new_work_product(tmp_path):
+def test_review_workspace_runs_exports_and_final_bundle_include_new_work_product(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     with TestClient(
         create_workbench_app(runtime, generator=EvidenceEchoGenerator(), auth_mode="test")
     ) as client:
+        progress_messages = []
+        update_progress = client.app.state.workbench.workspace.update_research_progress
+
+        def record_progress(*args, **kwargs):
+            progress_messages.append(kwargs.get("message", ""))
+            return update_progress(*args, **kwargs)
+
+        monkeypatch.setattr(client.app.state.workbench.workspace, "update_research_progress", record_progress)
         created = client.post(
             "/matters",
             data={"name": "Generated web workflow", "descriptor": "Public fixture"},
@@ -1162,10 +1170,15 @@ def test_review_workspace_runs_exports_and_final_bundle_include_new_work_product
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             research_result = client.get(research_url)
-            if "Verified synthesis" in research_result.text:
+            if 'aria-label="Completed synthesis actions"' in research_result.text:
                 break
             time.sleep(0.02)
         assert "Evidence record" in research_result.text
+        assert "verifies the synthesis" not in research_result.text
+        assert "Generated synthesis · needs review" in research_result.text
+        assert "Citations and automated checks do not establish" in research_result.text
+        assert "Final verification complete" not in "\n".join(progress_messages)
+        assert any("Citation references checked" in message for message in progress_messages)
         assert "Return to conversation" in research_result.text
         research_status = client.get(
             f"/matters/{slug}/research/{research_id}/status"

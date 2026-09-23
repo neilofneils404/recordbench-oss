@@ -2365,6 +2365,7 @@ def test_gateway_acceptance_uses_configured_bind_for_health_and_login(tmp_path, 
     installation = json.loads((root / "installation.json").read_text())
     installation["auth"] = auth
     (root / "installation.json").write_text(json.dumps(installation))
+    installer._replace_env(root / "config/recordbench.env", "CASE_INTELLIGENCE_AUTH_MODE", auth)
     installer._replace_env(root / "compose.env", "RECORDBENCH_BIND_ADDRESS", bind)
     payload = {"product": "RecordBench", "status": "ok", "storage": {"status": "ready"},
         "capabilities": {"source_review": "ready", "malware_scan": "ready"}}
@@ -2401,12 +2402,185 @@ def test_gateway_acceptance_uses_configured_bind_for_health_and_login(tmp_path, 
     monkeypatch.setattr(installer.http.client, "HTTPSConnection", Connection)
     monkeypatch.setattr(installer.urllib.request, "urlopen", health_request)
     monkeypatch.setattr(installer, "_run", internal_probe)
+    monkeypatch.setattr(installer, "_probe", lambda command: subprocess.CompletedProcess(command, 0, json.dumps({"auth_mode": auth}), ""))
     monkeypatch.setattr(installer.time, "sleep", lambda *a: pytest.fail("valid configured bind was not accepted"))
     assert installer._login_reachable(root)
     installer._wait_health(installer.Console(color=False, quiet=True), root)
     assert "/auth/login" in requests
     assert ("internal-kerberos-health" if auth == "kerberos" else "health-transport") in requests
     assert installer._install_progress(root)["phases"]["login_reachable"] == "complete"
+
+
+@pytest.mark.parametrize("saved", [None, "", "preview", "test", "oidc", "synthetic-invalid-private-value"])
+@pytest.mark.parametrize("operation", ["doctor", "health"])
+def test_installed_auth_drift_is_rejected_before_runtime_probe(tmp_path, monkeypatch, capsys, saved, operation):
+    from tests.test_first_run_handoff import configured_node
+    root, args, _ = configured_node(tmp_path.resolve())
+    env_path = root / "config/recordbench.env"
+    values = installer._dotenv(env_path)
+    if saved is None:
+        values.pop("CASE_INTELLIGENCE_AUTH_MODE")
+    else:
+        values["CASE_INTELLIGENCE_AUTH_MODE"] = saved
+    env_path.write_text(installer._env_text(values, "synthetic saved environment"))
+    monkeypatch.setattr(installer, "_run", lambda *a, **k: pytest.fail("auth drift reached Compose"))
+    monkeypatch.setattr(installer, "_probe", lambda *a, **k: pytest.fail("auth drift reached runtime"))
+    monkeypatch.setattr(installer.urllib.request, "urlopen", lambda *a, **k: pytest.fail("auth drift reached HTTP"))
+    with pytest.raises(RuntimeError, match="authentication mode") as error:
+        if operation == "doctor":
+            installer._doctor(installer.Console(color=False), args, root)
+        else:
+            installer._wait_health(installer.Console(color=False), root)
+    assert "synthetic-invalid-private-value" not in str(error.value) + capsys.readouterr().out
+
+
+@pytest.mark.parametrize("expected", ["local", "oidc", "kerberos"])
+@pytest.mark.parametrize("effective", ["preview", "test", "local", "oidc", "kerberos"])
+def test_health_checks_running_auth_mode_before_accepting_healthy_node(tmp_path, monkeypatch, expected, effective):
+    import io
+    from tests.test_first_run_handoff import configured_node
+    root, _, _ = configured_node(tmp_path.resolve())
+    installation = json.loads((root / "installation.json").read_text())
+    installation["auth"] = expected
+    (root / "installation.json").write_text(json.dumps(installation))
+    installer._replace_env(root / "config/recordbench.env", "CASE_INTELLIGENCE_AUTH_MODE", expected)
+    payload = {"product": "RecordBench", "status": "ok", "storage": {"status": "ready"},
+        "capabilities": {"source_review": "ready", "malware_scan": "ready"}}
+    monkeypatch.setattr(installer.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(json.dumps(payload).encode()))
+    monkeypatch.setattr(installer, "_run", lambda command, *a, **k: subprocess.CompletedProcess(command, 0, json.dumps(payload), ""))
+    probes = []
+    def diagnostic(command):
+        assert command[-6:-2] == ["exec", "-T", "app", "python"]
+        assert "/internal/auth-mode" in command[-1]
+        probes.append(command)
+        return subprocess.CompletedProcess(command, 0, json.dumps({"auth_mode": effective}), "")
+    monkeypatch.setattr(installer, "_probe", diagnostic)
+    monkeypatch.setattr(installer, "_login_reachable", lambda root: True)
+    monkeypatch.setattr(installer.time, "sleep", lambda *a: pytest.fail("live mode mismatch did not fail promptly"))
+    if expected == effective:
+        installer._wait_health(installer.Console(color=False, quiet=True), root)
+        assert installer._install_progress(root)["phases"]["selected_capabilities"] == "complete"
+    else:
+        with pytest.raises(RuntimeError, match="running authentication mode"):
+            installer._wait_health(installer.Console(color=False, quiet=True), root)
+        assert installer._install_progress(root)["phases"]["selected_capabilities"] != "complete"
+    assert len(probes) == 1
+
+
+@pytest.mark.parametrize("result", [
+    "", "not-json", "{}", "[]", '{"auth_mode": "unknown"}',
+    '{"auth_mode": null}', '{"auth_mode": ["local"]}',
+    '{"auth_mode": "local", "private": "synthetic-private-value"}',
+    "synthetic-private-value" * 300, "command-error", "timeout", "missing-command",
+])
+def test_health_never_accepts_unavailable_live_auth_or_reports_probe_output(tmp_path, monkeypatch, capsys, result):
+    import io
+    from tests.test_first_run_handoff import configured_node
+    root, _, _ = configured_node(tmp_path.resolve())
+    payload = {"product": "RecordBench", "status": "ok", "storage": {"status": "ready"},
+        "capabilities": {"source_review": "ready", "malware_scan": "ready"}}
+    monkeypatch.setattr(installer.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(json.dumps(payload).encode()))
+    def diagnostic(command):
+        if result == "timeout":
+            raise subprocess.TimeoutExpired(command, 20, output="synthetic-private-value")
+        if result == "missing-command":
+            raise OSError("synthetic-private-value")
+        return subprocess.CompletedProcess(command, 1 if result == "command-error" else 0,
+                                           result, "synthetic-private-value")
+    monkeypatch.setattr(installer, "_probe", diagnostic)
+    monkeypatch.setattr(installer, "_login_reachable", lambda root: True)
+    clock = [0]
+    monkeypatch.setattr(installer.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(installer.time, "sleep", lambda _: clock.__setitem__(0, 901))
+    with pytest.raises(RuntimeError, match="running authentication mode is unavailable") as error:
+        installer._wait_health(installer.Console(color=False), root)
+    assert installer._install_progress(root)["phases"]["login_reachable"] == "incomplete"
+    assert "synthetic-private-value" not in str(error.value) + capsys.readouterr().out
+
+
+@pytest.mark.parametrize("key_length, status, payload, accepted", [
+    (32, 200, {"auth_mode": "local"}, True),
+    (32, 200, {"auth_mode": "preview"}, True),
+    (31, 200, {"auth_mode": "local"}, False),
+    (33, 200, {"auth_mode": "local"}, False),
+    (32, 302, {"auth_mode": "local"}, False),
+    (32, 404, {"auth_mode": "local"}, False),
+    (32, 200, {"auth_mode": "synthetic-private-value"}, False),
+    (32, 200, {"auth_mode": "local", "private": "synthetic-private-value"}, False),
+    (32, 200, {"auth_mode": "local", "padding": "x" * 4096}, False),
+])
+def test_auth_probe_derives_proof_inside_container_and_only_emits_allowlisted_mode(monkeypatch, capsys, key_length, status, payload, accepted):
+    import builtins
+    import hashlib
+    import hmac
+    import io
+    key = b"s" * key_length
+    proof = hmac.new(key, b"recordbench/auth-mode-diagnostic/v1", hashlib.sha256).hexdigest()
+    def key_file(path, mode):
+        assert path == "/var/lib/recordbench/runtime/identity-session.key" and mode == "rb"
+        return io.BytesIO(key)
+    calls = []
+    class Connection:
+        def __init__(self, host, port, timeout):
+            assert host == "127.0.0.1" and port == 8786 and timeout == 5
+            self.status = status
+        def request(self, method, path, headers):
+            assert method == "GET" and path == "/internal/auth-mode"
+            assert headers == {"X-RecordBench-Auth-Diagnostic": proof}
+            calls.append("request")
+        def getresponse(self):
+            return self
+        def read(self, size):
+            assert size == 4097
+            return json.dumps(payload).encode()[:size]
+        def close(self):
+            calls.append("close")
+    monkeypatch.setattr(builtins, "open", key_file)
+    monkeypatch.setattr(installer.http.client, "HTTPConnection", Connection)
+    if accepted:
+        exec(installer._AUTH_MODE_PROBE, {})
+    else:
+        with pytest.raises(SystemExit) as error:
+            exec(installer._AUTH_MODE_PROBE, {})
+        assert error.value.code == 1
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert output.out == (json.dumps(payload) + "\n" if accepted else "")
+    assert proof not in output.out and "synthetic-private-value" not in output.out
+    assert calls == (["request", "close"] if key_length == 32 else [])
+
+
+@pytest.mark.parametrize("rollback_auth", ["local", "preview", None])
+def test_update_auth_drift_rolls_back_and_rechecks_previous_live_mode(tmp_path, request, monkeypatch, capsys, rollback_auth):
+    import io
+    wait_health = installer._wait_health
+    root, args, events, before = synthetic_live_update(tmp_path, monkeypatch, request)
+    monkeypatch.setattr(installer, "_wait_health", wait_health)
+    monkeypatch.setattr(installer, "_preflight", lambda *a, **k: ())
+    payload = {"product": "RecordBench", "status": "ok", "storage": {"status": "ready"},
+        "capabilities": {"source_review": "ready", "malware_scan": "ready",
+                         "answering": "ready", "search": "word + meaning"}}
+    monkeypatch.setattr(installer.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(json.dumps(payload).encode()))
+    monkeypatch.setattr(installer, "_login_reachable", lambda root: True)
+    modes = []
+    def diagnostic(command):
+        installed, _ = installer._installed_release(root)
+        mode = "preview" if installed["release_id"] == "synthetic-new" else rollback_auth
+        modes.append(mode)
+        return subprocess.CompletedProcess(command, 0, json.dumps({"auth_mode": mode}), "")
+    monkeypatch.setattr(installer, "_probe", diagnostic)
+    clock = [0]
+    monkeypatch.setattr(installer.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(installer.time, "sleep", lambda _: clock.__setitem__(0, clock[0] + 901))
+    message = "update failed and rollback was attempted" if rollback_auth == "local" else "rollback also failed"
+    with pytest.raises(RuntimeError, match=message):
+        installer._update(installer.Console(color=False), args, root)
+    assert modes == ["preview", rollback_auth]
+    assert "up-new" in events and "up-old" in events and "seal" not in events
+    assert (root / "installation.json").read_bytes() == before[Path("installation.json")]
+    assert (root / "compose.env").read_bytes() == before[Path("compose.env")]
+    output = capsys.readouterr().out
+    assert ("Prior release restored and healthy" in output) is (rollback_auth == "local")
 
 
 def synthetic_saved_provider(tmp_path, request, monkeypatch, auth, mutation=None):
@@ -2771,6 +2945,7 @@ def test_health_timeout_has_actionable_host_remedy(tmp_path, monkeypatch, cause)
     monkeypatch.setattr(installer.time, "sleep", lambda seconds: clock.__setitem__(0, 901))
     monkeypatch.setattr(installer.urllib.request, "urlopen", probe)
     monkeypatch.setattr(installer, "_login_reachable", lambda root: True)
+    monkeypatch.setattr(installer, "_probe", lambda command: subprocess.CompletedProcess(command, 0, '{"auth_mode": "local"}', ""))
     with pytest.raises(RuntimeError) as error:
         installer._wait_health(installer.Console(color=False, quiet=True), root)
     message = str(error.value)

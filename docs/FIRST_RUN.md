@@ -79,7 +79,10 @@ Team setup, additional accounts and adoption checks come later.
    is needed. An administrator with no matter arrives at **Team setup**.
 
 4. **Create a practice matter.** Choose **Create matter**, name it
-   `Synthetic CPU practice`, and submit the form. You own the new matter.
+   `Synthetic CPU practice`, and review its end date before submitting. The
+   default is 30 days of review plus seven days of export grace, after which
+   enabled maintenance can delete it without another confirmation; see
+   [temporary-matter retention](EXPIRED_MATTER_RECOVERY.md). You own the new matter.
    The other team-setup checklist items can remain incomplete for this one-user
    exercise.
 

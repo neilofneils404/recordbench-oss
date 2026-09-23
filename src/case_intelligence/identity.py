@@ -34,6 +34,21 @@ OIDC_STATE_COOKIE = "case_intelligence_oidc_state"
 KERBEROS_USER_HEADER = "X-RecordBench-Authenticated-User"
 KERBEROS_SECRET_HEADER = "X-RecordBench-Proxy-Secret"
 
+
+def resolve_auth_mode(auth_mode: str | None = None) -> str:
+    """Require deliberate authentication before creating runtime or identity state."""
+    configured = os.getenv("CASE_INTELLIGENCE_AUTH_MODE", "") if auth_mode is None else auth_mode
+    selected = configured.strip().lower()
+    if selected not in {"preview", "test", "local", "oidc", "kerberos"}:
+        raise RuntimeError(
+            "An explicit supported identity provider is required "
+            "(CASE_INTELLIGENCE_AUTH_MODE)."
+        )
+    if os.getenv("RECORDBENCH_ALLOW_CONTAINER_BIND", "") == "1" and selected in {"preview", "test"}:
+        raise RuntimeError("An installed service requires local, OIDC or Kerberos authentication.")
+    return selected
+
+
 _CLAIM_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,79}$")
 _SAFE_SIGNING_ALGORITHMS = frozenset(
     {
@@ -779,9 +794,7 @@ class IdentityService:
     ) -> None:
         self.store = store
         self.runtime_dir = Path(runtime_dir)
-        self.auth_mode = (auth_mode or os.getenv("CASE_INTELLIGENCE_AUTH_MODE", "preview")).strip().lower()
-        if self.auth_mode not in {"preview", "test", "local", "oidc", "kerberos"}:
-            raise RuntimeError("The selected identity provider is not supported.")
+        self.auth_mode = resolve_auth_mode(auth_mode)
         if secure_cookie is None:
             configured_cookie = os.getenv("CASE_INTELLIGENCE_SECURE_COOKIE", "").strip()
             if self.auth_mode in {"local", "oidc", "kerberos"} and configured_cookie != "1":
@@ -880,6 +893,15 @@ class IdentityService:
                 identity.login_name,
                 preferred_principal_id=identity.preferred_principal_id,
             )
+
+    def auth_diagnostic_authorized(self, proof: str | None) -> bool:
+        """A domain-separated operator proof; never a browser/session credential."""
+        if proof is None or not re.fullmatch(r"[0-9a-f]{64}", proof):
+            return False
+        expected = hmac.new(
+            self._secret, b"recordbench/auth-mode-diagnostic/v1", hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(proof, expected)
 
     def preview_identities(self) -> tuple[PrincipalRecord, ...]:
         if self.auth_mode not in {"preview", "test"}:

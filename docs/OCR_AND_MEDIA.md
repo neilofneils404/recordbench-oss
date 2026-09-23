@@ -2,10 +2,19 @@
 
 Uploads are streamed into a private staging boundary and scanned before they
 become matter sources. RecordBench extracts PDF and DOCX structure, email and
-spreadsheet text, and bounded image content. PDF pages without usable text are
-rendered with Poppler and recognized with Tesseract. OCR page, pixel, byte, and
-time limits protect the shared node; failures remain visible per source and do
-not block searching the rest of a matter.
+spreadsheet text, and bounded image content. PDF native text is retained. When
+OCR is enabled, selected pages are rendered with Poppler and recognized with
+Tesseract. Selective mode processes empty-text pages; expanded mode also selects
+pages with little native text, substantial image placements or unknown image
+evidence, so a text stamp does not suppress OCR of a scanned body.
+
+OCR page, pixel, byte and time limits protect the shared node. Source status
+records attempts and returned text separately from disabled/selective/capped
+skips, failures, timeouts, empty results and output limits. Searchable text or a
+successful OCR attempt does not establish that every visible part of a page was
+read correctly. Review the original PDF and its
+[extraction coverage](PDF_OCR_COVERAGE.md), including when a search finds no
+matches. Historical extraction and citation identities are not silently replaced.
 
 Audio and video are playable even when transcription fails. Browser-incompatible
 video is prepared asynchronously with FFmpeg, using remux or audio-only
