@@ -1,0 +1,922 @@
+{
+  "schema_version": 1,
+  "suite_id": "r1b-claims-v1",
+  "synthetic": true,
+  "frozen": true,
+  "provenance": {
+    "source": "Assistant-authored synthetic fixtures; no real case material or runtime model output.",
+    "review_status": "Human acceptance of the rubric and release thresholds remains pending.",
+    "source_text_encoding": "UTF-8 without an appended newline"
+  },
+  "rubric": {
+    "unit": "One candidate response containing exactly one material claim; no limitation claim.",
+    "semantic_valid": {
+      "pass": "The claim preserves the facts, relationships, event associations, polarity, uncertainty, and quotation fidelity of the full supplied evidence.",
+      "fail": "Any material invented, reversed, overstated, contradicted, or falsely quoted meaning fails the whole claim. Citation labels are scored separately.",
+      "partial_credit": false
+    },
+    "citations_valid": {
+      "pass": "The evidence_ids list is nonempty, contains unique supplied labels, and points to the intended source record or records for the claim.",
+      "fail": "Any missing, unknown, duplicate, or unrelated source label fails citation validity.",
+      "not_entailment": "A known intended source label can remain citation-valid when the claim alters that source's meaning. Semantic validity separately measures that error.",
+      "partial_credit": false
+    },
+    "candidate_valid": "semantic_valid and citations_valid",
+    "verifier_acceptance": "The application verifier retains the single material claim; rejection or omission is rejection. Do not treat application acceptance as the semantic ground truth.",
+    "metrics": {
+      "generation_semantic_errors": "Number of judged real generator outputs with semantic_valid=false / number of judged real generator outputs.",
+      "generation_citation_errors": "Number of judged real generator outputs with citations_valid=false / number of judged real generator outputs.",
+      "verifier_false_acceptance": "Number of invalid candidates accepted by the verifier / number of invalid candidates submitted to the verifier.",
+      "verifier_false_rejection": "Number of valid candidates rejected by the verifier / number of valid candidates submitted to the verifier.",
+      "empty_denominator": "Report rate as null and preserve numerator=0, denominator=0; never report an unevaluated category as passing."
+    },
+    "thresholds": {
+      "diagnostic_verifier_false_acceptance_rate_max": 0.0,
+      "diagnostic_verifier_false_rejection_rate_max": 0.0,
+      "fixture_integrity_failures_max": 0,
+      "diagnostic_targets_only": true,
+      "release_acceptance": "not_defined_no_release_claim"
+    },
+    "preregistration": "Labels, rationale, and diagnostic thresholds are fixed before execution. Change suite identity/version and digest when changing these bytes; do not relabel from observed verifier outcomes.",
+    "scope_limit": "Injected candidates measure deterministic verifier behavior only. They do not measure generator quality, embedding/reranking quality, supported hardware, or release readiness."
+  },
+  "source_text_sha256": {
+    "r1b-v1-actor-direction-a": "c5360f4deef2f82abf871180ef9cf717531b3e211ca5f003bf9630dbbfeb42fa",
+    "r1b-v1-decision-polarity-a": "25b7d9e4e3709142b3ade99bc490a517ac242381d0699b590f302efc695dd12b",
+    "r1b-v1-numeric-association-a": "69fcadd20748c0d35a2bb2ed1abc750cab2e6445bd4c08ce983166843c37e242",
+    "r1b-v1-date-association-a": "3619d6b0de9e72d6626339507b86374b113a6a609b165fc0b1238db0f2ece502",
+    "r1b-v1-negation-a": "34f759736b009fc67131cb5aee25f4af5c452904fef9ccf5bac6f5a4ebf4c045",
+    "r1b-v1-uncertainty-a": "df3da127a30a3b36f7e1e9bae6687ec2f37a7ee853e0b15e44af3b9c1b07a6e0",
+    "r1b-v1-unrelated-combination-a": "cbb907b94373d02fd327376825aa69deffcc74e753b35591ea2b2796077c4629",
+    "r1b-v1-unrelated-combination-b": "9a60780411d3cc747b46a2464791bc87b7f32b190d432aa856b9a551a604490f",
+    "r1b-v1-quotation-a": "3360008812f360f86352f50cb92513b8baa2f0758fd8e9b5b1d4d72dfae56ece",
+    "r1b-v1-missing-citation-a": "984984cc723680102f600a3a74b466948279a2bb70c7e5de6cad8be2fd06ad80",
+    "r1b-v1-citation-attribution-a": "5f690de461bfb048b172d94f5cca451ceb4e04cfb4f30387d28e22b37f92672f",
+    "r1b-v1-citation-attribution-b": "b1c2b6fa2dcfe8bb123c2a2702b898b2a6db83dd97965b4f50580b722846e9bf",
+    "r1b-v1-attribution-loss-a": "b9bdaf8323b9397f917d432709955a4274cb37ceca5a44ab6203373d1766dccf"
+  },
+  "cases": [
+    {
+      "case_id": "actor-direction",
+      "category": "actors",
+      "question": "Which team sent the copper valve, and which team received it?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated transfer log.txt",
+          "location": "Line 1",
+          "excerpt": "Team Orchid sent the copper valve to Team Juniper.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-actor-direction-a"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "Team Orchid is the sender; Team Juniper is the recipient."
+        ],
+        "prohibited_inferences": [
+          "Do not reverse the sender and recipient."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-exact",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "Exact source sentence preserves the transfer direction.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "Team Orchid sent the copper valve to Team Juniper.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "faithful-passive",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "Passive voice preserves both actor roles.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The copper valve was sent to Team Juniper by Team Orchid.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "reversed-actors",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "Both team names occur, but their roles are reversed.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "Team Juniper sent the copper valve to Team Orchid.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "decision-polarity",
+      "category": "approval_rejection",
+      "question": "What decision did the synthetic panel make about the copper valve proposal?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated decision note.txt",
+          "location": "Line 1",
+          "excerpt": "The synthetic panel reviewed the copper valve proposal and rejected it.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-decision-polarity-a"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "The panel rejected the proposal."
+        ],
+        "prohibited_inferences": [
+          "Review of a proposal does not establish approval."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-exact",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "The rejection is explicitly recorded.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic panel reviewed the copper valve proposal and rejected it.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "approval-substitution",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "Approval contradicts the recorded rejection despite high word overlap.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic panel reviewed the copper valve proposal and approved it.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "numeric-association",
+      "category": "numbers",
+      "question": "How many units were in each synthetic batch?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated batch count.txt",
+          "location": "Line 1",
+          "excerpt": "The copper valve batch contained 12 units, and the silver switch batch contained 21 units.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-numeric-association-a"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "Copper valves: 12 units.",
+          "Silver switches: 21 units."
+        ],
+        "prohibited_inferences": [
+          "Preserve the association between each item and its count.",
+          "Do not invent a count."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-exact",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "Each item retains its recorded count.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The copper valve batch contained 12 units, and the silver switch batch contained 21 units.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "swapped-present-numbers",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "All numbers appear in the source, but the item/count associations are swapped.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The copper valve batch contained 21 units, and the silver switch batch contained 12 units.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "invented-number",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "The count 31 appears nowhere in the evidence.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The copper valve batch contained 31 units.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "date-association",
+      "category": "dates",
+      "question": "When did the synthetic assembly review open and close?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated review dates.txt",
+          "location": "Line 1",
+          "excerpt": "The synthetic assembly review opened on 2041-03-12 and closed on 2041-03-21.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-date-association-a"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "Opened: 2041-03-12.",
+          "Closed: 2041-03-21."
+        ],
+        "prohibited_inferences": [
+          "Preserve each date and its event association."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-exact",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "Both dates and event associations match the source.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic assembly review opened on 2041-03-12 and closed on 2041-03-21.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "swapped-present-dates",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "The same date tokens are present, but the opening and closing dates are reversed.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic assembly review opened on 2041-03-21 and closed on 2041-03-12.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "negation",
+      "category": "negation",
+      "question": "Did the synthetic inspection find a crack in the copper valve?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated inspection note.txt",
+          "location": "Line 1",
+          "excerpt": "The synthetic inspection did not find a crack in the copper valve.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-negation-a"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "The inspection did not find a crack."
+        ],
+        "prohibited_inferences": [
+          "Do not remove the negation.",
+          "Absence of a finding is not proof that no crack exists."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-exact",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "Preserves the limited negative finding.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic inspection did not find a crack in the copper valve.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "negation-removed",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "Removing not reverses the recorded finding.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic inspection did find a crack in the copper valve.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "uncertainty",
+      "category": "uncertainty",
+      "question": "What did the synthetic inspector conclude about replacing the copper valve?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated provisional inspection.txt",
+          "location": "Line 1",
+          "excerpt": "The synthetic inspector wrote that the copper valve may require replacement; the inspection was inconclusive.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-uncertainty-a"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "Replacement is a possibility, not a settled requirement.",
+          "The inspection was inconclusive."
+        ],
+        "prohibited_inferences": [
+          "Do not turn may into an established requirement or a completed replacement."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-exact",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "Preserves both possibility and the inconclusive inspection.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic inspector wrote that the copper valve may require replacement; the inspection was inconclusive.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "uncertainty-removed",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "The candidate upgrades a possible need to a definite conclusion.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic inspector concluded that the copper valve requires replacement.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "unrelated-combination",
+      "category": "unrelated_combined_facts",
+      "question": "Which synthetic team performed each recorded task, on which day?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated Orchid task note.txt",
+          "location": "Line 1",
+          "excerpt": "Team Orchid inspected the copper valve on Monday.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-unrelated-combination-a"
+        },
+        {
+          "evidence_id": "S2",
+          "source_name": "Generated Juniper task note.txt",
+          "location": "Line 1",
+          "excerpt": "Team Juniper tested the silver switch on Tuesday.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-unrelated-combination-b"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "Team Orchid inspected the copper valve on Monday.",
+          "Team Juniper tested the silver switch on Tuesday."
+        ],
+        "prohibited_inferences": [
+          "Do not move actors, tasks, objects, or days between unrelated records.",
+          "No causal relationship between the tasks is supplied."
+        ],
+        "intended_evidence_ids": [
+          "S1",
+          "S2"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-conjunction",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "A single conjunction preserves each complete source relationship.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "Team Orchid inspected the copper valve on Monday, and Team Juniper tested the silver switch on Tuesday.",
+                "evidence_ids": [
+                  "S1",
+                  "S2"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "spliced-actor-and-task",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "The actor is taken from one record and the task, object, and day from another.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "Team Orchid tested the silver switch on Tuesday.",
+                "evidence_ids": [
+                  "S1",
+                  "S2"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "invented-causation",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "Both task records are present, but neither supplies the causal link.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "Team Orchid inspected the copper valve on Monday because Team Juniper tested the silver switch on Tuesday.",
+                "evidence_ids": [
+                  "S1",
+                  "S2"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "quotation",
+      "category": "quotation",
+      "question": "What does the synthetic status card say about the copper valve inspection?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated status card.txt",
+          "location": "Line 1",
+          "excerpt": "The synthetic status card states: copper valve inspection remains incomplete.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-quotation-a"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "The inspection remains incomplete.",
+          "Words presented as a quotation must occur in the source in that order."
+        ],
+        "prohibited_inferences": [
+          "Do not fabricate quoted wording, even if a paraphrase would express the same meaning."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-quote",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "The quotation is an exact source span.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic status card states: \"copper valve inspection remains incomplete\".",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "faithful-paraphrase",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "Unquoted paraphrase preserves the recorded meaning.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic status card says the copper valve inspection is still incomplete.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "fabricated-quote",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "The wording is a plausible paraphrase but is falsely represented as a direct quotation.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic status card states: \"copper valve inspection is still incomplete\".",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "missing-citation",
+      "category": "missing_citation",
+      "question": "Which tray contains the copper valve in the synthetic inventory?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated tray inventory.txt",
+          "location": "Line 1",
+          "excerpt": "The synthetic inventory lists the copper valve in tray Amber.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-missing-citation-a"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "The copper valve is listed in tray Amber.",
+          "The factual claim requires source label S1."
+        ],
+        "prohibited_inferences": [
+          "Do not return a sourced factual claim without any citation label."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-cited",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "The correct known source label accompanies the faithful claim.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic inventory lists the copper valve in tray Amber.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "missing-label",
+          "semantic_valid": true,
+          "citations_valid": false,
+          "rationale": "The meaning matches the evidence, but the evidence_ids list is empty.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic inventory lists the copper valve in tray Amber.",
+                "evidence_ids": []
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "citation-attribution",
+      "category": "citation_attribution",
+      "question": "Which tag marks the copper valve in the synthetic inventory?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated copper valve tag.txt",
+          "location": "Line 1",
+          "excerpt": "The synthetic inventory marks the copper valve with a green tag.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-citation-attribution-a"
+        },
+        {
+          "evidence_id": "S2",
+          "source_name": "Generated silver switch tag.txt",
+          "location": "Line 1",
+          "excerpt": "The synthetic inventory marks the silver switch with a blue tag.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-citation-attribution-b"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "The copper valve has a green tag.",
+          "Only S1 is the intended source for the copper valve tag."
+        ],
+        "prohibited_inferences": [
+          "Do not cite the unrelated silver switch record.",
+          "Do not use an evidence label absent from the supplied evidence."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-cited",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "The faithful claim cites the record for the copper valve.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic inventory marks the copper valve with a green tag.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "unrelated-known-label",
+          "semantic_valid": true,
+          "citations_valid": false,
+          "rationale": "The claim is true in the full supplied evidence, but S2 concerns the silver switch.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic inventory marks the copper valve with a green tag.",
+                "evidence_ids": [
+                  "S2"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "unknown-label",
+          "semantic_valid": true,
+          "citations_valid": false,
+          "rationale": "S9 is not a supplied evidence label.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "The synthetic inventory marks the copper valve with a green tag.",
+                "evidence_ids": [
+                  "S9"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "attribution-loss",
+      "category": "attribution_loss",
+      "question": "What did Blair say about the allegation concerning Avery and the crate?",
+      "evidence": [
+        {
+          "evidence_id": "S1",
+          "source_name": "Generated allegation note.txt",
+          "location": "Line 1",
+          "excerpt": "Blair denied the allegation that Avery delivered the crate.",
+          "evidence_kind": "document",
+          "document_id": "r1b-v1-attribution-loss-a"
+        }
+      ],
+      "expectations": {
+        "expected_answerable": true,
+        "required_facts": [
+          "The delivery is an allegation that Blair denied."
+        ],
+        "prohibited_inferences": [
+          "An embedded allegation is not an established event.",
+          "A verbatim substring can lose its governing denial and reverse the source meaning."
+        ],
+        "intended_evidence_ids": [
+          "S1"
+        ]
+      },
+      "candidates": [
+        {
+          "candidate_id": "faithful-exact",
+          "semantic_valid": true,
+          "citations_valid": true,
+          "rationale": "The complete sentence preserves both allegation status and the denial.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "Blair denied the allegation that Avery delivered the crate.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        },
+        {
+          "candidate_id": "denial-attribution-dropped",
+          "semantic_valid": false,
+          "citations_valid": true,
+          "rationale": "The candidate is an exact embedded span but drops the governing allegation and denial, falsely asserting the delivery occurred.",
+          "output": {
+            "answerable": true,
+            "claims": [
+              {
+                "text": "Avery delivered the crate.",
+                "evidence_ids": [
+                  "S1"
+                ]
+              }
+            ],
+            "limitation": null,
+            "missing_information": ""
+          }
+        }
+      ]
+    }
+  ]
+}

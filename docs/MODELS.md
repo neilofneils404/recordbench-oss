@@ -51,3 +51,8 @@ automatically treated as facts.
 Every model entry must retain model ID, exact immutable revision, license,
 source, hashes/manifest, evaluation evidence, and GPU/runtime envelope. Gated
 tokens are staging-only. Confidential runtime is offline and telemetry-free.
+
+The [R1b claim-evaluation harness](CLAIM_EVALUATION.md) freezes synthetic challenges,
+separates raw generation errors from deterministic verifier false acceptance and
+rejection, and retains pinned-profile and execution evidence. Injected probes do
+not establish model quality, offline inference or supported-hardware acceptance.
