@@ -1,7 +1,9 @@
 """Synthetic derived-text saves keep the exact original citation basis."""
 from __future__ import annotations
 
+import copy
 import io
+import json
 import time
 
 from fastapi.testclient import TestClient
@@ -11,6 +13,7 @@ from case_intelligence.answer_jobs import AnswerCoordinator, AnswerResult
 from case_intelligence.generation import EvidenceItem, GroundedGenerationService
 from case_intelligence.managed_storage import StoragePolicy
 from case_intelligence.workbench import create_workbench_app
+from case_intelligence.workspace_store import WorkspaceProblem
 
 
 ACTOR = "development-taylor-morgan"
@@ -142,5 +145,60 @@ def test_background_save_failure_preserves_actionable_workspace_problem(source_w
         assert "Shorten the text and save again" in saved.message
         assert [item.role for item in workspace.messages(matter.matter_id,
             conversation.conversation_id)] == ["user"]
+    finally:
+        coordinator.close()
+
+
+def _oversized_serialized_payload():
+    # The repository accepts bounded serialized result mappings. JSON escapes
+    # can exceed that limit even when the displayed prose is short.
+    payload = {"kind": "generated", "source_details": "\x1a\x1b" * 8_334}
+    assert len(payload["source_details"]) < 20_000
+    assert len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"))) > 100_000
+    return payload
+
+
+def test_synchronous_payload_limit_is_actionable_and_atomic(source_workflow):
+    bench, matter, _ = source_workflow
+    workspace = bench.workspace
+    conversation = workspace.get_conversation(matter.matter_id)
+    payload = _oversized_serialized_payload()
+    original = copy.deepcopy(payload)
+    before_messages = workspace.messages(matter.matter_id, conversation.conversation_id)
+    with pytest.raises(WorkspaceProblem, match="Ask a narrower question or select fewer sources"):
+        workspace.append_message(matter.matter_id, conversation.conversation_id,
+            "assistant", "Synthetic short answer.", payload)
+    assert workspace.messages(matter.matter_id, conversation.conversation_id) == before_messages
+    assert workspace.get_conversation(matter.matter_id, conversation.conversation_id) == conversation
+    assert payload == original
+
+
+def test_background_payload_limit_retains_actionable_error_without_partial_answer(source_workflow):
+    bench, matter, _ = source_workflow
+    workspace = bench.workspace
+    conversation = workspace.get_conversation(matter.matter_id)
+    queued, _ = workspace.queue_answer_job(matter.matter_id, conversation.conversation_id,
+        ACTOR, "What does Cedar record?", "answer-request-" + "c" * 32)
+    before_messages = workspace.messages(matter.matter_id, conversation.conversation_id)
+    before_conversation = workspace.get_conversation(matter.matter_id, conversation.conversation_id)
+    payload = _oversized_serialized_payload()
+    original = copy.deepcopy(payload)
+    coordinator = AnswerCoordinator(workspace,
+        process=lambda *_: AnswerResult("Synthetic short answer.", payload), workers=1)
+    try:
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            saved = workspace.get_answer_job(matter.matter_id, ACTOR, queued.job_id)
+            if saved.state == "failed":
+                break
+            time.sleep(.01)
+        assert saved.state == "failed"
+        assert "source details exceed the save limit" in saved.message
+        assert "Ask a narrower question or select fewer sources" in saved.message
+        assert "try again" not in saved.message
+        assert saved.result_message_id is None
+        assert workspace.messages(matter.matter_id, conversation.conversation_id) == before_messages
+        assert workspace.get_conversation(matter.matter_id, conversation.conversation_id) == before_conversation
+        assert payload == original
     finally:
         coordinator.close()

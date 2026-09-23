@@ -3772,7 +3772,10 @@ class WorkspaceStore:
         )
         encoded = json.dumps(dict(payload or {}), ensure_ascii=False, separators=(",", ":"))
         if len(encoded) > 100_000:
-            raise ValueError("message payload is too large")
+            raise WorkspaceProblem(
+                "The message and its source details exceed the save limit. "
+                "Ask a narrower question or select fewer sources; existing work is retained."
+            )
         now = self._now()
         message_id = f"message-{uuid.uuid4().hex}"
         with self._lock, self.connection:
@@ -9321,7 +9324,10 @@ class WorkspaceStore:
         )
         encoded = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":"))
         if len(encoded) > 100_000:
-            raise ValueError("answer payload is too large")
+            raise WorkspaceProblem(
+                "The answer and its source details exceed the save limit. "
+                "Ask a narrower question or select fewer sources; existing work is retained."
+            )
         now = self._now()
         with self._lock, self.connection:
             job = self.connection.execute(

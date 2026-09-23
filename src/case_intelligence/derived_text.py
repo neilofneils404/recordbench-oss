@@ -3,7 +3,8 @@
 Each unsupported character becomes one space, preserving word boundaries and
 character positions. Tabs, line endings and Unicode format characters (including
 joiners) remain intact. No NFC, trimming or whitespace collapsing occurs here.
-Source bytes, extraction text, digests and locators must retain their own basis.
+This policy starts after extraction; extractors retain their own line rules.
+Source bytes, existing extraction text, digests and locators keep their own basis.
 """
 from __future__ import annotations
 

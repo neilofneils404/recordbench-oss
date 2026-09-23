@@ -4,14 +4,28 @@ Admitted TXT, CSV and email text can contain nonprinting control characters.
 These characters must not turn a source save into a server error or make an
 otherwise completed generated answer repeatedly fail when saved.
 
-The `controls-to-spaces-v1` presentation policy replaces each C0 control except
+The `controls-to-spaces-v1` presentation policy starts with an already extracted
+passage or saved prose. It replaces each C0 control except
 tab, LF and CR, each DEL/C1 control, surrogate code point, and U+FFFE/U+FFFF with
 one ordinary space. Replacement never joins adjacent words. Other Unicode,
 including combining marks, zero-width joiners and non-joiners, remains intact.
 This is a display and derived-prose policy, not an extraction correction or a
 claim that a control character had a particular meaning in the original.
 
-Original uploaded bytes, file digests, extraction text, source versions, passage
+The existing TXT extractor has its own line semantics: CR/LF and the boundaries
+recognized by Python `splitlines()` (including VT, form feed, U+001C–U+001E and
+NEL) delimit extracted lines, which are joined with LF. Those characters can
+therefore already be represented as LF in extracted passages. This correction
+retains that extraction behavior and its historical line-count limits; it does
+not reinterpret decoded original files using the presentation policy. A future
+CR/LF-only extraction rule needs explicit versioning/reprocessing treatment so
+old saved digests and locators cannot silently acquire a different basis.
+That versioned TXT extraction/reprocessing work remains an open follow-up in
+[issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109); this
+bounded save/export correction does not close it.
+
+This presentation correction leaves original uploaded bytes, file digests,
+existing extraction text, source versions, passage
 digests, support tokens and locator offsets are unchanged. Notebook, Report and
 analysis citation snapshots now retain exact bounded source text, including
 leading/trailing whitespace and its Unicode normalization form. A display copy

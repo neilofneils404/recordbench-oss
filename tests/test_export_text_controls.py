@@ -21,6 +21,7 @@ from case_intelligence.media_evidence import export_transcript
 from case_intelligence.workbench import create_workbench_app
 from case_intelligence.work_product_exports import (
     ExportBlock,
+    ExportProblem,
     blocks_to_docx,
     export_answer,
     export_conversation,
@@ -49,6 +50,7 @@ from tests.test_work_product_exports import (
 LEGACY_TEXT = "before\x1amiddle\x1bafter"
 PRESENTED_TEXT = "before middle after"
 UNICODE_TEXT = "café العربية فارسی\u200cword 👩\u200d💻 \u200b\u2060"
+EXACT_SOURCE_TEXT = " \tbefore\x1acafe\u0301 \t\r\nmiddle \r after\x1b  \n"
 
 
 def _docx_text(body: bytes) -> str:
@@ -183,20 +185,19 @@ def test_legacy_every_source_review_and_transcript_docx():
     assert (decision, segments) == snapshot
 
 
-def test_legacy_investigation_docx_keeps_verified_source_basis():
-    matter, *_ = _records()
+def _investigation_job(matter, excerpt=LEGACY_TEXT):
     reference = _legacy_notebook(matter)[1][0]
     evidence = {
         "matter_id": matter.matter_id, "support_token": reference.support_token,
         "document_id": reference.document_id, "source_version_id": reference.source_version_id,
         "source_name": reference.source_name, "location": reference.location,
         "chunk_id": reference.chunk_id, "unit_number": reference.unit_number,
-        "line_start": 1, "line_end": 2, "excerpt": LEGACY_TEXT,
-        "excerpt_digest": reference.excerpt_digest, "evidence_kind": "document",
+        "line_start": 1, "line_end": 2, "excerpt": excerpt,
+        "excerpt_digest": hashlib.sha256(excerpt.encode()).hexdigest(), "evidence_kind": "document",
     }
     answer = {"answerable": True, "introduction": LEGACY_TEXT, "claims": [], "source_matches": [evidence]}
     result = {"evidence": [evidence], "answer": answer, "summary": LEGACY_TEXT, "passes": []}
-    job = ResearchJobRecord(
+    return ResearchJobRecord(
         job_id="research-" + "7" * 32, matter_id=matter.matter_id,
         actor_id="principal-synthetic", idempotency_key="synthetic-export",
         question="What does the synthetic text say?", title="Synthetic investigation",
@@ -207,16 +208,26 @@ def test_legacy_investigation_docx_keeps_verified_source_basis():
         created_at=STAMP, started_at=STAMP, last_claimed_at=STAMP,
         finished_at=STAMP, updated_at=STAMP,
     )
+
+
+def test_legacy_investigation_docx_keeps_verified_source_basis():
+    matter, *_ = _records()
+    job = _investigation_job(matter)
+    evidence = job.result["evidence"][0]
     snapshot = copy.deepcopy(job)
     assert PRESENTED_TEXT in _docx_text(export_research(matter, job, "docx", exported_at=STAMP).body)
     assert job == snapshot
     assert evidence["excerpt_digest"] == hashlib.sha256(evidence["excerpt"].encode()).hexdigest()
 
 
-def test_bundle_parses_all_nested_word_exports_and_keeps_json_source_excerpt():
+@pytest.mark.parametrize("excerpt", [LEGACY_TEXT, EXACT_SOURCE_TEXT])
+def test_bundle_parses_all_nested_word_exports_and_keeps_json_source_excerpt(excerpt):
     matter, conversation, question, answer = _records()
     question = replace(question, content=LEGACY_TEXT)
-    entry = _legacy_notebook(matter)
+    item, references = _legacy_notebook(matter)
+    entry = (item, (replace(references[0], excerpt=excerpt,
+                           excerpt_digest=hashlib.sha256(excerpt.encode()).hexdigest()),))
+    snapshot = copy.deepcopy(entry)
     artifact = export_matter_bundle(
         matter, ((conversation, (question, answer)),), (), (entry,), exported_at=STAMP,
     )
@@ -226,8 +237,101 @@ def test_bundle_parses_all_nested_word_exports_and_keeps_json_source_excerpt():
         for name in docx_names:
             _docx_text(archive.read(name))
         notebook = json.loads(archive.read("notebook/notebook.json"))
-        assert notebook["items"][0]["sources"][0]["excerpt"] == LEGACY_TEXT
+        assert notebook["items"][0]["sources"][0]["excerpt"] == excerpt
         assert PRESENTED_TEXT in archive.read("notebook/matter-notebook.csv").decode()
+    assert entry == snapshot
+
+
+def test_every_source_json_retains_exact_whitespace_cr_and_decomposed_unicode():
+    matter, *_ = _records()
+    criterion, version, run, decision, metrics = _review_records(matter)
+    citation = {**decision.citations[0], "excerpt": EXACT_SOURCE_TEXT,
+                "excerpt_digest": hashlib.sha256(EXACT_SOURCE_TEXT.encode()).hexdigest()}
+    decision = replace(decision, citations=(citation,))
+    snapshot = copy.deepcopy(decision)
+    artifact = export_full_review(matter, criterion, version, run, (decision,), metrics,
+                                  "json", exported_at=STAMP)
+    excerpt = json.loads(artifact.body)["decisions"][0]["citations"][0]["excerpt"]
+    assert excerpt == EXACT_SOURCE_TEXT
+    assert hashlib.sha256(excerpt.encode()).hexdigest() == citation["excerpt_digest"]
+    assert decision == snapshot
+
+
+def test_investigation_json_retains_exact_source_text_at_every_citation_path():
+    matter, *_ = _records()
+    job = _investigation_job(matter, EXACT_SOURCE_TEXT)
+    evidence = job.result["evidence"][0]
+    answer = {"answerable": True, "introduction": "Synthetic source finding.",
+              "claims": [{"text": "The source records before and after.", "citations": [evidence]}],
+              "limitation": {"text": "The observation remains limited.", "citations": [evidence]}}
+    summary = "Synthetic source finding.\nThe source records before and after.\nLimitation: The observation remains limited."
+    result = {**job.result, "answer": answer, "summary": summary,
+              "passes": [{"query": "before", "status": "supported", "text": summary,
+                          "answer": answer, "motivating_support_token": evidence["support_token"]}],
+              "pending_searches": [{"query": "after", "support_token": evidence["support_token"]}]}
+    job = replace(job, result=result)
+    snapshot = copy.deepcopy(job)
+    exported = json.loads(export_research(matter, job, "json", exported_at=STAMP).body)["investigation"]
+    citations = [
+        exported["supporting_sources"][0], exported["answer"]["claims"][0]["sources"][0],
+        exported["answer"]["limitation"]["sources"][0], exported["findings"][0]["motivating_source"],
+        exported["unsearched_proposals"][0]["motivating_source"],
+    ]
+    assert all(citation["excerpt"] == EXACT_SOURCE_TEXT for citation in citations)
+    assert all(hashlib.sha256(citation["excerpt"].encode()).hexdigest() == evidence["excerpt_digest"]
+               for citation in citations)
+    assert job == snapshot
+
+
+@pytest.mark.parametrize("changed_excerpt", [
+    EXACT_SOURCE_TEXT.strip(),
+    EXACT_SOURCE_TEXT.replace("\r\n", "\n"),
+    EXACT_SOURCE_TEXT.replace("\r after", "\n after"),
+])
+def test_investigation_export_refuses_normalization_equivalent_citation_excerpt(changed_excerpt):
+    matter, *_ = _records()
+    original = _investigation_job(matter, EXACT_SOURCE_TEXT)
+    original_snapshot = copy.deepcopy(original)
+    valid = json.loads(export_research(matter, original, "json", exported_at=STAMP).body)
+    assert valid["investigation"]["supporting_sources"][0]["excerpt"] == EXACT_SOURCE_TEXT
+    citation = {**original.result["evidence"][0], "excerpt": changed_excerpt}
+    changed = replace(original, result={**original.result, "answer": {
+        **original.result["answer"], "source_matches": [citation],
+    }})
+    changed_snapshot = copy.deepcopy(changed)
+    with pytest.raises(ExportProblem, match="citation did not match its evidence ledger"):
+        export_research(matter, changed, "json", exported_at=STAMP)
+    assert original == original_snapshot and changed == changed_snapshot
+
+
+@pytest.mark.parametrize("excerpt_presence", ["missing", "null", "empty"])
+def test_investigation_export_keeps_legacy_missing_excerpt_compatibility(excerpt_presence):
+    matter, *_ = _records()
+    original = _investigation_job(matter, EXACT_SOURCE_TEXT)
+    citation = dict(original.result["evidence"][0])
+    if excerpt_presence == "missing":
+        citation.pop("excerpt")
+    else:
+        citation["excerpt"] = None if excerpt_presence == "null" else ""
+    job = replace(original, result={**original.result, "answer": {
+        **original.result["answer"], "source_matches": [citation],
+    }})
+    snapshot = copy.deepcopy(job)
+    exported = json.loads(export_research(matter, job, "json", exported_at=STAMP).body)
+    assert exported["investigation"]["supporting_sources"][0]["excerpt"] == EXACT_SOURCE_TEXT
+    assert job == snapshot
+
+
+def test_structured_excerpt_size_limit_rejects_instead_of_truncating(monkeypatch):
+    matter, *_ = _records()
+    criterion, version, run, decision, metrics = _review_records(matter)
+    citation = {**decision.citations[0], "excerpt": EXACT_SOURCE_TEXT}
+    decision = replace(decision, citations=(citation,))
+    monkeypatch.setattr("case_intelligence.work_product_exports.MAX_WORKFLOW_EXPORT_BYTES",
+                        len(EXACT_SOURCE_TEXT.encode()) - 1)
+    with pytest.raises(ExportProblem, match="source excerpt exceeds the export limit"):
+        export_full_review(matter, criterion, version, run, (decision,), metrics, "json", exported_at=STAMP)
+    assert citation["excerpt"] == EXACT_SOURCE_TEXT
 
 
 def test_csv_formula_guard_runs_after_control_replacement():

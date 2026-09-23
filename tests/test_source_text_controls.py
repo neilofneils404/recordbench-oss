@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from case_intelligence.workbench import create_workbench_app
+from case_intelligence.pilot_uploads import PilotStore
 from case_intelligence.workspace_store import WorkspaceProblem, WorkspaceStore
 from case_intelligence.derived_text import presentation_text
 from tests.test_review_tools import CleanScanner
@@ -214,3 +215,40 @@ def test_csv_and_email_control_passages_save_with_originals(source_workspace, ki
     assert reference.excerpt_digest == unit.excerpt_digest
     assert bench.source_store(matter).source_path(document.document_id, verify_digest=True).read_bytes() == original
     assert document.digest == hashlib.sha256(original).hexdigest()
+
+
+@pytest.mark.parametrize("separator", ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85"])
+def test_existing_txt_line_separator_basis_survives_restart_and_note_save(source_workspace, separator):
+    """Presentation must not silently reinterpret an existing extraction basis."""
+    client, bench, matter, _, _ = source_workspace
+    raw = f"Pump Cedar{separator}remained sealed.\tCafé a\u200db."
+    original = raw.encode()
+    response = client.post(f"/matters/{matter.slug}/uploads", files=[
+        ("files", ("synthetic-line-boundary.txt", original, "text/plain")),
+    ])
+    assert response.status_code == 200
+    sources = bench.source_store(matter)
+    document = next(d for d in sources.documents.values() if d.display_name == "synthetic-line-boundary.txt")
+    expected = raw.replace(separator, "\n")
+    unit = document.parsed_units()[0]
+    assert unit.text == expected
+    assert (unit.line_start, unit.line_end, document.page_count) == (1, 2, 2)
+    assert unit.excerpt_digest == hashlib.sha256(expected.encode()).hexdigest()
+    assert document.digest == hashlib.sha256(original).hexdigest()
+    reopened = PilotStore(sources.root)
+    try:
+        historical = reopened.get(document.document_id)
+        assert historical.version_id == document.version_id
+        assert historical.digest == document.digest
+        assert historical.parsed_units() == document.parsed_units()
+        assert reopened.source_path(document.document_id, verify_digest=True).read_bytes() == original
+    finally:
+        reopened.close()
+    citation = bench._citation(matter, bench._candidate(matter, document, unit, 1))
+    response = client.post(f"/matters/{matter.slug}/notebook/from-support/{citation.support_token}", follow_redirects=False)
+    assert response.status_code == 303 and "error=" not in response.headers["location"]
+    note = bench.workspace.all_notebook_items(matter.matter_id, ACTOR)[0]
+    reference = bench.workspace.notebook_references(matter.matter_id, ACTOR, note.item_id)[0]
+    assert reference.excerpt == expected
+    assert reference.excerpt_digest == unit.excerpt_digest
+    assert reference.support_token == citation.support_token

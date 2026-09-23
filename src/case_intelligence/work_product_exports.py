@@ -124,6 +124,24 @@ def _staff_actor_label(display_name: object) -> str:
     return _plain(display_name) or "Staff member"
 
 
+def _source_excerpt(value: object) -> str:
+    """Keep structured source snapshots exact; reject limits without truncation."""
+
+    if not isinstance(value, str):
+        return ""
+    if len(value) > MAX_WORKFLOW_EXPORT_BYTES:
+        raise ExportProblem("A source excerpt exceeds the export limit. Export a smaller selection.")
+    try:
+        encoded_size = len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ExportProblem(
+            "A source excerpt contains invalid Unicode. Review its saved support before exporting again."
+        ) from exc
+    if encoded_size > MAX_WORKFLOW_EXPORT_BYTES:
+        raise ExportProblem("A source excerpt exceeds the export limit. Export a smaller selection.")
+    return value
+
+
 def _portable_review_citation(value: object) -> dict[str, str] | None:
     """Whitelist the fields needed to resolve exported every-source support."""
 
@@ -132,7 +150,7 @@ def _portable_review_citation(value: object) -> dict[str, str] | None:
     citation = {
         "source_name": _plain(value.get("source_name")),
         "location": _plain(value.get("location")),
-        "excerpt": _plain(value.get("excerpt")),
+        "excerpt": _source_excerpt(value.get("excerpt")),
     }
     if not citation["source_name"] or not citation["location"]:
         return None
@@ -155,7 +173,7 @@ def _review_citation_text(citation: Mapping[str, str]) -> str:
         for part in (
             citation.get("source_name", ""),
             citation.get("location", ""),
-            citation.get("excerpt", ""),
+            _plain(citation.get("excerpt", "")),
         )
         if part
     )
@@ -390,12 +408,17 @@ def _validate_research_export_scope(
             raise ExportProblem(
                 "An investigation citation did not match its evidence ledger."
             )
-        for key in ("matter_id", "document_id", "source_version_id", "excerpt"):
+        for key in ("matter_id", "document_id", "source_version_id"):
             supplied = value.get(key)
             if supplied not in (None, "") and _plain(supplied) != _plain(source.get(key)):
                 raise ExportProblem(
                     "An investigation citation did not match its evidence ledger."
                 )
+        supplied_excerpt = value.get("excerpt")
+        if supplied_excerpt not in (None, "") and supplied_excerpt != source.get("excerpt"):
+            raise ExportProblem(
+                "An investigation citation did not match its evidence ledger."
+            )
 
     def validate_citation_list(value: object) -> int:
         if not isinstance(value, list):
@@ -1236,7 +1259,7 @@ def export_research(
                 "location": location,
                 "source_type": "Spoken" if kind == "transcript" else "Written",
             }
-            excerpt = _plain(value.get("excerpt"))
+            excerpt = _source_excerpt(value.get("excerpt"))
             if excerpt:
                 citation["excerpt"] = excerpt
             if "hierarchical_synthesis" in result:
@@ -1900,7 +1923,7 @@ def export_matter_bundle(
                     {
                         "name": reference.source_name,
                         "location": reference.location,
-                        "excerpt": reference.excerpt,
+                        "excerpt": _source_excerpt(reference.excerpt),
                     }
                     for reference in references
                 ],
