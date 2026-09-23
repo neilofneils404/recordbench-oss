@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Callable, Iterable, Mapping
 
-from .answer_presentation import GENERATED_REVIEW_NOTICE, research_content
+from .answer_presentation import GENERATED_REVIEW_NOTICE, research_content, rejected_answer_notice, review_rejection_notice
 from .workspace_store import MAX_REPORT_CITATION_EXCERPT_CHARS, ResearchJobRecord, ReviewDecisionRecord, ReviewRunRecord, WorkspaceProblem, is_full_text_synthesis
 
 MAX_DETAIL_DECISIONS = 50
@@ -73,7 +73,7 @@ def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
                 raise WorkspaceProblem("A potential source is missing from the saved investigation ledger.")
             citations.append(report_citation(by_token[token]))
         return (_section(heading,
-            "These passages matched the search but were not verified as findings. Review the source material directly.",
+            "These passages matched the search, but no generated finding citing them was retained. Review the source material directly.",
             citations),)
 
     answer = _mapping(result.get("answer"))
@@ -102,12 +102,12 @@ def research_sections(job: ResearchJobRecord) -> tuple[dict[str, object], ...]:
         ))
         sections.extend(potential_sources(item.get("answer"), f"Potential sources from evidence pass {index}"))
     gaps = [
-        f"Search: {item.get('query', '')}\n{item.get('note') or 'Unresolved in the saved run.'}"
+        f"Search: {item.get('query', '')}\n{(rejected_answer_notice(item.get('note')) if isinstance(item.get('note'), str) else item.get('note')) or 'Unresolved in the saved run.'}"
         for item in _rows(result.get("gaps"))
     ]
     missing = answer.get("missing_information")
     if missing:
-        gaps.append(str(missing))
+        gaps.append(rejected_answer_notice(missing))
     sections.append(_section(
         "Gaps and unresolved questions",
         "\n\n".join(gaps) if gaps else
@@ -224,7 +224,7 @@ def review_sections(
         detail = (
             f"Source: {item.source_name}\nSource version: {item.source_version_id}\n"
             f"Machine: {item.machine_decision.replace('_', ' ')}\n"
-            f"Machine rationale: {item.rationale or 'Not recorded'}\n"
+            f"Machine rationale: {review_rejection_notice(item.rationale) or 'Not recorded'}\n"
             f"Human decision: {item.human_decision or 'Not reviewed'}\n"
             f"Reviewer: {reviewer_name(item.reviewed_by) if reviewer_name and getattr(item, 'reviewed_by', None) else (reviewer_names or {}).get(getattr(item, 'reviewed_by', None), 'Not recorded')}\n"
             f"Human note: {item.human_note or 'None recorded'}\n"
@@ -232,7 +232,7 @@ def review_sections(
             f"Decision revision: {item.updated_at}"
         )
         if item.error_message:
-            detail += f"\nNeeds attention: {item.error_message}"
+            detail += f"\nNeeds attention: {review_rejection_notice(item.error_message)}"
         if len(citations) < len(item.citations):
             detail += f"\nCitation detail: {len(citations)} of {len(item.citations)} passages included here; see the original decision ledger."
         sections.append(_section(f"Decision detail {item.ordinal}", detail, citations))

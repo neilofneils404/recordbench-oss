@@ -144,6 +144,18 @@ the corresponding change is merged.
   cases without changing any non-notice metric. These overlapping runs are scoped
   evidence; fresh final-head review and Linux CI must replace earlier-head receipts
   before merge.
+  Subsequent review on `02e713ff939415304207d65f48bcca22dfc6abfb` found generated
+  coverage copied into compiled Reports and actual rejection/omission messages
+  still using the old assurance. Their follow-up applies typed presentation while
+  preserving original-input fingerprints, saved records, source qualifications
+  and human notes. The earlier `02e713f` Linux application run had 3,492 passes, nine skips and one
+  outdated wording expectation; the pinned test now expects the bounded notice.
+  Only that selected node's wording assertion and corresponding integrity digests
+  changed; the case definitions, fixtures and other selected assertions remain.
+  The follow-up passed 609 focused Report, research, confidence, documentation and
+  integrity checks using real media tools through a native-platform path adapter.
+  This is local integration evidence; updated-head Linux CI and hosted code review
+  remain mandatory before the protected merge.
 
 - **[#111](https://github.com/neilofneils404/recordbench-oss/pull/111) — R5 retention/recovery.**
   Serializes purge, work admission, extension and retry checks; includes synthetic clean-restore evidence and an expired-matter recovery runbook. Retention policy is unchanged.
@@ -217,7 +229,8 @@ reviewable change; do not combine the seven into an unreviewed composite merge.
 
 The frozen acceptance pack overlaps #110, #114 and #115. Their standalone receipts
 retain the same case definitions, selected node IDs and synthetic fixture bytes;
-#114 changes its selected OCR node for the typed outcome and coverage assertions.
+#110 updates one selected modality-notice expectation; #114 changes its selected
+OCR node for the typed outcome and coverage assertions.
 Before refreshing combined test-file/node digests and the aggregate fingerprint,
 review the resulting test definitions and fixture bytes. Never resolve a digest
 conflict by choosing one branch's fingerprint or blindly rehashing altered cases.

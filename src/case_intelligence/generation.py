@@ -26,7 +26,10 @@ MAX_EVIDENCE_ITEMS = DEFAULT_REVIEW_BUDGET.synthesis_inputs
 MAX_EVIDENCE_CHARS = DEFAULT_REVIEW_BUDGET.evidence_chars
 MAX_EVIDENCE_ITEM_CHARS = DEFAULT_REVIEW_BUDGET.evidence_item_chars
 MAX_ANSWER_CLAIMS = 8
-VERIFICATION_OMISSION_NOTICE = "Some generated statements were omitted because their source support could not be verified."
+# Retain the exact historical value for saved-work readers. New service output
+# describes the checks performed without claiming semantic verification.
+LEGACY_VERIFICATION_OMISSION_NOTICE = "Some generated statements were omitted because their source support could not be verified."
+VERIFICATION_OMISSION_NOTICE = "Some generated statements were omitted because they did not pass citation and text checks."
 MAX_HISTORY_CHARS = 6_000
 MAX_WORKING_CONTEXT_CHARS = 12_000
 MAX_RESPONSE_BYTES = 1024 * 1024

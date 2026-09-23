@@ -43,6 +43,17 @@ answer, not that a future answer will preserve their meaning. New compiled Repor
 coverage labels answer-service calls as attempts, including unavailable or
 rejected calls; older saved Report text remains historical content.
 
+Actual generation rejections and partially retained answers describe automated
+citation/text checks rather than source verification. Exact historical rejection
+messages and service-authored omission notices receive current presentation only
+when their saved fields identify that generated boilerplate. Source qualifications,
+claims, custom text and human notes remain unchanged. New compiled Reports apply
+the same guidance to generated coverage, gaps and otherwise empty generated
+responses. Their input fingerprints retain the original selected text, so a
+change during compilation still blocks saving even when both versions would
+display identically. An in-progress compilation started before this fingerprint
+update may require a retry; existing saved Reports are not rewritten.
+
 Use each claim's citation to open the source and compare the wording, participant
 roles, qualifications and surrounding context. Multiple citations do not establish
 that their details belong to the same event. For transcripts, check the recording
@@ -83,3 +94,8 @@ raw payloads, source bytes and ledgers. Exact-match and custom-notice controls
 prevent rewriting quoted or reviewer-authored text.
 `tests/test_generated_workflow_confidence.py` covers the ready assistant, served
 readiness script, retrieved-passage abstention and unavailable compilation calls.
+Additional rejection/omission regressions exercise the real generator checking
+path, and `tests/test_compiled_modality_confidence.py` compiles saved conversation
+and investigation coverage through the Report queue, views and exports. It checks
+raw-input change detection, malformed saved text and preservation of custom,
+human-authored and cited claim text.

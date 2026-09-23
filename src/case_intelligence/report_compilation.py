@@ -45,6 +45,9 @@ class CompilationMaterial:
     date_label: str = ""
     category: str = ""
     review_details: str = ""
+    # Bind original generated boilerplate when its presentation is updated.
+    # This participates in input fingerprints, never Report prose.
+    source_snapshot_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -367,7 +370,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             if cancelled is not None and cancelled():
                 raise CompilationProblem("Report compilation cancelled.")
             if not isinstance(classified, VerifiedAnswer):
-                raise CompilationProblem("Review classification requires independently verified model answers.")
+                raise CompilationProblem("Review classification requires structured answer-service responses.")
             rejected += classified.omitted_claims
             # A qualified relevance answer cannot establish that any omitted
             # review record is unrelated. Preserve the batch as unchecked.
@@ -423,7 +426,7 @@ def compile_report(kind: str, topic: str = "", materials: Sequence[CompilationMa
             if cancelled is not None and cancelled():
                 raise CompilationProblem("Report compilation cancelled.")
             if not isinstance(answer, VerifiedAnswer):
-                raise CompilationProblem("The compiler requires independently verified model answers.")
+                raise CompilationProblem("The compiler requires structured answer-service responses.")
             rejected += answer.omitted_claims
             incomplete_answer = bool(answer.omitted_claims or answer.duplicate_claims)
             valid_claims = []

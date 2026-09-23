@@ -68,9 +68,9 @@
               </li>
               {% endfor %}
             </ol>
-            {% if message.payload.limitation %}<p class="assistant-limitation"><strong>Limitation:</strong> {{ message.payload.limitation.text }}</p>{% endif %}
+            {% if message.payload.limitation %}<p class="assistant-limitation"><strong>Limitation:</strong> {{ answer_limitation(message.payload) }}</p>{% endif %}
           {% elif message.payload.kind == 'not-supported' %}
-            <p>{{ message.payload.missing_information or message.content }}</p>
+            <p>{{ rejected_answer_notice(message.payload.missing_information or message.content) }}</p>
             {% if message.payload.source_matches %}<span class="assistant-citations">{% for citation in message.payload.source_matches[:3] %}<a href="{{ citation_href(citation, matter.slug, assistant.conversation.conversation_id, entity_return_to=source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))) }}">Review {{ citation.source_name }} · {{ citation.location }}</a>{% endfor %}</span>{% endif %}
           {% else %}
             <p>{{ message.content }}</p>

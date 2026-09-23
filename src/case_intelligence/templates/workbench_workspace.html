@@ -383,7 +383,7 @@
                   </ol>
                   {% if message.payload.limitation %}
                   <div class="answer-limitation">
-                    <p><strong>Limitation:</strong> {{ message.payload.limitation.text }}</p>
+                    <p><strong>Limitation:</strong> {{ answer_limitation(message.payload) }}</p>
                     {% if message.payload.limitation.citations %}
                     <div class="citation-list">
                       {% for citation in message.payload.limitation.citations %}
@@ -394,7 +394,7 @@
                   </div>
                   {% endif %}
                 {% elif message.payload.kind == 'not-supported' %}
-                  <p class="answer-not-supported">{{ message.payload.missing_information or message.content }}</p>
+                  <p class="answer-not-supported">{{ rejected_answer_notice(message.payload.missing_information or message.content) }}</p>
                   {% if message.payload.source_matches %}
                   <div class="answer-source-matches">
                     <strong>Related source passages</strong>

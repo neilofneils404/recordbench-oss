@@ -43,7 +43,7 @@ from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
-from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, modality_coverage_notice, research_content
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, answer_limitation, answer_failure_notice, modality_coverage_notice, research_content, rejected_answer_content, rejected_answer_notice, review_rejection_notice, REJECTED_ANSWER_NOTICE
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
 from .exact_search import QuerySyntaxError, parse_query
 from .exact_search_results import (
@@ -4042,8 +4042,10 @@ class CaseIntelligenceWorkbench:
         body = answer.content
         if payload.get("kind") == "generated":
             introduction = payload.get("introduction")
-            body = answer_content(body, introduction if isinstance(introduction, str) else "")
+            body = answer_content(body, introduction if isinstance(introduction, str) else "", payload)
             body = GENERATED_REVIEW_NOTICE + "\n\n" + body
+        elif payload.get("kind") == "not-supported":
+            body = rejected_answer_content(body, payload)
         return self.workspace.add_report_section(
             matter.matter_id,
             report_id,
@@ -4409,11 +4411,7 @@ class CaseIntelligenceWorkbench:
             "The retrieved passages require direct review.",
             (),
             None,
-            (
-                "I found potentially relevant source passages, but the generated "
-                "answer did not pass source verification. Review the matches below "
-                "or ask a narrower question."
-            ),
+            REJECTED_ANSWER_NOTICE,
             (),
             True,
             0,
@@ -4764,7 +4762,7 @@ class CaseIntelligenceWorkbench:
             ) from exc
         except GenerationRejected as exc:
             raise AnswerJobFailure(
-                "I could not verify enough source support for a reliable answer. Try a narrower question or search the matter."
+                "No generated answer was retained after automated checks. Try a narrower question or search the matter."
             ) from exc
 
     def _assert_current_payload_support(
@@ -5770,13 +5768,13 @@ class CaseIntelligenceWorkbench:
                 )
             return ReviewDecisionResult(
                 "needs_attention",
-                "Potentially relevant passages were found, but an inclusion decision did not pass source verification.",
+                "Potentially relevant passages were found, but no inclusion decision was retained after automated checks.",
                 [
                     self._workflow_citation_payload(item)
                     for item in validated[:12]
                     if item is not None
                 ],
-                "Source verification did not resolve an inclusion decision.",
+                "Automated checks did not retain an inclusion decision. Review the source directly.",
             )
         if cancelled():
             raise WorkflowFailure("Review cancelled.")
@@ -6123,6 +6121,9 @@ def create_workbench_app(
     templates.env.globals.update(
         answer_introduction=answer_introduction,
         research_content=research_content,
+        rejected_answer_notice=rejected_answer_notice,
+        review_rejection_notice=review_rejection_notice,
+        answer_limitation=answer_limitation,
         modality_coverage_notice=modality_coverage_notice,
         generated_review_notice=GENERATED_REVIEW_NOTICE,
         product_name=PRODUCT_NAME,
@@ -6854,7 +6855,7 @@ def create_workbench_app(
                     kind="Focused answer",
                     activity_key=f"answer:{job.job_id}",
                     title="Focused answer",
-                    detail=job.message,
+                    detail=answer_failure_notice(job.message),
                     state=job.state,
                     href=_query_url(
                         f"/matters/{matter.slug}",
@@ -7715,7 +7716,7 @@ def create_workbench_app(
             "state": job.state,
             "stage": job.stage,
             "stage_label": stage_label,
-            "message": job.message,
+            "message": answer_failure_notice(job.message),
             "queue_position": bench.workspace.answer_queue_position(
                 matter.matter_id, context.principal_id, job.job_id
             ),
@@ -7741,7 +7742,7 @@ def create_workbench_app(
                     "state": event.state,
                     "stage": event.stage,
                     "stage_label": ANSWER_STAGE_LABELS[event.stage],
-                    "message": event.message,
+                    "message": answer_failure_notice(event.message),
                     "created_at": event.created_at,
                 }
                 for event in bench.workspace.answer_events(

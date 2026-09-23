@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from html import escape as xml_escape
 from typing import Mapping, Sequence
 
-from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, modality_coverage_notice, research_content
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, answer_limitation, modality_coverage_notice, research_content, rejected_answer_content, rejected_answer_notice, review_rejection_notice
 from .branding import PRODUCT_NAME
 from .workspace_store import (
     ConversationRecord,
@@ -452,7 +452,7 @@ def _validate_research_export_scope(
     _answer_citations, answer_text = validate_answer(answer)
     if result.get("summary") != answer_text:
         raise ExportProblem(
-            "The investigation synthesis does not match its verified answer."
+            "The investigation synthesis does not match its saved answer."
         )
     hierarchy = result.get("hierarchical_synthesis")
     if hierarchy is not None or job.plan.get("synthesis_version") == 1:
@@ -485,7 +485,7 @@ def _validate_research_export_scope(
             citation_count += answer_citations
             if item.get("text") != pass_text:
                 raise ExportProblem(
-                    "An investigation finding does not match its verified answer."
+                    "An investigation finding does not match its saved answer."
                 )
         else:
             expected_text = {
@@ -658,13 +658,13 @@ def _answer_blocks(message: MessageRecord) -> list[ExportBlock]:
                     blocks.append(ExportBlock(f"Source: {citation}", "citation"))
         limitation = payload.get("limitation")
         if isinstance(limitation, Mapping):
-            text = _plain(limitation.get("text"))
+            text = _plain(answer_limitation(payload))
             if text:
                 blocks.append(ExportBlock(f"Limitation: {text}", "note"))
             for citation in _citations(limitation.get("citations")):
                 blocks.append(ExportBlock(f"Source: {citation}", "citation"))
     elif kind == "not-supported":
-        text = _plain(payload.get("missing_information")) or message.content
+        text = _plain(rejected_answer_notice(payload.get("missing_information"))) or rejected_answer_notice(message.content)
         blocks.append(ExportBlock(text, "note"))
         for citation in _citations(payload.get("source_matches")):
             blocks.append(ExportBlock(f"Related source passage: {citation}", "citation"))
@@ -1242,13 +1242,13 @@ def export_research(
                 "outcome": "Supported" if answer.get("answerable") else "Not supported",
                 "introduction": answer_introduction(_plain(answer.get("introduction"))),
                 "claims": claims,
-                "missing_information": _plain(answer.get("missing_information")),
+                "missing_information": _plain(rejected_answer_notice(answer.get("missing_information"))) if answer.get("answerable") is False else _plain(answer.get("missing_information")),
                 "evidence_notice": _plain(answer.get("evidence_notice")),
             }
             limitation = answer.get("limitation")
             if isinstance(limitation, Mapping):
                 safe_answer["limitation"] = {
-                    "text": _plain(limitation.get("text")),
+                    "text": _plain(answer_limitation(answer)),
                     "sources": tuple(
                         safe
                         for citation in mapping_items(limitation.get("citations"))
@@ -1500,11 +1500,11 @@ def export_full_review(
                     _csv_safe(item.source_name),
                     _csv_safe(item.source_kind),
                     _staff_label(item.machine_decision),
-                    _csv_safe(item.rationale),
+                    _csv_safe(review_rejection_notice(item.rationale)),
                     _csv_safe(
                         "; ".join(_review_citation_text(citation) for citation in citations)
                     ),
-                    _csv_safe(item.error_message),
+                    _csv_safe(review_rejection_notice(item.error_message)),
                     "yes" if item.validation_sample else "no",
                     _staff_label(item.human_decision),
                     _csv_safe(item.human_note),
@@ -1551,9 +1551,9 @@ def export_full_review(
                         "source_name": item.source_name,
                         "source_kind": item.source_kind,
                         "recordbench_label": _staff_label(item.machine_decision),
-                        "rationale": item.rationale,
+                        "rationale": review_rejection_notice(item.rationale),
                         "citations": _portable_review_citations(item.citations),
-                        "attention_note": item.error_message,
+                        "attention_note": review_rejection_notice(item.error_message),
                         "validation_sample": bool(item.validation_sample),
                         "staff_decision": _staff_label(item.human_decision),
                         "staff_note": item.human_note,
@@ -1615,7 +1615,7 @@ def export_full_review(
             )
         )
         if item.rationale:
-            blocks.append(ExportBlock(item.rationale))
+            blocks.append(ExportBlock(review_rejection_notice(item.rationale)))
         if item.human_decision:
             blocks.append(
                 ExportBlock(
@@ -1652,7 +1652,9 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
     if message.role == "assistant":
         payload = message.payload
         if payload.get("kind") == "generated":
-            result["content"] = answer_content(message.content, _plain(payload.get("introduction")))
+            result["content"] = answer_content(message.content, _plain(payload.get("introduction")), payload)
+        if payload.get("kind") == "not-supported":
+            result["content"] = rejected_answer_content(message.content, payload)
         source_coverage = payload.get("source_coverage")
         portable_coverage: dict[str, object] = {}
         if isinstance(source_coverage, Mapping):
@@ -1749,10 +1751,10 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
             ]
             if isinstance(payload.get("claims"), list)
             else [],
-            "limitation": _plain(payload.get("limitation", {}).get("text"))
+            "limitation": _plain(answer_limitation(payload)) if payload.get("kind") == "generated" else _plain(payload.get("limitation", {}).get("text"))
             if isinstance(payload.get("limitation"), Mapping)
             else "",
-            "missing_information": _plain(payload.get("missing_information")),
+            "missing_information": _plain(rejected_answer_notice(payload.get("missing_information"))) if payload.get("kind") == "not-supported" else _plain(payload.get("missing_information")),
             "evidence_notice": _plain(payload.get("evidence_notice")),
             "source_matches": list(_citations(payload.get("source_matches"))),
             "source_coverage": portable_coverage,
