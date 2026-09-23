@@ -9,7 +9,10 @@ from xml.etree import ElementTree
 import pytest
 from fastapi.testclient import TestClient
 
-from case_intelligence.generation import EvidenceItem, GenerationGroundingRejected, GroundedGenerationService
+from case_intelligence.generation import (
+    EvidenceItem, GenerationGroundingRejected, GroundedGenerationService,
+    VerifiedAnswer, VerifiedClaim,
+)
 from case_intelligence.workbench import create_workbench_app
 from case_intelligence.work_product_exports import export_answer, export_conversation, export_matter_bundle
 from case_intelligence.workspace_store import ConversationRecord, MatterRecord, MessageRecord
@@ -86,8 +89,13 @@ def test_legacy_answer_and_conversation_exports_warn_without_rewriting_storage(f
                           "Synthetic review", "Synthetic", "owner", STAMP, STAMP)
     conversation = ConversationRecord("conversation-" + "b" * 32, matter.matter_id,
                                       "Synthetic decision", STAMP, STAMP)
+    historical = VerifiedAnswer(
+        True, LEGACY_INTRODUCTION,
+        (VerifiedClaim("The board rejected project MARBLE-22.", ("S1",)),),
+        None, "", ("S1",), True, 1,
+    )
     answer = MessageRecord("message-" + "c" * 32, conversation.conversation_id, 1,
-                           "assistant", "The board rejected project MARBLE-22.", _payload(), STAMP)
+                           "assistant", historical.text, _payload(), STAMP)
     for artifact in (
         export_answer(matter, conversation, answer, None, format_name, exported_at=STAMP),
         export_conversation(matter, conversation, (answer,), format_name, exported_at=STAMP),
@@ -109,7 +117,9 @@ def test_legacy_answer_and_conversation_exports_warn_without_rewriting_storage(f
         # Inspect the portable document actually shipped, not a helper return value.
         assert NOTICE in json.dumps(portable)
         assert INTRODUCTION in json.dumps(portable)
+        assert LEGACY_INTRODUCTION not in json.dumps(portable)
         assert "Synthetic minutes.txt" in json.dumps(portable)
+    assert answer.content == historical.text
 
 
 def test_saved_answer_page_and_assistant_warn_without_mutating_history(tmp_path):
@@ -129,6 +139,7 @@ def test_saved_answer_page_and_assistant_warn_without_mutating_history(tmp_path)
             assert page.status_code == 200
             assert NOTICE in page.text and INTRODUCTION in page.text
             assert LEGACY_INTRODUCTION not in page.text
+            assert "Verify claims and citations" not in page.text
             assert "Synthetic minutes.txt" in page.text
             assert "support=" + "a" * 40 in page.text
         current = next(message for message in bench.workspace.messages(matter.matter_id, conversation.conversation_id)

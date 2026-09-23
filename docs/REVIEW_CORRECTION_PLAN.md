@@ -310,6 +310,11 @@ tracking an issue or publishing a draft PR does not establish acceptance.
 - R1a.1's first focused run passed 73 checks covering generation, new confidence
   regressions, Word/Markdown exports, frozen acceptance-pack integrity and recorded
   context. Final-candidate broader results belong in the PR receipt.
+- Hosted code review identified remaining legacy text in portable conversation
+  JSON and remaining synthesis/progress assurances. Strengthened regressions
+  reproduced both; their corrections extend the focused suite to 94 passing
+  checks with a documented test-only storage-reserve override. Renewed exact-head
+  review and CI still determine acceptance.
 - R1a.2 excerpt comparison, semantic verification improvement, real-model error
   measurement and installed/GPU acceptance remain open. No release readiness or
   deployment claim follows from this first mitigation.

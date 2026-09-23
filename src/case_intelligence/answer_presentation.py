@@ -22,3 +22,13 @@ def answer_introduction(value: str) -> str:
     }:
         return GENERATED_TRANSCRIPT_INTRODUCTION
     return value
+
+
+def answer_content(value: str, introduction: str) -> str:
+    """Update only a saved generated introduction at the beginning of its text."""
+    corrected = answer_introduction(introduction)
+    if corrected != introduction and (
+        value == introduction or value.startswith(introduction + "\n")
+    ):
+        return corrected + value[len(introduction):]
+    return value

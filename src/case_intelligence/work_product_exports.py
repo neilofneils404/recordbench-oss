@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from html import escape as xml_escape
 from typing import Mapping, Sequence
 
-from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_introduction
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction
 from .branding import PRODUCT_NAME
 from .workspace_store import (
     ConversationRecord,
@@ -1641,6 +1641,8 @@ def _portable_message(message: MessageRecord) -> dict[str, object]:
     }
     if message.role == "assistant":
         payload = message.payload
+        if payload.get("kind") == "generated":
+            result["content"] = answer_content(message.content, _plain(payload.get("introduction")))
         source_coverage = payload.get("source_coverage")
         portable_coverage: dict[str, object] = {}
         if isinstance(source_coverage, Mapping):

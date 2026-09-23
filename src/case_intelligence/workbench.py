@@ -273,7 +273,7 @@ ANSWER_STAGE_LABELS = {
     "retrieving": "Finding relevant support",
     "reranking": "Prioritizing support",
     "generating": "Drafting from the best support",
-    "verifying": "Verifying claims and citations",
+    "verifying": "Checking citations and text",
     "complete": "Answer ready",
     "failed": "Answer needs attention",
     "cancelling": "Cancelling this request",
@@ -283,7 +283,7 @@ ANSWER_STAGE_MESSAGES = {
     "retrieving": "Searching this matter's searchable sources.",
     "reranking": "Comparing matching passages for relevance.",
     "generating": "Drafting only from the selected case support.",
-    "repairing": "Rewriting the draft in source-close language for verification.",
+    "repairing": "Rewriting the draft closer to the cited text for consistency checks.",
     "verifying": "Checking citation references and text consistency; meaning still needs human review.",
 }
 
@@ -5150,7 +5150,7 @@ class CaseIntelligenceWorkbench:
             "queries": [initial_query(question)],
             "planner_version": PLANNER_VERSION,
             "synthesis_version": 1,
-            "method": "Source-backed identifier, date, name, and phrase follow-ups; bounded retrieval and verified synthesis.",
+            "method": "Source-backed identifier, date, name, and phrase follow-ups; bounded retrieval and generated synthesis for source review.",
         }
 
     def _process_research_job(
@@ -5570,7 +5570,7 @@ class CaseIntelligenceWorkbench:
         self.workspace.update_research_progress(
             job.job_id,
             stage="verifying",
-            message="Final verification complete. Saving the evidence and coverage ledger.",
+            message="Citation references checked. Saving the evidence and coverage ledger; generated meaning still needs human review.",
             completed_steps=total_steps,
             candidate_count=candidate_count,
             evidence_count=len(citations),

@@ -15,6 +15,11 @@ answer/conversation exports carry the notice, as do synthesis exports; portable
 conversation and investigation JSON expose a review notice. Reports retain their
 existing instruction to verify statements against original sources.
 
+Portable conversation JSON updates both the structured introduction and the
+matching leading introduction in the full generated message text. It does not
+replace quoted occurrences inside claims or alter user-authored messages. Research
+instructions and progress describe citation/text checks, not verified meaning.
+
 Use each claim's citation to open the source and compare the wording, participant
 roles, qualifications and surrounding context. Multiple citations do not establish
 that their details belong to the same event. For transcripts, check the recording
