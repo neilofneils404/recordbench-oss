@@ -3175,7 +3175,7 @@ class CaseIntelligenceWorkbench:
 
     def _saved_answer_references(
         self, matter: MatterRecord, citations: Sequence[Mapping[str, object]],
-        *, notebook_preview: bool = False,
+        *, notebook_preview: bool = False, source_navigation: bool = False,
     ) -> tuple[dict[str, object], ...]:
         from .report_materials import resolve_saved_answer_references
 
@@ -3186,7 +3186,7 @@ class CaseIntelligenceWorkbench:
                 raise WorkspaceProblem("The saved answer has conflicting source support. Ask the question again in a new conversation.")
             values.append({**citation, "support_token": token})
         return resolve_saved_answer_references(self, matter, values,
-            notebook_preview=notebook_preview)
+            notebook_preview=notebook_preview, source_navigation=source_navigation)
 
     def _save_answer_to_notebook(
         self,
@@ -15036,7 +15036,8 @@ def create_workbench_app(
                     name="workbench_cited_context.html", context={
                         **base_context(request, matter, include_assistant=False), "matter": matter,
                         "comparison": comparison,
-                        "answer_href": _query_url(f"/matters/{slug}", conversation=conversation_id) + "#latest",
+                        "answer_href": (_query_url(f"/matters/{slug}", conversation=conversation_id)
+                            + f"#answer-support-{message_id}"),
                     }, headers={"Cache-Control": "no-store"})
             # HTML navigation also uses the original administrator role, even
             # when target-matter access was granted through ordinary membership.

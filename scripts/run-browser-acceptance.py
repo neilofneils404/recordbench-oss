@@ -36,7 +36,7 @@ JOURNEYS = (
     ('account-controls', 'browser-accept-account-controls.py', 'receipt.json', 6, ()),
     ('matter-knowledge', 'browser-accept-matter-knowledge.py', 'receipt.json', 7, ()),
     ('matter-context', 'browser-accept-matter-context.py', 'receipt.json', 7, ()),
-    ('cited-context', 'browser-accept-cited-context.py', 'receipt.json', 9, ()),
+    ('cited-context', 'browser-accept-cited-context.py', 'receipt.json', 11, ()),
 )
 ARTIFACT_NAMES = (
     'receipt-browser-result.json', 'receipt.json', 'failure.png', 'failure.html',
@@ -58,6 +58,7 @@ ARTIFACT_NAMES = (
     'cited-context-desktop.png', 'cited-context-390.png', 'cited-context-320.png',
     'cited-context-assistant.png', 'cited-context-assistant-390.png', 'cited-context-assistant-320.png',
     'cited-context-changed.png',
+    'cited-context-transcript-moment.png', 'cited-context-answer-return.png',
 )
 
 

@@ -2,7 +2,8 @@
 """Exercise on-demand cited context with synthetic saved answers in Chrome.
 
 The controlled answer client and retrieval population test persistence and UI
-behavior, not model quality. Source text uses the real TXT ingestion path.
+behavior, not model quality. TXT sources and a silent PCM carrier use real
+ingestion; the deterministic transcript does not evaluate speech recognition.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 from fastapi.responses import PlainTextResponse
@@ -30,9 +32,11 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'src'))
 from synthetic_browser_environment import isolate_environment
 from case_intelligence.workbench import create_workbench_app
+from tests.test_saved_answer_report_support import CedarProcessor, RECOLLECTION, synthetic_pcm
 
 ACTOR = 'development-taylor-morgan'
 MARKUP = '<script>window.syntheticInjection=true</script> & <img src=x onerror=alert(1)>'
@@ -53,6 +57,10 @@ class SyntheticAnswerClient:
     available = True
 
     def generate(self, *, evidence, **kwargs):
+        if evidence and all(item.evidence_kind == 'transcript' for item in evidence):
+            return dict(answerable=True, claims=[dict(
+                text='The machine transcript appears to say that ' + RECOLLECTION.split('. ', 1)[0] + '.',
+                evidence_ids=[evidence[0].evidence_id])], limitation=None, missing_information='')
         by_name = {item.source_name: item.evidence_id for item in evidence}
         return dict(answerable=True,
             claims=[dict(text=' '.join(STATEMENTS[:3]), evidence_ids=[by_name[name] for name in NAMES[:3]])],
@@ -60,7 +68,8 @@ class SyntheticAnswerClient:
 
 
 def app_at(runtime):
-    return create_workbench_app(runtime, generator=SyntheticAnswerClient(), auth_mode='test')
+    return create_workbench_app(runtime, generator=SyntheticAnswerClient(), auth_mode='test',
+        media_processor=CedarProcessor(), media_poll_seconds=.01)
 
 
 def seed(runtime):
@@ -89,8 +98,46 @@ def seed(runtime):
             assert all('excerpt' not in value for value in message.payload['claims'][0]['citations'])
             conversations.append(conversation.conversation_id)
             messages.append(message.message_id)
+        document_payload = message.payload
+        response = client.post(f'/matters/{matter.slug}/uploads', files=[
+            ('files', ('Generated Cedar recording.wav', synthetic_pcm(), 'audio/wav'))], follow_redirects=False)
+        assert response.status_code == 303
+        deadline = time.monotonic() + 15
+        continued_inspections = set()
+        recording = None
+        while time.monotonic() < deadline:
+            recording = next((item for item in store.documents.values() if item.media_type == 'audio/wav'), None)
+            if recording is not None:
+                if recording.state == 'ready':
+                    break
+                job = bench.workspace.media_job(matter.matter_id, recording.document_id, recording.version_id)
+                inspection_id = job.preflight.get('inspection_id') if job else None
+                if (recording.state == 'needs_review' and job and job.state == 'cancelled'
+                        and inspection_id and inspection_id not in continued_inspections):
+                    # The silent generated carrier needs one ordinary recording
+                    # decision before the deterministic transcript is admitted.
+                    continued = client.post(f'/matters/{matter.slug}/sources/{store.action_token(recording)}/recording-check',
+                        data=dict(action='continue', inspection_id=inspection_id), follow_redirects=False)
+                    assert continued.status_code == 303
+                    continued_inspections.add(inspection_id)
+            time.sleep(.01)
+        assert recording is not None and recording.state == 'ready', (
+            recording.state if recording else 'missing', recording.message if recording else '')
+        transcript_citation = bench._citation(matter, bench._candidate(matter, recording,
+            recording.parsed_units()[0], 1))
+        assert transcript_citation.line_start == 500
+        bench._answer_search = lambda *args, **kwargs: (transcript_citation,)
+        transcript_conversation = bench.workspace.create_conversation(matter.matter_id,
+            'Generated transcript moment comparison', actor_id=ACTOR)
+        transcript_message = bench.ask(matter, transcript_conversation, 'What did the synthetic observer report?')
+        assert transcript_message.payload['kind'] == 'generated'
+        assert transcript_message.payload['claims'][0]['citations'][0]['evidence_kind'] == 'transcript'
+        newer_message = bench.ask(matter, transcript_conversation, 'Repeat the synthetic observer account for a newer response.')
+        assert newer_message.message_id != transcript_message.message_id
         return dict(slug=matter.slug, conversations=conversations, messages=messages,
-                    document_id=documents[0].document_id, payload=message.payload)
+                    document_id=documents[0].document_id, payload=document_payload,
+                    transcript_conversation=transcript_conversation.conversation_id,
+                    transcript_message=transcript_message.message_id, newer_message=newer_message.message_id)
 
 
 def main():
@@ -314,7 +361,7 @@ def main():
                 document = store.get(seeded['document_id'])
                 document.version_id = 'f' * 32
                 store._save()
-                bench._sync_source_catalog(matter, [document])
+                bench._sync_source_catalog(matter, tuple(store.documents.values()))
             before_requests = len(requests)
             summary(first).send_keys(Keys.SPACE)
             wait.until(lambda _: len(requests) > before_requests)
@@ -329,6 +376,52 @@ def main():
             driver.execute_script('arguments[0].scrollIntoView({block:"start",behavior:"instant"})', first)
             driver.save_screenshot(str(output / 'cited-context-changed.png'))
             record('Reopening revalidates the historical version, clears changed context, leaves sibling citations usable and preserves stored answers')
+
+            answer_anchor = '#answer-support-' + seeded['transcript_message']
+            transcript_path = prefix + '?conversation=' + seeded['transcript_conversation']
+            driver.get(base + transcript_path + answer_anchor)
+            transcript_card = next(card for card in cards()
+                if '/messages/' + seeded['transcript_message'] + '/' in card.get_attribute('data-context-url'))
+            open_card(transcript_card)
+            assert RECOLLECTION in excerpt(transcript_card).text
+            comparison_path = transcript_card.get_attribute('data-context-url')
+            source_link = transcript_card.find_element(By.CSS_SELECTOR, '[data-context-source-link]')
+            source_url = urlparse(source_link.get_attribute('href'))
+            source_query = parse_qs(source_url.query)
+            assert source_query.get('start_ms') == ['500']
+            assert source_url.fragment == 'segment-1'
+            assert source_query.get('entity_return_to') == [transcript_path + answer_anchor]
+            source_link.send_keys(Keys.ENTER)
+            wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, '[data-media-review]'))
+            assert driver.find_element(By.CSS_SELECTOR, '[data-media-review]').get_attribute('data-start-ms') == '500'
+            assert urlparse(driver.current_url).fragment == 'segment-1'
+            wait.until(lambda _: driver.execute_script('''const player=document.querySelector('[data-media-player]');
+                return player && player.readyState >= 1 && Math.abs(player.currentTime-.5) < .02;'''))
+            collapse = driver.find_elements(By.CSS_SELECTOR, '[data-assistant-collapse]')
+            if collapse and collapse[0].is_displayed():
+                collapse[0].send_keys(Keys.ENTER)
+            segment = driver.find_element(By.ID, 'segment-1')
+            assert segment.get_attribute('data-start-ms') == '500'
+            wait.until(lambda _: RECOLLECTION in ' '.join(segment.text.split()))
+            driver.save_screenshot(str(output / 'cited-context-transcript-moment.png'))
+            record('A real synthetic WAV and saved transcript citation open the current viewer at the cited 500ms moment and segment anchor')
+
+            return_link = driver.find_element(By.LINK_TEXT, 'Return to review context')
+            assert urlparse(return_link.get_attribute('href')).fragment == answer_anchor[1:]
+            return_link.send_keys(Keys.ENTER)
+            wait.until(lambda _: urlparse(driver.current_url).fragment == answer_anchor[1:])
+            wait.until(lambda _: unobstructed(driver.find_element(By.ID, answer_anchor[1:])),
+                'The source return did not reveal the compared answer')
+            assert driver.find_element(By.ID, 'answer-support-' + seeded['newer_message'])
+            driver.get(base + comparison_path)
+            return_answer = driver.find_element(By.LINK_TEXT, 'Return to answer')
+            assert urlparse(return_answer.get_attribute('href')).fragment == answer_anchor[1:]
+            return_answer.send_keys(Keys.ENTER)
+            wait.until(lambda _: urlparse(driver.current_url).fragment == answer_anchor[1:])
+            wait.until(lambda _: unobstructed(driver.find_element(By.ID, answer_anchor[1:])),
+                'The comparison return did not reveal the compared answer')
+            driver.save_screenshot(str(output / 'cited-context-answer-return.png'))
+            record('Both the full-source return and comparison-page return select the exact historical answer even after a newer response exists')
 
             (output / 'receipt.json').write_text(json.dumps(dict(synthetic_only=True, passed=True, checks=checks,
                 browser=driver.capabilities.get('browserVersion'), screenshots=sorted(path.name for path in output.glob('*.png'))), indent=2))

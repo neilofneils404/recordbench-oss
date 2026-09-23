@@ -71,7 +71,8 @@ def saved_cited_context(bench, matter, conversation_id, message_id, passage, cit
     try:
         # Notebook preview mode verifies the COMPLETE unit before shortening it.
         # Its source scan/record/time budgets remain in force for this one source.
-        reference, = bench._saved_answer_references(matter, [citation], notebook_preview=True)
+        reference, = bench._saved_answer_references(matter, [citation],
+            notebook_preview=True, source_navigation=True)
     except (KeyError, TypeError, ValueError, WorkspaceProblem) as exc:
         if "source-validation limit" in str(exc):
             result["notice"] = (
@@ -81,8 +82,15 @@ def saved_cited_context(bench, matter, conversation_id, message_id, passage, cit
         return result
     store = bench.source_store(matter)
     document = store.get(reference["document_id"])
-    source_query = urlencode({"unit": reference["unit_number"],
-        "entity_return_to": f"/matters/{matter.slug}?conversation={conversation_id}#latest"})
+    source_parameters = {"unit": reference["unit_number"],
+        "entity_return_to": (f"/matters/{matter.slug}?conversation={conversation_id}"
+            f"#answer-support-{message_id}")}
+    navigation = reference["source_navigation"]
+    source_fragment = ""
+    if reference["kind"] == "transcript":
+        source_parameters["start_ms"] = navigation["start_ms"]
+        source_fragment = f"#segment-{navigation['ordinal']}"
+    source_query = urlencode(source_parameters)
     result.update(state="available", excerpt=reference["excerpt"], notice=CONTEXT_NOTICE,
-        source_href=f"/matters/{matter.slug}/sources/{store.action_token(document)}?{source_query}")
+        source_href=f"/matters/{matter.slug}/sources/{store.action_token(document)}?{source_query}{source_fragment}")
     return result

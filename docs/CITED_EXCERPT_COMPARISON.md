@@ -36,7 +36,10 @@ the existing source-validation budget gives a separate boundedness notice.
 Only after validating the complete unit does the response return its first
 6,000 characters at most, preserving whitespace. The notice identifies this as a
 prefix; it is not a relevance-selected excerpt. The full-source link opens the
-current source viewer, which may change after comparison. Historical version and
+current source viewer, which may change after comparison. Transcript links seek
+to the validated segment's start time and identify its segment. Both source and
+comparison return links retain the specific saved answer, even after newer
+answers are added. Historical version and
 full-unit digest remain inspectable. Each request retains existing streaming
 validation limits (including time, characters, units and serialized record size).
 There is no eager source resolution when rendering an answer. Reopening a
@@ -53,8 +56,9 @@ repopulating it. Network failures leave a keyboard-reachable retry and page link
 `tests/test_answer_cited_context.py` covers served comparisons, historical basis,
 source changes, authorization, escaping, bounds and unchanged saved payloads.
 `scripts/browser-accept-cited-context.py` exercises real browser rendering,
-keyboard controls, independent citations, narrow widths and failure recovery with
-synthetic source files and an injected deterministic generator. These tests do
+keyboard controls, independent citations, narrow widths, failure recovery and
+transcript playback/return navigation with synthetic text and audio sources and
+an injected deterministic generator and transcript processor. These tests do
 not establish generator quality, transcript accuracy or installed-node readiness.
 
 This packet covers focused generated-answer review, including historical answers

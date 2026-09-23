@@ -9,6 +9,7 @@ from dataclasses import asdict, replace
 import hashlib
 import html
 import io
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from starlette.templating import Jinja2Templates
@@ -16,6 +17,7 @@ from starlette.templating import Jinja2Templates
 from case_intelligence import report_materials
 from case_intelligence.identity import SESSION_COOKIE
 from tests.test_assertion_workflow import protected_assertion  # noqa: F401
+from tests.test_evidence_graph_workflow import _LinkParser
 from tests.test_saved_answer_note_preview import (  # noqa: F401
     ACTOR, LONG_TEXT, STATEMENT, long_answer,
 )
@@ -99,6 +101,81 @@ def test_multiple_citations_and_limitation_resolve_independently(long_answer):
         params={"format": "json"}), forbidden=other_text)
     unavailable(client.get(context_path(long_answer, message=message, passage="limitation"),
         params={"format": "json"}), forbidden=other_text)
+
+
+@pytest.mark.parametrize("format_name", ["html", "json"])
+def test_comparison_links_return_to_selected_answer_after_newer_answer(long_answer, format_name):
+    client, _, matter, _, _, conversation, selected = long_answer
+    newer = append_answer(long_answer, claims=[{**selected.payload["claims"][0],
+        "text": "Synthetic newer answer that must not replace the selected review context."}])
+    assert newer.message_id != selected.message_id
+    expected = (f"/matters/{matter.slug}?conversation={conversation.conversation_id}"
+        f"#answer-support-{selected.message_id}")
+    response = client.get(context_path(long_answer), params={"format": format_name})
+    assert response.status_code == 200
+    if format_name == "html":
+        returned = next(href for href, label in _LinkParser(response.text).links if label == "Return to answer")
+        assert returned == expected
+    else:
+        source_href = response.json()["source_href"]
+        assert parse_qs(urlsplit(source_href).query)["entity_return_to"] == [expected]
+        source = client.get(source_href)
+        assert source.status_code == 200
+        returned = next(href for href, label in _LinkParser(source.text).links
+            if label == "Return to review context")
+        assert returned == expected
+    original_page = client.get(expected)
+    assert original_page.status_code == 200
+    assert f'id="answer-support-{selected.message_id}"' in original_page.text
+
+
+@pytest.mark.parametrize("long_answer", ["transcript"], indirect=True)
+@pytest.mark.parametrize("legacy_missing_lines", [False, True])
+def test_transcript_source_navigation_uses_validated_time_and_segment(long_answer, legacy_missing_lines):
+    client, bench, matter, document, _, conversation, original = long_answer
+    message = original
+    if legacy_missing_lines:
+        claim = original.payload["claims"][0]
+        reference = dict(claim["citations"][0])
+        reference.pop("line_start")
+        reference.pop("line_end")
+        # Optional legacy fields cannot substitute an unvalidated playback time.
+        reference["start_ms"] = 2_000
+        message = append_answer(long_answer, claims=[{**claim, "citations": [reference]}])
+    saved = bench.workspace.messages(matter.matter_id, conversation.conversation_id)
+    segment = bench.workspace.transcript_segments(matter.matter_id, document.document_id, document.version_id)[0]
+    assert segment.start_ms == 500
+    response = client.get(context_path(long_answer, message=message), params={"format": "json"})
+    assert response.status_code == 200 and response.json()["state"] == "available"
+    source_href = response.json()["source_href"]
+    locator = urlsplit(source_href)
+    assert parse_qs(locator.query)["start_ms"] == [str(segment.start_ms)]
+    assert locator.fragment == f"segment-{segment.ordinal}"
+    source = client.get(source_href)
+    assert source.status_code == 200
+    assert f'data-media-review data-start-ms="{segment.start_ms}"' in source.text
+    assert f'id="segment-{segment.ordinal}"' in source.text
+    assert bench.workspace.messages(matter.matter_id, conversation.conversation_id) == saved
+
+
+@pytest.mark.parametrize("long_answer", ["document", "transcript"], indirect=True)
+def test_source_navigation_metadata_is_opt_in_and_does_not_enter_saved_work(long_answer):
+    _, bench, matter, _, _, conversation, message = long_answer
+    citations = message.payload["claims"][0]["citations"]
+    saved = bench.workspace.messages(matter.matter_id, conversation.conversation_id)
+    with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
+        ordinary, = bench._saved_answer_references(matter, citations, notebook_preview=True)
+        navigation, = bench._saved_answer_references(matter, citations,
+            notebook_preview=True, source_navigation=True)
+    assert "source_navigation" not in ordinary
+    coordinates = navigation.pop("source_navigation")
+    assert coordinates["ordinal"] == 1
+    assert navigation == ordinary
+    note, _ = bench.save_answer_to_notebook(matter, ACTOR, conversation.conversation_id,
+        message.message_id, 0)
+    reference, = bench.workspace.notebook_references(matter.matter_id, ACTOR, note.item_id)
+    assert "source_navigation" not in asdict(reference)
+    assert bench.workspace.messages(matter.matter_id, conversation.conversation_id) == saved
 
 
 @pytest.mark.parametrize("format_name", ["html", "json"])

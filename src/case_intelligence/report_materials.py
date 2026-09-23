@@ -47,15 +47,18 @@ _STALE = (
 _SCAN_LIMIT = "The selected saved work exceeds the report source-validation limit. Choose fewer or smaller sources; no report was saved."
 
 
-def resolve_saved_answer_references(bench, matter, references, *, notebook_preview=False):
+def resolve_saved_answer_references(bench, matter, references, *, notebook_preview=False,
+                                   source_navigation=False):
     """Verify saved answer support before capture, under caller-owned guards.
 
     Reuse Report compilation's exact-text and legacy-token rules so a note or
     direct Report section cannot silently refresh a stale answer's citations.
     Notes retain their bounded display preview and the complete unit's digest;
     their preview is cut only after all saved support has been validated.
+    Read-only comparisons may request transient, validated source navigation.
     """
-    resolver = _References(bench, matter, notebook_preview=notebook_preview)
+    resolver = _References(bench, matter, notebook_preview=notebook_preview,
+                           source_navigation=source_navigation)
     resolver.prepare(references)
     return tuple(resolver.resolve(value) for value in references)
 
@@ -70,9 +73,10 @@ def _decision_review_status(machine, human):
 
 
 class _References:
-    def __init__(self, bench, matter, *, notebook_preview=False):
+    def __init__(self, bench, matter, *, notebook_preview=False, source_navigation=False):
         self.bench, self.matter = bench, matter
         self.notebook_preview = notebook_preview
+        self.source_navigation = source_navigation
         self.store = bench.source_store(matter)
         self.documents = {}
         self.resolved = {}
@@ -253,6 +257,14 @@ class _References:
             # Legacy digest-bound tokens remain valid only for their exact text.
             if value["support_token"] != self.bench._legacy_support_token(candidate):
                 raise WorkspaceProblem(_STALE)
+        if self.source_navigation:
+            # Opt-in read-only comparison metadata, never added to stored notes
+            # or Reports. These coordinates come from the validated original.
+            canonical["source_navigation"] = {
+                "ordinal": int(candidate.chunk_id.removeprefix("chunk-")),
+                "start_ms": max(int(candidate.line_start or 0), 0)
+                    if candidate.evidence_kind == "transcript" else None,
+            }
         if self.notebook_preview:
             # The digest and locator above still bind the complete unit, including
             # text after this display prefix. Report callers never use this mode.
