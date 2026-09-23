@@ -1,15 +1,20 @@
 {
   "schema_version": 1,
-  "suite_id": "r1b-claims-v1",
+  "suite_id": "r1b-claims-v2",
   "synthetic": true,
   "frozen": true,
   "provenance": {
     "source": "Assistant-authored synthetic fixtures; no real case material or runtime model output.",
     "review_status": "Human acceptance of the rubric and release thresholds remains pending.",
-    "source_text_encoding": "UTF-8 without an appended newline"
+    "source_text_encoding": "UTF-8 without an appended newline",
+    "supersedes": {
+      "suite_id": "r1b-claims-v1",
+      "sha256": "ec9ac26e0d8874d7f37ae5ebfa41e57bfa0072fc8488aac62af3c7bcc3211809",
+      "reason": "Clarify generation metric units before real-model evaluation; source bytes, identifiers, candidates and labels unchanged."
+    }
   },
   "rubric": {
-    "unit": "One candidate response containing exactly one material claim; no limitation claim.",
+    "unit": "One raw claim occurrence, including each limitation and duplicate occurrence. Frozen probes contain one claim each; real-model responses may contain multiple claim occurrences.",
     "semantic_valid": {
       "pass": "The claim preserves the facts, relationships, event associations, polarity, uncertainty, and quotation fidelity of the full supplied evidence.",
       "fail": "Any material invented, reversed, overstated, contradicted, or falsely quoted meaning fails the whole claim. Citation labels are scored separately.",
@@ -24,11 +29,12 @@
     "candidate_valid": "semantic_valid and citations_valid",
     "verifier_acceptance": "The application verifier retains the single material claim; rejection or omission is rejection. Do not treat application acceptance as the semantic ground truth.",
     "metrics": {
-      "generation_semantic_errors": "Number of judged real generator outputs with semantic_valid=false / number of judged real generator outputs.",
-      "generation_citation_errors": "Number of judged real generator outputs with citations_valid=false / number of judged real generator outputs.",
+      "generation_semantic_errors": "Number of independently graded raw claim occurrences with semantic_valid=false / number of independently graded raw claim occurrences, including limitations and duplicates.",
+      "generation_citation_errors": "Number of independently graded raw claim occurrences with citations_valid=false / number of independently graded raw claim occurrences, including limitations and duplicates.",
       "verifier_false_acceptance": "Number of invalid candidates accepted by the verifier / number of invalid candidates submitted to the verifier.",
       "verifier_false_rejection": "Number of valid candidates rejected by the verifier / number of valid candidates submitted to the verifier.",
-      "empty_denominator": "Report rate as null and preserve numerator=0, denominator=0; never report an unevaluated category as passing."
+      "empty_denominator": "Report rate as null and preserve numerator=0, denominator=0; never report an unevaluated category as passing.",
+      "generation_answer_errors": "Number of generated responses that are malformed, abstain from an answerable question, omit required material, or contain a material semantic/citation error / number of generated responses. Record failed attempts separately."
     },
     "thresholds": {
       "diagnostic_verifier_false_acceptance_rate_max": 0.0,

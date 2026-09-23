@@ -43,8 +43,12 @@ class SyntheticClient:
 
 
 def make_capture(runtime, client=None, repetitions=1, identity_check=lambda: None):
-    return evaluation.capture(client or SyntheticClient(), profile="portable", runtime=runtime,
-                              repetitions=repetitions, identity_check=identity_check)
+    client = client or SyntheticClient()
+    def synthetic_snapshot():
+        identity_check()
+        return {"method": "api_model_id_snapshots", "model": client.model, "artifact_sha256": None}
+    return evaluation.capture(client, profile="portable", runtime=runtime,
+                              repetitions=repetitions, identity_check=synthetic_snapshot)
 
 
 def completed_grades(receipt):
@@ -85,6 +89,18 @@ def test_suite_rubric_changes_fail_frozen_fingerprint(monkeypatch, tmp_path):
     monkeypatch.setattr(evaluation, "SUITE_PATH", path)
     with pytest.raises(ValueError, match="Frozen"):
         evaluation.run_probes()
+
+
+def test_v2_defines_occurrence_units_without_relabeling_v1_challenges():
+    suite = evaluation.load_suite()
+    assert suite["suite_id"] == "r1b-claims-v2"
+    assert "raw claim occurrence" in suite["rubric"]["unit"]
+    for name in ("generation_semantic_errors", "generation_citation_errors"):
+        assert "raw claim occurrences" in suite["rubric"]["metrics"][name]
+    # Independent fingerprint of the already published v1 source/candidate data.
+    assert evaluation.digest({"cases": suite["cases"], "source_text_sha256": suite["source_text_sha256"]}) == (
+        "f508917d9bf84a521b7522eea7b322d0c5d032ab2a85aff2895d3ff642d02563")
+    assert suite["provenance"]["supersedes"]["sha256"] != evaluation.SUITE_SHA256
 
 
 def test_raw_claims_limitations_and_repetitions_keep_separate_denominators(runtime):
@@ -132,6 +148,40 @@ def test_capture_tampering_is_refused(runtime):
         evaluation.grade_template(receipt)
 
 
+@pytest.mark.parametrize("mutation", ["missing", "unknown_method", "wrong_model", "missing_observation",
+                                     "missing_limitation", "false_execution"])
+def test_gradable_capture_requires_bound_identity_and_execution_evidence(runtime, mutation):
+    receipt = make_capture(runtime)
+    receipt.pop("receipt_sha256")
+    if mutation == "missing":
+        receipt.pop("runtime_identity")
+    elif mutation == "unknown_method":
+        receipt["runtime_identity"]["method"] = "unverified"
+    elif mutation == "wrong_model":
+        receipt["runtime_identity"]["model"] = "different"
+    elif mutation == "missing_observation":
+        receipt["runtime_identity"]["observations"] -= 1
+    elif mutation == "missing_limitation":
+        receipt["runtime_identity"]["limitation"] = ""
+    else:
+        receipt["models"]["components"][0]["execution"] = "attempted_no_parsed_response"
+    with pytest.raises(ValueError):
+        evaluation.grade_template(evaluation.seal(receipt))
+
+
+@pytest.mark.parametrize("snapshot", [None, {},
+    {"method": "unknown", "model": "synthetic-test-only", "artifact_sha256": None},
+    {"method": "api_model_id_snapshots", "model": "wrong", "artifact_sha256": None},
+    {"method": "ollama_tag_digest_snapshots", "model": "synthetic-test-only", "artifact_sha256": "b" * 64}])
+def test_missing_or_wrong_identity_snapshot_fails_before_generation(runtime, snapshot):
+    class MustNotGenerate(SyntheticClient):
+        def generate(self, **kwargs):
+            pytest.fail("Invalid identity must fail before inference.")
+    with pytest.raises(ValueError, match="identity|Identity"):
+        evaluation.capture(MustNotGenerate(), profile="portable", runtime=runtime, repetitions=1,
+                           identity_check=lambda: snapshot)
+
+
 @pytest.mark.parametrize("mutation", ["empty", "duplicate", "wrong_verdict", "missing_code", "wrong_schema", "wrong_counts"])
 def test_resealed_incomplete_or_inconsistent_capture_is_refused(runtime, mutation):
     receipt = make_capture(runtime)
@@ -177,6 +227,8 @@ def test_unavailable_is_not_success_and_zero_denominators_are_null(runtime):
     events = []
     receipt = make_capture(runtime, Unavailable(), identity_check=lambda: events.append("check"))
     assert len(events) == 23  # before + after all 11 requests, then final check
+    assert receipt["runtime_identity"]["observations"] == 23
+    assert receipt["models"]["components"][0]["execution"] == "attempted_no_parsed_response"
     grades = evaluation.grade_template(receipt)
     grades["grader_id"] = "synthetic-grader"
     score = evaluation.score_capture(receipt, grades)
@@ -197,6 +249,7 @@ def test_abstentions_and_malformed_slots_are_retained_and_need_grading(runtime):
     receipt = make_capture(runtime, Mixed())
     assert receipt["generation"]["schema_invalid"] == 10
     assert receipt["generation"]["abstained"] == 1
+    assert receipt["models"]["components"][0]["execution"] == "parsed_responses_observed_not_inference_attestation"
     grades = completed_grades(receipt)
     assert grades["samples"][0]["claims"] == []
     assert len(grades["samples"][1]["claims"]) == 1

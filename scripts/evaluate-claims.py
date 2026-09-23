@@ -44,6 +44,8 @@ def local_client(backend, endpoint, model, artifact_digest):
             raise IdentityError("Runtime identity check unavailable; capture aborted.") from None
         if not valid:
             raise IdentityError("Runtime model identity mismatch; capture aborted.")
+        return {"method": "ollama_tag_digest_snapshots" if backend == "ollama" else "api_model_id_snapshots",
+                "model": model, "artifact_sha256": artifact_digest if backend == "ollama" else None}
 
     return client, check
 
@@ -79,14 +81,6 @@ def main(argv=None):
         client, check = local_client(args.backend, args.endpoint, args.model, runtime["model_artifact_sha256"])
         result = evaluation.capture(client, profile=args.profile, runtime=runtime,
                                     repetitions=args.repetitions, identity_check=check)
-        # Add identity-check limitations before sealing the final capture.
-        result.pop("receipt_sha256")
-        result["runtime_identity"] = {
-            "method": "ollama_tag_digest_snapshots" if args.backend == "ollama" else "api_model_id_snapshots",
-            "boundaries": "before_and_after_every_request_including_failures_and_before_receipt",
-            "limitation": "Snapshots cannot rule out change and reversion between checks. API model IDs do not attest loaded weights; artifact and upstream revision linkage remains operator-declared.",
-        }
-        result = evaluation.seal(result)
     else:
         receipt = json.loads(args.capture.read_text())
         result = (evaluation.grade_template(receipt) if args.command == "grade-template" else

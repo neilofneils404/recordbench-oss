@@ -22,9 +22,25 @@ from .generation import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-SUITE_PATH = ROOT / "benchmarks/r1b-claims-v1.json"
-# Changing v1 requires a new version, not an updated expected fingerprint.
-SUITE_SHA256 = "ec9ac26e0d8874d7f37ae5ebfa41e57bfa0072fc8488aac62af3c7bcc3211809"
+SUITE_PATH = ROOT / "benchmarks/r1b-claims-v2.json"
+# Changing v2 requires a new version, not an updated expected fingerprint.
+SUITE_SHA256 = "dd64595bb51c83c395616988ca51f77701dee6d59136da1a2912c23afe42691a"
+IDENTITY_BOUNDARIES = "before_and_after_every_request_including_failures_and_before_receipt"
+IDENTITY_LIMITATION = (
+    "Snapshots cannot rule out change and reversion between checks. API model IDs do not attest "
+    "loaded weights; artifact and upstream revision linkage remains operator-declared. "
+    "Identity observations do not establish inference execution."
+)
+
+
+def validate_identity_snapshot(snapshot, model, artifact_digest):
+    if not isinstance(snapshot, dict) or set(snapshot) != {"method", "model", "artifact_sha256"}:
+        raise ValueError("Identity checker must return a complete matched snapshot, not a no-op.")
+    if snapshot["method"] not in {"ollama_tag_digest_snapshots", "api_model_id_snapshots"}:
+        raise ValueError("Unsupported runtime identity observation method.")
+    expected_artifact = artifact_digest if snapshot["method"] == "ollama_tag_digest_snapshots" else None
+    if snapshot["model"] != model or snapshot["artifact_sha256"] != expected_artifact:
+        raise ValueError("Runtime identity snapshot does not match capture model/artifact.")
 
 
 def digest(value):
@@ -85,6 +101,18 @@ def validate_receipt(receipt):
                     raise ValueError("Stored schema validity differs from captured output.")
         if receipt["generation"] != generation_counts(rows):
             raise ValueError("Generation counters disagree with the complete capture.")
+        identity = receipt.get("runtime_identity")
+        if not isinstance(identity, dict) or set(identity) != {
+            "method", "model", "artifact_sha256", "observations", "boundaries", "limitation"
+        }:
+            raise ValueError("Gradable captures require complete runtime identity evidence.")
+        validate_identity_snapshot({key: identity[key] for key in ("method", "model", "artifact_sha256")},
+            receipt["configuration"]["model"], receipt["runtime"]["model_artifact_sha256"])
+        if (type(identity["observations"]) is not int or identity["observations"] != 2 * len(rows) + 1
+            or identity["boundaries"] != IDENTITY_BOUNDARIES or identity["limitation"] != IDENTITY_LIMITATION):
+            raise ValueError("Runtime identity evidence has incomplete boundaries or limitations.")
+        if receipt["models"]["components"][0]["execution"] != generator_execution(rows):
+            raise ValueError("Generator execution evidence disagrees with capture results.")
 
 
 def model_records(profile, *, generator_exercised):
@@ -93,7 +121,7 @@ def model_records(profile, *, generator_exercised):
     for role in ("generator", "embedding", "reranker"):
         entry = next(item for item in manifest["models"] if item["role"] == role
                      and (role != "generator" or item["profile"] == profile))
-        records.append({**entry, "execution": "operator_declared_generator_capture" if role == "generator"
+        records.append({**entry, "execution": "capture_planned_no_execution_evidence" if role == "generator"
                         and generator_exercised else "not_exercised",
                         "revision_basis": "repository_manifest_not_runtime_attestation"})
     return {"manifest_sha256": digest(manifest), "components": records}
@@ -226,7 +254,8 @@ def validate_runtime(runtime):
 def capture(client, *, profile, runtime, repetitions, identity_check):
     """Call a real production adapter once per packet; don't hide repair drafts.
 
-    identity_check is fatal on mismatch. Runtime artifact/offline declarations
+    identity_check returns a matched method/model/artifact snapshot; missing or
+    inconsistent observations are fatal. Runtime artifact/offline declarations
     are operator evidence, not a claim that an API model name attests weights.
     """
     validate_runtime(runtime)
@@ -237,6 +266,17 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
     if type(repetitions) is not int or not 1 <= repetitions <= 20:
         raise ValueError("Choose 1 to 20 repetitions before running the model.")
     receipt = base_receipt("model_capture", profile)
+    identity_observations = 0
+    first_identity = None
+
+    def checked_identity():
+        nonlocal identity_observations, first_identity
+        snapshot = identity_check()
+        validate_identity_snapshot(snapshot, client.model, runtime["model_artifact_sha256"])
+        if first_identity is not None and snapshot != first_identity:
+            raise ValueError("Runtime identity method or snapshot changed during capture.")
+        first_identity = dict(snapshot)
+        identity_observations += 1
     receipt.update(runtime={**runtime, "basis": "operator_declared_not_independently_verified"},
                    configuration={"repetitions": repetitions, "seed": None,
                        "seed_status": "production_adapters_do_not_set_seed",
@@ -252,7 +292,7 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
         for repetition in range(1, repetitions + 1):
             row = {"sample_id": f"{case['case_id']}:{repetition}", "case_id": case["case_id"],
                    "repetition": repetition, "prompt": {"system": system, "user": user}}
-            identity_check()
+            checked_identity()
             start = time.monotonic()
             try:
                 raw = client.generate(question=case["question"], evidence=evidence)
@@ -262,12 +302,21 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
                 # No remote error text: it may contain endpoint or runtime details.
                 row.update(state="generation_failure", failure_type=type(exc).__name__)
             finally:
-                identity_check()
+                checked_identity()
             row["elapsed_ms"] = round((time.monotonic() - start) * 1000)
             receipt["results"].append(row)
-    identity_check()
+    checked_identity()
     receipt["generation"] = generation_counts(receipt["results"])
+    receipt["models"]["components"][0]["execution"] = generator_execution(receipt["results"])
+    receipt["runtime_identity"] = {**first_identity, "observations": identity_observations,
+                                   "boundaries": IDENTITY_BOUNDARIES, "limitation": IDENTITY_LIMITATION}
     return seal(receipt)
+
+
+def generator_execution(rows):
+    return ("parsed_responses_observed_not_inference_attestation"
+            if any(row["state"] == "generated" for row in rows)
+            else "attempted_no_parsed_response")
 
 
 def generation_counts(rows):
