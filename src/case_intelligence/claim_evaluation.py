@@ -18,7 +18,8 @@ from jsonschema import Draft202012Validator
 
 from .generation import (
     ANSWER_SCHEMA, EvidenceItem, GenerationRejected, GenerationUnavailable,
-    GroundedGenerationService, _exact_original_span, _prompt, verify_original_claim,
+    GroundedGenerationService, OllamaGenerator, OpenAICompatibleGenerator,
+    _exact_original_span, _prompt, verify_original_claim,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,12 +34,22 @@ IDENTITY_LIMITATION = (
 )
 
 
-def validate_identity_snapshot(snapshot, model, artifact_digest):
+def adapter_name(client):
+    if isinstance(client, OllamaGenerator):
+        return "OllamaGenerator"
+    if isinstance(client, OpenAICompatibleGenerator):
+        return "OpenAICompatibleGenerator"
+    raise ValueError("Capture requires a supported production adapter.")
+
+
+def validate_identity_snapshot(snapshot, model, artifact_digest, adapter):
     if not isinstance(snapshot, dict) or set(snapshot) != {"method", "model", "artifact_sha256"}:
         raise ValueError("Identity checker must return a complete matched snapshot, not a no-op.")
-    if snapshot["method"] not in {"ollama_tag_digest_snapshots", "api_model_id_snapshots"}:
-        raise ValueError("Unsupported runtime identity observation method.")
-    expected_artifact = artifact_digest if snapshot["method"] == "ollama_tag_digest_snapshots" else None
+    expected_method = {"OllamaGenerator": "ollama_tag_digest_snapshots",
+                       "OpenAICompatibleGenerator": "api_model_id_snapshots"}.get(adapter)
+    if expected_method is None or snapshot["method"] != expected_method:
+        raise ValueError("Runtime identity observation method must match the active adapter.")
+    expected_artifact = artifact_digest if adapter == "OllamaGenerator" else None
     if snapshot["model"] != model or snapshot["artifact_sha256"] != expected_artifact:
         raise ValueError("Runtime identity snapshot does not match capture model/artifact.")
 
@@ -107,7 +118,8 @@ def validate_receipt(receipt):
         }:
             raise ValueError("Gradable captures require complete runtime identity evidence.")
         validate_identity_snapshot({key: identity[key] for key in ("method", "model", "artifact_sha256")},
-            receipt["configuration"]["model"], receipt["runtime"]["model_artifact_sha256"])
+            receipt["configuration"]["model"], receipt["runtime"]["model_artifact_sha256"],
+            receipt["configuration"]["adapter"])
         if (type(identity["observations"]) is not int or identity["observations"] != 2 * len(rows) + 1
             or identity["boundaries"] != IDENTITY_BOUNDARIES or identity["limitation"] != IDENTITY_LIMITATION):
             raise ValueError("Runtime identity evidence has incomplete boundaries or limitations.")
@@ -171,17 +183,33 @@ def claim_slots(raw):
 def verify_output(raw, evidence):
     evidence_map = {item.evidence_id: item for item in evidence}
     rows = []
+    accepted_keys = {"ordinary": set(), "exact_span": set()}
     for slot, value in claim_slots(raw):
         claim = (verify_original_claim(value.get("text"), value.get("evidence_ids"), evidence_map)
                  if isinstance(value, dict) and set(value) == {"text", "evidence_ids"} else None)
-        rows.append({"slot": slot, "ordinary_accepted": claim is not None,
-                     "exact_span_accepted": _exact_original_span(claim, evidence_map) is not None})
+        row = {"slot": slot}
+        for path, verified in (("ordinary", claim), ("exact_span", _exact_original_span(claim, evidence_map))):
+            disposition = "rejected"
+            if verified is not None:
+                key = (verified.text, frozenset(verified.evidence_ids))
+                # Production deduplicates material claims, but not the separate
+                # limitation. Retain every raw occurrence in the denominator.
+                if slot != "limitation" and key in accepted_keys[path]:
+                    disposition = "duplicate_omitted"
+                else:
+                    disposition = "retained"
+                    if slot != "limitation":
+                        accepted_keys[path].add(key)
+            row[path + "_accepted"] = disposition == "retained"
+            row[path + "_disposition"] = disposition
+        rows.append(row)
     outcomes = {}
     for path, strict in (("ordinary", False), ("exact_span", True)):
         try:
             answer = GroundedGenerationService._verify(raw, evidence, 0, strict_originals=strict)
             outcomes[path] = {"state": "answer" if answer.answerable else "abstained",
                               "retained_claims": len(answer.claims),
+                              "duplicate_claims": answer.duplicate_claims,
                               "omitted_claims": answer.omitted_claims}
         except (GenerationRejected, TypeError, AttributeError) as exc:
             outcomes[path] = {"state": "rejected", "failure_type": type(exc).__name__}
@@ -190,6 +218,7 @@ def verify_output(raw, evidence):
         if outcomes[path]["state"] != "answer":
             for row in rows:
                 row[path + "_accepted"] = False
+                row[path + "_disposition"] = "response_" + outcomes[path]["state"]
     return {"claims": rows, "response": outcomes}
 
 
@@ -202,6 +231,8 @@ def verifier_metrics(rows):
     invalid = [row for row in rows if not (row["semantic_valid"] and row["citations_valid"])]
     valid = [row for row in rows if row["semantic_valid"] and row["citations_valid"]]
     return {path: {
+        "duplicate_omissions": fraction(sum(row.get(path + "_disposition") == "duplicate_omitted"
+                                            for row in rows), len(rows)),
         "false_acceptance": fraction(sum(row[path + "_accepted"] for row in invalid), len(invalid)),
         "false_rejection": fraction(sum(not row[path + "_accepted"] for row in valid), len(valid)),
         "semantic_false_acceptance": fraction(sum(row[path + "_accepted"] for row in rows
@@ -259,6 +290,7 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
     are operator evidence, not a claim that an API model name attests weights.
     """
     validate_runtime(runtime)
+    adapter = adapter_name(client)
     generator = model_records(profile, generator_exercised=False)["components"][0]
     if any(runtime[key] != generator[field] for key, field in (
         ("upstream_model_id", "model_id"), ("upstream_revision", "revision"), ("license", "license"))):
@@ -272,7 +304,7 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
     def checked_identity():
         nonlocal identity_observations, first_identity
         snapshot = identity_check()
-        validate_identity_snapshot(snapshot, client.model, runtime["model_artifact_sha256"])
+        validate_identity_snapshot(snapshot, client.model, runtime["model_artifact_sha256"], adapter)
         if first_identity is not None and snapshot != first_identity:
             raise ValueError("Runtime identity method or snapshot changed during capture.")
         first_identity = dict(snapshot)
@@ -281,10 +313,10 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
                    configuration={"repetitions": repetitions, "seed": None,
                        "seed_status": "production_adapters_do_not_set_seed",
                        "history": [], "working_context": "", "grounding_repair": False,
-                       "adapter": type(client).__name__, "model": client.model,
+                       "adapter": adapter, "model": client.model,
                        "disable_thinking": getattr(client, "disable_thinking", None),
                        "temperature": 0.1, "output_tokens": 1200,
-                       "context_tokens": 8192 if type(client).__name__ == "OllamaGenerator" else "server_configured",
+                       "context_tokens": 8192 if adapter == "OllamaGenerator" else "server_configured",
                        "response_schema": ANSWER_SCHEMA}, results=[])
     for case in load_suite()["cases"]:
         evidence = tuple(EvidenceItem(**item) for item in case["evidence"])
@@ -296,6 +328,10 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
             start = time.monotonic()
             try:
                 raw = client.generate(question=case["question"], evidence=evidence)
+                try:
+                    json.dumps(raw, ensure_ascii=False, allow_nan=False).encode("utf-8")
+                except (ValueError, UnicodeError) as exc:
+                    raise GenerationRejected("Model output is not finite, UTF-8 JSON.") from exc
                 row.update(state="generated", raw=raw, verification=verify_output(raw, evidence),
                            schema_valid=Draft202012Validator(ANSWER_SCHEMA).is_valid(raw))
             except (GenerationRejected, GenerationUnavailable) as exc:
@@ -390,6 +426,8 @@ def score_capture(receipt, grades):
 
 
 def write_new(path, payload):
-    with path.open("x", encoding="utf-8") as stream:
-        json.dump(payload, stream, indent=2, ensure_ascii=False, allow_nan=False)
-        stream.write("\n")
+    # Complete serialization first: invalid values must not reserve a path with
+    # a truncated artifact that cannot be retried under the no-overwrite policy.
+    serialized = (json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+    with path.open("xb") as stream:
+        stream.write(serialized)

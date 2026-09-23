@@ -242,13 +242,15 @@ def _bounded_json_request(
     *,
     timeout: float,
     headers: Mapping[str, str] | None = None,
+    opener: urllib.request.OpenerDirector | None = None,
 ) -> Mapping[str, object]:
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     request_headers = {"Content-Type": "application/json", "Accept": "application/json"}
     request_headers.update(dict(headers or {}))
     request = urllib.request.Request(url, data=body, headers=request_headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        open_request = opener.open if opener is not None else urllib.request.urlopen
+        with open_request(request, timeout=timeout) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except (OSError, urllib.error.URLError, TimeoutError) as exc:
         raise GenerationUnavailable("The answer service is temporarily unavailable.") from exc
@@ -263,10 +265,14 @@ def _bounded_json_request(
     return value
 
 
-def _bounded_json_get(url: str, *, timeout: float, headers: Mapping[str, str] | None = None) -> Mapping[str, object]:
+def _bounded_json_get(
+    url: str, *, timeout: float, headers: Mapping[str, str] | None = None,
+    opener: urllib.request.OpenerDirector | None = None,
+) -> Mapping[str, object]:
     request = urllib.request.Request(url, headers={"Accept": "application/json", **dict(headers or {})})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        open_request = opener.open if opener is not None else urllib.request.urlopen
+        with open_request(request, timeout=timeout) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
             return {}
@@ -500,16 +506,21 @@ def _parse_model_content(content: object) -> Mapping[str, object]:
 
 
 class OllamaGenerator:
-    def __init__(self, endpoint: str, model: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
+    def __init__(
+        self, endpoint: str, model: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        opener: urllib.request.OpenerDirector | None = None,
+    ) -> None:
         self.endpoint = _validate_endpoint(endpoint)
         self.model = model.strip()
         if not self.model or len(self.model) > 200:
             raise ValueError("generator model role is not configured")
         self.timeout = min(max(float(timeout), 1.0), 300.0)
+        self._opener = opener
 
     @property
     def available(self) -> bool:
-        payload = _bounded_json_get(f"{self.endpoint}/api/tags", timeout=2.0)
+        payload = _bounded_json_get(f"{self.endpoint}/api/tags", timeout=2.0,
+                                   **({"opener": self._opener} if self._opener is not None else {}))
         names = {
             item.get("name")
             for item in payload.get("models", [])
@@ -547,6 +558,7 @@ class OllamaGenerator:
                 "keep_alive": "5m",
             },
             timeout=self.timeout,
+            **({"opener": self._opener} if self._opener is not None else {}),
         )
         message = response.get("message")
         if not isinstance(message, dict):
@@ -579,6 +591,7 @@ class OllamaGenerator:
                 "keep_alive": "5m",
             },
             timeout=self.timeout,
+            **({"opener": self._opener} if self._opener is not None else {}),
         )
         message = response.get("message")
         if not isinstance(message, dict):
@@ -595,6 +608,7 @@ class OpenAICompatibleGenerator:
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         api_key: str = "",
         disable_thinking: bool = False,
+        opener: urllib.request.OpenerDirector | None = None,
     ) -> None:
         self.endpoint = _validate_endpoint(endpoint)
         self.model = model.strip()
@@ -603,11 +617,13 @@ class OpenAICompatibleGenerator:
         self.timeout = min(max(float(timeout), 1.0), 300.0)
         self._headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self.disable_thinking = bool(disable_thinking)
+        self._opener = opener
 
     @property
     def available(self) -> bool:
         payload = _bounded_json_get(
-            f"{self.endpoint}/v1/models", timeout=2.0, headers=self._headers
+            f"{self.endpoint}/v1/models", timeout=2.0, headers=self._headers,
+            **({"opener": self._opener} if self._opener is not None else {}),
         )
         ids = {
             item.get("id")
@@ -650,11 +666,14 @@ class OpenAICompatibleGenerator:
         if self.disable_thinking:
             request["chat_template_kwargs"] = {"enable_thinking": False}
         if recorded_dispatch is not None:
+            if self._opener is not None:
+                raise ValueError("Recorded dispatch does not support an injected HTTP opener.")
             response = recorded_dispatch.send(self, request, grounding_repair)
         else:
             response = _bounded_json_request(
                 f"{self.endpoint}/v1/chat/completions", request,
                 timeout=self.timeout, headers=self._headers,
+                **({"opener": self._opener} if self._opener is not None else {}),
             )
         choices = response.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -700,6 +719,7 @@ class OpenAICompatibleGenerator:
             request,
             timeout=self.timeout,
             headers=self._headers,
+            **({"opener": self._opener} if self._opener is not None else {}),
         )
         choices = response.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):

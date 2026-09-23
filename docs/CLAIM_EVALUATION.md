@@ -121,8 +121,12 @@ PYTHONPATH=src python scripts/evaluate-claims.py capture \
 
 The `openai` backend means the existing local OpenAI-compatible adapter, not a
 cloud service. An explicit HTTP IPv4 loopback endpoint is required. `ollama` is
-also supported. Identity checks surround every call, including failures, and run
-again before completing the capture. Ollama checks artifact digest; the compatible
+also supported. The evaluator supplies a dedicated transport for both metadata
+and generation: ambient proxies are disabled and every redirect is refused before
+following it. A redirect aborts capture without a quality receipt. Ordinary
+application transport defaults are unchanged. Identity checks surround every call,
+including failures, and run again before completing the capture. Ollama checks
+artifact digest; the compatible
 API checks unique model ID only. Snapshots cannot exclude change and reversion
 between checks. Any missing/mismatched identity aborts without a quality receipt.
 The capture API itself requires matched identity snapshots from its checker and
@@ -178,11 +182,21 @@ graded claims and citation errors/raw graded claims. Verifier false acceptance
 uses invalid raw candidates as its denominator; false rejection uses faithful,
 correctly cited candidates. Semantic and citation false-acceptance subsets are
 also reported. Limitations are candidates; duplicate output occurrences remain in
-the denominator. Empty denominators yield null rates. The final score includes all
-grades and case-level verdicts. Human disagreement should receive independent
+the denominator, but production-deduplicated material claims are marked
+`duplicate_omitted` instead of retained. A separate duplicate-omission count makes
+that distinction visible; the retained-occurrence false-rejection metric includes
+faithful duplicates that were not retained. Empty denominators yield null rates.
+The final score includes all grades and case-level verdicts. Human disagreement should receive independent
 adjudication recorded in a new grade artifact, never overwrite an earlier receipt.
 
 Real generator quality, learned retrieval, offline execution, supported hardware,
 representative workload thresholds and installed acceptance remain pending until
 their own evidence exists. Review all receipt text and metadata before any public
 upload, then follow the publication guard and current public-alpha policy.
+
+Identity methods are bound to the production adapter: Ollama requires tag-digest
+snapshots; the compatible adapter uses model-ID snapshots with its explicit
+weight-attestation limitation. Non-finite values and unpaired Unicode surrogates
+from permissive JSON parsing are failed generation attempts. Artifact serialization
+and UTF-8 encoding complete before reserving a new output path, so invalid values
+cannot leave a truncated receipt.

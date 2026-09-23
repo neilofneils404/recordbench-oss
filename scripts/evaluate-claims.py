@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import urllib.request
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,25 +22,50 @@ class IdentityError(RuntimeError):
     """Fatal attribution failure: no quality receipt may be written."""
 
 
+class EvaluationBoundaryError(RuntimeError):
+    """Fatal transport boundary failure, never an ordinary model failure."""
+
+
+class NoEvaluationRedirects(urllib.request.HTTPErrorProcessor):
+    def http_response(self, request, response):
+        # Reject every 3xx before urllib can dispatch to a redirect handler,
+        # including nonstandard or missing-Location responses.
+        if 300 <= response.code < 400:
+            response.close()
+            raise EvaluationBoundaryError("Evaluation endpoint redirected; capture aborted.")
+        return super().http_response(request, response)
+
+    https_response = http_response
+
+
+def evaluation_opener():
+    # A local endpoint must stay local regardless of redirects or inherited
+    # HTTP_PROXY/HTTPS_PROXY settings. Never alter the global urllib opener.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), NoEvaluationRedirects())
+
+
 def local_client(backend, endpoint, model, artifact_digest):
     parsed = urlparse(endpoint)
     if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.username
         or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
         raise ValueError("Use an explicit HTTP 127.0.0.1 endpoint on an authorized isolated target.")
-    client = (OllamaGenerator(endpoint, model, timeout=90) if backend == "ollama" else
-              OpenAICompatibleGenerator(endpoint, model, timeout=90, disable_thinking=True))
+    opener = evaluation_opener()
+    client = (OllamaGenerator(endpoint, model, timeout=90, opener=opener) if backend == "ollama" else
+              OpenAICompatibleGenerator(endpoint, model, timeout=90, disable_thinking=True, opener=opener))
 
     def check():
         try:
             if backend == "ollama":
-                payload = _bounded_json_get(f"{client.endpoint}/api/tags", timeout=5)
+                payload = _bounded_json_get(f"{client.endpoint}/api/tags", timeout=5, opener=opener)
                 matches = [item for item in payload.get("models", []) if item.get("name") == model]
                 valid = (len(matches) == 1
                          and str(matches[0].get("digest", "")).removeprefix("sha256:") == artifact_digest)
             else:
-                payload = _bounded_json_get(f"{client.endpoint}/v1/models", timeout=5)
+                payload = _bounded_json_get(f"{client.endpoint}/v1/models", timeout=5, opener=opener)
                 matches = [item for item in payload.get("data", []) if item.get("id") == model]
                 valid = len(matches) == 1
+        except EvaluationBoundaryError:
+            raise
         except Exception:
             raise IdentityError("Runtime identity check unavailable; capture aborted.") from None
         if not valid:
@@ -95,5 +121,5 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (ValueError, IdentityError) as exc:
+    except (ValueError, IdentityError, EvaluationBoundaryError) as exc:
         raise SystemExit(str(exc)) from None

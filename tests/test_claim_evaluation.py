@@ -31,8 +31,9 @@ def runtime():
             "upstream_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a", "license": "Apache-2.0"}
 
 
-class SyntheticClient:
-    model = "synthetic-test-only"
+class SyntheticClient(generation.OpenAICompatibleGenerator):
+    def __init__(self):
+        super().__init__("http://127.0.0.1:11435", "synthetic-test-only", disable_thinking=True)
 
     def generate(self, *, question, evidence):
         return {"answerable": True, "claims": [
@@ -275,6 +276,56 @@ def test_no_overwrite_and_no_model_grading_for_injected_output(tmp_path):
     assert json.loads(path.read_text()) == {"retained": True}
     with pytest.raises(ValueError, match="real-model"):
         evaluation.grade_template(evaluation.run_probes())
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), "\ud800"])
+def test_invalid_json_output_is_a_failed_attempt_and_never_reserves_output_path(runtime, tmp_path, value):
+    class Nonfinite(SyntheticClient):
+        def generate(self, **kwargs):
+            return {"answerable": True, "claims": [], "limitation": None,
+                    "missing_information": "", "invalid": value}
+    receipt = make_capture(runtime, Nonfinite())
+    assert receipt["generation"]["generated"] == 0
+    assert all(row["failure_type"] == "GenerationRejected" for row in receipt["results"])
+    path = tmp_path / "output.json"
+    with pytest.raises((ValueError, UnicodeError)):
+        evaluation.write_new(path, {"invalid": value})
+    assert not path.exists()
+    evaluation.write_new(path, receipt)
+    assert json.loads(path.read_text())["generation"]["attempts"] == 11
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_duplicate_occurrences_follow_production_retention(valid):
+    case = evaluation.load_suite()["cases"][0]
+    candidate = next(row for row in case["candidates"] if row["semantic_valid"] is valid)
+    raw = copy.deepcopy(candidate["output"])
+    raw["claims"].append(copy.deepcopy(raw["claims"][0]))
+    evidence = tuple(generation.EvidenceItem(**row) for row in case["evidence"])
+    verdict = evaluation.verify_output(raw, evidence)
+    ordinary = verdict["response"]["ordinary"]
+    assert ordinary["retained_claims"] == ordinary["duplicate_claims"] == 1
+    assert [row["ordinary_accepted"] for row in verdict["claims"]] == [True, False]
+    assert verdict["claims"][1]["ordinary_disposition"] == "duplicate_omitted"
+    metrics = evaluation.verifier_metrics([{**row, "semantic_valid": valid, "citations_valid": True}
+                                          for row in verdict["claims"]])
+    metric = "false_rejection" if valid else "false_acceptance"
+    assert metrics["ordinary"][metric] == evaluation.fraction(1, 2)
+
+
+def test_ollama_cannot_downgrade_to_model_id_only_identity(runtime, monkeypatch):
+    client = generation.OllamaGenerator("http://127.0.0.1:11435", "synthetic-test-only")
+    def forbidden(**kwargs):
+        pytest.fail("Downgraded identity must fail before generation.")
+    monkeypatch.setattr(client, "generate", forbidden)
+    with pytest.raises(ValueError, match="adapter"):
+        evaluation.capture(client, profile="portable", runtime=runtime, repetitions=1,
+            identity_check=lambda: {"method": "api_model_id_snapshots", "model": client.model, "artifact_sha256": None})
+    receipt = make_capture(runtime)
+    receipt.pop("receipt_sha256")
+    receipt["configuration"]["adapter"] = "OllamaGenerator"
+    with pytest.raises(ValueError, match="adapter"):
+        evaluation.grade_template(evaluation.seal(receipt))
 
 
 def cli_module():
