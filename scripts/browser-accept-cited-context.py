@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import io
 import json
 import os
@@ -49,8 +50,12 @@ STATEMENTS = (
 )
 NAMES = ('Generated Cedar reading.txt', 'Generated Birch reference.txt',
          'Generated Elm observation.txt', 'Generated Pine limitation.txt')
-SOURCES = (STATEMENTS[0] + ' ' + MARKUP + '\n' +
-           '\n'.join('Synthetic retained context line. ' * 22 for _ in range(14)),
+CONTROL_TEXT = 'Synthetic separators: left\x1amiddle\x1bright\x7f end; café e\u0301 a\u200db.\n'
+PRESENTED_CONTROL_TEXT = 'Synthetic separators: left middle right  end; café e\u0301 a\u200db.\n'
+PREFIX = STATEMENTS[0] + ' ' + MARKUP + '\n' + CONTROL_TEXT
+PADDING = ('Synthetic retained context line. ' * 22 + '\n') * 14
+LONG_SOURCE = (PREFIX + PADDING)[:5_999] + '😀' + PADDING
+SOURCES = (LONG_SOURCE,
            STATEMENTS[1], STATEMENTS[2], STATEMENTS[3])
 
 
@@ -87,6 +92,9 @@ def seed(runtime):
         citations = tuple(bench._citation(matter, bench._candidate(matter, document,
             document.parsed_units()[0], 1)) for document in documents)
         assert len(citations[0].excerpt) > 6_000
+        exact_digest = hashlib.sha256(citations[0].excerpt.encode('utf-8')).hexdigest()
+        assert citations[0].excerpt_digest == exact_digest
+        assert store.source_path(documents[0].document_id).read_bytes() == SOURCES[0].encode('utf-8')
         bench._answer_search = lambda *args, **kwargs: citations
         conversations = []
         messages = []
@@ -140,6 +148,7 @@ def seed(runtime):
         assert newer_message.message_id != transcript_message.message_id
         return dict(slug=matter.slug, conversations=conversations, messages=messages,
                     document_id=documents[0].document_id, payload=document_payload,
+                    exact_excerpt=citations[0].excerpt[:6_000], exact_digest=exact_digest,
                     transcript_conversation=transcript_conversation.conversation_id,
                     transcript_message=transcript_message.message_id, newer_message=newer_message.message_id)
 
@@ -263,16 +272,34 @@ def main():
 
             long_excerpt = excerpt(first)
             displayed = long_excerpt.get_attribute('textContent')
-            assert displayed and len(displayed) <= 6_000 and SOURCES[0].startswith(displayed)
+            expected = SOURCES[0][:6_000].replace(CONTROL_TEXT, PRESENTED_CONTROL_TEXT)
+            assert displayed == expected and len(displayed) == 6_000
+            assert displayed.endswith('😀'), 'The prefix must not split a supplementary character'
+            assert CONTROL_TEXT not in displayed and PRESENTED_CONTROL_TEXT in displayed
             assert MARKUP in displayed
             assert not long_excerpt.find_elements(By.CSS_SELECTOR, 'script, img')
             assert driver.execute_script('return window.syntheticInjection !== true')
             assert len(requests) == 2
+            # Fetch the structured response independently of its DOM projection:
+            # controls and the full-unit digest must retain the saved source basis.
+            raw_context = driver.execute_async_script('''
+                const done = arguments[arguments.length - 1];
+                fetch(arguments[0] + '?format=json', {cache: 'no-store', credentials: 'same-origin'})
+                    .then(response => {
+                        if (!response.ok) throw new Error('Synthetic context API request failed');
+                        return response.json();
+                    }).then(done, error => done({error: String(error)}));
+            ''', first.get_attribute('data-context-url'))
+            assert raw_context.get('state') == 'available', raw_context
+            assert raw_context['excerpt'] == seeded['exact_excerpt'] == SOURCES[0][:6_000]
+            assert CONTROL_TEXT in raw_context['excerpt'] and CONTROL_TEXT not in displayed
+            assert raw_context['excerpt_digest'] == seeded['exact_digest']
+            assert raw_context['excerpt_digest'] == seeded['payload']['claims'][0]['citations'][0]['excerpt_digest']
             for card, statement in zip(cards()[1:], STATEMENTS[1:]):
                 open_card(card, Keys.SPACE)
                 assert statement in excerpt(card).text
             assert len({card.find_element(By.CSS_SELECTOR, '[data-context-source]').text for card in cards()}) == 4
-            record('Each source context remains separate; Space opens disclosures, long text is bounded and source markup is escaped')
+            record('Each source context remains separate; Space opens disclosures, long text is bounded, controls keep word boundaries, Unicode stays intact, raw context and digest stay exact, and source markup is escaped')
 
             long_excerpt.send_keys(Keys.HOME)
             before_scroll = driver.execute_script('return arguments[0].scrollTop', long_excerpt)

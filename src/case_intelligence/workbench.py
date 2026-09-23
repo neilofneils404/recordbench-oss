@@ -6019,6 +6019,25 @@ def _workspace_citation_href(
     return _query_url(f"/matters/{matter_slug}", conversation=conversation_id)
 
 
+class _MatterResponseSendLeaseMiddleware:
+    """Release opted-in matter leases after the outer response send exits."""
+
+    def __init__(self, app, *, release: Callable[[str, str], None]):
+        self.app = app
+        self.release = release
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            state = scope.get("state", {}).get("matter_response_lease")
+            if isinstance(state, dict) and state.get("send_owned"):
+                # BaseHTTPMiddleware buffers an inner Response. Its background
+                # task may run before the outer body's send completes, and may
+                # be skipped on failure. This boundary also covers disconnects.
+                self.release(state["matter"].matter_id, state["lease_id"])
+
+
 def create_workbench_app(
     runtime_dir: Path | None = None,
     *,
@@ -6221,6 +6240,10 @@ def create_workbench_app(
             response.headers.setdefault("Cache-Control", "no-store")
         return response
 
+    # Register outside the identity middleware's response buffer so an opted-in
+    # lease outlives the final body send, including send errors/cancellation.
+    app.add_middleware(_MatterResponseSendLeaseMiddleware, release=bench.finish_matter_response)
+
     async def require_csrf(
         request: Request,
         csrf_token: str | None = Form(None),
@@ -6385,7 +6408,9 @@ def create_workbench_app(
             raise HTTPException(409, "The download admission could not be verified.")
         return matter
 
-    def transfer_matter_response_lease(request: Request, response: Response) -> Response:
+    def transfer_matter_response_lease(
+        request: Request, response: Response, *, through_send: bool = False,
+    ) -> Response:
         """Keep a deletion lease through the final response body byte."""
 
         state = getattr(request.state, "matter_response_lease", None)
@@ -6395,6 +6420,10 @@ def create_workbench_app(
         lease_id = state.get("lease_id")
         if not isinstance(matter, MatterRecord) or not isinstance(lease_id, str):
             raise RuntimeError("matter response lease is invalid")
+        if through_send:
+            state["send_owned"] = True
+            state["transferred"] = True
+            return response
         cleanup = BackgroundTask(
             bench.finish_matter_response, matter.matter_id, lease_id
         )
@@ -15011,7 +15040,8 @@ def create_workbench_app(
             status_code=303,
         )
 
-    @app.get("/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/cited-context/{passage}/{citation_index}")
+    @app.get("/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/cited-context/{passage}/{citation_index}",
+             dependencies=[Depends(require_matter_response_lease)])
     def answer_cited_context(
         request: Request, slug: str, conversation_id: str, message_id: str,
         passage: str, citation_index: int,
@@ -15020,7 +15050,7 @@ def create_workbench_app(
         from .answer_cited_context import saved_cited_context
 
         context = auth_context(request)
-        matter = authorized_matter(request, slug)
+        matter = response_lease_matter(request, slug)
         administrator_override = getattr(request.state, "administrator_matter_override", None) == matter.matter_id
         with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
             refresh_context_authority(request, slug, context, administrator_override)
@@ -15043,7 +15073,7 @@ def create_workbench_app(
             # when target-matter access was granted through ordinary membership.
             refresh_context_authority(request, slug, context, administrator_override,
                 require_administrator=format_name == "html" and context.is_administrator)
-            return response
+            return transfer_matter_response_lease(request, response, through_send=True)
 
     @app.post(
         "/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/notebook/claims/{claim_index}",

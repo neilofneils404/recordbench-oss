@@ -11,6 +11,12 @@
   const desktopRailMedia = window.matchMedia("(min-width: 901px)");
   const railPreferenceKey = "case-intelligence:matter-rail-collapsed";
 
+  // Match controls-to-spaces-v1 at this DOM boundary. Structured excerpts and
+  // their full-unit digests remain exact; the Unicode flag preserves valid
+  // supplementary characters while replacing lone surrogate code points.
+  const presentCitedText = (value) => typeof value === "string"
+    ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\ud800-\udfff\ufffe\uffff]/gu, " ")
+    : "";
   const citedContextRequests = new WeakMap();
   const clearCitedContext = (details) => {
     citedContextRequests.get(details)?.abort();
@@ -71,9 +77,9 @@
         return;
       }
       if (typeof context.excerpt !== "string" || !context.excerpt) throw new Error("Missing cited context");
-      const text = (value) => typeof value === "string" ? value : "";
+      const text = presentCitedText;
       details.querySelector("[data-context-source]").textContent = [text(context.source_name), text(context.location)].filter(Boolean).join(" · ");
-      details.querySelector("[data-context-excerpt]").textContent = context.excerpt.slice(0, 6000);
+      details.querySelector("[data-context-excerpt]").textContent = Array.from(presentCitedText(context.excerpt)).slice(0, 6000).join("");
       details.querySelector("[data-context-version]").textContent = text(context.source_version_id) || "Not recorded";
       details.querySelector("[data-context-digest]").textContent = text(context.excerpt_digest) || "Not recorded";
       if (typeof context.source_href === "string" && context.source_href.startsWith("/matters/")) {

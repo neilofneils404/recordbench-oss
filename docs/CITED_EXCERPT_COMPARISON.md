@@ -25,6 +25,11 @@ role mid-request refuses the page; JSON remains available with current membershi
 because it contains no wider navigation. Existing audited administrator read-only
 access is preserved.
 
+The comparison holds the existing matter deletion lease until the outer HTTP
+response finishes sending its body, covering both HTML and JSON. Scheduled purge
+and deletion remain deferred while that response is in flight. Rendering failures,
+send failures and cancellation release the lease through their cleanup paths.
+
 Resolution reuses the saved-work validator: source identity/version, locator,
 full-unit text digest and compatible legacy citation rules must match. In
 particular, a transcript moment link alone does not authorize displaying edited
@@ -34,8 +39,11 @@ sources produce an explicit unavailable state without replacement text. Exceedin
 the existing source-validation budget gives a separate boundedness notice.
 
 Only after validating the complete unit does the response return its first
-6,000 characters at most, preserving whitespace. The notice identifies this as a
-prefix; it is not a relevance-selected excerpt. The full-source link opens the
+6,000 characters at most, preserving whitespace. The structured response retains
+that exact source text. Inline browser display follows the `controls-to-spaces-v1`
+presentation policy without changing the returned snapshot or its digest; valid
+supplementary Unicode characters remain intact at the prefix boundary. The notice
+identifies this as a prefix; it is not a relevance-selected excerpt. The full-source link opens the
 current source viewer, which may change after comparison. Document links use the
 validated searchable-unit position, preserving physical PDF page labels even
 when preceding pages are blank or unreadable. Transcript links seek
@@ -57,6 +65,9 @@ repopulating it. Network failures leave a keyboard-reachable retry and page link
 
 `tests/test_answer_cited_context.py` covers served comparisons, historical basis,
 source changes, authorization, escaping, bounds and unchanged saved payloads.
+`tests/test_answer_cited_context_leases.py` covers deletion deferral through the
+final response-body send and lease cleanup on rendering, send and cancellation
+failures.
 `scripts/browser-accept-cited-context.py` exercises real browser rendering,
 keyboard controls, independent citations, narrow widths, failure recovery and
 transcript playback/return navigation with synthetic text and audio sources and
