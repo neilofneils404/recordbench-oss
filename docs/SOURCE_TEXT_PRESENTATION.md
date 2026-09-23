@@ -50,6 +50,12 @@ background-answer validation errors retain the specific failure instead of
 replacing it with a generic retry suggestion. Existing draft recovery and
 source-change checks still apply.
 
+Known service-authored confidence notices use the
+[generated-answer presentation rules](GENERATED_ANSWER_REVIEW.md) before control-character
+projection. Structured JSON may present those notices with current wording while
+source excerpts, source versions, excerpt digests and citation authority remain
+exact. Existing saved payloads are not rewritten.
+
 DOCX serialization applies the policy before XML escaping, including metadata.
 In the document body, CRLF and bare CR become LF, each represented by one explicit
 Word line break. A separate note reports that line-ending normalization when it

@@ -25,7 +25,7 @@
       {% else %}
       <p class="eyebrow">A wider evidence pass</p>
       <h2>Research across the record, then show your work.</h2>
-      <p>RecordBench breaks a question into bounded searches, compares source-diverse passages, verifies the synthesis, and saves an evidence and coverage ledger while it works.</p>
+      <p>RecordBench breaks a question into bounded searches, compares source-diverse passages, checks citation references and text consistency, and saves an evidence and coverage ledger while it works. Generated meaning still needs human review.</p>
       {% endif %}
     </div>
     <div class="workflow-scope-card">
@@ -168,7 +168,8 @@
         {% endif %}
       {% if active_research.state == 'succeeded' and not research_stale and not research_synthesis_invalid %}
       <section class="research-result">
-        <header class="workflow-section-heading"><div><p class="eyebrow">Verified synthesis</p><h2>{{ "Full-text synthesis" if full_text_synthesis else "Investigation brief" }}</h2></div></header>
+        <header class="workflow-section-heading"><div><p class="eyebrow">Generated synthesis · needs review</p><h2>{{ "Full-text synthesis" if full_text_synthesis else "Investigation brief" }}</h2></div></header>
+        <p class="workflow-caution" role="note">{{ generated_review_notice }}</p>
         <nav class="workflow-completion-bar" aria-label="Completed synthesis actions">
           <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>{{ "Synthesis ready" if full_text_synthesis else "Investigation ready" }}</strong><small>{{ active_research.result.evidence|length }} supporting passage{% if active_research.result.evidence|length != 1 %}s{% endif %}</small></span></span>
           <a href="#research-support">Review support</a>
@@ -177,10 +178,10 @@
           <details><summary>Export</summary><div><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=docx" data-download>Word</a><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=markdown" data-download>Markdown</a><a href="/matters/{{ matter.slug }}/research/{{ active_research.job_id }}/export?format=json" data-download>JSON</a></div></details>
           <a href="{{ entity_context_href('/matters/' ~ matter.slug ~ ('?conversation=' ~ active_research.conversation_id if active_research.conversation_id else '') ~ '#evidence-conversation', review_return) }}">Return to conversation</a>
         </nav>
-        <div class="research-summary prose">{{ active_research.result.summary }}</div>
+        <div class="research-summary prose">{{ research_content(active_research.result.summary, active_research.result.get('answer')) }}</div>
         {% if active_research.result.get('answer', {}).get('evidence_notice') %}<p class="workflow-caution" role="note">{{ active_research.result.answer.evidence_notice }}</p>{% endif %}
         {% set modality = active_research.result.get('answer', {}).get('modality_coverage') %}
-        {% if modality %}<div class="answer-source-coverage" role="note"><strong>Requested source coverage · {{ modality.mode|title }}</strong><p>{{ modality.notice }}</p></div>{% endif %}
+        {% if modality %}<div class="answer-source-coverage" role="note"><strong>Requested source coverage · {{ modality.mode|title }}</strong><p>{{ modality_coverage_notice(modality.notice) }}</p></div>{% endif %}
         {% set coverage = active_research.result.coverage %}
         <div class="workflow-section-heading workflow-section-heading-compact"><div><p class="eyebrow">Coverage ledger</p><h3>{{ "What this synthesis used" if full_text_synthesis else "What this run searched and used" }}</h3></div></div>
         <div class="coverage-metrics">
@@ -188,7 +189,7 @@
         </div>
         <p class="workflow-caution">{{ coverage.notice }}</p>
         <div class="research-two-column">
-          <section><div class="workflow-section-heading"><div><p class="eyebrow">{{ "Saved finding record" if full_text_synthesis else "Search record" }}</p><h3>Findings and gaps</h3></div></div>{% for pass in active_research.result.passes %}<article class="research-finding state-{{ pass.status }}"><header><span>{{ loop.index|string }} </span><div><strong>{{ pass.query }}</strong><small>{{ pass.candidate_sources }} source{% if pass.candidate_sources != 1 %}s{% endif %} considered · {{ pass.status|replace('_',' ') }}</small></div></header><p>{{ pass.text }}</p></article>{% endfor %}</section>
+          <section><div class="workflow-section-heading"><div><p class="eyebrow">{{ "Saved finding record" if full_text_synthesis else "Search record" }}</p><h3>Findings and gaps</h3></div></div>{% for pass in active_research.result.passes %}<article class="research-finding state-{{ pass.status }}"><header><span>{{ loop.index|string }} </span><div><strong>{{ pass.query }}</strong><small>{{ pass.candidate_sources }} source{% if pass.candidate_sources != 1 %}s{% endif %} considered · {{ pass.status|replace('_',' ') }}</small></div></header><p>{{ research_content(pass.text, pass.get('answer')) }}</p></article>{% endfor %}</section>
           <aside id="research-support"><div class="workflow-section-heading"><div><p class="eyebrow">Cited support</p><h3>Evidence record</h3></div><span>{{ active_research.result.evidence|length }}</span></div><div class="evidence-ledger">{% for evidence in active_research.result.evidence %}<a href="{{ citation_href(evidence, matter.slug, entity_return_to=review_return) }}"><span>{{ loop.index }}</span><span><strong>{{ evidence.source_name }}</strong><small>{{ evidence.location }}</small></span></a>{% endfor %}</div></aside>
         </div>
       </section>

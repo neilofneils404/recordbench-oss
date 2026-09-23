@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Protocol, Sequence
 from urllib.parse import urlparse
 
+from .answer_presentation import (
+    GENERATED_ANSWER_INTRODUCTION,
+    GENERATED_TRANSCRIPT_INTRODUCTION,
+)
 from .review_budget import DEFAULT_REVIEW_BUDGET
 from .review_quality import answer_advances_objective, classify_question
 from .service_endpoints import validate_service_endpoint
@@ -22,7 +26,10 @@ MAX_EVIDENCE_ITEMS = DEFAULT_REVIEW_BUDGET.synthesis_inputs
 MAX_EVIDENCE_CHARS = DEFAULT_REVIEW_BUDGET.evidence_chars
 MAX_EVIDENCE_ITEM_CHARS = DEFAULT_REVIEW_BUDGET.evidence_item_chars
 MAX_ANSWER_CLAIMS = 8
-VERIFICATION_OMISSION_NOTICE = "Some generated statements were omitted because their source support could not be verified."
+# Retain the exact historical value for saved-work readers. New service output
+# describes the checks performed without claiming semantic verification.
+LEGACY_VERIFICATION_OMISSION_NOTICE = "Some generated statements were omitted because their source support could not be verified."
+VERIFICATION_OMISSION_NOTICE = "Some generated statements were omitted because they did not pass citation and text checks."
 MAX_HISTORY_CHARS = 6_000
 MAX_WORKING_CONTEXT_CHARS = 12_000
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -1332,17 +1339,9 @@ class GroundedGenerationService:
             for claim in accepted
         )
         introduction = (
-            (
-                "The machine transcript supports this orientation:"
-                if len(accepted) == 1
-                else "The machine transcript supports these orientation points:"
-            )
+            GENERATED_TRANSCRIPT_INTRODUCTION
             if transcript_only_claims
-            else (
-                "The searchable sources support this answer:"
-                if len(accepted) == 1
-                else "The searchable sources support these findings:"
-            )
+            else GENERATED_ANSWER_INTRODUCTION
         )
         source_limitation = limitation
         verification_notice = ""

@@ -1301,7 +1301,7 @@ def test_dual_modal_answer_resolves_page_and_timestamp_support(tmp_path):
             "available_evidence_kinds": ["written"],
             "used_evidence_kinds": ["written"],
             "missing_evidence_kinds": [],
-            "notice": "This answer includes source-verified written support.",
+            "notice": "This answer cites written passages. Check each claim against the original sources.",
         }
         document_only_citations = [
             citation
@@ -1532,7 +1532,7 @@ def test_media_answer_repairs_to_a_verified_timestamped_transcript_claim(tmp_pat
         )
         assert any(
             event.stage == "generating"
-            and event.message == "Rewriting the draft in source-close language for verification."
+            and event.message == "Rewriting the draft closer to the cited text for consistency checks."
             for event in events
         )
 

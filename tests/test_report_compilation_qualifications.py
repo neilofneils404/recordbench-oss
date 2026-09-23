@@ -4,7 +4,8 @@ from dataclasses import replace
 import pytest
 
 from case_intelligence.generation import (
-    MEDIA_TRANSCRIPT_NOTICE, EvidenceItem, GroundedGenerationService, VerifiedAnswer, VerifiedClaim,
+    MEDIA_TRANSCRIPT_NOTICE, VERIFICATION_OMISSION_NOTICE,
+    EvidenceItem, GroundedGenerationService, VerifiedAnswer, VerifiedClaim,
 )
 from case_intelligence.report_compilation import (
     CompilationBudget, CompilationMaterial, CompilationProblem, compile_report,
@@ -138,7 +139,7 @@ def test_real_verifier_notice_remains_uncited_beside_sourced_limitation(tmp_path
     first = replace(first, text="A synthetic delivery was recorded.",
                     citations=({**first.citations[0], "excerpt": "A synthetic delivery was recorded."},))
     selected = (first, material(2))
-    omission_notice = "Some generated statements were omitted because their source support could not be verified."
+    omission_notice = VERIFICATION_OMISSION_NOTICE
 
     class PartlySupportedClient:
         available = True

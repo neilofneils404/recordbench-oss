@@ -45,6 +45,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .derived_text import presentation_text
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
+from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, answer_limitation, answer_failure_notice, modality_coverage_notice, research_content, rejected_answer_content, rejected_answer_notice, review_rejection_notice, REJECTED_ANSWER_NOTICE
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
 from .exact_search import QuerySyntaxError, parse_query
 from .exact_search_results import (
@@ -64,6 +65,7 @@ from .identity import (
     LocalAccountSettings,
     LocalAuthenticationError,
     local_principal_enabled,
+    resolve_auth_mode,
     OidcAuthenticationError,
     OidcProviderClient,
     OidcSettings,
@@ -274,7 +276,7 @@ ANSWER_STAGE_LABELS = {
     "retrieving": "Finding relevant support",
     "reranking": "Prioritizing support",
     "generating": "Drafting from the best support",
-    "verifying": "Verifying claims and citations",
+    "verifying": "Checking citations and text",
     "complete": "Answer ready",
     "failed": "Answer needs attention",
     "cancelling": "Cancelling this request",
@@ -284,8 +286,8 @@ ANSWER_STAGE_MESSAGES = {
     "retrieving": "Searching this matter's searchable sources.",
     "reranking": "Comparing matching passages for relevance.",
     "generating": "Drafting only from the selected case support.",
-    "repairing": "Rewriting the draft in source-close language for verification.",
-    "verifying": "Checking every claim and citation against the retrieved record.",
+    "repairing": "Rewriting the draft closer to the cited text for consistency checks.",
+    "verifying": "Checking citation references and text consistency; meaning still needs human review.",
 }
 
 
@@ -4039,13 +4041,20 @@ class CaseIntelligenceWorkbench:
             ),
             "",
         )
+        body = answer.content
+        if payload.get("kind") == "generated":
+            introduction = payload.get("introduction")
+            body = answer_content(body, introduction if isinstance(introduction, str) else "", payload)
+            body = GENERATED_REVIEW_NOTICE + "\n\n" + body
+        elif payload.get("kind") == "not-supported":
+            body = rejected_answer_content(body, payload)
         return self.workspace.add_report_section(
             matter.matter_id,
             report_id,
             actor_id,
             expected_status=expected_status,
             heading=question[:200] or conversation.title,
-            body=answer.content,
+            body=body,
             origin="answer",
             origin_id=answer.message_id,
             citations=citations,
@@ -4404,11 +4413,7 @@ class CaseIntelligenceWorkbench:
             "The retrieved passages require direct review.",
             (),
             None,
-            (
-                "I found potentially relevant source passages, but the generated "
-                "answer did not pass source verification. Review the matches below "
-                "or ask a narrower question."
-            ),
+            REJECTED_ANSWER_NOTICE,
             (),
             True,
             0,
@@ -4759,7 +4764,7 @@ class CaseIntelligenceWorkbench:
             ) from exc
         except GenerationRejected as exc:
             raise AnswerJobFailure(
-                "I could not verify enough source support for a reliable answer. Try a narrower question or search the matter."
+                "No generated answer was retained after automated checks. Try a narrower question or search the matter."
             ) from exc
 
     def _assert_current_payload_support(
@@ -5151,7 +5156,7 @@ class CaseIntelligenceWorkbench:
             "queries": [initial_query(question)],
             "planner_version": PLANNER_VERSION,
             "synthesis_version": 1,
-            "method": "Source-backed identifier, date, name, and phrase follow-ups; bounded retrieval and verified synthesis.",
+            "method": "Source-backed identifier, date, name, and phrase follow-ups; bounded retrieval and generated synthesis for source review.",
         }
 
     def _process_research_job(
@@ -5571,7 +5576,7 @@ class CaseIntelligenceWorkbench:
         self.workspace.update_research_progress(
             job.job_id,
             stage="verifying",
-            message="Final verification complete. Saving the evidence and coverage ledger.",
+            message="Citation references checked. Saving the evidence and coverage ledger; generated meaning still needs human review.",
             completed_steps=total_steps,
             candidate_count=candidate_count,
             evidence_count=len(citations),
@@ -5765,13 +5770,13 @@ class CaseIntelligenceWorkbench:
                 )
             return ReviewDecisionResult(
                 "needs_attention",
-                "Potentially relevant passages were found, but an inclusion decision did not pass source verification.",
+                "Potentially relevant passages were found, but no inclusion decision was retained after automated checks.",
                 [
                     self._workflow_citation_payload(item)
                     for item in validated[:12]
                     if item is not None
                 ],
-                "Source verification did not resolve an inclusion decision.",
+                "Automated checks did not retain an inclusion decision. Review the source directly.",
             )
         if cancelled():
             raise WorkflowFailure("Review cancelled.")
@@ -6048,6 +6053,7 @@ def create_workbench_app(
     malware_scanner: MalwareScanner | None = None,
     malware_scan_mode: str | None = None,
 ) -> FastAPI:
+    selected_auth_mode = resolve_auth_mode(auth_mode)
     if background_ingestion is None:
         background_ingestion = os.getenv("CASE_INTELLIGENCE_BACKGROUND_INGESTION", "0") == "1"
     if ingestion_workers is None:
@@ -6062,7 +6068,6 @@ def create_workbench_app(
             answer_workers = 2
     # Recovery coordinators start in the workbench constructor. Install the
     # live account boundary before they can inspect any restored local jobs.
-    selected_auth_mode = (auth_mode or os.getenv("CASE_INTELLIGENCE_AUTH_MODE", "preview")).strip().lower()
     if selected_auth_mode == "local":
         local_settings = local_settings or LocalAccountSettings.from_env()
     bench = CaseIntelligenceWorkbench(
@@ -6101,7 +6106,7 @@ def create_workbench_app(
         identity = IdentityService(
             bench.workspace,
             bench.runtime_dir,
-            auth_mode=auth_mode,
+            auth_mode=selected_auth_mode,
             secure_cookie=secure_cookie,
             local_settings=local_settings,
             oidc_settings=oidc_settings,
@@ -6125,6 +6130,13 @@ def create_workbench_app(
 
     templates.env.finalize = present_value
     templates.env.globals.update(
+        answer_introduction=answer_introduction,
+        research_content=research_content,
+        rejected_answer_notice=rejected_answer_notice,
+        review_rejection_notice=review_rejection_notice,
+        answer_limitation=answer_limitation,
+        modality_coverage_notice=modality_coverage_notice,
+        generated_review_notice=GENERATED_REVIEW_NOTICE,
         product_name=PRODUCT_NAME,
         product_tagline=PRODUCT_TAGLINE,
         citation_href=_workspace_citation_href,
@@ -6176,6 +6188,19 @@ def create_workbench_app(
 
     @app.middleware("http")
     async def identity_boundary(request: Request, call_next):
+        if request.url.path == "/internal/auth-mode":
+            if (
+                request.method != "GET"
+                or request.client is None
+                or request.client.host not in {"127.0.0.1", "::1"}
+                or not identity.auth_diagnostic_authorized(request.headers.get("X-RecordBench-Auth-Diagnostic"))
+            ):
+                return Response(status_code=404, headers={"Cache-Control": "no-store"})
+            return JSONResponse({"auth_mode": identity.auth_mode}, headers={"Cache-Control": "no-store"})
+        if identity.auth_mode in {"preview", "test"} and (
+            request.client is None or request.client.host not in {"127.0.0.1", "::1", "testclient"}
+        ):
+            return PlainTextResponse("Development authentication is loopback-only.", status_code=403)
         request.state.request_id = f"request-{uuid.uuid4().hex}"
         public = (
             request.url.path == "/health"
@@ -6841,7 +6866,7 @@ def create_workbench_app(
                     kind="Focused answer",
                     activity_key=f"answer:{job.job_id}",
                     title="Focused answer",
-                    detail=job.message,
+                    detail=answer_failure_notice(job.message),
                     state=job.state,
                     href=_query_url(
                         f"/matters/{matter.slug}",
@@ -7702,7 +7727,7 @@ def create_workbench_app(
             "state": job.state,
             "stage": job.stage,
             "stage_label": stage_label,
-            "message": job.message,
+            "message": answer_failure_notice(job.message),
             "queue_position": bench.workspace.answer_queue_position(
                 matter.matter_id, context.principal_id, job.job_id
             ),
@@ -7728,7 +7753,7 @@ def create_workbench_app(
                     "state": event.state,
                     "stage": event.stage,
                     "stage_label": ANSWER_STAGE_LABELS[event.stage],
-                    "message": event.message,
+                    "message": answer_failure_notice(event.message),
                     "created_at": event.created_at,
                 }
                 for event in bench.workspace.answer_events(
@@ -9650,14 +9675,22 @@ def create_workbench_app(
                 active = replace(active, result={})
         research_synthesis = None
         research_synthesis_invalid = False
+        if active and active.state == "succeeded" and not research_stale:
+            try:
+                # Validate raw legacy and current results before presentation,
+                # as exports and Report copies do. Normalization must not make
+                # inconsistent saved summaries or per-search findings visible.
+                validate_research_basis(matter, active)
+            except (ValueError, KeyError, TypeError, AttributeError, IndexError, ExportProblem):
+                research_synthesis_invalid = True
+                active = replace(active, result={"budget": active.review_budget})
+                full_text_input = None
         if active and active.result.get("hierarchical_synthesis") is not None:
             from .hierarchical_synthesis import validate_state, completion_receipt
             try:
                 saved = active.result["hierarchical_synthesis"]
                 ledger, findings = validate_state(saved, active.result.get("passes", []),
                     active.result.get("evidence", []), final=active.state == "succeeded")
-                if active.state == "succeeded":
-                    validate_research_basis(matter, active)
                 research_synthesis = {**saved, **completion_receipt(saved, findings, ledger)}
             except (ValueError, KeyError, TypeError, AttributeError, IndexError, ExportProblem):
                 research_synthesis_invalid = True
@@ -15991,11 +16024,16 @@ def main() -> None:
         parser.error(
             "non-loopback binding is allowed only in the isolated container profile"
         )
+    try:
+        selected_auth_mode = resolve_auth_mode()
+    except RuntimeError as exc:
+        parser.error(str(exc))
     uvicorn.run(
-        create_workbench_app(args.runtime),
+        create_workbench_app(args.runtime, auth_mode=selected_auth_mode),
         host=args.host,
         port=args.port,
         access_log=False,
+        proxy_headers=False,
     )
 
 

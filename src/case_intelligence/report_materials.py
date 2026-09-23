@@ -15,7 +15,8 @@ import re
 import time
 from typing import Mapping
 
-from .generation import VERIFICATION_OMISSION_NOTICE
+from .answer_presentation import answer_content, modality_coverage_notice, rejected_answer_notice, review_rejection_notice
+from .generation import LEGACY_VERIFICATION_OMISSION_NOTICE, VERIFICATION_OMISSION_NOTICE
 from .report_compilation import CompilationMaterial
 from .unit_stream import UnitRecordLimit
 from .work_product_exports import MAX_EXPORT_TEXT_CHARS, validate_research_basis
@@ -290,15 +291,20 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
     validation_references = []
     resolver = _References(bench, matter)
 
-    def add(*, material_id, origin, title, text, citations=(), review_status="needs_review", revision="", author="", date_label="", category="note", review_details=""):
+    def add(*, material_id, origin, title, text, citations=(), review_status="needs_review", revision="", author="", date_label="", category="note", review_details="", raw_snapshot=None):
         resolver.check_budget()
         if not isinstance(text, str):
             raise WorkspaceProblem("A selected finding has unreadable text.")
         if not text.strip():
             return
+        source_snapshot_digest = ""
+        if raw_snapshot is not None and raw_snapshot != (text, review_details):
+            source_snapshot_digest = hashlib.sha256(json.dumps(raw_snapshot,
+                ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
         material = CompilationMaterial(material_id=material_id, origin=origin,
             title=title, text=text, citations=tuple(citations), review_status=review_status,
-            revision=revision, author=author, date_label=date_label, category=category, review_details=review_details)
+            revision=revision, author=author, date_label=date_label, category=category,
+            review_details=review_details, source_snapshot_digest=source_snapshot_digest)
         if material_id in materials:
             if material != materials[material_id]:
                 raise WorkspaceProblem("Overlapping selections contain conflicting versions of saved work.")
@@ -325,7 +331,7 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
             result.append(dict(value))
         return tuple(result)
 
-    def coverage(payload, prefix, revision, origin):
+    def coverage(payload, prefix, revision, origin, *, generated=False):
         for key, title in (("evidence_notice", "Saved evidence notice"), ("review_scope", "Saved review scope"),
                            ("source_coverage", "Saved source coverage"), ("modality_coverage", "Saved media coverage")):
             value = payload.get(key)
@@ -341,14 +347,26 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
                 continue
             else:
                 raise WorkspaceProblem("A saved answer has unreadable coverage information.")
+            raw_snapshot = (text, review_details)
+            if generated and key == "modality_coverage":
+                text = modality_coverage_notice(text)
+                if isinstance(value, Mapping):
+                    notice_key = "notice" if value.get("notice") else "summary"
+                    projected = modality_coverage_notice(value.get(notice_key))
+                    if projected != value.get(notice_key) and isinstance(value.get(notice_key), str):
+                        review_details = "Coverage values for source review:\n" + json.dumps(
+                            {**value, notice_key: projected}, ensure_ascii=False, sort_keys=True)
             add(material_id=f"{prefix}:{key}", origin=origin, title=title, text=text,
-                revision=revision, category="coverage", author="AI assistance", review_details=review_details)
+                revision=revision, category="coverage", author="AI assistance", review_details=review_details,
+                raw_snapshot=raw_snapshot)
 
     def claims(payload, prefix, title, revision, origin, ledger=None, fallback=""):
         if not isinstance(payload, Mapping):
             raise WorkspaceProblem("A saved answer is malformed. Reopen it before compiling a report.")
         if payload.get('recorded_context_job'):
             raise WorkspaceProblem('Export this answer with its context-supplied receipt. Report compilation cannot yet preserve that notice; choose different saved work.')
+        generated = (origin == "research" or payload.get("kind") in {"generated", "not-supported"}
+                     or ("kind" not in payload and type(payload.get("answerable")) is bool))
         values = payload.get("claims", [])
         if not isinstance(values, list):
             raise WorkspaceProblem("A saved answer has unreadable findings.")
@@ -369,10 +387,12 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
             # never infer source support for service-authored text.
             if isinstance(limitation, Mapping) and isinstance(limitation.get("text"), str):
                 legacy = limitation["text"]
-                if legacy == VERIFICATION_OMISSION_NOTICE or legacy.endswith(" " + VERIFICATION_OMISSION_NOTICE):
-                    sourced = legacy[:-len(VERIFICATION_OMISSION_NOTICE)].rstrip()
-                    limitation = {**limitation, "text": sourced} if sourced else None
-                    notice = VERIFICATION_OMISSION_NOTICE
+                for known_notice in (LEGACY_VERIFICATION_OMISSION_NOTICE, VERIFICATION_OMISSION_NOTICE):
+                    if legacy == known_notice or legacy.endswith(" " + known_notice):
+                        sourced = legacy[:-len(known_notice)].rstrip()
+                        limitation = {**limitation, "text": sourced} if sourced else None
+                        notice = known_notice
+                        break
         if limitation is not None:
             if not isinstance(limitation, Mapping) or not isinstance(limitation.get("text"), str):
                 raise WorkspaceProblem("A saved answer has an unreadable qualification.")
@@ -381,21 +401,28 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
                 revision=revision, category="gap", author="AI assistance")
         if notice.strip():
             add(material_id=f"{prefix}:verification_notice", origin=origin, title="Saved verification notice",
-                text=notice, revision=revision, category="coverage", author="AI assistance")
+                text=VERIFICATION_OMISSION_NOTICE if generated and notice == LEGACY_VERIFICATION_OMISSION_NOTICE else notice,
+                revision=revision, category="coverage", author="AI assistance", raw_snapshot=(notice, ""))
         missing = payload.get("missing_information")
         if missing is not None and not isinstance(missing, str):
             raise WorkspaceProblem("A saved answer has unreadable missing-information notes.")
         if isinstance(missing, str) and missing.strip():
+            presented = rejected_answer_notice(missing) if generated and (
+                payload.get("kind") == "not-supported" or payload.get("answerable") is False) else missing
             add(material_id=f"{prefix}:gap", origin=origin, title="Unanswered question",
-                text=missing, citations=references(payload.get("source_matches", []), ledger),
-                revision=revision, category="gap", author="AI assistance")
+                text=presented, citations=references(payload.get("source_matches", []), ledger),
+                revision=revision, category="gap", author="AI assistance", raw_snapshot=(missing, ""))
         elif not values and limitation is None:
             text = payload.get("introduction") or fallback
             if text:
+                if not isinstance(text, str):
+                    raise WorkspaceProblem("A selected finding has unreadable text.")
+                introduction = payload.get("introduction", "")
+                presented = answer_content(text, introduction) if payload.get("kind") == "generated" and isinstance(introduction, str) else text
                 add(material_id=f"{prefix}:gap", origin=origin, title="Saved response requiring review",
-                    text=text, citations=references(payload.get("source_matches", []), ledger),
-                    revision=revision, category="gap", author="AI assistance")
-        coverage(payload, prefix, revision, origin)
+                    text=presented, citations=references(payload.get("source_matches", []), ledger),
+                    revision=revision, category="gap", author="AI assistance", raw_snapshot=(text, ""))
+        coverage(payload, prefix, revision, origin, generated=generated)
 
     for selection in selections:
         kind, separator, identifier = selection.partition(":")
@@ -422,14 +449,16 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
                     claims(entry["answer"], f"{job.job_id}:pass:{index}", entry.get("query", job.title), job.updated_at, "research", ledger)
                 elif entry.get("text"):
                     add(material_id=f"{job.job_id}:pass-gap:{index}", origin="research", title=entry.get("query") or "Unanswered question",
-                        text=entry["text"], citations=references(entry.get("citations", []), ledger),
-                        revision=job.updated_at, category="gap", author="AI assistance")
+                        text=rejected_answer_notice(entry["text"]) if isinstance(entry["text"], str) else entry["text"],
+                        citations=references(entry.get("citations", []), ledger),
+                        revision=job.updated_at, category="gap", author="AI assistance", raw_snapshot=(entry["text"], ""))
             for index, gap in enumerate(job.result.get("gaps", [])):
                 if not isinstance(gap, Mapping):
                     raise WorkspaceProblem("An investigation has unreadable recorded gaps.")
+                note = gap.get("note") or "No finding was saved."
                 add(material_id=f"{job.job_id}:recorded-gap:{index}", origin="research",
-                    title=gap.get("query") or "Unanswered question", text=gap.get("note") or "No finding was saved.",
-                    revision=job.updated_at, category="gap", author="AI assistance")
+                    title=gap.get("query") or "Unanswered question", text=rejected_answer_notice(note) if isinstance(note, str) else note,
+                    revision=job.updated_at, category="gap", author="AI assistance", raw_snapshot=(note, ""))
             coverage_value = job.result.get("coverage", {})
             coverage({"review_scope": coverage_value}, f"{job.job_id}:scope", job.updated_at, "research")
         elif kind == "conversation":
@@ -496,15 +525,20 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
                 human = bool(item.human_decision)
                 reviewed += human
                 reviewer = bench.workspace.get_principal(item.reviewed_by).display_name if item.reviewed_by else "Team reviewer"
-                text = f"Machine screening: {item.machine_decision}.\n{item.rationale}"
+                raw_text = f"Machine screening: {item.machine_decision}.\n{item.rationale}"
+                text = f"Machine screening: {item.machine_decision}.\n{review_rejection_notice(item.rationale)}"
                 if verified_citations is not None:
                     text = "Saved full extracted-text screening summary; the complete reviewed ranges remain in the original ledger.\n" + text
+                    raw_text = "Saved full extracted-text screening summary; the complete reviewed ranges remain in the original ledger.\n" + raw_text
                 if item.error_message:
-                    text += f"\nSaved screening limitation: {item.error_message}"
+                    text += f"\nSaved screening limitation: {review_rejection_notice(item.error_message)}"
+                    raw_text += f"\nSaved screening limitation: {item.error_message}"
                 if human:
                     text += f"\nHuman decision: {item.human_decision}.\nHuman note: {item.human_note or 'None saved.'}"
+                    raw_text += f"\nHuman decision: {item.human_decision}.\nHuman note: {item.human_note or 'None saved.'}"
                 else:
                     text += "\nThis saved machine decision has not been reviewed by a person."
+                    raw_text += "\nThis saved machine decision has not been reviewed by a person."
                 material_id = f"{run.run_id}:{item.document_id}"
                 if verified_citations is not None and material_id not in materials:
                     full_text_citation_chars += sum(len(value["excerpt"]) for value in verified_citations)
@@ -513,12 +547,13 @@ def snapshot_report_materials(bench, matter, actor: str, selections: tuple[str, 
                         raise WorkspaceProblem("The selected source passages exceed the report's total citation-text limit. Choose fewer items of saved work.")
                     if full_text_reference_count > MAX_REFERENCES:
                         raise WorkspaceProblem("That selection has too many source references. Choose fewer items of saved work.")
+                review_details = f"Frozen source-content basis: {item.source_basis_digest}" if verified_citations is not None else ""
                 add(material_id=material_id, origin="human" if human else "source_review_ai",
                     title=item.source_name, text=text, citations=references(list(item.citations if verified_citations is None else verified_citations)),
                     review_status=_decision_review_status(item.machine_decision, item.human_decision),
                     revision=item.updated_at, author=reviewer if human else "AI screening",
                     category="decision" if human else "gap",
-                    review_details=f"Frozen source-content basis: {item.source_basis_digest}" if verified_citations is not None else "")
+                    review_details=review_details, raw_snapshot=(raw_text, review_details))
                 if verified_citations is not None:
                     full_text_material_ids.add(material_id)
             if total != run.snapshot_count:
