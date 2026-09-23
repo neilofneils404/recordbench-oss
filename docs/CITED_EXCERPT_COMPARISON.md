@@ -36,7 +36,9 @@ the existing source-validation budget gives a separate boundedness notice.
 Only after validating the complete unit does the response return its first
 6,000 characters at most, preserving whitespace. The notice identifies this as a
 prefix; it is not a relevance-selected excerpt. The full-source link opens the
-current source viewer, which may change after comparison. Transcript links seek
+current source viewer, which may change after comparison. Document links use the
+validated searchable-unit position, preserving physical PDF page labels even
+when preceding pages are blank or unreadable. Transcript links seek
 to the validated segment's start time and identify its segment. Both source and
 comparison return links retain the specific saved answer, even after newer
 answers are added. Historical version and

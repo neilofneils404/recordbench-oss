@@ -129,6 +129,56 @@ def test_comparison_links_return_to_selected_answer_after_newer_answer(long_answ
     assert f'id="answer-support-{selected.message_id}"' in original_page.text
 
 
+def test_pdf_full_source_selects_cited_physical_page_after_unsearchable_pages(long_answer, monkeypatch):
+    from pypdf import PdfReader
+    from case_intelligence.pilot_uploads import PilotUnit
+    from tests.test_workflow_quality_handoff import pdf_bytes
+
+    client, bench, matter, _, _, conversation, _ = long_answer
+    later_text = "Synthetic page four describes a different training observation."
+    original_bytes = pdf_bytes(("", STATEMENT, "", later_text))
+    pages = PdfReader(io.BytesIO(original_bytes)).pages
+    extracted = [(number, (page.extract_text() or "").strip())
+        for number, page in enumerate(pages, 1)]
+    searchable = [(number, text) for number, text in extracted if text]
+    assert searchable == [(2, STATEMENT), (4, later_text)]
+    store = bench.source_store(matter)
+    document, _ = store.store_stream("Synthetic skipped PDF pages.pdf", "application/pdf",
+        io.BytesIO(original_bytes), defer_processing=True)
+    # Seed synthetic parsed units from these actual PDF bytes. This isolates the
+    # navigation contract from the platform-specific extraction child sandbox.
+    with store.mutation_guard():
+        document.units = [asdict(PilotUnit(number, text,
+            excerpt_digest=hashlib.sha256(text.encode()).hexdigest())) for number, text in searchable]
+        document.page_count = len(pages)
+        document.state = "ready"
+        document.message = "Synthetic PDF with two searchable pages."
+        store._save()
+    bench._sync_source_catalog(matter, [document])
+    citation = bench._citation(matter, bench._candidate(matter, document, document.parsed_units()[0], 1))
+    assert citation.unit_number == 2 and citation.chunk_id == "chunk-1"
+    monkeypatch.setattr(bench, "_answer_search", lambda *args, **kwargs: (citation,))
+    message = bench.ask(matter, conversation, "What did the synthetic pressure reading show?")
+    assert message.payload["kind"] == "generated" and message.payload["claims"][0]["text"] == STATEMENT
+    before = bench.workspace.messages(matter.matter_id, conversation.conversation_id)
+    comparison = client.get(context_path(long_answer, message=message), params={"format": "json"})
+    assert comparison.status_code == 200
+    value = comparison.json()
+    assert value["state"] == "available" and value["excerpt"] == STATEMENT
+    assert value["passage_text"] == STATEMENT and value["location"] == "Page 2"
+    source = client.get(value["source_href"])
+    assert source.status_code == 200
+    selected_page = source.text.split('<h2 id="extracted-reader-heading">', 1)[1].split('</h2>', 1)[0]
+    assert selected_page == "Page 2 of 4"
+    assert '<pre>' + STATEMENT + '</pre>' in source.text
+    assert '<pre>' + later_text + '</pre>' not in source.text
+    assert '/content#page=2"' in source.text
+    assert parse_qs(urlsplit(value["source_href"]).query)["unit"] == ["1"]
+    assert bench.workspace.messages(matter.matter_id, conversation.conversation_id) == before
+    assert message.payload["claims"][0]["citations"][0] == saved_reference(bench, citation)
+    assert store.source_path(document.document_id).read_bytes() == original_bytes
+
+
 @pytest.mark.parametrize("long_answer", ["transcript"], indirect=True)
 @pytest.mark.parametrize("legacy_missing_lines", [False, True])
 def test_transcript_source_navigation_uses_validated_time_and_segment(long_answer, legacy_missing_lines):

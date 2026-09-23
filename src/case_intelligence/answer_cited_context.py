@@ -82,10 +82,10 @@ def saved_cited_context(bench, matter, conversation_id, message_id, passage, cit
         return result
     store = bench.source_store(matter)
     document = store.get(reference["document_id"])
-    source_parameters = {"unit": reference["unit_number"],
+    navigation = reference["source_navigation"]
+    source_parameters = {"unit": navigation["ordinal"],
         "entity_return_to": (f"/matters/{matter.slug}?conversation={conversation_id}"
             f"#answer-support-{message_id}")}
-    navigation = reference["source_navigation"]
     source_fragment = ""
     if reference["kind"] == "transcript":
         source_parameters["start_ms"] = navigation["start_ms"]
