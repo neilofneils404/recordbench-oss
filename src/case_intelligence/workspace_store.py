@@ -9486,6 +9486,7 @@ class WorkspaceStore:
         now = self._now()
         with self._lock, self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
+            self.membership(matter_id, actor_id)
             current = self.connection.execute(
                 "SELECT * FROM workbench_answer_job WHERE job_id=? AND matter_id=? AND actor_id=?",
                 (job_id, matter_id, actor_id),
@@ -10348,6 +10349,7 @@ class WorkspaceStore:
         now = self._now()
         with self._lock, self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
+            self.membership(matter_id, actor_id)
             current = self.connection.execute(
                 "SELECT * FROM workbench_research_job WHERE job_id=? "
                 "AND matter_id=? AND actor_id=?",
@@ -10359,7 +10361,6 @@ class WorkspaceStore:
             if full_text:
                 from .full_text_synthesis import validate_job_input
                 validate_job_input(self._research_job(current))
-                self.membership(matter_id, actor_id)
                 if validate_locked is None:
                     raise WorkspaceProblem("Resuming synthesis requires validation of its frozen input.")
                 if additional_passes or current["state"] == "succeeded":
@@ -11317,6 +11318,7 @@ class WorkspaceStore:
         now = self._now()
         with self._lock, self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
+            self.membership(matter_id, actor_id)
             run = self.review_run(matter_id, actor_id, run_id)
             if run.state in {"queued", "running"}:
                 return run

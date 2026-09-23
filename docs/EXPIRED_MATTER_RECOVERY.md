@@ -123,7 +123,10 @@ claimed deletion. The correction serializes authority, lifecycle and inventory
 reads with their writes using immediate SQLite transactions. Ingestion admission,
 plan confirmation, analysis start, media admission and overview retry now use
 the same boundary; failed-ingestion retry also requires an active matter in its
-update. Media admission previously failed with a raw integrity error from its
+update. Answer, investigation and every-source retry recheck membership and an
+active lifecycle inside their writer transactions. Failed-close export access
+does not authorize resuming those jobs in a quarantined matter. Media admission
+previously failed with a raw integrity error from its
 existing active-matter trigger; it now rejects through the ordinary lifecycle
 check. A completed extension still defeats a stale due scan. A purge that wins
 first prevents extension/new admission; active work that wins first defers purge.

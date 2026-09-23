@@ -220,3 +220,83 @@ def test_due_purge_waits_for_worker_and_late_completion_cannot_recreate_content(
     assert primary.connection.execute(
         "SELECT COUNT(*) FROM workbench_conversation WHERE matter_id=?", (matter.matter_id,),
     ).fetchone()[0] == 0
+
+
+def _failed_retry_work(store, matter, work_kind):
+    if work_kind == "answer":
+        job = _queue_answer(store, matter)
+        store.claim_answer_job("synthetic-answer-worker")
+        store.fail_answer_job(job.job_id, "Synthetic retry fixture.")
+        return lambda: store.retry_answer_job(matter.matter_id, ACTOR, job.job_id)
+    if work_kind == "research":
+        job, _ = store.queue_research_job(
+            matter.matter_id, ACTOR, "What happened in the synthetic record?",
+            "Synthetic investigation", "research-request-" + "b" * 32,
+        )
+        store.claim_research_job("synthetic-research-worker")
+        store.fail_research_job(job.job_id, "Synthetic retry fixture.")
+        return lambda: store.retry_research_job(matter.matter_id, ACTOR, job.job_id)
+
+    store.upsert_source_catalog(matter.matter_id, ({
+        "document_id": "a" * 32, "version_id": "b" * 32, "action_token": "c" * 32,
+        "display_name": "generated.txt", "relative_path": "generated.txt",
+        "media_type": "text/plain", "kind": "TXT", "source_state": "ready",
+        "tone": "ready", "state_label": "Searchable", "count_label": "1 line",
+        "processing_stage": "", "completed_units": 1, "total_units": 1,
+        "page_count": 1, "duration_ms": 0, "byte_size": 9, "origin": "upload",
+        "retryable": False, "removable": True, "has_video": False,
+        "content_basis_digest": "d" * 64,
+    },))
+    _, version = store.create_review_criterion(
+        matter.matter_id, ACTOR, title="Synthetic criterion",
+        instructions="Review the synthetic event.",
+    )
+    run = store.queue_review_run(matter.matter_id, ACTOR, version.criterion_version_id, run_kind="full")
+    store.claim_review_run("synthetic-review-worker")
+    store.fail_review_run(run.run_id, "Synthetic retry fixture.")
+    return lambda: store.retry_review_run(matter.matter_id, ACTOR, run.run_id)
+
+
+@pytest.mark.parametrize("work_kind", ["answer", "research", "review"])
+@pytest.mark.parametrize("purge_state", ["purging", "purge_failed"])
+def test_retry_cannot_cross_purge_claim_or_failed_close_recovery(
+    due_matter, work_kind, purge_state,
+):
+    primary, competing, matter, _ = due_matter
+    retry = _failed_retry_work(primary, matter, work_kind)
+    claims = []
+    errors = []
+
+    def claim_before_retry_writer_lock(statement):
+        if statement.strip().upper() != "BEGIN IMMEDIATE" or claims or errors:
+            return
+        try:
+            claimed = competing.begin_due_matter_purge(matter.matter_id, source_count=1)
+            claims.append(claimed)
+            if claimed is not None and purge_state == "purge_failed":
+                competing.fail_matter_purge(matter.matter_id, claimed[1].purge_id, "storage")
+        except Exception as exc:
+            errors.append(exc)
+
+    primary.connection.set_trace_callback(claim_before_retry_writer_lock)
+    try:
+        with pytest.raises((KeyError, WorkspaceProblem)):
+            retry()
+    finally:
+        primary.connection.set_trace_callback(None)
+
+    assert not errors
+    assert len(claims) == 1 and claims[0] is not None
+    assert primary.matter_lifecycle(matter.matter_id).state == purge_state
+    assert not any(primary.active_matter_work_counts(matter.matter_id).values())
+
+
+@pytest.mark.parametrize("work_kind", ["answer", "research", "review"])
+def test_retry_winning_before_purge_claim_keeps_work_active(due_matter, work_kind):
+    primary, competing, matter, _ = due_matter
+    retry = _failed_retry_work(primary, matter, work_kind)
+
+    assert retry().state == "queued"
+    assert competing.begin_due_matter_purge(matter.matter_id, source_count=1) is None
+    assert primary.matter_lifecycle(matter.matter_id).state == "active"
+    assert sum(primary.active_matter_work_counts(matter.matter_id).values()) == 1
