@@ -676,7 +676,7 @@ def answer_blocks(
     question: MessageRecord | None = None,
     *,
     exported_at: str | None = None,
-    presentation_notice: str = "",
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> tuple[ExportBlock, ...]:
     if (
         conversation.matter_id != matter.matter_id
@@ -719,7 +719,7 @@ def conversation_blocks(
     messages: Sequence[MessageRecord],
     *,
     exported_at: str | None = None,
-    presentation_notice: str = "",
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> tuple[ExportBlock, ...]:
     if (
         conversation.matter_id != matter.matter_id
@@ -1083,7 +1083,7 @@ def export_answer(
     format_name: str,
     *,
     exported_at: str | None = None,
-    presentation_notice: str = "",
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> ExportArtifact:
     created = exported_at or _now()
     blocks = answer_blocks(matter, conversation, answer, question, exported_at=created,
@@ -1099,7 +1099,7 @@ def export_conversation(
     format_name: str,
     *,
     exported_at: str | None = None,
-    presentation_notice: str = "",
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> ExportArtifact:
     created = exported_at or _now()
     blocks = conversation_blocks(matter, conversation, messages, exported_at=created,
@@ -1135,7 +1135,7 @@ def export_report(
     format_name: str,
     *,
     exported_at: str | None = None,
-    presentation_notice: str = "",
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> ExportArtifact:
     created = exported_at or _now()
     _validate_report_export_scope(matter, report, sections)
@@ -1191,7 +1191,7 @@ def export_research(
     format_name: str,
     *,
     exported_at: str | None = None,
-    presentation_notice: str = "",
+    presentation_notice: str = PDF_SAVED_RESULT_NOTICE,
 ) -> ExportArtifact:
     """Export one durable research run with its evidence and coverage ledger."""
 
@@ -1779,7 +1779,7 @@ def export_matter_bundle(
     exported_at: str | None = None,
 ) -> ExportArtifact:
     created = exported_at or _now()
-    presentation_notice = PDF_SAVED_RESULT_NOTICE if any(source.get("kind") == "PDF" for source in sources) else ""
+    presentation_notice = PDF_SAVED_RESULT_NOTICE
     report = matter_report_blocks(
         matter,
         conversations,

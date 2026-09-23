@@ -3586,13 +3586,9 @@ class CaseIntelligenceWorkbench:
         """Resolve citations once, then render formats inside the same boundary."""
 
         def render() -> tuple[ExportArtifact, ...]:
-            has_pdf = (any(source.matter_id == matter.matter_id and source.media_type == "application/pdf"
-                           for source in frozen_source_catalog) if frozen_source_catalog is not None
-                       else self.workspace.matter_readiness(matter.matter_id).pdf_count > 0)
             return tuple(
                 export_report(
                     matter, report, sections, format_name, exported_at=exported_at,
-                    presentation_notice=PDF_SAVED_RESULT_NOTICE if has_pdf else "",
                 )
                 for format_name in format_names
             )
@@ -3813,15 +3809,12 @@ class CaseIntelligenceWorkbench:
             self._assert_frozen_research_ledger(
                 matter, job, frozen_source_catalog
             )
-            return export_research(matter, job, format_name,
-                presentation_notice=PDF_SAVED_RESULT_NOTICE if any(
-                    source.media_type == "application/pdf" for source in frozen_source_catalog) else "")
+            return export_research(matter, job, format_name)
 
         store = self.source_store(matter)
         with store.mutation_guard():
             self._assert_current_research_ledger(matter, job)
-            return export_research(matter, job, format_name,
-                presentation_notice=PDF_SAVED_RESULT_NOTICE if self.workspace.matter_readiness(matter.matter_id).pdf_count else "")
+            return export_research(matter, job, format_name)
 
     def _assert_frozen_research_ledger(
         self,
@@ -6614,7 +6607,7 @@ def create_workbench_app(
             "partial_query": readiness.partial_query,
             "excluded_count": int(coverage["excluded_count"]),
             "coverage_notice": str(coverage["notice"]),
-            "pdf_presentation_notice": PDF_SAVED_RESULT_NOTICE if readiness.pdf_count else "",
+            "pdf_presentation_notice": PDF_SAVED_RESULT_NOTICE,
             "headline": headline,
             "summary": summary,
             "guidance": guidance,
@@ -15230,7 +15223,6 @@ def create_workbench_app(
             messages = bench.workspace.messages(matter.matter_id, conversation_id)
             artifact = export_conversation(
                 matter, conversation, messages, format_name,
-                presentation_notice=PDF_SAVED_RESULT_NOTICE if bench.workspace.matter_readiness(matter.matter_id).pdf_count else "",
             )
         except KeyError as exc:
             raise HTTPException(404, "Matter or conversation not found") from exc
@@ -15280,7 +15272,6 @@ def create_workbench_app(
             )
             artifact = export_answer(
                 matter, conversation, answer, question, format_name,
-                presentation_notice=PDF_SAVED_RESULT_NOTICE if bench.workspace.matter_readiness(matter.matter_id).pdf_count else "",
             )
         except (KeyError, StopIteration) as exc:
             raise HTTPException(404, "Saved answer not found") from exc

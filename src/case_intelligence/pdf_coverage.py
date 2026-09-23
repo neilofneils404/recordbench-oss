@@ -9,8 +9,8 @@ PDF_COVERAGE_NOTICE = (
 )
 
 PDF_SAVED_RESULT_NOTICE = (
-    "PDF extraction completeness is unknown for this saved result. This matter "
-    "contains PDF sources; a saved complete status does not establish that all "
+    "If this saved result used PDFs, their extraction completeness is unknown; "
+    "a saved complete status does not establish that all "
     "original PDF content was extracted or searched. This viewing/export note "
     "leaves the saved coverage receipt and citations unchanged."
 )

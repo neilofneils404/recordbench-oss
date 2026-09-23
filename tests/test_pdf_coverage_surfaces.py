@@ -5,6 +5,7 @@ OCR accuracy. Real image/OCR selection regressions are tested separately.
 """
 from __future__ import annotations
 
+from dataclasses import asdict
 import io
 import json
 import sys
@@ -203,6 +204,7 @@ def test_pdf_coverage_survives_search_answer_and_exports_without_reprocessing(tm
         historical = client.get(f'/matters/{slug}/sources/{token}')
         assert historical.status_code == 200 and PDF_COVERAGE_NOTICE in historical.text
         assert identity == (document.document_id, document.version_id, document.digest, bench._document_content_basis(document))
+
         foreign_slug = _matter(client, 'Generated unrelated PDF scope')
         foreign = bench.matter(foreign_slug, ACTOR)
         assert bench.workspace.matter_readiness(foreign.matter_id).pdf_count == 0
@@ -248,3 +250,58 @@ def test_pdf_coverage_survives_search_answer_and_exports_without_reprocessing(tm
                 if name.startswith(('conversations/', 'reports/')) and name.endswith('.md'):
                     assert PDF_SAVED_RESULT_NOTICE in archive.read(name).decode()
         assert identity == (document.document_id, document.version_id, document.digest, bench._document_content_basis(document))
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='The bounded PDF extraction subprocess requires Linux resource limits.')
+def test_saved_pdf_completeness_caution_survives_last_source_removal(tmp_path, monkeypatch):
+    monkeypatch.setenv('CASE_REVIEW_OCR_MODE', 'off')
+    app = create_workbench_app(tmp_path / 'runtime', generator=CoverageGenerator(),
+        auth_mode='test', malware_scanner=CleanScanner(), malware_scan_mode='extended')
+    with TestClient(app) as client:
+        slug = _matter(client, 'Generated historical source removal')
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        assert client.post(f'/matters/{slug}/uploads', files=[
+            ('files', ('generated.pdf', generated_native_pdf(), 'application/pdf')),
+        ]).status_code == 200
+        store = bench.source_store(matter)
+        document = next(iter(store.documents.values()))
+        assert document.state == 'ready', document.message
+        citation = bench._citation(matter, bench._candidate(matter, document, next(document.iter_parsed_units()), 1))
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        answer = bench.workspace.append_message(matter.matter_id, conversation.conversation_id,
+            'assistant', 'GeneratedPdfCoverageCanary describes a synthetic meeting.', {
+                'kind': 'generated', 'claims': [{'text': 'GeneratedPdfCoverageCanary describes a synthetic meeting.',
+                                               'citations': [asdict(citation)]}],
+                'source_coverage': {'mode': 'complete', 'searchable_count': 1, 'total_count': 1,
+                                    'excluded_count': 0, 'notice': ''},
+            })
+        def saved_receipt():
+            with bench.workspace._lock:
+                return bench.workspace.connection.execute(
+                    'SELECT payload_json FROM workbench_message WHERE message_id=?', (answer.message_id,)).fetchone()[0]
+        original = saved_receipt()
+        assert client.post(f'/matters/{slug}/sources/{store.action_token(document)}/remove', follow_redirects=False).status_code == 303
+        assert bench.workspace.matter_readiness(matter.matter_id).pdf_count == 0
+        for suffix in ('/export', f'/messages/{answer.message_id}/export'):
+            for format_name in ('markdown', 'docx'):
+                exported = client.get(f'/matters/{slug}/conversations/{conversation.conversation_id}{suffix}',
+                                      params={'format': format_name})
+                assert exported.status_code == 200
+                if format_name == 'docx':
+                    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+                        text = archive.read('word/document.xml').decode()
+                else:
+                    text = exported.text
+                assert PDF_SAVED_RESULT_NOTICE in text
+        page = client.get(f'/matters/{slug}', params={'conversation': conversation.conversation_id})
+        assert page.status_code == 200 and PDF_SAVED_RESULT_NOTICE in page.text
+        bundle = client.get(f'/matters/{slug}/export')
+        assert bundle.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+            conversations = json.loads(archive.read('conversations.json'))
+            assert conversations['conversations'][0]['presentation_notice'] == PDF_SAVED_RESULT_NOTICE
+            for name in archive.namelist():
+                if name.startswith('conversations/') and name.endswith('.md'):
+                    assert PDF_SAVED_RESULT_NOTICE in archive.read(name).decode()
+        assert saved_receipt() == original

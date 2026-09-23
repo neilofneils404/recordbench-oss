@@ -62,7 +62,9 @@ There is no new schema, source registry field or automatic backfill. Historical
 PDFs receive a conservative coverage notice without fabricated OCR outcomes or
 changed extraction/citation identity. Ready sources cannot be retried in place.
 Historical answer and investigation views, and answer, investigation and Report
-exports in matters containing PDFs, receive a separate caveat. Their original
+exports, receive a separate conditional PDF caveat. It survives removal of the
+last PDF because the current catalog cannot establish historical absence of PDFs.
+Their original
 coverage receipts and citations remain unchanged, including a historical saved
 complete status.
 To obtain new extraction for an already-ready PDF, explicitly ingest it as a new
@@ -76,8 +78,8 @@ The generated synthetic image-PDF suite exercises real ingestion, CPU OCR and
 exact phrase search for long/short stamps, image-only pages, native text, small
 logos, mixed regions/pages and existing text layers. Blank-page exclusions and
 rotated-page selection, native preservation and coverage cautions are also
-checked. It checks original
-bytes, digest, source version, page locators and restart behavior. Outcome tests
+checked, along with original bytes, digest, source version, page locators and
+restart behavior. Outcome tests
 separately inject timeouts, failures and resource caps to verify their reporting;
 those tests are not recognition-quality evidence.
 
