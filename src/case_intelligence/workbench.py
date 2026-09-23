@@ -9648,14 +9648,22 @@ def create_workbench_app(
                 active = replace(active, result={})
         research_synthesis = None
         research_synthesis_invalid = False
+        if active and active.state == "succeeded" and not research_stale:
+            try:
+                # Validate raw legacy and current results before presentation,
+                # as exports and Report copies do. Normalization must not make
+                # inconsistent saved summaries or per-search findings visible.
+                validate_research_basis(matter, active)
+            except (ValueError, KeyError, TypeError, AttributeError, IndexError, ExportProblem):
+                research_synthesis_invalid = True
+                active = replace(active, result={"budget": active.review_budget})
+                full_text_input = None
         if active and active.result.get("hierarchical_synthesis") is not None:
             from .hierarchical_synthesis import validate_state, completion_receipt
             try:
                 saved = active.result["hierarchical_synthesis"]
                 ledger, findings = validate_state(saved, active.result.get("passes", []),
                     active.result.get("evidence", []), final=active.state == "succeeded")
-                if active.state == "succeeded":
-                    validate_research_basis(matter, active)
                 research_synthesis = {**saved, **completion_receipt(saved, findings, ledger)}
             except (ValueError, KeyError, TypeError, AttributeError, IndexError, ExportProblem):
                 research_synthesis_invalid = True

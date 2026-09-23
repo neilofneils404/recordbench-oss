@@ -1,8 +1,10 @@
 # Independent review correction plan
 
 Status snapshot, September 23, 2026: seven portable correction packets have
-standalone CI receipts and remain **draft, open and unmerged**. The heads below
-record the initial integration audit; follow-up corrections require fresh receipts.
+standalone CI receipts. **#112 is merged** at
+`0534e5c1a508d916d667588ad9886b0292e02702`; the other six remain draft and open.
+The packet heads below record the initial integration audit; follow-up corrections
+and base updates require fresh receipts.
 Integration review and final-candidate validation are in progress. Independent
 local security review and genuine full-head maintainer acceptance remain required.
 Hosted security review is not required for this correction series, following the
@@ -14,8 +16,9 @@ does not close that issue or claim installed/GPU/release acceptance.
 Authoritative planning baseline: GitHub OSS `main` at
 `a33d93b5302fc0f726f361ae2e3341883a4bdd77`, verified with `git ls-remote` and
 an isolated fresh checkout. This is exactly the external review's commit.
-The seven standalone packets started from that same revision, which remains the
-verified protected-main baseline for this integration snapshot. Refresh GitHub and
+The seven standalone packets started from that same revision. Protected main
+subsequently advanced to `0534e5c1a508d916d667588ad9886b0292e02702` through #112's
+accepted, guarded fast-forward at 14:34 UTC on September 23. Refresh GitHub and
 record the actual base and candidate before each update or merge, preserving
 unrelated work. The receipts below do not validate later corrections, base updates,
 or the future combined candidate.
@@ -93,15 +96,22 @@ those reviews. Keep each PR draft until its actual candidate meets these gates.
 Use the [public-alpha](PUBLIC_ALPHA.md) policy for any future strict hosted-review
 opt-in; no repository-wide review implementation is changed here.
 
-The renewed review also identified a #113 resource-bound follow-up: tab-heavy
-DOCX content must be bounded before serialized XML/run expansion. That correction
-requires its own regression and fresh candidate validation.
+The renewed review identified a #113 resource-bound follow-up. Commit
+`350e81317979583b589e95468eccaf3393dbe8e9` now preflights total DOCX XML bytes
+and runs before allocation. Its 174 affected checks and 120 independent boundary
+cases passed; fresh code review completed without further findings. Its Linux CI
+and eventual integrated-candidate validation remain separate.
 
 Integration review also identified two #115 follow-ups: apply the source-text
 presentation policy to fetched excerpts without changing exact JSON/digests, and
 hold the existing response lease through the final HTML/JSON body byte so matter
-purge cannot overlap delivery. Both require synthetic regressions and renewed
-final-head evidence; the standalone #115 receipts below predate these corrections.
+purge cannot overlap delivery. Commit `3c74e371af0d13b5e95e7b117269aa2711faa7a1`
+includes both corrections, with 199 focused checks and 11 browser checks passing.
+The direct comparison page still depends on #113's server-side presentation
+policy: keep its review finding open until the real merged dependency and a
+permanent fallback regression validate #115's actual candidate. The standalone
+receipts below predate these corrections. Other existing response lease paths
+and coordination between full application processes need a separate lifecycle audit.
 
 Feature-document links outside this packet use immutable PR-head permalinks until
 the corresponding change is merged.
@@ -114,7 +124,11 @@ the corresponding change is merged.
   [generated-answer review](GENERATED_ANSWER_REVIEW.md). The follow-up correction
   in this packet normalizes matching historical research introductions across
   views, per-search findings, exports and new Report copies while retaining saved
-  records. Its fresh review and CI must replace the earlier-head receipts before merge.
+  records. A subsequent GET-path correction validates all succeeded legacy/current
+  results before presentation and hides malformed derived text without rewriting
+  storage. Three raw-mismatch GET cases failed before that guard; 185 related
+  research/synthesis/report/confidence/documentation checks now pass. Fresh review
+  and CI must replace the earlier-head receipts before merge.
 
 - **[#111](https://github.com/neilofneils404/recordbench-oss/pull/111) — R5 retention/recovery.**
   Serializes purge, work admission, extension and retry checks; includes synthetic clean-restore evidence and an expired-matter recovery runbook. Retention policy is unchanged.
@@ -122,6 +136,11 @@ the corresponding change is merged.
   [Push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35853955393);
   [PR Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35853961013);
   [expired-matter recovery](https://github.com/neilofneils404/recordbench-oss/blob/1c86f96d5f4027e56f0705b9a15af618a557f16d/docs/EXPIRED_MATTER_RECOVERY.md).
+  Updated candidate `2d066094d36d2ed7ac368c8d7c8654b8b39d0772` incorporates accepted
+  #112 main without conflicts. Its 764 combined checks passed with one optional
+  encrypted-backup integration skip; both restore drills and independent local
+  integration/security review passed. Current-head CI/code review and acceptance
+  remain required; the links above describe the original standalone head.
 
 - **[#112](https://github.com/neilofneils404/recordbench-oss/pull/112) — R3/R6 authentication/cache.**
   Requires explicit auth, restricts preview/test access, checks effective installed mode, and exercises actual account-writer changes. Overlayfs/tmpfs and installed providers remain open.
@@ -129,6 +148,9 @@ the corresponding change is merged.
   [Push Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35852516468);
   [PR Quality](https://github.com/neilofneils404/recordbench-oss/actions/runs/35852585836);
   [authentication diagnostics](https://github.com/neilofneils404/recordbench-oss/blob/0534e5c1a508d916d667588ad9886b0292e02702/docs/AUTHENTICATION_DIAGNOSTICS.md).
+  **Merged at this exact head** after explicit maintainer acceptance, successful
+  current checks, completed code/local-security review and publication inspection.
+  GitHub and remote main independently confirmed the protected fast-forward.
 
 - **[#113](https://github.com/neilofneils404/recordbench-oss/pull/113) — R4 source controls.**
   Preserves source snapshots while projecting unsupported controls safely for derived prose and readable exports; handles older saved data. Versioned TXT extraction remains open.
@@ -427,7 +449,7 @@ current upstream [public-alpha](PUBLIC_ALPHA.md) policy: Quality and branch
 protections always apply; hosted review is optional unless `require-hosted-review`
 is enabled. Strict opt-in requires final-head code/security review, reconciliation
 and maintainer acceptance. Honor any additional review requirements explicitly
-set by the maintainer for this work. Do not change review policy as part of these
+set by the maintainer for this work. Do not change the repository review implementation as part of these
 fixes. Each implementation section must have its own reviewed change and receipt;
 tracking an issue or publishing a draft PR does not establish acceptance.
 

@@ -179,7 +179,7 @@ A failed source remains visible and is excluded from searching until repaired;
 it does not prevent the rest of the matter from being used.
 
 The [independent review correction plan](docs/REVIEW_CORRECTION_PLAN.md) tracks
-seven draft correction packets, their recorded validation, and the remaining
+seven correction packets, their merge status, recorded validation, and the remaining
 integrated and installed acceptance work.
 
 ## What RecordBench uses

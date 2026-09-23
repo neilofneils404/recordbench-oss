@@ -25,7 +25,10 @@ Historical investigation summaries and per-search findings receive the same
 leading-introduction treatment in the research view, Word/Markdown/JSON exports,
 complete bundles and newly copied Report sections. The structured exported answer
 introduction is also normalized. Exact saved-result and source-ledger validation
-runs against the original record before any export presentation change. Copies
+runs against the original record before any succeeded-result view, export or
+Report-copy presentation change. Invalid saved results remain stored unchanged;
+the research page hides their derived text and offers a recovery notice. This
+checks the saved ledger, not whether an old source is still current. Copies
 to Reports carry the generated-text notice; the saved investigation, claims,
 citations and source bytes remain unchanged. Research instructions and progress
 describe citation/text checks, not verified meaning.
@@ -58,4 +61,7 @@ of the installed model's error rate or GPU acceptance.
 introductions on a saved investigation and checks its research view, all three
 export formats, complete bundle and Report copy. A custom-introduction control
 and quoted-text check prevent broad replacement. The original result JSON and
-extracted source units must remain byte-for-byte/equality unchanged.
+extracted source units must remain byte-for-byte/equality unchanged. Mismatched
+raw introductions, summary claims and per-search findings are refused by exports
+and Report copies and hidden on the research page, even when presentation would
+otherwise make two inconsistent saved strings look identical.

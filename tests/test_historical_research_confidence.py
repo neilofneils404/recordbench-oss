@@ -105,19 +105,36 @@ def test_presentation_changes_only_a_matching_leading_introduction():
     assert answer_content(old + " followed by unrelated prose", old) == old + " followed by unrelated prose"
 
 
-def test_mismatched_historical_summary_is_rejected_before_presentation(workspace):
+@pytest.mark.parametrize("mismatch", ["summary_introduction", "summary_claim", "finding"])
+def test_mismatched_historical_summary_is_rejected_before_presentation(workspace, mismatch):
     client, bench, matter = workspace
-    job, _ = saved_research(bench, matter)
+    job, document = saved_research(bench, matter)
     result = copy.deepcopy(job.result)
     result["answer"]["introduction"] = "The searchable sources support this answer:"
-    # Both texts would display identically after normalization, but their saved
-    # forms disagree. Presentation must never repair this provenance mismatch.
-    result["summary"] = GENERATED_ANSWER_INTRODUCTION + "\n" + result["summary"]
+    result["summary"] = result["answer"]["introduction"] + "\n" + result["summary"]
+    if mismatch == "summary_introduction":
+        # These forms would display identically after normalization; that must
+        # never repair the raw mismatch, including on the research GET page.
+        result["summary"] = result["summary"].replace(
+            result["answer"]["introduction"], GENERATED_ANSWER_INTRODUCTION, 1,
+        )
+    elif mismatch == "summary_claim":
+        result["summary"] = result["answer"]["introduction"] + "\nSynthetic incompatible claim."
+    else:
+        result["passes"][0]["text"] = "Synthetic incompatible finding."
+    encoded = json.dumps(result)
+    original_units = document.parsed_units()
     with bench.workspace._lock, bench.workspace.connection:
         bench.workspace.connection.execute(
             "UPDATE workbench_research_job SET result_json=? WHERE job_id=?",
-            (json.dumps(result), job.job_id),
+            (encoded, job.job_id),
         )
+    page = client.get(f"/matters/{matter.slug}/research?job={job.job_id}")
+    assert page.status_code == 200
+    assert "checkpoint could not be verified" in page.text
+    assert "Its derived text is hidden" in page.text
+    assert 'class="research-summary prose"' not in page.text
+    assert "Synthetic incompatible" not in page.text
     for format_name in ("json", "markdown", "docx"):
         response = client.get(
             f"/matters/{matter.slug}/research/{job.job_id}/export?format={format_name}",
@@ -127,3 +144,7 @@ def test_mismatched_historical_summary_is_rejected_before_presentation(workspace
     response = client.post(f"/matters/{matter.slug}/research/{job.job_id}/report", follow_redirects=False)
     assert response.status_code == 303 and "error=" in response.headers["location"]
     assert not bench.workspace.reports(matter.matter_id, ACTOR)
+    assert bench.workspace.connection.execute(
+        "SELECT result_json FROM workbench_research_job WHERE job_id=?", (job.job_id,),
+    ).fetchone()[0] == encoded
+    assert document.parsed_units() == original_units
