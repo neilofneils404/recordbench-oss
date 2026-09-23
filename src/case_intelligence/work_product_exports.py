@@ -41,6 +41,8 @@ ZIP_MEDIA_TYPE = "application/zip"
 CSV_MEDIA_TYPE = "text/csv; charset=utf-8"
 JSON_MEDIA_TYPE = "application/json; charset=utf-8"
 MAX_EXPORT_TEXT_CHARS = 10_000_000
+MAX_DOCX_XML_BYTES = 100 * 1024 * 1024
+MAX_DOCX_RUNS = 250_000
 MAX_WORKFLOW_EXPORT_BYTES = 100 * 1024 * 1024
 MAX_BUNDLE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 MAX_READABLE_REVIEW_DECISIONS = 500
@@ -51,6 +53,29 @@ _TEXT_PRESENTATION_NOTICE = (
 _DOCX_LINE_ENDING_NOTICE = (
     "Carriage-return line endings were normalized to line breaks in this Word document. "
     "Original source text and saved citation references are unchanged."
+)
+_DOCX_CAPACITY_MESSAGE = (
+    "This Word export contains too much text or formatting to prepare safely. "
+    "Export a smaller selection or choose Markdown."
+)
+_DOCX_STYLE_MAP = {
+    "title": "Title", "subtitle": "Subtitle", "heading1": "Heading1",
+    "bullet": "ListBullet", "citation": "Citation", "note": "Note",
+    "metadata": "Metadata", "footer": "Footer",
+}
+_DOCX_TEXT_RUN_OPEN = '<w:r><w:t xml:space="preserve">'
+_DOCX_TEXT_RUN_CLOSE = "</w:t></w:r>"
+_DOCX_TAB_RUN = "<w:r><w:tab/></w:r>"
+_DOCX_BREAK_RUN = "<w:r><w:br/></w:r>"
+_DOCX_DOCUMENT_OPEN = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    '<w:body>'
+)
+_DOCX_DOCUMENT_CLOSE = (
+    '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
+    '<w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr>'
+    "</w:body></w:document>"
 )
 
 _PORTABLE_REVIEW_METRICS = (
@@ -1020,32 +1045,78 @@ def _xml_text(value: str) -> str:
     return xml_escape(presentation_text(value), quote=False).replace("\r", "&#13;")
 
 
+def _paragraph_open(block: ExportBlock) -> str:
+    style = _DOCX_STYLE_MAP.get(block.style, "Normal")
+    return f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr>'
+
+
+def _xml_text_byte_count(value: str, *, body: bool = False) -> int:
+    """Count escaped UTF-8 bytes without constructing an expanded XML string."""
+
+    total = 0
+    for start in range(0, len(value), 16_384):
+        part = presentation_text(value[start:start + 16_384])
+        total += (len(part.encode("utf-8")) + 4 * part.count("&")
+                  + 3 * (part.count("<") + part.count(">")))
+        if body:
+            # Body delimiters become runs, counted separately. Removing both
+            # CR/LF bytes also handles a CRLF pair split across these chunks.
+            total -= part.count("\t") + part.count("\r") + part.count("\n")
+        else:
+            total += 4 * part.count("\r")  # _xml_text emits &#13;.
+        if total > MAX_DOCX_XML_BYTES:
+            raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+    return total
+
+
+def _check_docx_capacity(
+    blocks: Sequence[ExportBlock], *, title: str, created_at: str, fixed_xml_bytes: int,
+) -> None:
+    """Reject expanded XML and run-list growth before allocating either one."""
+
+    xml_bytes = fixed_xml_bytes
+    for value in (title, PRODUCT_NAME, created_at):
+        # One input character needs at least one escaped byte, even when the
+        # presentation policy replaces it. Refuse huge metadata before copying.
+        if xml_bytes + len(value) > MAX_DOCX_XML_BYTES:
+            raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+        xml_bytes += _xml_text_byte_count(value)
+    runs = 0
+    for block in blocks:
+        tabs = block.text.count("\t")
+        breaks = (block.text.count("\n") + block.text.count("\r")
+                  - block.text.count("\r\n"))
+        text_runs = 1 + tabs + breaks
+        runs += text_runs + tabs + breaks
+        if runs > MAX_DOCX_RUNS:
+            raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+        xml_bytes += (
+            len(_paragraph_open(block)) + len("</w:p>")
+            + text_runs * (len(_DOCX_TEXT_RUN_OPEN) + len(_DOCX_TEXT_RUN_CLOSE))
+            + tabs * len(_DOCX_TAB_RUN) + breaks * len(_DOCX_BREAK_RUN)
+        )
+        if xml_bytes > MAX_DOCX_XML_BYTES:
+            raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+        xml_bytes += _xml_text_byte_count(block.text, body=True)
+    if xml_bytes > MAX_DOCX_XML_BYTES:
+        raise ExportProblem(_DOCX_CAPACITY_MESSAGE)
+
+
 def _paragraph_xml(block: ExportBlock) -> str:
-    style_map = {
-        "title": "Title",
-        "subtitle": "Subtitle",
-        "heading1": "Heading1",
-        "bullet": "ListBullet",
-        "citation": "Citation",
-        "note": "Note",
-        "metadata": "Metadata",
-        "footer": "Footer",
-    }
-    style = style_map.get(block.style, "Normal")
     runs: list[str] = []
     lines = block.text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     for index, line in enumerate(lines):
         if index:
-            runs.append("<w:r><w:br/></w:r>")
+            runs.append(_DOCX_BREAK_RUN)
         for part_index, part in enumerate(line.split("\t")):
             if part_index:
-                runs.append("<w:r><w:tab/></w:r>")
+                runs.append(_DOCX_TAB_RUN)
             runs.append(
-                '<w:r><w:t xml:space="preserve">'
+                _DOCX_TEXT_RUN_OPEN
                 + _xml_text(part)
-                + "</w:t></w:r>"
+                + _DOCX_TEXT_RUN_CLOSE
             )
-    return f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr>{"".join(runs)}</w:p>'
+    return _paragraph_open(block) + "".join(runs) + "</w:p>"
 
 
 def blocks_to_docx(
@@ -1072,15 +1143,6 @@ def blocks_to_docx(
                 "This export is too large to prepare at once. Export the conversations individually."
             )
         blocks = (*blocks, *notices)
-    document = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        '<w:body>'
-        + "".join(_paragraph_xml(block) for block in blocks)
-        + '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
-        '<w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr>'
-        "</w:body></w:document>"
-    )
     # Larger title glyphs can consume an implicit half-inch tab stop in Word
     # readers. Explicit one-inch stops keep title word boundaries visible.
     styles = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1112,11 +1174,25 @@ def blocks_to_docx(
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>"""
-    core = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    core_template = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-<dc:title>{_xml_text(title)}</dc:title><dc:creator>{_xml_text(PRODUCT_NAME)}</dc:creator>
-<dcterms:created xsi:type="dcterms:W3CDTF">{_xml_text(created_at)}</dcterms:created>
+<dc:title>{title}</dc:title><dc:creator>{creator}</dc:creator>
+<dcterms:created xsi:type="dcterms:W3CDTF">{created_at}</dcterms:created>
 </cp:coreProperties>"""
+    fixed_parts = (
+        content_types, package_rels, document_rels, styles,
+        core_template.format(title="", creator="", created_at=""),
+        _DOCX_DOCUMENT_OPEN, _DOCX_DOCUMENT_CLOSE,
+    )
+    _check_docx_capacity(
+        blocks, title=title, created_at=created_at,
+        fixed_xml_bytes=sum(len(part.encode("utf-8")) for part in fixed_parts),
+    )
+    document = (_DOCX_DOCUMENT_OPEN + "".join(_paragraph_xml(block) for block in blocks)
+                + _DOCX_DOCUMENT_CLOSE)
+    core = core_template.format(
+        title=_xml_text(title), creator=_xml_text(PRODUCT_NAME), created_at=_xml_text(created_at),
+    )
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("[Content_Types].xml", content_types)

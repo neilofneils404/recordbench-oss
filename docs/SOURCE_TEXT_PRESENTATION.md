@@ -58,6 +58,16 @@ larger title style to retain visible word separation. Metadata
 retains supported characters exactly; carriage returns use XML character references
 so an XML parser cannot silently change them to LF. Literal text such as `&#13;`
 remains literal. Both normalization notes count toward the existing export limit.
+Before building paragraph runs, document XML or the ZIP package, DOCX export also
+checks a 250,000-run limit and a 100 MiB total uncompressed XML limit. The byte
+budget includes escaped UTF-8 text, explicit tab/line-break runs, paragraph and
+package markup, metadata and normalization notices. The preflight counts in
+bounded chunks without constructing the expanded XML. This prevents tab-heavy
+or heavily escaped text from turning an otherwise admitted text payload into an
+unbounded allocation or a highly compressed oversized document. The existing
+10-million-character text limit is retained; ordinary text within both budgets
+keeps its existing representation. A rejected Word export directs the reviewer
+to a smaller selection or Markdown without changing sources or saved work.
 Markdown and work-product CSV exports use the same presentation policy. DOCX and Markdown
 include a note when this serialization changes text; CSV keeps its existing
 table shape. Structured JSON and full-text ledger CSV retain exact source
@@ -88,6 +98,11 @@ DOCX path, and exact saved citation recovery using SQLite online backup followed
 by a clean database restore and integrity check. No schema migration or source
 storage change is required. This bounded control-store restore does not replace
 the full installed-node backup and recovery drill.
+
+Small patched-capacity regressions check tab/CR/LF expansion and cumulative runs
+before paragraph allocation, exact serialized-byte and run boundaries, metadata,
+normalization notices and unchanged ordinary text. They exercise the same limits
+without constructing a large document or changing the frozen acceptance cases.
 
 The serializer defect can be reproduced with synthetic legacy records containing
 XML-invalid controls. That demonstrates serializer reachability and parser
