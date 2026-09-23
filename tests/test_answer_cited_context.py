@@ -332,3 +332,51 @@ def test_authority_rechecked_after_context_resolution_and_render(protected_answe
     assert citation.excerpt not in response.text and "Synthetic generated comparison canary" not in response.text
     if response.status_code == 404:
         assert response.headers.get("cache-control") == "no-store"
+
+
+@pytest.mark.parametrize("format_name", ["html", "json"])
+def test_admin_demotion_with_retained_membership_cannot_expose_foreign_navigation(tmp_path,
+        monkeypatch, format_name):
+    from fastapi.testclient import TestClient
+    from tests.test_matter_management import _app, _headers, ADMIN, USER_GROUP
+
+    monkeypatch.setenv("CASE_INTELLIGENCE_STORAGE_RESERVE_GIB", "0")
+    with TestClient(_app(tmp_path), base_url="https://recordbench.example.test") as client:
+        assert client.get("/matters/new", headers=_headers(ADMIN)).status_code == 200
+        bench, identity = client.app.state.workbench, client.app.state.identity
+        actor = identity.resolve(client.cookies.get(SESSION_COOKIE)).principal_id
+        matter = bench.create_matter("Synthetic administrator member matter", "", actor)
+        other = "synthetic-unrelated-owner"
+        bench.workspace.upsert_principal("test", other, "Synthetic unrelated owner", other,
+            preferred_principal_id=other)
+        foreign = bench.create_matter("Synthetic foreign navigation canary", "", other)
+        document, _ = bench.source_store(matter).store_stream("Synthetic context.txt", "text/plain",
+            io.BytesIO(b"Synthetic source passage."))
+        bench._sync_source_catalog(matter, [document])
+        citation = bench._citation(matter, bench._candidate(matter, document, document.parsed_units()[0], 1))
+        conversation = bench.workspace.get_conversation(matter.matter_id)
+        message = bench.workspace.append_message(matter.matter_id, conversation.conversation_id,
+            "assistant", "Synthetic passage.", {"kind": "generated", "claims": [{
+                "text": "Synthetic passage.", "citations": [saved_reference(bench, citation)]}]})
+        fixture = (client, bench, matter, document, citation, conversation, message)
+        original = bench._saved_answer_references
+        demoted = []
+
+        def resolve_then_demote(*args, **kwargs):
+            result = original(*args, **kwargs)
+            monkeypatch.setattr(identity, "kerberos_group_resolver", lambda principal: {USER_GROUP})
+            demoted.append(True)
+            return result
+
+        monkeypatch.setattr(bench, "_saved_answer_references", resolve_then_demote)
+        response = client.get(context_path(fixture), params={"format": format_name}, headers=_headers(ADMIN))
+        assert demoted
+        assert response.status_code == (404 if format_name == "html" else 200)
+        assert foreign.display_name not in response.text
+        if format_name == "json":
+            assert response.json()["state"] == "available"
+            assert response.json()["excerpt"] == citation.excerpt
+        else:
+            assert citation.excerpt not in response.text
+        assert response.headers["cache-control"] == "no-store"
+        assert client.get(f"/matters/{foreign.slug}", headers=_headers(ADMIN)).status_code == 404

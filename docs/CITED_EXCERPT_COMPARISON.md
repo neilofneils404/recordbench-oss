@@ -19,7 +19,11 @@ conversation. It cannot supply replacement citation data. The app reads only tha
 message's bounded payload, authorizes current matter access, and resolves one
 citation under the existing source mutation guard and workspace lock. It rechecks
 live session/provider authority and matter access before reading and after
-rendering. Existing audited administrator read-only access is preserved.
+rendering. HTML also rechecks administrator authority used by its wider matter
+navigation, even when the actor is a member of the requested matter. Losing that
+role mid-request refuses the page; JSON remains available with current membership
+because it contains no wider navigation. Existing audited administrator read-only
+access is preserved.
 
 Resolution reuses the saved-work validator: source identity/version, locator,
 full-unit text digest and compatible legacy citation rules must match. In

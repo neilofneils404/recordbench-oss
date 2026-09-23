@@ -13565,14 +13565,15 @@ def create_workbench_app(
                                   authorized_matter=authorized_matter, auth_context=auth_context,
                                   templates=templates, base_context=base_context)
 
-    def refresh_context_authority(request, slug, original, administrator_override):
+    def refresh_context_authority(request, slug, original, administrator_override, *, require_administrator=False):
         current = identity.resolve(request.cookies.get(SESSION_COOKIE), read_only=True)
         if current is not None and identity.auth_mode == "kerberos":
             current = identity.bind_kerberos_request(current,
                 request.headers.get(KERBEROS_USER_HEADER), request.headers.get(KERBEROS_SECRET_HEADER))
         try:
             if (current is None or current.principal_id != original.principal_id
-                    or not current.principal.active or (administrator_override and not current.is_administrator)):
+                    or not current.principal.active
+                    or ((administrator_override or require_administrator) and not current.is_administrator)):
                 raise KeyError(original.principal_id)
             return bench.matter(slug, current.principal_id, administrator=administrator_override)
         except KeyError as exc:
@@ -15037,8 +15038,10 @@ def create_workbench_app(
                         "comparison": comparison,
                         "answer_href": _query_url(f"/matters/{slug}", conversation=conversation_id) + "#latest",
                     }, headers={"Cache-Control": "no-store"})
-            # Source validation and rendering may outlive the first access check.
-            refresh_context_authority(request, slug, context, administrator_override)
+            # HTML navigation also uses the original administrator role, even
+            # when target-matter access was granted through ordinary membership.
+            refresh_context_authority(request, slug, context, administrator_override,
+                require_administrator=format_name == "html" and context.is_administrator)
             return response
 
     @app.post(
