@@ -110,6 +110,9 @@ At least one parsed response records `parsed_responses_observed_not_inference_at
 even a malformed response or abstention is only response evidence, not inference
 or quality attestation. Failed requests cannot establish whether inference ran.
 Record actual runtime/GPU/driver details without private hostnames or paths.
+Runtime declarations and the initial capture metadata must encode as finite UTF-8
+JSON before the first identity observation or model request. Invalid Unicode in
+metadata therefore cannot consume all planned requests before receipt creation fails.
 
 ```console
 PYTHONPATH=src python scripts/evaluate-claims.py capture \
@@ -148,6 +151,11 @@ repeatable protocol and retained outputs, not identical stochastic answers.
 Ollama uses the production 8192 context setting; compatible API context capacity
 comes from the server launch evidence. Capture is single-pass: no repair, retrieval,
 saved context, ingestion, browser, or supported-hardware acceptance is implied.
+Each attempt separately records whether the adapter returned a parsed response.
+Non-finite or unencodable parsed output remains a failed attempt with that observation
+retained, without storing the unsafe raw value. Adapter parsing failures preserve
+earlier completed samples and the planned population; identity and redirect boundary
+failures still abort the capture.
 
 Offline readiness remains `not_exercised` unless the operator supplies
 `operator_attested` plus a SHA-256 for separate offline execution evidence.
@@ -177,6 +185,11 @@ An omitted requested fact is an answer error even if its surviving claims are tr
 
 Grades bind to the exact capture and rubric digests. Scoring refuses stale,
 missing, duplicate or extra samples/claim grades and altered verifier results.
+It also checks the complete recorded generation protocol and each prompt against
+the frozen case and adapter settings, plus the declared model catalog and fixed
+scope/acceptance fields. Failure rows cannot carry generated-output fields that
+would otherwise disappear from human grading. Parsed-response evidence, row states,
+verifier outcomes and typed aggregate counters must agree.
 Use the captured code revision; code-fingerprint changes require an explicit new
 evaluation, not silent regrading with different verification. Hashes detect edits
 and bind artifacts; they are not signatures or independent runtime attestation.

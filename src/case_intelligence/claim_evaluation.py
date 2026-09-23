@@ -5,6 +5,7 @@ Use production verification code; do not use its verdict as semantic ground trut
 """
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -23,6 +24,7 @@ from .generation import (
     GroundedGenerationService, OllamaGenerator, OpenAICompatibleGenerator,
     _exact_original_span, _prompt, verify_original_claim,
 )
+from .review_budget import DEFAULT_REVIEW_BUDGET
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITE_PATH = ROOT / "benchmarks/r1b-claims-v2.json"
@@ -44,6 +46,36 @@ def adapter_name(client):
     raise ValueError("Capture requires a supported production adapter.")
 
 
+def capture_configuration(adapter, model, repetitions, disable_thinking):
+    if adapter not in ("OllamaGenerator", "OpenAICompatibleGenerator"):
+        raise ValueError("Capture configuration requires a supported adapter.")
+    if not isinstance(model, str) or not model or model != model.strip() or len(model) > 200:
+        raise ValueError("Capture configuration requires a valid adapter model name.")
+    if type(repetitions) is not int or not 1 <= repetitions <= 20:
+        raise ValueError("Capture configuration repetitions invalid.")
+    if ((adapter == "OllamaGenerator" and disable_thinking is not None)
+        or (adapter == "OpenAICompatibleGenerator" and type(disable_thinking) is not bool)):
+        raise ValueError("Capture configuration thinking option does not match the adapter.")
+    return {"repetitions": repetitions, "seed": None,
+            "seed_status": "production_adapters_do_not_set_seed",
+            "history": [], "working_context": "", "grounding_repair": False,
+            "adapter": adapter, "model": model, "disable_thinking": disable_thinking,
+            "temperature": 0.1, "output_tokens": DEFAULT_REVIEW_BUDGET.output_tokens,
+            "context_tokens": 8192 if adapter == "OllamaGenerator" else "server_configured",
+            "response_schema": copy.deepcopy(ANSWER_SCHEMA)}
+
+
+def receipt_protocol(mode):
+    if mode not in ("model_capture", "injected_verifier_probes"):
+        raise ValueError("Unsupported receipt protocol mode.")
+    return {"schema_version": 1, "suite_id": load_suite()["suite_id"], "suite_sha256": SUITE_SHA256,
+            "mode": mode, "synthetic": True,
+            "release_acceptance": "pending_no_release_threshold_defined",
+            "supported_hardware_acceptance": "not_established",
+            "retrieval": "fixed_evidence_no_embedding_or_reranker_calls",
+            "scope": "single_pass_claim_checks_no_repair_retrieval_storage_or_browser_acceptance"}
+
+
 def validate_identity_snapshot(snapshot, model, artifact_digest, adapter):
     if not isinstance(snapshot, dict) or set(snapshot) != {"method", "model", "artifact_sha256"}:
         raise ValueError("Identity checker must return a complete matched snapshot, not a no-op.")
@@ -61,6 +93,15 @@ def digest(value):
                                      ensure_ascii=False).encode()).hexdigest()
 
 
+def json_equal(left, right):
+    """Compare recorded JSON without accepting bool/int/float substitutions."""
+    try:
+        return json.dumps(left, sort_keys=True, separators=(",", ":"), allow_nan=False) == json.dumps(
+            right, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError):
+        return False
+
+
 def load_suite():
     suite = json.loads(SUITE_PATH.read_text(encoding="utf-8"))
     if digest(suite) != SUITE_SHA256:
@@ -72,14 +113,49 @@ def seal(receipt):
     return {**receipt, "receipt_sha256": digest(receipt)}
 
 
+def validate_capture_row(row):
+    common = {"sample_id", "case_id", "repetition", "prompt", "elapsed_ms",
+              "state", "parsed_response_received"}
+    if (not isinstance(row, dict) or not isinstance(row.get("state"), str)
+        or row["state"] not in {"generated", "generation_failure"}):
+        raise ValueError("Invalid capture sample state.")
+    generated = row["state"] == "generated"
+    fields = {"raw", "verification", "schema_valid"} if generated else {"failure_type"}
+    if set(row) != common | fields:
+        raise ValueError("Capture sample fields must match their recorded state.")
+    if (not isinstance(row["sample_id"], str) or not isinstance(row["case_id"], str)
+        or type(row["repetition"]) is not int or type(row["elapsed_ms"]) is not int
+        or row["elapsed_ms"] < 0 or type(row["parsed_response_received"]) is not bool):
+        raise ValueError("Invalid capture sample identity, timing or parsed-response evidence.")
+    if generated:
+        if (row["parsed_response_received"] is not True
+            or type(row["schema_valid"]) is not bool or not isinstance(row["verification"], dict)):
+            raise ValueError("Generated samples require complete parsed output evidence.")
+        try:
+            json.dumps(row["raw"], ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise ValueError("Generated samples must retain finite UTF-8 JSON output.") from exc
+    elif (not isinstance(row["failure_type"], str)
+          or row["failure_type"] not in {"GenerationRejected", "GenerationUnavailable"}
+          or (row["parsed_response_received"] and row["failure_type"] != "GenerationRejected")):
+        raise ValueError("Invalid capture failure or parsed-response evidence.")
+
+
 def validate_receipt(receipt):
+    if not isinstance(receipt, dict):
+        raise ValueError("Capture receipt must be a JSON object.")
+    try:
+        json.dumps(receipt, sort_keys=True, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise ValueError("Capture receipt must be finite UTF-8 JSON.") from exc
     body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     if receipt.get("receipt_sha256") != digest(body):
         raise ValueError("Capture digest mismatch.")
     if receipt.get("suite_sha256") != SUITE_SHA256:
         raise ValueError("Capture uses a different frozen suite.")
-    if receipt.get("schema_version") != 1:
-        raise ValueError("Unsupported receipt schema.")
+    protocol = receipt_protocol(receipt.get("mode"))
+    if not json_equal({key: receipt.get(key) for key in protocol}, protocol):
+        raise ValueError("Capture receipt contradicts the frozen evaluation protocol.")
     if receipt.get("mode") == "model_capture":
         runtime = receipt.get("runtime")
         if (not isinstance(runtime, dict)
@@ -100,13 +176,26 @@ def validate_receipt(receipt):
                    for key, field in (("upstream_model_id", "model_id"),
                                       ("upstream_revision", "revision"), ("license", "license")))):
             raise ValueError("Declared artifact provenance must match the selected pinned model profile.")
-        repetitions = receipt.get("configuration", {}).get("repetitions")
-        if type(repetitions) is not int or not 1 <= repetitions <= 20:
-            raise ValueError("Capture repetitions invalid.")
+        configuration = receipt.get("configuration")
+        if not isinstance(configuration, dict):
+            raise ValueError("Capture configuration must be a JSON object.")
+        try:
+            expected_configuration = capture_configuration(
+                configuration["adapter"], configuration["model"],
+                configuration["repetitions"], configuration["disable_thinking"])
+        except KeyError as exc:
+            raise ValueError("Capture configuration is incomplete.") from exc
+        if not json_equal(configuration, expected_configuration):
+            raise ValueError("Capture configuration contradicts the fixed adapter protocol.")
+        repetitions = configuration["repetitions"]
         cases = {case["case_id"]: case for case in load_suite()["cases"]}
         expected = {f"{case_id}:{repetition}" for case_id in cases
                     for repetition in range(1, repetitions + 1)}
         rows = receipt.get("results", [])
+        if not isinstance(rows, list):
+            raise ValueError("Capture results must be a complete list of samples.")
+        for row in rows:
+            validate_capture_row(row)
         if (len(rows) != len(expected) or {row["sample_id"] for row in rows} != expected
             or receipt.get("generation", {}).get("attempts") != len(expected)):
             raise ValueError("Capture must contain every planned sample exactly once.")
@@ -115,6 +204,11 @@ def validate_receipt(receipt):
                 or row["sample_id"] != f"{row['case_id']}:{row['repetition']}"
                 or row.get("state") not in {"generated", "generation_failure"}):
                 raise ValueError("Invalid capture sample identity or state.")
+            case = cases[row["case_id"]]
+            evidence = tuple(EvidenceItem(**item) for item in case["evidence"])
+            system, user = _prompt(case["question"], evidence, (), "", grounding_repair=False)
+            if not json_equal(row.get("prompt"), {"system": system, "user": user}):
+                raise ValueError("Capture sample prompt differs from the frozen case protocol.")
         # Verification is code-sensitive. Score with the recorded implementation;
         # do not silently replay a later verifier against an old capture.
         fingerprints = receipt["execution"]["implementation_sha256"]
@@ -127,11 +221,11 @@ def validate_receipt(receipt):
         for row in rows:
             if row["state"] == "generated":
                 evidence = tuple(EvidenceItem(**item) for item in cases[row["case_id"]]["evidence"])
-                if row["verification"] != verify_output(row["raw"], evidence):
+                if not json_equal(row["verification"], verify_output(row["raw"], evidence)):
                     raise ValueError("Stored verification differs from captured code replay.")
                 if row["schema_valid"] is not Draft202012Validator(ANSWER_SCHEMA).is_valid(row["raw"]):
                     raise ValueError("Stored schema validity differs from captured output.")
-        if receipt["generation"] != generation_counts(rows):
+        if not json_equal(receipt["generation"], generation_counts(rows)):
             raise ValueError("Generation counters disagree with the complete capture.")
         identity = receipt.get("runtime_identity")
         if not isinstance(identity, dict) or set(identity) != {
@@ -144,8 +238,10 @@ def validate_receipt(receipt):
         if (type(identity["observations"]) is not int or identity["observations"] != 2 * len(rows) + 1
             or identity["boundaries"] != IDENTITY_BOUNDARIES or identity["limitation"] != IDENTITY_LIMITATION):
             raise ValueError("Runtime identity evidence has incomplete boundaries or limitations.")
-        if receipt["models"]["components"][0]["execution"] != generator_execution(rows):
-            raise ValueError("Generator execution evidence disagrees with capture results.")
+        expected_models = model_records(generator["profile"], generator_exercised=True)
+        expected_models["components"][0]["execution"] = generator_execution(rows)
+        if not json_equal(receipt["models"], expected_models):
+            raise ValueError("Recorded model catalog disagrees with the pinned manifest or capture scope.")
 
 
 def model_records(profile, *, generator_exercised):
@@ -177,17 +273,11 @@ def execution_metadata():
 
 
 def base_receipt(mode, profile):
-    suite = load_suite()
     return {
-        "schema_version": 1, "suite_id": suite["suite_id"], "suite_sha256": SUITE_SHA256,
-        "mode": mode, "synthetic": True,
+        **receipt_protocol(mode),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "execution": execution_metadata(),
         "models": model_records(profile, generator_exercised=mode == "model_capture"),
-        "release_acceptance": "pending_no_release_threshold_defined",
-        "supported_hardware_acceptance": "not_established",
-        "retrieval": "fixed_evidence_no_embedding_or_reranker_calls",
-        "scope": "single_pass_claim_checks_no_repair_retrieval_storage_or_browser_acceptance",
     }
 
 
@@ -286,6 +376,10 @@ def validate_runtime(runtime):
                 "upstream_model_id", "upstream_revision", "license"}
     if not isinstance(runtime, dict) or set(runtime) != required:
         raise ValueError("Runtime profile must contain exactly the documented fields.")
+    try:
+        json.dumps(runtime, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise ValueError("Runtime profile must be finite, UTF-8 JSON.") from exc
     for field in ("runtime_name", "runtime_version", "accelerator", "driver"):
         if not isinstance(runtime[field], str) or not 1 <= len(runtime[field]) <= 160:
             raise ValueError("Runtime description is missing or too long.")
@@ -331,33 +425,42 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
         first_identity = dict(snapshot)
         identity_observations += 1
     receipt.update(runtime={**runtime, "basis": "operator_declared_not_independently_verified"},
-                   configuration={"repetitions": repetitions, "seed": None,
-                       "seed_status": "production_adapters_do_not_set_seed",
-                       "history": [], "working_context": "", "grounding_repair": False,
-                       "adapter": adapter, "model": client.model,
-                       "disable_thinking": getattr(client, "disable_thinking", None),
-                       "temperature": 0.1, "output_tokens": 1200,
-                       "context_tokens": 8192 if adapter == "OllamaGenerator" else "server_configured",
-                       "response_schema": ANSWER_SCHEMA}, results=[])
+                   configuration=capture_configuration(
+                       adapter, client.model, repetitions, getattr(client, "disable_thinking", None)), results=[])
+    # Metadata is part of the final evidence too. Refuse an unencodable runtime
+    # or model alias before any identity request or expensive generation call.
+    try:
+        json.dumps(receipt, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise ValueError("Capture metadata must be finite, UTF-8 JSON.") from exc
     for case in load_suite()["cases"]:
         evidence = tuple(EvidenceItem(**item) for item in case["evidence"])
         system, user = _prompt(case["question"], evidence, (), "", grounding_repair=False)
         for repetition in range(1, repetitions + 1):
             row = {"sample_id": f"{case['case_id']}:{repetition}", "case_id": case["case_id"],
-                   "repetition": repetition, "prompt": {"system": system, "user": user}}
+                   "repetition": repetition, "prompt": {"system": system, "user": user},
+                   "parsed_response_received": False}
             checked_identity()
             start = time.monotonic()
             try:
-                raw = client.generate(question=case["question"], evidence=evidence)
+                try:
+                    raw = client.generate(question=case["question"], evidence=evidence)
+                except ValueError as exc:
+                    # An adapter parse failure is one failed attempt, not a
+                    # reason to discard earlier samples. Identity/transport
+                    # boundary exceptions remain outside this data-error catch.
+                    raise GenerationRejected("Model response could not be parsed.") from exc
+                row["parsed_response_received"] = True
                 try:
                     json.dumps(raw, ensure_ascii=False, allow_nan=False).encode("utf-8")
-                except (ValueError, UnicodeError) as exc:
+                except (TypeError, ValueError, UnicodeError) as exc:
                     raise GenerationRejected("Model output is not finite, UTF-8 JSON.") from exc
                 row.update(state="generated", raw=raw, verification=verify_output(raw, evidence),
                            schema_valid=Draft202012Validator(ANSWER_SCHEMA).is_valid(raw))
             except (GenerationRejected, GenerationUnavailable) as exc:
                 # No remote error text: it may contain endpoint or runtime details.
-                row.update(state="generation_failure", failure_type=type(exc).__name__)
+                row.update(state="generation_failure", failure_type=(
+                    "GenerationUnavailable" if isinstance(exc, GenerationUnavailable) else "GenerationRejected"))
             finally:
                 checked_identity()
             row["elapsed_ms"] = round((time.monotonic() - start) * 1000)
@@ -372,7 +475,7 @@ def capture(client, *, profile, runtime, repetitions, identity_check):
 
 def generator_execution(rows):
     return ("parsed_responses_observed_not_inference_attestation"
-            if any(row["state"] == "generated" for row in rows)
+            if any(row["parsed_response_received"] for row in rows)
             else "attempted_no_parsed_response")
 
 
