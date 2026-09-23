@@ -1,3 +1,4 @@
+{% from "workbench_cited_context_macros.html" import cited_context %}
 <aside class="matter-assistant" data-assistant-dock data-assistant-presentation="{{ assistant.presentation }}" data-fragment-url="{{ assistant.fragment_url }}" data-matter-id="{{ matter.matter_id }}" data-conversation-id="{{ assistant.conversation.conversation_id }}" data-matter-ready="{{ 'true' if assistant.matter_ready else 'false' }}" aria-label="Ask RecordBench">
   <button class="assistant-collapsed-tab" type="button" data-assistant-expand aria-label="Open Ask RecordBench">
     <span class="assistant-brand-mark" aria-hidden="true">RB</span>
@@ -62,12 +63,36 @@
             {% if message.payload.evidence_notice %}<small class="assistant-evidence-note">Machine transcript · verify wording and speaker identity against the recording.</small>{% endif %}
             <ol class="assistant-claims">
               {% for claim in message.payload.claims %}
+              {% set claim_index = loop.index0 %}
               <li>{{ claim.text }}
-                {% if claim.citations %}<span class="assistant-citations">{% for citation in claim.citations[:2] %}<a href="{{ citation_href(citation, matter.slug, assistant.conversation.conversation_id, entity_return_to=source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))) }}">{{ citation.source_name }} · {{ citation.location }}</a>{% endfor %}</span>{% endif %}
+                {% if claim.citations %}
+                <div class="assistant-citations cited-context-list">
+                  {% for citation in claim.citations %}
+                  <div class="cited-context-item">
+                    <a href="{{ citation_href(citation, matter.slug, assistant.conversation.conversation_id, entity_return_to=source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))) }}">{{ citation.source_name }} · {{ citation.location }}</a>
+                    {{ cited_context(matter.slug, assistant.conversation.conversation_id, message.message_id, 'claim-' ~ claim_index, loop.index0, citation) }}
+                  </div>
+                  {% endfor %}
+                </div>
+                {% endif %}
               </li>
               {% endfor %}
             </ol>
-            {% if message.payload.limitation %}<p class="assistant-limitation"><strong>Limitation:</strong> {{ message.payload.limitation.text }}</p>{% endif %}
+            {% if message.payload.limitation %}
+            <div class="assistant-limitation">
+              <p><strong>Limitation:</strong> {{ message.payload.limitation.text }}</p>
+              {% if message.payload.limitation.citations %}
+              <div class="assistant-citations cited-context-list">
+                {% for citation in message.payload.limitation.citations %}
+                <div class="cited-context-item">
+                  <a href="{{ citation_href(citation, matter.slug, assistant.conversation.conversation_id, entity_return_to=source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))) }}">{{ citation.source_name }} · {{ citation.location }}</a>
+                  {{ cited_context(matter.slug, assistant.conversation.conversation_id, message.message_id, 'limitation', loop.index0, citation) }}
+                </div>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            {% endif %}
           {% elif message.payload.kind == 'not-supported' %}
             <p>{{ message.payload.missing_information or message.content }}</p>
             {% if message.payload.source_matches %}<span class="assistant-citations">{% for citation in message.payload.source_matches[:3] %}<a href="{{ citation_href(citation, matter.slug, assistant.conversation.conversation_id, entity_return_to=source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))) }}">Review {{ citation.source_name }} · {{ citation.location }}</a>{% endfor %}</span>{% endif %}

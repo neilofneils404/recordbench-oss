@@ -1,4 +1,5 @@
 {% extends "workbench_base.html" %}
+{% from "workbench_cited_context_macros.html" import cited_context %}
 
 {% block title %}{{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}workspace-page {% if support %}support-is-open{% endif %} {% if support and support.evidence_kind == 'transcript' %}support-media-is-open{% endif %}{% endblock %}
@@ -362,8 +363,9 @@
                         <button type="submit">Save passage to case notes</button>
                       </form>
                       {% if claim.citations %}
-                      <div class="citation-list">
+                      <div class="citation-list cited-context-list">
                         {% for citation in claim.citations %}
+                        <div class="cited-context-item">
                         <div class="citation-with-save">
                           <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">
                             {% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}
@@ -373,6 +375,8 @@
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <button type="submit" aria-label="Save {{ citation.source_name }} {{ citation.location }} to notebook">Save</button>
                           </form>
+                        </div>
+                        {{ cited_context(matter.slug, conversation.conversation_id, message.message_id, 'claim-' ~ claim_index, loop.index0, citation) }}
                         </div>
                         {% endfor %}
                       </div>
@@ -384,9 +388,12 @@
                   <div class="answer-limitation">
                     <p><strong>Limitation:</strong> {{ message.payload.limitation.text }}</p>
                     {% if message.payload.limitation.citations %}
-                    <div class="citation-list">
+                    <div class="citation-list cited-context-list">
                       {% for citation in message.payload.limitation.citations %}
+                      <div class="cited-context-item">
                       <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
+                      {{ cited_context(matter.slug, conversation.conversation_id, message.message_id, 'limitation', loop.index0, citation) }}
+                      </div>
                       {% endfor %}
                     </div>
                     {% endif %}

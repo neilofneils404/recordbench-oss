@@ -6927,6 +6927,7 @@ def create_workbench_app(
         active: MatterRecord | None = None,
         *,
         readiness: dict[str, object] | None = None,
+        include_assistant: bool = True,
     ) -> dict[str, object]:
         context = auth_context(request)
         membership = None
@@ -6976,7 +6977,7 @@ def create_workbench_app(
                 membership_present=membership is not None,
                 readiness=active_readiness,
             )
-            if active is not None and active_readiness is not None
+            if include_assistant and active is not None and active_readiness is not None
             else None
         )
         preference = bench.workspace.principal_preference(context.principal_id)
@@ -15008,6 +15009,37 @@ def create_workbench_app(
             + f"#{item.item_id}",
             status_code=303,
         )
+
+    @app.get("/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/cited-context/{passage}/{citation_index}")
+    def answer_cited_context(
+        request: Request, slug: str, conversation_id: str, message_id: str,
+        passage: str, citation_index: int,
+        format_name: str = Query("html", alias="format", pattern="^(html|json)$"),
+    ):
+        from .answer_cited_context import saved_cited_context
+
+        context = auth_context(request)
+        matter = authorized_matter(request, slug)
+        administrator_override = getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+        with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
+            refresh_context_authority(request, slug, context, administrator_override)
+            try:
+                comparison = saved_cited_context(bench, matter, conversation_id,
+                    message_id, passage, citation_index)
+            except KeyError as exc:
+                raise HTTPException(404, "Saved answer citation not found") from exc
+            if format_name == "json":
+                response = JSONResponse(comparison, headers={"Cache-Control": "no-store"})
+            else:
+                response = templates.TemplateResponse(request=request,
+                    name="workbench_cited_context.html", context={
+                        **base_context(request, matter, include_assistant=False), "matter": matter,
+                        "comparison": comparison,
+                        "answer_href": _query_url(f"/matters/{slug}", conversation=conversation_id) + "#latest",
+                    }, headers={"Cache-Control": "no-store"})
+            # Source validation and rendering may outlive the first access check.
+            refresh_context_authority(request, slug, context, administrator_override)
+            return response
 
     @app.post(
         "/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/notebook/claims/{claim_index}",

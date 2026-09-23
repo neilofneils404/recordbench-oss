@@ -1,0 +1,21 @@
+{% extends "workbench_base.html" %}
+{% block title %}Compare cited context · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block content %}
+<main id="main-content" tabindex="-1" class="notebook-shell cited-context-page">
+  <h1>Compare cited context</h1>
+  <p><a href="{{ answer_href }}">Return to answer</a></p>
+  <h2>Generated passage</h2>
+  <p class="cited-context-passage">{{ comparison.passage_text }}</p>
+  <h2>{{ comparison.source_name }} · {{ comparison.location }}</h2>
+  <p>{{ comparison.notice }}</p>
+  {% if comparison.state == 'available' %}
+  <blockquote class="cited-context-excerpt" tabindex="0" aria-label="Cited source excerpt">{{ comparison.excerpt }}</blockquote>
+  <p><a href="{{ comparison.source_href }}">Open full source (current view)</a></p>
+  {% endif %}
+  <details><summary>Historical citation basis</summary>
+    <p>Source version: <code>{{ comparison.source_version_id or 'Not recorded' }}</code></p>
+    <p>Full-unit SHA-256: <code>{{ comparison.excerpt_digest or 'Not recorded' }}</code></p>
+    <p>Comparison does not modify the saved answer or its citation basis. The source viewer shows current content.</p>
+  </details>
+</main>
+{% endblock %}

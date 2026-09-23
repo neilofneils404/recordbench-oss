@@ -2185,6 +2185,12 @@ textarea::placeholder,
   border-bottom: 1px solid var(--line-soft);
 }
 
+.active-conversation-heading > div {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .active-conversation-heading > div > span {
   color: var(--ink-faint);
   font-size: 10px;
@@ -6300,6 +6306,37 @@ body.assistant-available .next-steps { display: none; }
 .assistant-claims > li { padding-left: 2px; color: var(--ink); font-size: 12px; line-height: 1.5; }
 .assistant-citations { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .assistant-citations a { padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--blue-action); font-size: 9px; font-weight: 700; }
+.cited-context-page { min-width: 0; overflow-wrap: anywhere; }
+.cited-context-passage { white-space: pre-wrap; }
+.cited-context-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
+.workspace-main:has(.cited-context) {
+  /* Native keyboard focus must clear the composer as its responsive height changes. */
+  scroll-padding-block: 12px calc(var(--review-composer-height, 160px) + var(--review-composer-offset, 0px) + 16px);
+}
+.cited-context-item { min-width: 0; overflow-wrap: anywhere; }
+.cited-context-item > .citation-with-save { max-width: 100%; }
+.cited-context-item > .citation-with-save form { flex-shrink: 0; }
+.cited-context-item .citation { min-width: 0; }
+.cited-context-item .citation svg { flex-shrink: 0; }
+.cited-context { min-width: 0; margin-top: 3px; font-family: var(--font-ui); }
+.cited-context > summary { width: fit-content; max-width: 100%; padding: 5px 0; color: var(--blue-action); font-size: 11px; font-weight: 650; cursor: pointer; }
+.cited-context > summary:focus-visible,
+.cited-context button:focus-visible,
+.cited-context a:focus-visible,
+.cited-context-excerpt:focus-visible { outline: 2px solid var(--blue-action); outline-offset: 3px; }
+.cited-context-panel { min-width: 0; padding: 12px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.cited-context .cited-context-status { margin: 0 0 8px; color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
+.cited-context .cited-context-source { margin: 0 0 7px; color: var(--ink); font-size: 12px; font-weight: 700; }
+.cited-context-excerpt { max-height: 22rem; margin: 0; padding: 10px 12px; overflow-y: auto; border-left: 3px solid var(--line-strong); background: var(--canvas); color: var(--ink); font-family: var(--font-reading); font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cited-context-basis { display: grid; gap: 5px; margin: 10px 0; font-size: 10px; line-height: 1.4; }
+.cited-context-basis > div { min-width: 0; }
+.cited-context-basis dt { color: var(--ink-soft); }
+.cited-context-basis dd { margin: 1px 0 0; color: var(--ink); font-family: ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
+.cited-context-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 9px; }
+.cited-context a { display: inline-block; padding: 3px 0; border: 0; border-radius: 0; color: var(--blue-action); font-size: 11px; font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
+.cited-context button { min-height: 30px; padding: 4px 9px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--canvas); color: var(--ink); font: 650 11px var(--font-ui); cursor: pointer; }
+.cited-context button[aria-disabled="true"] { opacity: .65; cursor: progress; }
+.cited-context [hidden] { display: none; }
 .assistant-evidence-note { display: block; margin-top: 6px; padding: 6px 7px; border-left: 2px solid var(--warning); background: var(--surface); color: var(--ink-soft); font-size: 9.5px; }
 .assistant-limitation { padding: 7px 8px; background: var(--surface); }
 .assistant-empty { display: grid; justify-items: center; gap: 5px; padding: 30px 22px; color: var(--ink-soft); text-align: center; }
