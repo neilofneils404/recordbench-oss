@@ -2670,13 +2670,6 @@ class WorkspaceStore:
         administrator_override: bool = False,
     ) -> MatterRetentionRecord:
         actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
-        if administrator_override:
-            if not self.get_principal(actor).active:
-                raise WorkspaceProblem("The administrator identity is not active.")
-        else:
-            membership = self.membership(matter_id, actor)
-            if membership.role != "owner":
-                raise WorkspaceProblem("Only the matter owner can change its review end date.")
         selected = expires_at.astimezone(timezone.utc) if expires_at.tzinfo else None
         now_value = self.current_time()
         if selected is None or selected <= now_value:
@@ -2687,6 +2680,16 @@ class WorkspaceStore:
         expiry = self._timestamp(selected)
         purge_after = self._timestamp(selected + timedelta(days=7))
         with self._lock, self.connection:
+            # Serialize authority and lifecycle checks with both scheduled and
+            # manual purge claims, including writers on another connection.
+            self.connection.execute("BEGIN IMMEDIATE")
+            if administrator_override:
+                if not self.get_principal(actor).active:
+                    raise WorkspaceProblem("The administrator identity is not active.")
+            else:
+                membership = self.membership(matter_id, actor)
+                if membership.role != "owner":
+                    raise WorkspaceProblem("Only the matter owner can change its review end date.")
             active = self.connection.execute(
                 "SELECT 1 FROM workbench_matter_lifecycle "
                 "WHERE matter_id=? AND state='active'",
@@ -3010,6 +3013,9 @@ class WorkspaceStore:
             raise ValueError("invalid purge source count")
         now = self._now()
         with self._lock, self.connection:
+            # The work inventory and deletion claim must share the writer
+            # transaction with admissions/extensions on other connections.
+            self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute(
                 "SELECT m.matter_id,m.slug,m.display_name,m.descriptor,m.owner_id,"
                 "m.created_at,m.updated_at,r.scheduled_by FROM workbench_matter m "
@@ -3904,6 +3910,7 @@ class WorkspaceStore:
     ) -> tuple[IngestJobRecord, ...]:
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             plan = self.connection.execute(
                 "SELECT ip.source_location_id,ip.source_label,ip.relative_folder,"
                 "ip.state,ip.supported_count,m.owner_id "
@@ -3999,6 +4006,7 @@ class WorkspaceStore:
         job_id = f"ingest-job-{uuid.uuid4().hex}"
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             active = self.connection.execute(
                 "SELECT 1 FROM workbench_matter_lifecycle "
                 "WHERE matter_id=? AND state='active'",
@@ -4121,7 +4129,9 @@ class WorkspaceStore:
             changed = self.connection.execute(
                 "UPDATE workbench_ingest_job SET state='queued',stage='Queued',message='',"
                 "worker_id=NULL,started_at=NULL,finished_at=NULL,updated_at=? "
-                "WHERE matter_id=? AND document_id=? AND state='failed'",
+                "WHERE matter_id=? AND document_id=? AND state='failed' AND EXISTS ("
+                "SELECT 1 FROM workbench_matter_lifecycle ml "
+                "WHERE ml.matter_id=workbench_ingest_job.matter_id AND ml.state='active')",
                 (now, matter_id, document_id),
             ).rowcount
             if changed != 1:
@@ -4204,6 +4214,7 @@ class WorkspaceStore:
         now = self._now()
         media_job_id = f"media-job-{uuid.uuid4().hex}"
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             self.membership(matter_id, actor_id)
             self.connection.execute(
                 "INSERT INTO workbench_media_job("
@@ -4970,6 +4981,7 @@ class WorkspaceStore:
         self.membership(matter_id, actor_id)
         now = self._now()
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             self.membership(matter_id, actor_id)
             transcript = self.connection.execute(
                 "SELECT transcript_id,segment_count FROM workbench_media_transcript "
@@ -7904,6 +7916,7 @@ class WorkspaceStore:
         now = self._now()
         analysis_id = f"analysis-{uuid.uuid4().hex}"
         with self._lock, self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
             self.membership(matter_id, actor)
             self.connection.execute(
                 "INSERT INTO workbench_analysis_run("

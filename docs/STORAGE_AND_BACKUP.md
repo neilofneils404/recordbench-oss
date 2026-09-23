@@ -129,6 +129,12 @@ an additional recovery acceptance step. Inspect the receipt, then remove the
 exact drill directory yourself; it contains decrypted confidential state.
 Never declare backup ready from a successful upload alone.
 
+Restored matter deadlines keep their original dates. Before starting a restored
+application, follow [expired-matter recovery](EXPIRED_MATTER_RECOVERY.md): hold
+maintenance in the isolated target's effective environment, inspect while held,
+and decide each due matter's disposition before activation. Enabled maintenance
+runs immediately on startup; its interval is not an inspection grace period.
+
 ## Synthetic consistency verification
 
 The regression suite simulates writes completing at stop and new writes after
