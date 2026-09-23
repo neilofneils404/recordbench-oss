@@ -159,7 +159,8 @@ def test_numeric_colors_with_native_text_remain_known_without_images(tmp_path, c
     assert page.image_coverage == 0.0
 
 
-def test_stamped_type3_glyph_image_has_unknown_evidence(tmp_path):
+@pytest.mark.parametrize("font_operator", ["Tf", "gs"])
+def test_stamped_type3_glyph_image_has_unknown_evidence(tmp_path, font_operator):
     source = tmp_path / "synthetic-type3.pdf"
     stamp = "SYNTHETIC RECEIVED STAMP WITH MANY NATIVE CHARACTERS"
     _pdf(source, native=stamp)
@@ -179,14 +180,141 @@ def test_stamped_type3_glyph_image_has_unknown_evidence(tmp_path):
         NameObject("/Widths"): _array([1000]),
         NameObject("/Resources"): DictionaryObject({NameObject("/XObject"): resources["/XObject"]}),
     })
-    resources["/Font"][NameObject("/ImageGlyph")] = writer._add_object(font)
-    commands = b"BT /ImageGlyph 80 Tf 10 10 Td (A) Tj ET\n"
+    font_reference = writer._add_object(font)
+    resources["/Font"][NameObject("/ImageGlyph")] = font_reference
+    if font_operator == "gs":
+        resources[NameObject("/ExtGState")] = DictionaryObject({
+            NameObject("/ImageFont"): DictionaryObject({
+                NameObject("/Font"): ArrayObject([font_reference, NumberObject(80)]),
+            }),
+        })
+        commands = b"BT /ImageFont gs 10 10 Td (A) Tj ET\n"
+    else:
+        commands = b"BT /ImageGlyph 80 Tf 10 10 Td (A) Tj ET\n"
     page[NameObject("/Contents")] = writer._add_object(_stream(commands + page.get_contents().get_data()))
     writer.write(source)
     extracted, = _read_pages(source)
     assert stamp in extracted.text
     assert extracted.image_coverage == 0.0
     assert extracted.image_evidence_known is False
+
+
+def _annotation_pdf(source, *, appearance=True, subtype="/Stamp", count=1):
+    stamp = "SYNTHETIC RECEIVED STAMP WITH MANY NATIVE CHARACTERS"
+    _pdf(source, native=stamp)
+    writer = PdfWriter()
+    page = writer.add_page(PdfReader(source).pages[0])
+    annotation = DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"),
+        NameObject("/Subtype"): NameObject(subtype),
+        NameObject("/Rect"): _array([0, 0, 100, 100]),
+        NameObject("/F"): NumberObject(4),
+    })
+    if appearance:
+        body = _stream(b"q 80 0 0 80 10 10 cm /Scan Do Q")
+        body.update({
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Form"),
+            NameObject("/BBox"): _array([0, 0, 100, 100]),
+            NameObject("/Resources"): DictionaryObject({
+                NameObject("/XObject"): page["/Resources"]["/XObject"],
+            }),
+        })
+        annotation[NameObject("/AP")] = DictionaryObject({NameObject("/N"): writer._add_object(body)})
+    page[NameObject("/Annots")] = ArrayObject([writer._add_object(annotation)] * count)
+    writer.write(source)
+    return stamp
+
+
+@pytest.mark.parametrize("subtype", ["/Stamp", "/Widget", "/Link"])
+def test_image_annotation_appearance_with_long_stamp_is_unknown(tmp_path, subtype):
+    source = tmp_path / "synthetic-appearance.pdf"
+    stamp = _annotation_pdf(source, subtype=subtype)
+    page, = _read_pages(source)
+    assert page.text == stamp
+    assert page.image_coverage == 0.0
+    assert page.image_evidence_known is False
+
+
+def test_link_only_annotations_without_appearances_preserve_native_selection(tmp_path):
+    source = tmp_path / "synthetic-link.pdf"
+    stamp = _annotation_pdf(source, subtype="/Link", appearance=False)
+    page, = _read_pages(source)
+    assert page.text == stamp
+    assert page.image_coverage == 0.0
+    assert page.image_evidence_known is True
+
+
+@pytest.mark.parametrize("annotations", [
+    DictionaryObject(), ArrayObject([NumberObject(3)]),
+    ArrayObject([DictionaryObject({NameObject("/Subtype"): NameObject("/Link")})]),
+])
+def test_malformed_annotations_are_unknown(tmp_path, annotations):
+    source = tmp_path / "synthetic-malformed-annotations.pdf"
+    _pdf(source, native="Useful synthetic native paragraph remains available.")
+    writer = PdfWriter()
+    page = writer.add_page(PdfReader(source).pages[0])
+    page[NameObject("/Annots")] = annotations
+    writer.write(source)
+    extracted, = _read_pages(source)
+    assert extracted.text == "Useful synthetic native paragraph remains available."
+    assert extracted.image_evidence_known is False
+
+
+def test_annotation_inspection_is_bounded(tmp_path, monkeypatch):
+    source = tmp_path / "synthetic-bounded-annotations.pdf"
+    _annotation_pdf(source, subtype="/Link", appearance=False, count=2)
+    monkeypatch.setattr(pdf_extract_helper, "MAX_IMAGE_EVIDENCE_ANNOTATIONS", 1)
+    page, = _read_pages(source)
+    assert page.image_evidence_known is False
+
+
+@pytest.mark.parametrize(("state_kind", "known"), [
+    ("image_mask", False), ("none_mask", True), ("opacity", True),
+    ("standard_font", True), ("malformed_mask", False),
+])
+def test_graphics_state_image_masks_are_unknown_but_simple_states_remain_known(tmp_path, state_kind, known):
+    source = tmp_path / "synthetic-graphics-state.pdf"
+    stamp = "SYNTHETIC RECEIVED STAMP WITH MANY NATIVE CHARACTERS"
+    _pdf(source, native=stamp)
+    writer = PdfWriter()
+    page = writer.add_page(PdfReader(source).pages[0])
+    resources = page["/Resources"]
+    state = DictionaryObject({NameObject("/Type"): NameObject("/ExtGState")})
+    if state_kind == "image_mask":
+        body = _stream(b"q 80 0 0 80 10 10 cm /Scan Do Q")
+        body.update({
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Form"),
+            NameObject("/BBox"): _array([0, 0, 100, 100]),
+            NameObject("/Resources"): DictionaryObject({NameObject("/XObject"): resources["/XObject"]}),
+            NameObject("/Group"): DictionaryObject({
+                NameObject("/S"): NameObject("/Transparency"),
+                NameObject("/CS"): NameObject("/DeviceGray"),
+            }),
+        })
+        state[NameObject("/SMask")] = DictionaryObject({
+            NameObject("/S"): NameObject("/Luminosity"),
+            NameObject("/G"): writer._add_object(body),
+        })
+    elif state_kind == "none_mask":
+        state[NameObject("/SMask")] = NameObject("/None")
+    elif state_kind == "malformed_mask":
+        state[NameObject("/SMask")] = NumberObject(3)
+    elif state_kind == "standard_font":
+        state[NameObject("/Font")] = ArrayObject([
+            writer._add_object(resources["/Font"]["/F1"]), NumberObject(7),
+        ])
+    else:
+        state[NameObject("/ca")] = FloatObject(0.5)
+    resources[NameObject("/ExtGState")] = DictionaryObject({NameObject("/PaintState"): writer._add_object(state)})
+    commands = b"q /PaintState gs 0 g 0 0 100 100 re f Q\n"
+    page[NameObject("/Contents")] = writer._add_object(_stream(commands + page.get_contents().get_data()))
+    writer.write(source)
+    extracted, = _read_pages(source)
+    assert extracted.text == stamp
+    assert extracted.image_coverage == 0.0
+    assert extracted.image_evidence_known is known
 
 
 def test_form_image_placement_uses_form_and_parent_matrices_and_bbox(tmp_path):

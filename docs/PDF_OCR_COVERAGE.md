@@ -14,8 +14,11 @@ images and nested Form objects. Overlap, skew and nonrectangular clipping can
 cause overestimation. The traversal stops at 50,000 operations, 256 image
 placements, 64 Forms, depth 8 or graphics stack depth 64; unsupported or exhausted
 inspection records unknown evidence.
-Named pattern colors and Type3 fonts also record unknown evidence because their
-paint procedures can contain images outside the inspected page/Form paths.
+Named pattern colors, Type3 fonts and soft masks also record unknown evidence
+because their paint procedures can contain images outside the inspected
+page/Form paths. Annotation appearances and non-link annotations likewise
+record unknown evidence. Plain links without appearances retain known evidence;
+annotation-reference inspection stops at 256 entries without decoding appearances.
 
 Expanded OCR selects a page when it has fewer than 20 native alphanumeric
 characters, images cover at least 10 percent of the page, or image evidence is
@@ -79,7 +82,8 @@ operation, and source-byte verification remains mandatory.
 
 The generated synthetic image-PDF suite exercises real ingestion, CPU OCR and
 exact phrase search for long/short stamps, image-only pages, pattern-painted
-images, native text, small logos, mixed regions/pages and existing text layers.
+images, annotation appearances, soft masks, native text, small logos, mixed
+regions/pages and existing text layers.
 Blank-page exclusions and
 rotated-page selection, native preservation and coverage cautions are also
 checked, along with original bytes, digest, source version, page locators and

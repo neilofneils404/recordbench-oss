@@ -15,6 +15,7 @@ MAX_IMAGE_EVIDENCE_OPERATIONS = 50_000
 MAX_IMAGE_EVIDENCE_PLACEMENTS = 256
 MAX_IMAGE_EVIDENCE_FORMS = 64
 MAX_IMAGE_EVIDENCE_DEPTH = 8
+MAX_IMAGE_EVIDENCE_ANNOTATIONS = 256
 _IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 
@@ -64,7 +65,7 @@ def page_image_evidence(page: object, reader: object) -> tuple[float, bool]:
     Page rotation does not change the fraction of the page occupied by an image.
     Parsing itself remains inside the existing resource-limited child process.
     """
-    from pypdf.generic import ContentStream, DictionaryObject, NameObject
+    from pypdf.generic import ArrayObject, ContentStream, DictionaryObject, NameObject
 
     area = 0.0
     operations = placements = forms = 0
@@ -105,6 +106,23 @@ def page_image_evidence(page: object, reader: object) -> tuple[float, bool]:
                     # Type3 glyph programs can paint images, too. Their text
                     # extraction does not establish absence of image content.
                     raise ValueError("glyph image evidence is unknown")
+            elif operator == b"gs":
+                if len(operands) != 1:
+                    raise ValueError("invalid graphics state reference")
+                state = resources["/ExtGState"][operands[0]].get_object()
+                mask = state.get("/SMask")
+                if mask is not None and mask.get_object() != "/None":
+                    # A transparency-group image can turn an ordinary fill
+                    # into visible text without a page-level image placement.
+                    raise ValueError("soft mask image evidence is unknown")
+                font_setting = state.get("/Font")
+                if font_setting is not None:
+                    font_setting = font_setting.get_object()
+                    if not isinstance(font_setting, ArrayObject) or len(font_setting) != 2:
+                        raise ValueError("invalid graphics state font")
+                    font = font_setting[0].get_object()
+                    if font.get("/Subtype") == "/Type3":
+                        raise ValueError("glyph image evidence is unknown")
             elif operator in {b"Do", b"INLINE IMAGE"}:
                 if operator == b"Do":
                     if len(operands) != 1:
@@ -147,6 +165,23 @@ def page_image_evidence(page: object, reader: object) -> tuple[float, bool]:
         if content is not None:
             resources = page.get("/Resources", DictionaryObject()).get_object()
             walk(content, resources, _IDENTITY, crop, set(), 0)
+        annotations = page.get("/Annots")
+        if annotations is not None:
+            annotations = annotations.get_object()
+            if (not isinstance(annotations, ArrayObject)
+                    or len(annotations) > MAX_IMAGE_EVIDENCE_ANNOTATIONS):
+                raise ValueError("annotation image evidence limit or malformed array")
+            for reference in annotations:
+                annotation = reference.get_object()
+                if not isinstance(annotation, DictionaryObject):
+                    raise ValueError("malformed annotation")
+                # Appearance streams can paint images outside page Contents;
+                # widgets and other annotation kinds may also generate visible
+                # appearances. Do not decode or recurse into those programs.
+                # An ordinary link without an appearance adds no image body.
+                if "/AP" in annotation or annotation.get("/Subtype") != "/Link":
+                    raise ValueError("annotation appearance evidence is unknown")
+                _numbers(annotation.get("/Rect"), 4)
         return min(1.0, area / page_area), True
     except Exception:
         return min(1.0, area / page_area), False

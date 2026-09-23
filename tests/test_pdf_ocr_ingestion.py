@@ -16,7 +16,7 @@ import sys
 import pytest
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (
-    ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject,
+    ArrayObject, BooleanObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject,
 )
 
 from case_intelligence import pilot_uploads
@@ -129,6 +129,67 @@ def _paint_image_as_pattern(writer, page):
     page[NameObject("/Contents")] = writer._add_object(stream)
 
 
+def _paint_image_as_annotation(writer, page):
+    """Place the raster in a printable annotation appearance below the stamp."""
+    resources = page["/Resources"]
+    appearance = DecodedStreamObject()
+    appearance.set_data(page.get_contents().get_data())
+    appearance.update({
+        NameObject("/Type"): NameObject("/XObject"),
+        NameObject("/Subtype"): NameObject("/Form"),
+        NameObject("/FormType"): NumberObject(1),
+        NameObject("/BBox"): ArrayObject([NumberObject(value) for value in (0, 0, 612, 792)]),
+        NameObject("/Resources"): DictionaryObject({
+            NameObject("/XObject"): resources.pop(NameObject("/XObject")),
+        }),
+    })
+    annotation = DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"),
+        NameObject("/Subtype"): NameObject("/Stamp"),
+        NameObject("/Rect"): ArrayObject([NumberObject(value) for value in (0, 0, 612, 700)]),
+        NameObject("/F"): NumberObject(4),  # Printable and visible.
+        NameObject("/AP"): DictionaryObject({NameObject("/N"): writer._add_object(appearance)}),
+    })
+    page[NameObject("/Annots")] = ArrayObject([writer._add_object(annotation)])
+    stream = DecodedStreamObject()
+    stream.set_data(b"")
+    page[NameObject("/Contents")] = writer._add_object(stream)
+
+
+def _paint_image_as_soft_mask(writer, page):
+    """Use the inverted raster as a luminosity mask for a black rectangle."""
+    group = DecodedStreamObject()
+    group.set_data(page.get_contents().get_data())
+    group.update({
+        NameObject("/Type"): NameObject("/XObject"),
+        NameObject("/Subtype"): NameObject("/Form"),
+        NameObject("/BBox"): ArrayObject([NumberObject(value) for value in (0, 0, 612, 792)]),
+        NameObject("/Resources"): page["/Resources"],
+        NameObject("/Group"): DictionaryObject({
+            NameObject("/S"): NameObject("/Transparency"),
+            NameObject("/CS"): NameObject("/DeviceGray"),
+            NameObject("/I"): BooleanObject(True),
+        }),
+    })
+    mask = DictionaryObject({
+        NameObject("/Type"): NameObject("/Mask"),
+        NameObject("/S"): NameObject("/Luminosity"),
+        NameObject("/G"): writer._add_object(group),
+        NameObject("/BC"): ArrayObject([NumberObject(0)]),
+    })
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/ExtGState"): DictionaryObject({
+            NameObject("/ScanMask"): DictionaryObject({
+                NameObject("/Type"): NameObject("/ExtGState"),
+                NameObject("/SMask"): mask,
+            }),
+        }),
+    })
+    stream = DecodedStreamObject()
+    stream.set_data(b"q /ScanMask gs 0 g 0 0 612 792 re f Q")
+    page[NameObject("/Contents")] = writer._add_object(stream)
+
+
 def synthetic_image_pdf(tmp_path, pages, *, pdftoppm=_PDFTOPPM):
     """Build final image/native pages; images contain no PDF text operators.
 
@@ -140,8 +201,12 @@ def synthetic_image_pdf(tmp_path, pages, *, pdftoppm=_PDFTOPPM):
         page = writer.add_blank_page(width=612, height=792)
         phrase = specification.get("image")
         if phrase:
+            raster = _raster_body(tmp_path, phrase, pdftoppm=pdftoppm)
+            if specification.get("soft_mask"):
+                width, height, pixels = raster
+                raster = width, height, pixels.translate(bytes(reversed(range(256))))
             _image(
-                writer, page, _raster_body(tmp_path, phrase, pdftoppm=pdftoppm),
+                writer, page, raster,
                 width=specification.get("image_width", 612),
                 height=specification.get("image_height", 792),
                 left=specification.get("image_left", 0),
@@ -149,6 +214,10 @@ def synthetic_image_pdf(tmp_path, pages, *, pdftoppm=_PDFTOPPM):
             )
             if specification.get("pattern"):
                 _paint_image_as_pattern(writer, page)
+            elif specification.get("annotation"):
+                _paint_image_as_annotation(writer, page)
+            elif specification.get("soft_mask"):
+                _paint_image_as_soft_mask(writer, page)
         elif specification.get("logo"):
             _image(writer, page, (16, 16, b"\x00" * 256), width=28, height=28, left=545, bottom=735)
         if specification.get("native"):
@@ -210,6 +279,50 @@ def test_pattern_painted_scan_reaches_exact_search_and_preserves_long_stamp(tmp_
     assert stamp in page.extract_text()
     store, document = _ingest(tmp_path, monkeypatch, payload)
     _assert_phrase(document, "indigo valley", 1)
+    _assert_phrase(document, stamp, 1)
+    assert "OCR attempted on 1" in document.message
+    assert "Complete page reading is not established" in document.message
+    assert document.digest == hashlib.sha256(payload).hexdigest()
+    assert (store.files / document.stored_name).read_bytes() == payload
+
+
+@_REAL_OCR
+def test_annotation_appearance_scan_reaches_exact_search_and_preserves_long_stamp(tmp_path, monkeypatch):
+    stamp = "SYNTHETIC LONG ANNOTATION STAMP WITH MANY NATIVE CHARACTERS"
+    payload = synthetic_image_pdf(tmp_path, [{
+        "image": "emerald canyon", "annotation": True, "native": [stamp],
+    }])
+    page = PdfReader(io.BytesIO(payload)).pages[0]
+    annotation = page["/Annots"][0].get_object()
+    assert annotation["/F"] & 4
+    assert "/XObject" in annotation["/AP"]["/N"]["/Resources"]
+    assert "/XObject" not in page["/Resources"]
+    assert "emerald canyon" not in page.extract_text()
+    assert stamp in page.extract_text()
+    store, document = _ingest(tmp_path, monkeypatch, payload)
+    _assert_phrase(document, "emerald canyon", 1)
+    _assert_phrase(document, stamp, 1)
+    assert "OCR attempted on 1" in document.message
+    assert "Complete page reading is not established" in document.message
+    assert document.digest == hashlib.sha256(payload).hexdigest()
+    assert (store.files / document.stored_name).read_bytes() == payload
+
+
+@_REAL_OCR
+def test_soft_mask_scan_reaches_exact_search_and_preserves_long_stamp(tmp_path, monkeypatch):
+    stamp = "SYNTHETIC LONG SOFT MASK STAMP WITH MANY NATIVE CHARACTERS"
+    payload = synthetic_image_pdf(tmp_path, [{
+        "image": "amber meadow", "soft_mask": True, "native": [stamp],
+    }])
+    page = PdfReader(io.BytesIO(payload)).pages[0]
+    mask = page["/Resources"]["/ExtGState"]["/ScanMask"]["/SMask"]
+    assert mask["/S"] == "/Luminosity"
+    assert "/XObject" in mask["/G"]["/Resources"]
+    assert "/XObject" not in page["/Resources"]
+    assert "amber meadow" not in page.extract_text()
+    assert stamp in page.extract_text()
+    store, document = _ingest(tmp_path, monkeypatch, payload)
+    _assert_phrase(document, "amber meadow", 1)
     _assert_phrase(document, stamp, 1)
     assert "OCR attempted on 1" in document.message
     assert "Complete page reading is not established" in document.message
