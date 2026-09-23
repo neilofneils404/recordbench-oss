@@ -14,6 +14,7 @@ from html import escape as xml_escape
 from typing import Mapping, Sequence
 
 from .branding import PRODUCT_NAME
+from .derived_text import presentation_text
 from .workspace_store import (
     ConversationRecord,
     MatterRecord,
@@ -43,6 +44,10 @@ MAX_EXPORT_TEXT_CHARS = 10_000_000
 MAX_WORKFLOW_EXPORT_BYTES = 100 * 1024 * 1024
 MAX_BUNDLE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 MAX_READABLE_REVIEW_DECISIONS = 500
+_TEXT_PRESENTATION_NOTICE = (
+    "Unsupported control or Unicode characters were replaced with spaces for this export. "
+    "Original source text and saved citation references are unchanged."
+)
 
 _PORTABLE_REVIEW_METRICS = (
     "sample_total",
@@ -103,7 +108,8 @@ def safe_file_stem(value: str, fallback: str = "recordbench-export") -> str:
 def _plain(value: object) -> str:
     if not isinstance(value, str):
         return ""
-    return "\n".join(line.rstrip() for line in value.replace("\r", "").split("\n")).strip()
+    lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return "\n".join(line.rstrip() for line in lines).strip()
 
 
 def _staff_label(value: object) -> str:
@@ -828,7 +834,7 @@ def notebook_blocks(
 
 
 def _csv_safe(value: object) -> str:
-    text = _plain(value)
+    text = presentation_text(_plain(value))
     if text.lstrip().startswith(("=", "+", "-", "@")):
         return "'" + text
     return text
@@ -938,8 +944,11 @@ def _markdown_escape(value: str) -> str:
 def blocks_to_markdown(blocks: Sequence[ExportBlock]) -> bytes:
     parts: list[str] = []
     total = 0
+    normalized = False
     for block in blocks:
-        value = _markdown_escape(block.text)
+        presented = presentation_text(block.text)
+        normalized = normalized or presented != block.text
+        value = _markdown_escape(presented)
         total += len(value)
         if total > MAX_EXPORT_TEXT_CHARS:
             raise ExportProblem(
@@ -960,7 +969,24 @@ def blocks_to_markdown(blocks: Sequence[ExportBlock]) -> bytes:
         else:
             rendered = value
         parts.append(rendered)
+    if normalized:
+        if total + len(_TEXT_PRESENTATION_NOTICE) > MAX_EXPORT_TEXT_CHARS:
+            raise ExportProblem(
+                "This export is too large to prepare at once. Export the conversations individually."
+            )
+        parts.append(f"**Note:** {_TEXT_PRESENTATION_NOTICE}")
     return ("\n\n".join(parts).rstrip() + "\n").encode("utf-8")
+
+
+def _xml_text(value: str) -> str:
+    """Escape derived text only after replacing characters XML cannot carry.
+
+    HTML escaping alone leaves XML-invalid controls and surrogate code points
+    intact. Keep this defense at serialization so historical stored citations
+    and their digest/locator basis remain unchanged.
+    """
+
+    return xml_escape(presentation_text(value), quote=False)
 
 
 def _paragraph_xml(block: ExportBlock) -> str:
@@ -982,7 +1008,7 @@ def _paragraph_xml(block: ExportBlock) -> str:
             runs.append("<w:r><w:br/></w:r>")
         runs.append(
             '<w:r><w:t xml:space="preserve">'
-            + xml_escape(line, quote=False)
+            + _xml_text(line)
             + "</w:t></w:r>"
         )
     return f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr>{"".join(runs)}</w:p>'
@@ -996,6 +1022,17 @@ def blocks_to_docx(
         raise ExportProblem(
             "This export is too large to prepare at once. Export the conversations individually."
         )
+    normalized = (
+        presentation_text(title) != title
+        or presentation_text(created_at) != created_at
+        or any(presentation_text(block.text) != block.text for block in blocks)
+    )
+    if normalized:
+        if total + len(_TEXT_PRESENTATION_NOTICE) > MAX_EXPORT_TEXT_CHARS:
+            raise ExportProblem(
+                "This export is too large to prepare at once. Export the conversations individually."
+            )
+        blocks = (*blocks, ExportBlock(_TEXT_PRESENTATION_NOTICE, "note"))
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -1036,8 +1073,8 @@ def blocks_to_docx(
 </Relationships>"""
     core = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-<dc:title>{xml_escape(title, quote=False)}</dc:title><dc:creator>{PRODUCT_NAME}</dc:creator>
-<dcterms:created xsi:type="dcterms:W3CDTF">{xml_escape(created_at, quote=False)}</dcterms:created>
+<dc:title>{_xml_text(title)}</dc:title><dc:creator>{_xml_text(PRODUCT_NAME)}</dc:creator>
+<dcterms:created xsi:type="dcterms:W3CDTF">{_xml_text(created_at)}</dcterms:created>
 </cp:coreProperties>"""
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:

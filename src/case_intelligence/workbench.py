@@ -39,9 +39,11 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 
+from .derived_text import presentation_text
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
 from .exact_search import QuerySyntaxError, parse_query
@@ -6113,6 +6115,15 @@ def create_workbench_app(
         raise
     app.state.identity = identity
     templates = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
+
+    def present_value(value):
+        if not isinstance(value, str):
+            return value
+        projected = presentation_text(value)
+        # Preserve Jinja's escaping boundary for already-escaped markup.
+        return Markup(projected) if isinstance(value, Markup) else projected
+
+    templates.env.finalize = present_value
     templates.env.globals.update(
         product_name=PRODUCT_NAME,
         product_tagline=PRODUCT_TAGLINE,
@@ -14990,6 +15001,12 @@ def create_workbench_app(
             )
         except KeyError as exc:
             raise HTTPException(404, "Supporting source is unavailable") from exc
+        except WorkspaceProblem as exc:
+            return RedirectResponse(
+                _query_url(f"/matters/{slug}", support=token,
+                           error=f"{exc} The source remains available; review it before trying another save."),
+                status_code=303,
+            )
         audit(
             request,
             "notebook.capture_citation",

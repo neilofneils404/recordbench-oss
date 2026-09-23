@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
 from .contracts import validate_relative_path
+from .derived_text import presentation_text
 from .source_locations import SourcePreflight, SourceScanItem
 
 _SLUG = re.compile(r"^m-[0-9a-f]{12}$")
@@ -1219,6 +1220,42 @@ class WorkspaceStore:
         ):
             raise WorkspaceProblem(f"{label} contains unsupported characters.")
         return normalized
+
+    @staticmethod
+    def _derived_text(
+        value: str, *, label: str, maximum: int, required: bool = True,
+        multiline: bool = False,
+    ) -> str:
+        """Bound prose before projecting controls; never use for source identity."""
+        value = value or ""
+        if len(value) > maximum:
+            raise WorkspaceProblem(f"{label} is too long. Shorten the text and save again; existing work is retained.")
+        prepared = presentation_text(value).replace("\r\n", "\n").replace("\r", "\n")
+        normalized = unicodedata.normalize("NFC", prepared).strip()
+        if not multiline:
+            normalized = normalized.replace("\n", " ").replace("\t", " ")
+        if required and not normalized:
+            raise WorkspaceProblem(f"{label} is required. Add readable text and save again; existing work is retained.")
+        if len(normalized) > maximum:
+            raise WorkspaceProblem(f"{label} is too long.")
+        return normalized
+
+    @staticmethod
+    def _source_text(
+        value: str, *, label: str, maximum: int, required: bool = True,
+        multiline: bool = True,
+    ) -> str:
+        """Keep bounded citation snapshots exact, including controls and NFC basis."""
+        value = value or ""
+        if len(value) > maximum:
+            raise WorkspaceProblem(f"{label} is too long. Open the original source and save a shorter supported passage.")
+        if required and not value.strip():
+            raise WorkspaceProblem(f"{label} is required.")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise WorkspaceProblem(f"{label} contains invalid Unicode. Open the original source for review; existing work is retained.") from exc
+        return value
 
     @staticmethod
     def _matter(row: sqlite3.Row) -> MatterRecord:
@@ -3729,7 +3766,8 @@ class WorkspaceStore:
     ) -> MessageRecord:
         if role not in {"user", "assistant"}:
             raise ValueError("invalid message role")
-        value = self._safe_text(
+        validator = self._derived_text if role == "assistant" else self._safe_text
+        value = validator(
             content, label="Message", maximum=20_000, multiline=True
         )
         encoded = json.dumps(dict(payload or {}), ensure_ascii=False, separators=(",", ":"))
@@ -7247,8 +7285,8 @@ class WorkspaceStore:
         self, matter_id: str, actor_id: str, title: str, purpose: str = ""
     ) -> ReportRecord:
         actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
-        heading = self._safe_text(title, label="Report title", maximum=200)
-        description = self._safe_text(
+        heading = self._derived_text(title, label="Report title", maximum=200)
+        description = self._derived_text(
             purpose,
             label="Report purpose",
             maximum=2_000,
@@ -7281,8 +7319,8 @@ class WorkspaceStore:
         """Save a complete converted review atomically, or leave no new Report."""
 
         actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
-        heading = self._safe_text(title, label="Report title", maximum=200)
-        description = self._safe_text(purpose, label="Report purpose", maximum=2_000,
+        heading = self._derived_text(title, label="Report title", maximum=200)
+        description = self._derived_text(purpose, label="Report purpose", maximum=2_000,
                                       required=False, multiline=True)
         source_id = self._safe_text(origin_id, label="Section origin", maximum=120)
         if not 1 <= len(sections) <= 500:
@@ -7293,13 +7331,13 @@ class WorkspaceStore:
                 raise WorkspaceProblem("A converted Report section is invalid.")
             if not isinstance(section.get("heading"), str) or not isinstance(section.get("body"), str):
                 raise WorkspaceProblem("A converted Report section needs text for its heading and body.")
-            section_heading = self._safe_text(section.get("heading"), label="Section heading", maximum=200)
-            body = self._safe_text(section.get("body"), label="Section text", maximum=50_000,
+            section_heading = self._derived_text(section.get("heading"), label="Section heading", maximum=200)
+            body = self._derived_text(section.get("body"), label="Section text", maximum=50_000,
                                    required=False, multiline=True)
             basis = section.get("compilation_basis", "")
             if not isinstance(basis, str):
                 raise WorkspaceProblem("The compilation basis must be text.")
-            basis = self._safe_text(basis, label="Compilation basis", maximum=40_000,
+            basis = self._derived_text(basis, label="Compilation basis", maximum=40_000,
                                     required=False, multiline=True)
             if basis and not body.endswith("\n\nReview basis:\n" + basis):
                 raise WorkspaceProblem("The compilation basis does not match its saved section.")
@@ -7527,8 +7565,8 @@ class WorkspaceStore:
     ) -> ReportRecord:
         if status not in {"draft", "final"}:
             raise WorkspaceProblem("Choose draft or final report status.")
-        heading = self._safe_text(title, label="Report title", maximum=200)
-        description = self._safe_text(purpose, label="Report purpose", maximum=2_000,
+        heading = self._derived_text(title, label="Report title", maximum=200)
+        description = self._derived_text(purpose, label="Report purpose", maximum=2_000,
                                       required=False, multiline=True)
         with self._lock, self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
@@ -7592,7 +7630,7 @@ class WorkspaceStore:
                 maximum=200,
             ),
             support_token,
-            self._safe_text(
+            self._source_text(
                 str(value.get("excerpt", "")),
                 label="Report citation excerpt",
                 maximum=MAX_REPORT_CITATION_EXCERPT_CHARS,
@@ -7620,8 +7658,8 @@ class WorkspaceStore:
         if origin not in {"manual", "notebook", "answer", "finding", "media_clip"}:
             raise ValueError("invalid report section origin")
         actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
-        title = self._safe_text(heading, label="Section heading", maximum=200)
-        content = self._safe_text(
+        title = self._derived_text(heading, label="Section heading", maximum=200)
+        content = self._derived_text(
             body,
             label="Section text",
             maximum=50_000,
@@ -7742,8 +7780,8 @@ class WorkspaceStore:
         if not _REPORT_SECTION.fullmatch(section_id or ""):
             raise KeyError(section_id)
         actor = self._safe_text(actor_id, label="Actor identity", maximum=100)
-        title = self._safe_text(heading, label="Section heading", maximum=200)
-        content = self._safe_text(
+        title = self._derived_text(heading, label="Section heading", maximum=200)
+        content = self._derived_text(
             body,
             label="Section text",
             maximum=50_000,
@@ -7758,7 +7796,7 @@ class WorkspaceStore:
                                                                    expected_updated_at)
             if current_section.compilation_basis:
                 suffix = "\n\nReview basis:\n" + current_section.compilation_basis
-                content = self._safe_text(
+                content = self._derived_text(
                     content + suffix, label="Section text", maximum=50_000,
                     required=False, multiline=True,
                 )
@@ -7946,10 +7984,10 @@ class WorkspaceStore:
             signature = str(finding.get("signature", ""))
             if not re.fullmatch(r"[0-9a-f]{64}", signature):
                 raise ValueError("invalid review finding signature")
-            title = self._safe_text(
+            title = self._derived_text(
                 str(finding.get("title", "")), label="Finding title", maximum=200
             )
-            summary = self._safe_text(
+            summary = self._derived_text(
                 str(finding.get("summary", "")),
                 label="Finding summary",
                 maximum=4_000,
@@ -7998,7 +8036,7 @@ class WorkspaceStore:
                         unit_number,
                         chunk_id,
                         excerpt_digest,
-                        self._safe_text(
+                        self._source_text(
                             str(reference.get("excerpt", "")),
                             label="Finding excerpt",
                             maximum=6_000,
@@ -8224,7 +8262,7 @@ class WorkspaceStore:
         )
         excerpt_digest = str(value.get("excerpt_digest") or "").strip().casefold()
         support_token = str(value.get("support_token") or "").strip().casefold()
-        excerpt = self._safe_text(
+        excerpt = self._source_text(
             str(value.get("excerpt") or ""),
             label="Notebook source excerpt",
             maximum=6_000,
@@ -8276,11 +8314,11 @@ class WorkspaceStore:
         kind = self._notebook_choice(item_type, NOTEBOOK_TYPES, "type")
         state = self._notebook_choice(status, NOTEBOOK_STATUSES, "status")
         source_kind = self._notebook_choice(origin, NOTEBOOK_ORIGINS, "origin")
-        heading = self._safe_text(title, label="Notebook title", maximum=160)
-        content = self._safe_text(
+        heading = self._derived_text(title, label="Notebook title", maximum=160)
+        content = self._derived_text(
             body, label="Notebook details", maximum=20_000, required=False, multiline=True
         )
-        date_value = self._safe_text(
+        date_value = self._derived_text(
             date_label, label="Notebook date", maximum=100, required=False
         )
         if kind in {"date", "event"} and not (content or date_value):
@@ -8621,11 +8659,11 @@ class WorkspaceStore:
     ) -> NotebookItemRecord:
         kind = self._notebook_choice(item_type, NOTEBOOK_TYPES, "type")
         state = self._notebook_choice(status, NOTEBOOK_STATUSES, "status")
-        heading = self._safe_text(title, label="Notebook title", maximum=160)
-        content = self._safe_text(
+        heading = self._derived_text(title, label="Notebook title", maximum=160)
+        content = self._derived_text(
             body, label="Notebook details", maximum=20_000, required=False, multiline=True
         )
-        date_value = self._safe_text(
+        date_value = self._derived_text(
             date_label, label="Notebook date", maximum=100, required=False
         )
         if kind in {"date", "event"} and not (content or date_value):
@@ -9278,7 +9316,7 @@ class WorkspaceStore:
     ) -> MessageRecord | None:
         """Commit one assistant message and success state atomically."""
 
-        value = self._safe_text(
+        value = self._derived_text(
             content, label="Answer", maximum=20_000, multiline=True
         )
         encoded = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":"))
@@ -10175,7 +10213,7 @@ class WorkspaceStore:
                     )
                 answer = result.get("answer")
                 payload = dict(answer) if isinstance(answer, Mapping) else {}
-                summary = self._safe_text(
+                summary = self._derived_text(
                     str(result.get("summary") or "Investigation complete."),
                     label="Research result",
                     maximum=20_000,
@@ -10982,7 +11020,7 @@ class WorkspaceStore:
     ) -> ReviewRunRecord:
         if decision not in {"included", "excluded", "needs_attention"}:
             raise ValueError("invalid review decision")
-        reason = self._safe_text(
+        reason = self._derived_text(
             rationale, label="Decision rationale", maximum=4_000, required=False, multiline=True
         )
         error = self._safe_text(
