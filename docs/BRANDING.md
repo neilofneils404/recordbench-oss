@@ -23,35 +23,31 @@ with enough contrast. The tagline matches the application's sign-in screen.
 | --- | --- |
 | [Record mark](../src/case_intelligence/static/favicon.svg) | Canonical application icon and standalone mark. |
 | [Repository banner](assets/recordbench-banner.svg) | Wide wordmark and tagline for the README or a project introduction. |
-| [Video teaser](assets/recordbench-teaser.mp4) | Approved 51-second, 1080p glimpse of selected workflows using synthetic records and a maintainer-supplied original soundtrack. Not a full walkthrough. |
-| [Teaser preview](assets/recordbench-teaser-preview.jpg) | Linked preview image for surfaces that do not support inline video. |
+| [Desktop walkthrough](assets/recordbench-desktop-walkthrough.mp4) | 4:47 landscape tour of the fictional Harbor Street matter, at 1280 × 720. |
+| [Mobile walkthrough](assets/recordbench-mobile-walkthrough.mp4) | 5:34 portrait tour of the same fictional matter, at 720 × 1280. |
 
 Both SVGs are self-contained. They contain no external image or font requests,
 case screenshots, or deployment details. The banner repeats the canonical
 mark's paths at a larger scale; keep them synchronized if the mark changes.
 Use descriptive alternative text when embedding either asset.
 
-## Video teaser
+## Demo walkthroughs
 
-Present the video as **RecordBench in 51 seconds**: a quick glimpse of selected
-workflows, not a comprehensive tour or tutorial. Pair it with a short invitation
-to try synthetic material or contribute workflow feedback. Do not imply that
-this preview establishes production readiness or institutional endorsement.
+Present the videos as **Desktop walkthrough** and **Mobile walkthrough**, under
+**See RecordBench in action**. They replace the former 51-second teaser as the
+repository's featured demos. Both follow the fictional Harbor Street matter
+through records, source-linked questions, review, and work product. Keep the
+on-screen labels and fictional-case/development-alpha notices visible. Do not
+present either walkthrough as production validation or institutional endorsement.
 
-The MP4 includes music but no narration. Keep the on-screen labels visible.
-For GitHub, upload the video as an attachment and place its stable
+For GitHub, upload each video as an attachment and place its stable
 `github.com/user-attachments/assets/` URL alone in a paragraph to render a
-player. A repository-file link is only a download fallback, not an inline
-player. Keep that fallback for other Markdown viewers. GitHub initializes the
-player muted; viewers can unmute it. Never commit the temporary signed media
-URL returned by the renderer. Private attachments require repository access.
-The approved edit is 51 seconds at 1920 × 1080. Preserve its soundtrack's pitch
-and tempo when reusing it.
+player. A repository-file link is a download fallback, not an inline player.
+Keep that fallback for other Markdown viewers. Never commit the temporary signed
+media URL returned by the renderer. Preserve each video's aspect ratio and timing.
 
-The maintainer supplied the original soundtrack for this teaser. Inclusion in
-this repository does not relicense that music under Apache-2.0 or grant a
-standalone music license. Obtain the maintainer's permission for other music
-uses. See [media rights](assets/MEDIA_RIGHTS.md).
+See [media rights](assets/MEDIA_RIGHTS.md) for the supplied walkthroughs and the
+separate rights notice retained for the older teaser.
 
 ## Short description
 
