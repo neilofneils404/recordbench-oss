@@ -23,9 +23,16 @@ def main(arguments: list[str]) -> int:
         soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
         effective = min(value for value in (maximum, soft, hard) if value != resource.RLIM_INFINITY)
         resource.setrlimit(resource.RLIMIT_FSIZE, (effective, effective))
-        # Python ignores this signal at startup. The exec'd program must instead
-        # terminate when it tries to write beyond the enforced file-size cap.
-        signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
+        # A default SIGXFSZ can send source-bearing process memory to an external
+        # core collector, even when RLIMIT_CORE is zero. Inherit SIG_IGN through
+        # exec so an oversized write fails with EFBIG without that signal path.
+        signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        # Report the limit actually installed in this process, including a
+        # tighter inherited limit. This pipe write is not subject to RLIMIT_FSIZE.
+        receipt = f"recordbench-ocr-limit:{effective}\n".encode("ascii")
+        if os.write(sys.stdout.fileno(), receipt) != len(receipt):
+            return 125
         os.execv(command[0], command)
     except (IndexError, OSError, ValueError):
         # No unbounded fallback if the operating system cannot apply the limit.

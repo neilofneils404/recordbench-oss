@@ -50,15 +50,20 @@ are evaluated within that deadline: a confident fragment does not establish a
 complete reading. A retry replaces the current reading only when it
 has more words at confidence 80 or higher that native text lacks; words already
 in native text, such as an upright stamp, do not count. Matching uses whole
-alphanumeric terms and consumes only the available native occurrences. Missing
-native whitespace can be matched against an entire consecutive OCR span, bounded
-at 12 words and 256 characters; partial substrings are never discounted.
+alphanumeric terms and consumes each native occurrence at most once. A joined
+term in either layer can match complete consecutive terms in the other layer,
+bounded at 12 words and 256 characters. Partial substrings,
+nonconsecutive terms and overlapping reuse of native occurrences are not discounted.
 Competing readings are never combined. A retry that times out, fails or exceeds
 a limit keeps the best completed reading and its outcome. Before recognition,
 a dedicated child applies a 16 MiB regular-file size limit, retaining any tighter
-inherited limit, then executes Tesseract. This bounds output-file growth while
-Tesseract writes, including its word-confidence table; the existing text read
-limit still applies. Without a table the first reading is kept without retries. PDF page
+inherited limit, then executes Tesseract. The parent uses the child's reported
+effective limit and rejects either output file at that boundary, including a
+child that reports success after a truncated write. File-limit overflow returns
+a write error without a core-producing signal; the existing recognition timeout
+still bounds the child. This bounds output-file growth while Tesseract writes,
+including its word-confidence table; the existing text read limit still applies.
+Without usable word confidences the first reading is kept without retries. PDF page
 rotation metadata and pixels turned on an upright page are handled the same way,
 because retries turn the rendered page.
 

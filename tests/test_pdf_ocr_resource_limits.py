@@ -1,24 +1,23 @@
 """Synthetic real-process checks for OCR's enforced output-file boundary."""
 from __future__ import annotations
 
-import signal
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+resource = pytest.importorskip("resource")
 from case_intelligence import ocr_process_helper, pilot_uploads
 
-resource = pytest.importorskip("resource")
 HELPER = Path(ocr_process_helper.__file__)
 ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "OMP_THREAD_LIMIT": "1"}
 RASTER = b"P5\n1 1\n255\n\0"
-# Python normally ignores SIGXFSZ; restore the exec-time default so this
-# synthetic executable behaves like Tesseract when the kernel refuses a write.
+# Keep the helper's ignored SIGXFSZ disposition: excess writes raise EFBIG.
 WRITER = """
-import pathlib, signal, sys
-signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
+import pathlib, sys
 pathlib.Path(sys.argv[1]).with_suffix('.txt').write_text('synthetic body')
 with open(sys.argv[1], 'wb', buffering=0) as output:
     for _ in range(257):
@@ -34,7 +33,7 @@ def test_real_ocr_child_cannot_write_past_file_cap(tmp_path):
          sys.executable, "-I", "-S", "-c", WRITER, str(output)],
         capture_output=True, timeout=10, env=ENVIRONMENT,
     )
-    assert result.returncode == -signal.SIGXFSZ
+    assert result.returncode > 0
     assert 0 < output.stat().st_size <= pilot_uploads.MAX_OCR_TSV_BYTES
     assert resource.getrlimit(resource.RLIMIT_FSIZE) == inherited
 
@@ -92,24 +91,28 @@ pathlib.Path(sys.argv[1] + '.txt').write_text('synthetic body')
     assert observed_sizes == [pilot_uploads.MAX_OCR_TSV_BYTES]
 
 
-def test_real_bounded_child_returns_small_reading_and_cleans_up(monkeypatch):
+@pytest.mark.parametrize("include_table", [False, True])
+def test_real_bounded_child_returns_small_reading_and_cleans_up(monkeypatch, include_table):
     run = subprocess.run
     directories = []
     script = """
 import pathlib, sys
 pathlib.Path(sys.argv[1] + '.txt').write_text('synthetic body')
-pathlib.Path(sys.argv[1] + '.tsv').write_text('header\\n5\\t1\\t1\\t1\\t1\\t1\\t0\\t0\\t1\\t1\\t95\\tbody\\n')
+if sys.argv[2] == 'True':
+    pathlib.Path(sys.argv[1] + '.tsv').write_text('header\\n5\\t1\\t1\\t1\\t1\\t1\\t0\\t0\\t1\\t1\\t95\\tbody\\n')
+print('ignored synthetic OCR stdout')
 """
 
     def synthetic_tesseract(command, **kwargs):
         index = command.index("/usr/bin/tesseract")
         base = Path(command[index + 2])
         directories.append(base.parent)
-        return run(command[:index] + [sys.executable, "-I", "-S", "-c", script, str(base)], **kwargs)
+        assert Path(kwargs["cwd"]) == base.parent
+        return run(command[:index] + [sys.executable, "-I", "-S", "-c", script, str(base), str(include_table)], **kwargs)
 
     monkeypatch.setattr(pilot_uploads.subprocess, "run", synthetic_tesseract)
     reading = pilot_uploads._tesseract_reading(RASTER, "eng", "1", 10, ENVIRONMENT)
-    assert reading == pilot_uploads._OcrReading("synthetic body", (("body", 95.0),))
+    assert reading == pilot_uploads._OcrReading("synthetic body", (("body", 95.0),) if include_table else ())
     assert not directories[0].exists()
 
 
@@ -144,8 +147,117 @@ os.execv(sys.executable, [sys.executable, '-I', '-S', *sys.argv[1:]])
          sys.executable, "-I", "-S", "-c", WRITER, str(output)],
         capture_output=True, timeout=10, env=ENVIRONMENT,
     )
-    assert result.returncode == -signal.SIGXFSZ
+    assert result.returncode > 0
     assert output.stat().st_size == 1024
+
+
+def test_native_overflow_does_not_trigger_a_core_dump(tmp_path):
+    dd = shutil.which("dd")
+    if dd is None:
+        pytest.skip("native dd is required to check exec-inherited signal disposition")
+    parent_core_limit = resource.getrlimit(resource.RLIMIT_CORE)
+    if parent_core_limit[1] == 0:
+        pytest.skip("inherited hard core limit cannot enable dumps for this regression")
+    launcher = """
+import os, resource, sys
+soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+enabled = 1048576 if hard == resource.RLIM_INFINITY else min(1048576, hard)
+resource.setrlimit(resource.RLIMIT_CORE, (enabled, hard))
+os.execv(sys.executable, [sys.executable, '-I', '-S', *sys.argv[1:]])
+"""
+    output = tmp_path / "synthetic.tsv"
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", launcher, str(HELPER), "1024", dd,
+         "if=/dev/zero", f"of={output}", "bs=1024", "count=2"],
+        capture_output=True, timeout=10, env=ENVIRONMENT, cwd=tmp_path,
+    )
+    # A positive exit proves an ordinary write error, rather than a signal that
+    # might send a dump to an external collector outside this directory.
+    assert result.returncode > 0
+    assert output.stat().st_size == 1024
+    assert list(tmp_path.iterdir()) == [output]
+    assert resource.getrlimit(resource.RLIMIT_CORE) == parent_core_limit
+
+
+@pytest.mark.parametrize("suffix", [".txt", ".tsv"])
+@pytest.mark.parametrize("hard", [1024, resource.RLIM_INFINITY], ids=["tight-hard", "soft-only"])
+def test_successful_truncated_output_uses_the_actual_inherited_limit(monkeypatch, suffix, hard):
+    run = subprocess.run
+    observations = []
+    launcher = """
+import os, resource, sys
+resource.setrlimit(resource.RLIMIT_FSIZE, (1024, int(sys.argv[1])))
+os.execv(sys.argv[2], sys.argv[2:])
+"""
+    script = """
+import pathlib, sys
+base, suffix = sys.argv[1:]
+pathlib.Path(base + '.txt').write_text('synthetic body')
+pathlib.Path(base + '.tsv').write_text('header\\n')
+try:
+    with open(base + suffix, 'wb', buffering=0) as output:
+        output.write(b'x' * 1025)
+except OSError:
+    pass
+"""
+
+    def synthetic_tesseract(command, **kwargs):
+        index = command.index("/usr/bin/tesseract")
+        base = Path(command[index + 2])
+        bounded = command[:index] + [sys.executable, "-I", "-S", "-c", script, str(base), suffix]
+        result = run([sys.executable, "-I", "-S", "-c", launcher, str(hard), *bounded], **kwargs)
+        assert result.returncode == 0
+        observations.append((base.parent, base.with_suffix(suffix).stat().st_size))
+        return result
+
+    monkeypatch.setattr(pilot_uploads.subprocess, "run", synthetic_tesseract)
+    with pytest.raises(pilot_uploads._OcrStop) as raised:
+        pilot_uploads._tesseract_reading(RASTER, "eng", "1", 10, ENVIRONMENT)
+    assert raised.value.status == "output_limit"
+    directory, size = observations[0]
+    assert size == 1024
+    assert not directory.exists()
+
+
+def test_zero_inherited_cap_is_reported_as_output_limit(monkeypatch):
+    run = subprocess.run
+    launcher = """
+import os, resource, sys
+resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
+os.execv(sys.argv[1], sys.argv[1:])
+"""
+
+    def synthetic_tesseract(command, **kwargs):
+        index = command.index("/usr/bin/tesseract")
+        bounded = command[:index] + [sys.executable, "-I", "-S", "-c", "pass"]
+        result = run([sys.executable, "-I", "-S", "-c", launcher, *bounded], **kwargs)
+        assert result.returncode == 0
+        assert result.stdout == b"recordbench-ocr-limit:0\n"
+        return result
+
+    monkeypatch.setattr(pilot_uploads.subprocess, "run", synthetic_tesseract)
+    with pytest.raises(pilot_uploads._OcrStop) as raised:
+        pilot_uploads._tesseract_reading(RASTER, "eng", "1", 10, ENVIRONMENT)
+    assert raised.value.status == "output_limit"
+
+
+@pytest.mark.parametrize("receipt", [b"", b"recordbench-ocr-limit:1024", b"recordbench-ocr-limit:-1\n",
+                                    b"recordbench-ocr-limit:16777217\n", b"junk\nrecordbench-ocr-limit:1024\n"])
+def test_success_without_valid_limit_receipt_fails_closed(monkeypatch, receipt):
+    directories = []
+
+    def synthetic_tesseract(command, **kwargs):
+        index = command.index("/usr/bin/tesseract")
+        base = Path(command[index + 2])
+        directories.append(base.parent)
+        base.with_suffix(".txt").write_text("synthetic body")
+        return SimpleNamespace(returncode=0, stdout=receipt)
+
+    monkeypatch.setattr(pilot_uploads.subprocess, "run", synthetic_tesseract)
+    with pytest.raises(pilot_uploads._OcrStop) as raised:
+        pilot_uploads._tesseract_reading(RASTER, "eng", "1", 10, ENVIRONMENT)
+    assert raised.value.status == "failed"
+    assert not directories[0].exists()
 
 
 @pytest.mark.parametrize("arguments", [[], ["invalid"], ["0", "/bin/echo"], ["-1", "/bin/echo"],

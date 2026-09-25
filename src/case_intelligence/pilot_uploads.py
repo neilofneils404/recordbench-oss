@@ -14,7 +14,6 @@ import threading
 import time
 import unicodedata
 import uuid
-from collections import Counter
 from contextlib import contextmanager
 from errno import ENOSYS, EOPNOTSUPP, EPERM, EXDEV
 from dataclasses import asdict, dataclass, field
@@ -283,7 +282,6 @@ def _tesseract_reading(
     raster: bytes, language: str, mode: str, timeout: float, environment: dict[str, str],
 ) -> _OcrReading:
     """Return text and word confidences from one bounded Tesseract run."""
-    import signal
     import sys
 
     with tempfile.TemporaryDirectory(prefix="recordbench-ocr-") as directory:
@@ -300,7 +298,15 @@ def _tesseract_reading(
             check=False,
             timeout=timeout,
             env=environment,
+            cwd=directory,
         )
+        # The helper writes this short receipt before exec. Use the actual
+        # inherited cap, not just the nominal maximum, and never trust output
+        # from a process that did not report successful limit installation.
+        receipt_line, separator, _ = recognized.stdout[:32].partition(b"\n")
+        receipt = re.fullmatch(rb"recordbench-ocr-limit:([0-9]{1,8})", receipt_line) if separator else None
+        if receipt is None or (effective_limit := int(receipt[1])) > MAX_OCR_TSV_BYTES:
+            raise _OcrStop("failed")
         text_path, table_path = base.with_suffix(".txt"), base.with_suffix(".tsv")
         # Without a confidence table the reading is kept but never re-oriented.
         table_size = table_path.stat().st_size if table_path.is_file() else 0
@@ -308,8 +314,8 @@ def _tesseract_reading(
         # The child enforces RLIMIT_FSIZE before exec, so output cannot grow past
         # the cap while recognition runs. Treat a file reaching the cap as
         # incomplete even if the executable fails to report its write error.
-        if (recognized.returncode == -signal.SIGXFSZ
-                or text_size > MAX_PDF_PAGE_CHARS or table_size >= MAX_OCR_TSV_BYTES):
+        if (text_size >= effective_limit or table_size >= effective_limit
+                or text_size > MAX_PDF_PAGE_CHARS):
             raise _OcrStop("output_limit")
         if recognized.returncode != 0:
             raise _OcrStop("failed")
@@ -335,24 +341,64 @@ def _ocr_word_keys(text: str) -> list[str]:
 
 def _new_ocr_words(reading: _OcrReading, native_words: list[str]) -> list[tuple[str, float]]:
     """Discount complete native occurrences, including bounded joined runs."""
-    remaining = Counter(native_words)
+    from array import array
+
     words = [(key, confidence) for word, confidence in reading.words for key in _ocr_word_keys(word)]
+    if not native_words or not words:
+        return words
+    ocr_keys = {key for key, _ in words}
+    single_occurrences: dict[str, array] = {}
+    joined_occurrences: dict[str, array] = {}
+    # Index original positions once. Compact integer pairs bound index storage;
+    # inverse joins are indexed only for keys actually present in OCR output.
+    for start, word in enumerate(native_words):
+        single_occurrences.setdefault(word, array("I")).extend((start, start + 1))
+        joined = word
+        for end in range(start + 1, min(len(native_words), start + 12)):
+            if len(joined) + len(native_words[end]) > 256:
+                break
+            joined += native_words[end]
+            if joined in ocr_keys:
+                joined_occurrences.setdefault(joined, array("I")).extend((start, end + 1))
+    consumed = bytearray(len(native_words))
+    single_cursors: dict[str, int] = {}
+    joined_cursors: dict[str, int] = {}
+
+    def available(occurrences: dict[str, array], cursors: dict[str, int], key: str):
+        spans = occurrences.get(key)
+        if spans is None:
+            return None
+        cursor = cursors.get(key, 0)
+        while cursor < len(spans):
+            start, end = spans[cursor], spans[cursor + 1]
+            if not any(consumed[start:end]):
+                cursors[key] = cursor
+                return start, end
+            # A used occurrence cannot be reused through an overlapping join.
+            cursor += 2
+        cursors[key] = cursor
+        return None
+
     added = []
     index = 0
     while index < len(words):
         joined = words[index][0]
-        match = (joined, index + 1) if remaining[joined] else None
+        single = available(single_occurrences, single_cursors, joined)
+        inverse = available(joined_occurrences, joined_cursors, joined)
+        span = min((value for value in (single, inverse) if value is not None), default=None)
+        match = (*span, index + 1) if span is not None else None
         # Missing native whitespace can join stamp words. Match an entire run,
         # never a substring, and bound work even for hostile confidence tables.
         for end in range(index + 1, min(len(words), index + 12)):
             if len(joined) + len(words[end][0]) > 256:
                 break
             joined += words[end][0]
-            if remaining[joined]:
-                match = joined, end + 1
+            span = available(single_occurrences, single_cursors, joined)
+            if span is not None:
+                match = (*span, end + 1)
         if match is not None:
-            key, index = match
-            remaining[key] -= 1
+            start, end, index = match
+            consumed[start:end] = b"\x01" * (end - start)
         else:
             added.append(words[index])
             index += 1

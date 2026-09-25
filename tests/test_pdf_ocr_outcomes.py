@@ -136,7 +136,10 @@ def _fake_ocr(monkeypatch, readings, *, raster=_RASTER):
         if words is not None:
             with open(base + ".tsv", "w", encoding="utf-8") as handle:
                 handle.write("\n".join(rows) + "\n")
-        return SimpleNamespace(returncode=0, stdout=b"")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=f"recordbench-ocr-limit:{pilot_uploads.MAX_OCR_TSV_BYTES}\n".encode("ascii"),
+        )
 
     monkeypatch.setattr(pilot_uploads.subprocess, "run", run)
     return calls
@@ -225,6 +228,20 @@ def test_joined_native_stamp_does_not_hide_low_confidence_body(monkeypatch, tmp_
     assert len(_tesseract_calls(calls)) == 4
 
 
+def test_joined_ocr_stamp_does_not_hide_low_confidence_body(monkeypatch, tmp_path):
+    native = "SYNTHETIC STAMP RECEIVED FOR REVIEW DESK ONLY TODAY"
+    stamp = [(word, 95) for word in "SYNTHETICSTAMP RECEIVEDFOR REVIEWDESK ONLYTODAY".split()]
+    calls = _fake_ocr(monkeypatch, [
+        ("SYNTHETICSTAMP RECEIVEDFOR REVIEWDESK ONLYTODAY MOJIM", stamp + [("MOJIM", 15)]),
+        ("SYNTHETICSTAMP RECEIVEDFOR REVIEWDESK ONLYTODAY", stamp),
+        ("amber ledger", [("amber", 95), ("ledger", 95)]),
+        ("", []),
+    ])
+    result = pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1, native_text=native)
+    assert result == PdfOcrResult("amber ledger", "recognized")
+    assert len(_tesseract_calls(calls)) == 4
+
+
 def test_small_confident_fragment_does_not_preempt_later_body(monkeypatch, tmp_path):
     calls = _fake_ocr(monkeypatch, [
         ("Ja MOJIM", [("Ja", 20), ("MOJIM", 15)]),
@@ -243,11 +260,43 @@ def test_small_confident_fragment_does_not_preempt_later_body(monkeypatch, tmp_p
     ("SCARLET", ["CAR"], ["car"]),
     ("ledger", ["ledger", "ledger"], ["ledger"]),
     ("RECEIVEDFORREVIEW", ["RECEIVED", "FOR", "REVIEW", "FOR"], ["for"]),
+    ("RECEIVED FOR REVIEW", ["RECEIVEDFORREVIEW"], []),
+    ("RECEIVED FOR REVIEW", ["FORRECEIVED"], ["forreceived"]),
+    ("RECEIVED FOR REVIEW", ["RECEIVEDREVIEW"], ["receivedreview"]),
+    ("RECEIVED FOR REVIEW", ["RECEIVEDFOR", "RECEIVEDFOR"], ["receivedfor"]),
+    ("RECEIVED FOR REVIEW RECEIVED FOR", ["RECEIVEDFOR", "RECEIVEDFOR"], []),
+    ("RECEIVED FOR REVIEW", ["FOR", "RECEIVEDFOR"], ["receivedfor"]),
+    ("RECEIVED FOR REVIEW", ["RECEIVEDFOR", "FOR"], ["for"]),
+    ("RECEIVED GAP FOR", ["GAP", "RECEIVEDFOR"], ["receivedfor"]),
+    ("SCAR LET", ["CARLET"], ["carlet"]),
+    ("AB A B", ["AB", "AB", "AB"], ["ab"]),
+    ("A B AB", ["AB", "A", "B"], []),
+    ("A B C A B", ["AB", "BC", "AB"], ["bc"]),
 ])
 def test_native_discount_requires_complete_available_occurrences(native, words, expected):
     reading = pilot_uploads._OcrReading(" ".join(words), tuple((word, 95) for word in words))
     added = pilot_uploads._new_ocr_words(reading, pilot_uploads._ocr_word_keys(native))
     assert [word for word, _ in added] == expected
+
+
+@pytest.mark.parametrize("terms,discounted", [(12, True), (13, False)])
+def test_native_join_matching_has_a_term_limit_in_both_directions(terms, discounted):
+    separate = ["a"] * terms
+    joined = "".join(separate)
+    for native, words in ((separate, [joined]), ([joined], separate)):
+        reading = pilot_uploads._OcrReading(" ".join(words), tuple((word, 95) for word in words))
+        added = pilot_uploads._new_ocr_words(reading, native)
+        assert [word for word, _ in added] == ([] if discounted else words)
+
+
+@pytest.mark.parametrize("characters,discounted", [(256, True), (257, False)])
+def test_native_join_matching_has_a_character_limit_in_both_directions(characters, discounted):
+    separate = ["a" * 128, "b" * (characters - 128)]
+    joined = "".join(separate)
+    for native, words in ((separate, [joined]), ([joined], separate)):
+        reading = pilot_uploads._OcrReading(" ".join(words), tuple((word, 95) for word in words))
+        added = pilot_uploads._new_ocr_words(reading, native)
+        assert [word for word, _ in added] == ([] if discounted else words)
 
 
 def test_failed_later_orientation_keeps_best_completed_reading(monkeypatch, tmp_path):
