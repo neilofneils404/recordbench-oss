@@ -23,18 +23,26 @@ workflows use local models for retrieval, answers, and media transcription.
 > See [release readiness](docs/RELEASE_READINESS.md) for the validation still
 > ahead.
 
-## RecordBench in 51 seconds
+## See RecordBench in action
 
-https://github.com/user-attachments/assets/d60d5c9e-0942-441e-988e-7109b9de8406
+Follow a fictional Harbor Street matter from adding records to source-linked
+answers, media review, notes, timelines, reports, and export. These desktop and
+mobile walkthroughs use synthetic records and demonstrate the development alpha.
 
-**Ask. Verify. Review. Export.** A quick glimpse of a few workflows—not a
-full walkthrough. See source-linked questions, synchronized media review,
-and work product coming together in one case workspace.
+### Desktop walkthrough · 4:47
 
-[Watch or download the teaser](docs/assets/recordbench-teaser.mp4?raw=true)
-· **51 seconds, with music; no narration.** On-screen labels provide context,
-so it also works muted. The demonstration uses synthetic records (Project
-Nightglass). This is a development-alpha preview, not production validation.
+https://github.com/user-attachments/assets/e14f468e-7ea6-46de-84e0-d9c865e1db53
+
+[Watch or download the desktop walkthrough](docs/assets/recordbench-desktop-walkthrough.mp4?raw=true)
+
+### Mobile walkthrough · 5:34
+
+https://github.com/user-attachments/assets/2506daba-2922-4f8a-b2a0-b5e518b10a27
+
+[Watch or download the mobile walkthrough](docs/assets/recordbench-mobile-walkthrough.mp4?raw=true)
+
+On-screen labels explain each step. The case is fictional; the app and its
+actions are real. These walkthroughs are previews, not production validation.
 
 Want to help shape it? [Help build RecordBench](#help-build-it)—workflow feedback,
 synthetic test material, and clear bug reports are as useful as code.
@@ -372,5 +380,7 @@ in [release readiness](docs/RELEASE_READINESS.md) and the
 RecordBench is licensed under [Apache-2.0](LICENSE). Dependencies, containers,
 and models retain their respective licenses and terms. Their notice inventory
 remains part of the [publication review](docs/PUBLICATION_CHECKLIST.md).
-The teaser's original soundtrack is not covered by the software license;
+The new desktop and mobile walkthroughs, including their audio, are also
+licensed under Apache-2.0. Only the previous teaser's original soundtrack is
+excluded from the software license;
 see [media rights](docs/assets/MEDIA_RIGHTS.md).

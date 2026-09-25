@@ -1,4 +1,22 @@
-# Teaser media rights
+# Demo media rights
+
+## Current walkthroughs
+
+`recordbench-desktop-walkthrough.mp4` and
+`recordbench-mobile-walkthrough.mp4` were supplied by the maintainer for
+publication as RecordBench's desktop and mobile GitHub demos. Both show the
+fictional Harbor Street demonstration matter. The supplied files are preserved
+without re-encoding.
+
+The maintainer confirms the rights to publish these AI-assisted demos and
+licenses both complete videos, including their audio tracks, under the
+repository's [Apache-2.0 license](../../LICENSE). No separate audio exclusion
+applies to either new walkthrough.
+
+## Previous teaser
+
+The previous teaser is no longer featured in the README. Its rights notice is
+retained for the existing media files and historical copies.
 
 `recordbench-teaser.mp4` is the maintainer-approved RecordBench teaser. It shows
 synthetic demonstration material and includes an original soundtrack supplied
