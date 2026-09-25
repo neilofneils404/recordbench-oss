@@ -271,6 +271,29 @@ def test_orientation_retry_failure_keeps_first_reading(monkeypatch, tmp_path, fa
     assert len(_tesseract_calls(calls)) == 2
 
 
+def test_native_only_initial_reading_retries_for_image_body(monkeypatch, tmp_path):
+    calls = _fake_ocr(monkeypatch, [
+        ("RECEIVED", [("RECEIVED", 95)]),
+        ("RECEIVED", [("RECEIVED", 95)]),
+        ("amber ledger", [("amber", 95), ("ledger", 95)]),
+        ("", []),
+    ])
+    result = pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1, native_text="RECEIVED.")
+    assert result == PdfOcrResult("amber ledger", "recognized")
+    assert len(_tesseract_calls(calls)) == 4
+
+
+@pytest.mark.parametrize("retries", [
+    [("RECEIVED", [("RECEIVED", 95)]), ("", []), ("", [])],
+    [subprocess.TimeoutExpired("tesseract", 1)],
+])
+def test_native_only_initial_reading_survives_unhelpful_or_failed_retries(monkeypatch, tmp_path, retries):
+    calls = _fake_ocr(monkeypatch, [("RECEIVED", [("RECEIVED", 95)]), *retries])
+    result = pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1, native_text="RECEIVED.")
+    assert result == PdfOcrResult("RECEIVED", "recognized")
+    assert len(_tesseract_calls(calls)) == 1 + len(retries)
+
+
 def test_native_only_retry_does_not_end_search_before_useful_rotation(monkeypatch, tmp_path):
     # The first retry is fully confident but adds nothing native text lacks.
     calls = _fake_ocr(monkeypatch, [
@@ -335,9 +358,11 @@ def test_rotate_pgm_turns_pixels_clockwise():
     assert pilot_uploads._rotate_pgm(b"P5\n3 2\n255\n\0", 90) is None
 
 
-def test_missing_confidence_table_keeps_reading_without_retry(monkeypatch, tmp_path):
-    calls = _fake_ocr(monkeypatch, [("Ja MOJIM", None)])
-    assert pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1) == PdfOcrResult("Ja MOJIM", "recognized")
+@pytest.mark.parametrize("native", ["", "Ja MOJIM"])
+@pytest.mark.parametrize("words", [None, []])
+def test_missing_confidence_words_keep_reading_without_retry(monkeypatch, tmp_path, native, words):
+    calls = _fake_ocr(monkeypatch, [("Ja MOJIM", words)])
+    assert pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1, native_text=native) == PdfOcrResult("Ja MOJIM", "recognized")
     assert len(_tesseract_calls(calls)) == 1
 
 

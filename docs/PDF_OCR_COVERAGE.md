@@ -42,6 +42,8 @@ body upside down or sideways. That misreading still contains letters, so nonempt
 output is not treated as evidence of accuracy. When at least a quarter of the
 recognized words that native text does not already supply have Tesseract word
 confidence below 50, the rendered page is retried at 180, 90 and 270 degrees.
+A populated confidence table containing only native words also triggers retries:
+an upright stamp alone does not establish that the scanned body was read.
 Those retries share one additional 20-second timeout, measured again after each
 pixel rotation so no retry starts once it has expired. All remaining orientations
 are evaluated within that deadline: a confident fragment does not establish a

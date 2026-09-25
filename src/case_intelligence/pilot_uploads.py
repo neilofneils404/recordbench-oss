@@ -410,7 +410,9 @@ def _ocr_pdf_page(source: Path, page_number: int, *, native_text: str = "") -> P
     native_words = _ocr_word_keys(native_text)
     added = [confidence for _, confidence in _new_ocr_words(reading, native_words)]
     low = sum(1 for confidence in added if confidence < OCR_LOW_WORD_CONFIDENCE)
-    if not added or low < OCR_REORIENT_LOW_SHARE * len(added):
+    # A populated native-only table can mean an unread rotated image body.
+    # Missing word confidences cannot support orientation comparison.
+    if not reading.words or (added and low < OCR_REORIENT_LOW_SHARE * len(added)):
         return PdfOcrResult(text=reading.text, status="recognized")
     # Tesseract keeps the unrotated reading when its orientation estimate is
     # weak (sparse text, or an upright stamp over a turned scan). Retry the
