@@ -14,6 +14,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from errno import ENOSYS, EOPNOTSUPP, EPERM, EXDEV
 from dataclasses import asdict, dataclass, field
@@ -282,10 +283,15 @@ def _tesseract_reading(
     raster: bytes, language: str, mode: str, timeout: float, environment: dict[str, str],
 ) -> _OcrReading:
     """Return text and word confidences from one bounded Tesseract run."""
+    import signal
+    import sys
+
     with tempfile.TemporaryDirectory(prefix="recordbench-ocr-") as directory:
         base = Path(directory) / "page"
         recognized = subprocess.run(
             [
+                sys.executable, "-I", "-S", str(Path(__file__).with_name("ocr_process_helper.py")),
+                str(MAX_OCR_TSV_BYTES),
                 "/usr/bin/tesseract", "stdin", str(base), "-l", language,
                 "--psm", mode, "txt", "tsv",
             ],
@@ -295,13 +301,18 @@ def _tesseract_reading(
             timeout=timeout,
             env=environment,
         )
-        if recognized.returncode != 0:
-            raise _OcrStop("failed")
         text_path, table_path = base.with_suffix(".txt"), base.with_suffix(".tsv")
         # Without a confidence table the reading is kept but never re-oriented.
         table_size = table_path.stat().st_size if table_path.is_file() else 0
-        if text_path.stat().st_size > MAX_PDF_PAGE_CHARS or table_size > MAX_OCR_TSV_BYTES:
+        text_size = text_path.stat().st_size if text_path.is_file() else 0
+        # The child enforces RLIMIT_FSIZE before exec, so output cannot grow past
+        # the cap while recognition runs. Treat a file reaching the cap as
+        # incomplete even if the executable fails to report its write error.
+        if (recognized.returncode == -signal.SIGXFSZ
+                or text_size > MAX_PDF_PAGE_CHARS or table_size >= MAX_OCR_TSV_BYTES):
             raise _OcrStop("output_limit")
+        if recognized.returncode != 0:
+            raise _OcrStop("failed")
         text = text_path.read_bytes().decode("utf-8", errors="strict").strip()
         table = table_path.read_bytes().decode("utf-8", errors="strict") if table_size else ""
     words = []
@@ -318,15 +329,38 @@ def _tesseract_reading(
     return _OcrReading(text, tuple(words))
 
 
-def _word_key(word: str) -> str:
-    return "".join(character for character in word.casefold() if character.isalnum())
+def _ocr_word_keys(text: str) -> list[str]:
+    return re.findall(r"[^\W_]+", text.casefold())
 
 
-def _confident_new_words(reading: _OcrReading, native_words: set[str]) -> int:
-    return sum(
-        1 for word, confidence in reading.words
-        if confidence >= OCR_CONFIDENT_WORD and _word_key(word) not in native_words
-    )
+def _new_ocr_words(reading: _OcrReading, native_words: list[str]) -> list[tuple[str, float]]:
+    """Discount complete native occurrences, including bounded joined runs."""
+    remaining = Counter(native_words)
+    words = [(key, confidence) for word, confidence in reading.words for key in _ocr_word_keys(word)]
+    added = []
+    index = 0
+    while index < len(words):
+        joined = words[index][0]
+        match = (joined, index + 1) if remaining[joined] else None
+        # Missing native whitespace can join stamp words. Match an entire run,
+        # never a substring, and bound work even for hostile confidence tables.
+        for end in range(index + 1, min(len(words), index + 12)):
+            if len(joined) + len(words[end][0]) > 256:
+                break
+            joined += words[end][0]
+            if remaining[joined]:
+                match = joined, end + 1
+        if match is not None:
+            key, index = match
+            remaining[key] -= 1
+        else:
+            added.append(words[index])
+            index += 1
+    return added
+
+
+def _confident_new_words(reading: _OcrReading, native_words: list[str]) -> int:
+    return sum(confidence >= OCR_CONFIDENT_WORD for _, confidence in _new_ocr_words(reading, native_words))
 
 
 def _ocr_pdf_page(source: Path, page_number: int, *, native_text: str = "") -> PdfOcrResult:
@@ -373,8 +407,8 @@ def _ocr_pdf_page(source: Path, page_number: int, *, native_text: str = "") -> P
         return PdfOcrResult(status="failed")
     # Judge only what OCR adds: confident native stamp words must not mask a
     # misread body.
-    native_words = {_word_key(word) for word in native_text.split()}
-    added = [confidence for word, confidence in reading.words if _word_key(word) not in native_words]
+    native_words = _ocr_word_keys(native_text)
+    added = [confidence for _, confidence in _new_ocr_words(reading, native_words)]
     low = sum(1 for confidence in added if confidence < OCR_LOW_WORD_CONFIDENCE)
     if not added or low < OCR_REORIENT_LOW_SHARE * len(added):
         return PdfOcrResult(text=reading.text, status="recognized")
@@ -382,7 +416,7 @@ def _ocr_pdf_page(source: Path, page_number: int, *, native_text: str = "") -> P
     # weak (sparse text, or an upright stamp over a turned scan). Retry the
     # other orientations within one extra timeout. A retry replaces the first
     # reading only with more confident words that native text lacks; competing
-    # readings are never merged, and a failed retry keeps the first reading.
+    # readings are never merged, and a failed retry keeps the best completed reading.
     selected, best = reading, _confident_new_words(reading, native_words)
     deadline = time.monotonic() + OCR_TIMEOUT_SECONDS
     for degrees in OCR_REORIENT_DEGREES:
@@ -399,11 +433,10 @@ def _ocr_pdf_page(source: Path, page_number: int, *, native_text: str = "") -> P
             break
         score = _confident_new_words(candidate, native_words)
         if score <= best or not any(character.isalnum() for character in candidate.text):
-            # A native-only or otherwise non-improving reading never ends the search.
             continue
         selected, best = candidate, score
-        if all(confidence >= OCR_LOW_WORD_CONFIDENCE for _, confidence in candidate.words):
-            break
+        # A confident fragment is not evidence of complete recognition. Evaluate
+        # the remaining orientations while the shared deadline permits it.
     return PdfOcrResult(text=selected.text, status="recognized")
 
 

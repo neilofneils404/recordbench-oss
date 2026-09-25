@@ -43,14 +43,20 @@ output is not treated as evidence of accuracy. When at least a quarter of the
 recognized words that native text does not already supply have Tesseract word
 confidence below 50, the rendered page is retried at 180, 90 and 270 degrees.
 Those retries share one additional 20-second timeout, measured again after each
-pixel rotation so no retry starts once it has expired. They stop early only when
-a retry is selected and has no low-confidence words; a retry that adds nothing
-beyond native text never ends the search. A retry replaces the first reading only when it
+pixel rotation so no retry starts once it has expired. All remaining orientations
+are evaluated within that deadline: a confident fragment does not establish a
+complete reading. A retry replaces the current reading only when it
 has more words at confidence 80 or higher that native text lacks; words already
-in native text, such as an upright stamp, do not count. Competing readings are
-never combined. A retry that times out, fails or exceeds a limit keeps the first
-reading and its outcome. Word confidences are read from a table bounded at
-16 MiB; without a table the first reading is kept without retries. PDF page
+in native text, such as an upright stamp, do not count. Matching uses whole
+alphanumeric terms and consumes only the available native occurrences. Missing
+native whitespace can be matched against an entire consecutive OCR span, bounded
+at 12 words and 256 characters; partial substrings are never discounted.
+Competing readings are never combined. A retry that times out, fails or exceeds
+a limit keeps the best completed reading and its outcome. Before recognition,
+a dedicated child applies a 16 MiB regular-file size limit, retaining any tighter
+inherited limit, then executes Tesseract. This bounds output-file growth while
+Tesseract writes, including its word-confidence table; the existing text read
+limit still applies. Without a table the first reading is kept without retries. PDF page
 rotation metadata and pixels turned on an upright page are handled the same way,
 because retries turn the rendered page.
 

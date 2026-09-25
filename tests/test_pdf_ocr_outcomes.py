@@ -129,7 +129,8 @@ def _fake_ocr(monkeypatch, readings, *, raster=_RASTER):
         rows = ["level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
                 "1\t1\t0\t0\t0\t0\t0\t0\t9\t9\t-1\t"]
         rows += [] if words is None else [f"5\t1\t1\t1\t1\t{n}\t0\t0\t9\t9\t{conf}\t{word}" for n, (word, conf) in enumerate(words, 1)]
-        base = command[2]
+        ocr_command = command[command.index("/usr/bin/tesseract"):]
+        base = ocr_command[2]
         with open(base + ".txt", "w", encoding="utf-8") as handle:
             handle.write(text + "\n")
         if words is not None:
@@ -142,7 +143,8 @@ def _fake_ocr(monkeypatch, readings, *, raster=_RASTER):
 
 
 def _tesseract_calls(calls):
-    return [(command, kwargs) for command, kwargs in calls if command[0].endswith("tesseract")]
+    return [(command[command.index("/usr/bin/tesseract"):], kwargs)
+            for command, kwargs in calls if "/usr/bin/tesseract" in command]
 
 
 def test_ocr_uses_first_layout_result_not_longest(monkeypatch, tmp_path):
@@ -172,12 +174,13 @@ def test_misoriented_reading_selects_confident_rotation_not_concatenation(monkey
     calls = _fake_ocr(monkeypatch, [
         ("ssauj wopjeq", [("ssauj", 21), ("wopjeq", 18)]),
         ("rotated body", [("rotated", 94), ("body", 96)]),
+        ("", []), ("", []),
     ])
     result = pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1)
     assert result == PdfOcrResult("rotated body", "recognized")
     tesseract = _tesseract_calls(calls)
-    # A fully confident retry ends the search; the first retry is 180 degrees.
-    assert len(tesseract) == 2
+    # Later readings cannot overwrite the best completed reading with less evidence.
+    assert len(tesseract) == 4
     assert tesseract[1][1]["input"] == b"P5\n3 2\n255\n" + bytes(reversed(range(6)))
     assert tesseract[1][1]["timeout"] <= pilot_uploads.OCR_TIMEOUT_SECONDS
 
@@ -206,6 +209,57 @@ def test_upright_native_stamp_words_do_not_outvote_rotated_body(monkeypatch, tmp
     assert result == PdfOcrResult("amber ledger\nGEVIECEY dWVLS", "recognized")
 
 
+@pytest.mark.parametrize("native", [
+    "SYNTHETIC/STAMP:RECEIVED-FOR.REVIEW_DESK|ONLY",
+    "SYNTHETICSTAMPRECEIVEDFORREVIEWDESKONLY",
+])
+def test_joined_native_stamp_does_not_hide_low_confidence_body(monkeypatch, tmp_path, native):
+    stamp = [(word, 95) for word in "SYNTHETIC STAMP RECEIVED FOR REVIEW DESK ONLY".split()]
+    calls = _fake_ocr(monkeypatch, [
+        ("SYNTHETIC STAMP RECEIVED FOR REVIEW DESK ONLY Ja MOJIM", stamp + [("Ja", 20), ("MOJIM", 15)]),
+        ("SYNTHETIC STAMP RECEIVED FOR REVIEW DESK ONLY", stamp),
+        ("amber ledger", [("amber", 95), ("ledger", 95)]),
+        ("", []),
+    ])
+    assert pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1, native_text=native) == PdfOcrResult("amber ledger", "recognized")
+    assert len(_tesseract_calls(calls)) == 4
+
+
+def test_small_confident_fragment_does_not_preempt_later_body(monkeypatch, tmp_path):
+    calls = _fake_ocr(monkeypatch, [
+        ("Ja MOJIM", [("Ja", 20), ("MOJIM", 15)]),
+        ("fragment", [("fragment", 95)]),
+        ("amber ledger original body", [(word, 95) for word in "amber ledger original body".split()]),
+        ("", []),
+    ])
+    result = pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1)
+    assert result == PdfOcrResult("amber ledger original body", "recognized")
+    assert len(_tesseract_calls(calls)) == 4
+
+
+@pytest.mark.parametrize(("native", "words", "expected"), [
+    ("RECEIVEDFORREVIEW", ["FOR"], ["for"]),
+    ("RECEIVEDFORREVIEW", ["RECEIVED", "FOR"], ["received", "for"]),
+    ("SCARLET", ["CAR"], ["car"]),
+    ("ledger", ["ledger", "ledger"], ["ledger"]),
+    ("RECEIVEDFORREVIEW", ["RECEIVED", "FOR", "REVIEW", "FOR"], ["for"]),
+])
+def test_native_discount_requires_complete_available_occurrences(native, words, expected):
+    reading = pilot_uploads._OcrReading(" ".join(words), tuple((word, 95) for word in words))
+    added = pilot_uploads._new_ocr_words(reading, pilot_uploads._ocr_word_keys(native))
+    assert [word for word, _ in added] == expected
+
+
+def test_failed_later_orientation_keeps_best_completed_reading(monkeypatch, tmp_path):
+    calls = _fake_ocr(monkeypatch, [
+        ("Ja MOJIM", [("Ja", 20), ("MOJIM", 15)]),
+        ("amber ledger", [("amber", 95), ("ledger", 95)]),
+        subprocess.TimeoutExpired("tesseract", 1),
+    ])
+    assert pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1) == PdfOcrResult("amber ledger", "recognized")
+    assert len(_tesseract_calls(calls)) == 3
+
+
 @pytest.mark.parametrize("failure", [
     subprocess.TimeoutExpired("tesseract", 1),
     OSError("synthetic executable failure"),
@@ -223,11 +277,11 @@ def test_native_only_retry_does_not_end_search_before_useful_rotation(monkeypatc
         ("RECEIVED Ja MOJIM", [("RECEIVED", 95), ("Ja", 20), ("MOJIM", 15)]),
         ("RECEIVED", [("RECEIVED", 95)]),
         ("amber ledger", [("amber", 95), ("ledger", 95)]),
+        ("", []),
     ])
     result = pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1, native_text="RECEIVED.")
     assert result == PdfOcrResult("amber ledger", "recognized")
-    # The selected, fully confident 90-degree reading ends the search.
-    assert len(_tesseract_calls(calls)) == 3
+    assert len(_tesseract_calls(calls)) == 4
 
 
 def test_confident_non_improving_retry_does_not_end_search(monkeypatch, tmp_path):
