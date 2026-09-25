@@ -42,8 +42,10 @@ body upside down or sideways. That misreading still contains letters, so nonempt
 output is not treated as evidence of accuracy. When at least a quarter of the
 recognized words that native text does not already supply have Tesseract word
 confidence below 50, the rendered page is retried at 180, 90 and 270 degrees.
-Those retries share one additional 20-second timeout and stop early at a reading
-with no low-confidence words. A retry replaces the first reading only when it
+Those retries share one additional 20-second timeout, measured again after each
+pixel rotation so no retry starts once it has expired. They stop early only when
+a retry is selected and has no low-confidence words; a retry that adds nothing
+beyond native text never ends the search. A retry replaces the first reading only when it
 has more words at confidence 80 or higher that native text lacks; words already
 in native text, such as an upright stamp, do not count. Competing readings are
 never combined. A retry that times out, fails or exceeds a limit keeps the first

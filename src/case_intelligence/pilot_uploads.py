@@ -386,18 +386,23 @@ def _ocr_pdf_page(source: Path, page_number: int, *, native_text: str = "") -> P
     selected, best = reading, _confident_new_words(reading, native_words)
     deadline = time.monotonic() + OCR_TIMEOUT_SECONDS
     for degrees in OCR_REORIENT_DEGREES:
+        if time.monotonic() >= deadline:
+            break
+        rotated = _rotate_pgm(rendered.stdout, degrees)
+        # Rotation consumes the shared budget; never launch after it expires.
         remaining = deadline - time.monotonic()
-        rotated = _rotate_pgm(rendered.stdout, degrees) if remaining > 0 else None
-        if rotated is None:
+        if rotated is None or remaining <= 0:
             break
         try:
             candidate = _tesseract_reading(rotated, language, page_segmentation_mode, remaining, environment)
         except (_OcrStop, subprocess.TimeoutExpired, OSError, UnicodeDecodeError):
             break
         score = _confident_new_words(candidate, native_words)
-        if score > best and any(character.isalnum() for character in candidate.text):
-            selected, best = candidate, score
-        if candidate.words and all(confidence >= OCR_LOW_WORD_CONFIDENCE for _, confidence in candidate.words):
+        if score <= best or not any(character.isalnum() for character in candidate.text):
+            # A native-only or otherwise non-improving reading never ends the search.
+            continue
+        selected, best = candidate, score
+        if all(confidence >= OCR_LOW_WORD_CONFIDENCE for _, confidence in candidate.words):
             break
     return PdfOcrResult(text=selected.text, status="recognized")
 

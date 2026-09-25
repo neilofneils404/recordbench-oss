@@ -217,15 +217,54 @@ def test_orientation_retry_failure_keeps_first_reading(monkeypatch, tmp_path, fa
     assert len(_tesseract_calls(calls)) == 2
 
 
+def test_native_only_retry_does_not_end_search_before_useful_rotation(monkeypatch, tmp_path):
+    # The first retry is fully confident but adds nothing native text lacks.
+    calls = _fake_ocr(monkeypatch, [
+        ("RECEIVED Ja MOJIM", [("RECEIVED", 95), ("Ja", 20), ("MOJIM", 15)]),
+        ("RECEIVED", [("RECEIVED", 95)]),
+        ("amber ledger", [("amber", 95), ("ledger", 95)]),
+    ])
+    result = pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1, native_text="RECEIVED.")
+    assert result == PdfOcrResult("amber ledger", "recognized")
+    # The selected, fully confident 90-degree reading ends the search.
+    assert len(_tesseract_calls(calls)) == 3
+
+
+def test_confident_non_improving_retry_does_not_end_search(monkeypatch, tmp_path):
+    calls = _fake_ocr(monkeypatch, [
+        ("amber Ja MOJIM", [("amber", 90), ("Ja", 20), ("MOJIM", 15)]),
+        ("amber", [("amber", 95)]),
+        ("", []),
+        ("amber ledger", [("amber", 95), ("ledger", 95)]),
+    ])
+    assert pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1) == PdfOcrResult("amber ledger", "recognized")
+    assert len(_tesseract_calls(calls)) == 4
+
+
 def test_orientation_retries_share_one_additional_timeout(monkeypatch, tmp_path):
-    clock = iter([100.0, 100.0, 115.0, 121.0])
+    # Deadline at 120; each retry reads the clock before and after rotation.
+    clock = iter([100.0, 100.0, 100.0, 110.0, 115.0, 119.0, 121.0])
     monkeypatch.setattr(pilot_uploads.time, "monotonic", lambda: next(clock))
     low = ("Ja MOJIM", [("Ja", 20), ("MOJIM", 15)])
-    calls = _fake_ocr(monkeypatch, [low, low, low, low])
+    calls = _fake_ocr(monkeypatch, [low, low, low])
     assert pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1) == PdfOcrResult("Ja MOJIM", "recognized")
     timeouts = [kwargs["timeout"] for _, kwargs in _tesseract_calls(calls)]
-    # First reading uses the existing timeout; retries consume one shared budget.
+    # First reading uses the existing timeout; retries consume one shared budget,
+    # and the third retry is not launched once rotation passes the deadline.
     assert timeouts == [pilot_uploads.OCR_TIMEOUT_SECONDS, 20.0, 5.0]
+
+
+def test_retry_is_not_launched_when_rotation_exhausts_the_deadline(monkeypatch, tmp_path):
+    clock = iter([100.0, 119.5, 120.0])
+    monkeypatch.setattr(pilot_uploads.time, "monotonic", lambda: next(clock))
+    rotations = []
+    actual = pilot_uploads._rotate_pgm
+    monkeypatch.setattr(pilot_uploads, "_rotate_pgm", lambda *a: rotations.append(a[1]) or actual(*a))
+    calls = _fake_ocr(monkeypatch, [("Ja MOJIM", [("Ja", 20), ("MOJIM", 15)])])
+    assert pilot_uploads._ocr_pdf_page(tmp_path / "synthetic.pdf", 1) == PdfOcrResult("Ja MOJIM", "recognized")
+    # Rotation began with budget left, but no Tesseract run follows expiry.
+    assert rotations == [180]
+    assert len(_tesseract_calls(calls)) == 1
 
 
 def test_unrecognized_raster_format_keeps_first_reading(monkeypatch, tmp_path):
