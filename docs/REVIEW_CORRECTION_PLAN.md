@@ -418,6 +418,9 @@ tracking an issue or publishing a draft PR does not establish acceptance.
   remain open. The Mac real-tool probe substituted executable paths and an
   unsupported resource limit. An upside-down page was selected but incorrectly
   recognized; selection and preserved stamps do not establish rotated-scan quality.
+  A bounded, confidence-gated orientation retry now recovers the synthetic
+  rotated, sparse and stamped Linux fixtures; representative rotated-scan quality
+  remains open.
 - **R3/R6:** clean installed Linux/container and applicable provider acceptance,
   plus the reported overlayfs/tmpfs comparison, remain open. Actual-writer tests
   did not reproduce stale authority on APFS; that does not resolve other filesystems.

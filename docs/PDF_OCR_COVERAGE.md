@@ -36,6 +36,22 @@ rendering and each recognition subprocess have a 20-second timeout. Automatic
 orientation/layout recognition is tried first, with a block-layout fallback only when it
 returns no alphanumeric text. Longer OCR is never used as a quality score.
 
+Tesseract applies its own orientation estimate only when that estimate is strong.
+Sparse text, or an upright stamp over a turned scan body, can leave it reading the
+body upside down or sideways. That misreading still contains letters, so nonempty
+output is not treated as evidence of accuracy. When at least a quarter of the
+recognized words that native text does not already supply have Tesseract word
+confidence below 50, the rendered page is retried at 180, 90 and 270 degrees.
+Those retries share one additional 20-second timeout and stop early at a reading
+with no low-confidence words. A retry replaces the first reading only when it
+has more words at confidence 80 or higher that native text lacks; words already
+in native text, such as an upright stamp, do not count. Competing readings are
+never combined. A retry that times out, fails or exceeds a limit keeps the first
+reading and its outcome. Word confidences are read from a table bounded at
+16 MiB; without a table the first reading is kept without retries. PDF page
+rotation metadata and pixels turned on an upright page are handled the same way,
+because retries turn the rendered page.
+
 Useful native text is retained verbatim as extracted. Distinct OCR lines are
 appended on the same original page; whitespace/case-equivalent lines already
 present are omitted. This does not reconcile near duplicates or resolve OCR
@@ -84,8 +100,13 @@ The generated synthetic image-PDF suite exercises real ingestion, CPU OCR and
 exact phrase search for long/short stamps, image-only pages, pattern-painted
 images, annotation appearances, soft masks, native text, small logos, mixed
 regions/pages and existing text layers.
-Blank-page exclusions and
-rotated-page selection, native preservation and coverage cautions are also
+Rotated scan bodies must reach exact search on the correct page and source
+version at 0, 90, 180 and 270 degrees. The suite covers both PDF page-rotation
+metadata and pixels turned on an upright page, sparse one-line bodies, and an
+upright native stamp over a turned body. Before the orientation retry, the
+existing 180-degree stamped fixture and four sparse or stamped pixel-rotation
+cases returned misoriented text that exact search could not find. Blank-page
+exclusions, native preservation and coverage cautions are also
 checked, along with original bytes, digest, source version, page locators and
 restart behavior. Outcome tests
 separately inject timeouts, failures and resource caps to verify their reporting;
@@ -99,6 +120,10 @@ model quality, exhaustive document reading, or hardware readiness.
 
 In the local Mac real-tool probe, the upside-down synthetic body was selected,
 but automatic orientation declined to rotate it and returned incorrect text.
-Its native stamp survived and the coverage caution remained visible. Recovery
-of arbitrary rotated scans is not established by this correction; inspect the
-original when recognition is poor, even when OCR returned nonempty text.
+Its native stamp survived and the coverage caution remained visible. The later
+orientation retry recovers these synthetic Linux fixtures. It does not establish
+recovery of arbitrary rotated scans, skewed pages, mixed-orientation bodies or
+non-English text. When the selected orientation turns an upright stamp,
+misread stamp lines can also be appended. The stamp itself remains
+searchable from native text. Inspect the original when recognition is poor,
+even when OCR returned nonempty text.

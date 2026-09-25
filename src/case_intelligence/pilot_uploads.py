@@ -9,6 +9,7 @@ import re
 import sqlite3
 import stat
 import subprocess
+import tempfile
 import threading
 import time
 import unicodedata
@@ -52,6 +53,13 @@ MAX_OCR_PAGES = 25
 MAX_EXPANDED_OCR_PAGES = 500
 MAX_OCR_RASTER_BYTES = 16 * 1024 * 1024
 OCR_TIMEOUT_SECONDS = 20
+# Tesseract word confidences (0-100) that separate a misoriented reading from
+# a confident one. Retried orientations share one additional OCR timeout.
+OCR_LOW_WORD_CONFIDENCE = 50
+OCR_CONFIDENT_WORD = 80
+OCR_REORIENT_LOW_SHARE = 0.25
+OCR_REORIENT_DEGREES = (180, 90, 270)
+MAX_OCR_TSV_BYTES = 16 * 1024 * 1024
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 DOCUMENT_MEDIA_TYPES = {
     ".pdf": "application/pdf",
@@ -240,7 +248,88 @@ class PdfOcrResult:
     status: str = "failed"
 
 
-def _ocr_pdf_page(source: Path, page_number: int) -> PdfOcrResult:
+class _OcrStop(Exception):
+    def __init__(self, status: str) -> None:
+        super().__init__(status)
+        self.status = status
+
+
+@dataclass(frozen=True)
+class _OcrReading:
+    text: str
+    words: tuple[tuple[str, float], ...]
+
+
+def _rotate_pgm(raster: bytes, degrees: int) -> bytes | None:
+    """Rotate binary 8-bit grayscale pixels clockwise; None if not that format."""
+    header = re.match(rb"P5\s+(\d+)\s+(\d+)\s+255\s", raster)
+    if header is None:
+        return None
+    width, height = (int(value) for value in header.groups())
+    pixels = raster[header.end():]
+    if not width or not height or len(pixels) != width * height:
+        return None
+    if degrees == 180:
+        return raster[:header.end()] + pixels[::-1]
+    if degrees == 90:
+        rotated = b"".join(pixels[(height - 1) * width + column::-width] for column in range(width))
+    else:
+        rotated = b"".join(pixels[width - 1 - column::width] for column in range(width))
+    return b"P5\n%d %d\n255\n" % (height, width) + rotated
+
+
+def _tesseract_reading(
+    raster: bytes, language: str, mode: str, timeout: float, environment: dict[str, str],
+) -> _OcrReading:
+    """Return text and word confidences from one bounded Tesseract run."""
+    with tempfile.TemporaryDirectory(prefix="recordbench-ocr-") as directory:
+        base = Path(directory) / "page"
+        recognized = subprocess.run(
+            [
+                "/usr/bin/tesseract", "stdin", str(base), "-l", language,
+                "--psm", mode, "txt", "tsv",
+            ],
+            input=raster,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+            env=environment,
+        )
+        if recognized.returncode != 0:
+            raise _OcrStop("failed")
+        text_path, table_path = base.with_suffix(".txt"), base.with_suffix(".tsv")
+        # Without a confidence table the reading is kept but never re-oriented.
+        table_size = table_path.stat().st_size if table_path.is_file() else 0
+        if text_path.stat().st_size > MAX_PDF_PAGE_CHARS or table_size > MAX_OCR_TSV_BYTES:
+            raise _OcrStop("output_limit")
+        text = text_path.read_bytes().decode("utf-8", errors="strict").strip()
+        table = table_path.read_bytes().decode("utf-8", errors="strict") if table_size else ""
+    words = []
+    for row in table.splitlines()[1:]:
+        fields = row.split("\t")
+        if len(fields) != 12 or fields[0] != "5" or not any(c.isalnum() for c in fields[11]):
+            continue
+        try:
+            confidence = float(fields[10])
+        except ValueError:
+            continue
+        if confidence >= 0:
+            words.append((fields[11], confidence))
+    return _OcrReading(text, tuple(words))
+
+
+def _word_key(word: str) -> str:
+    return "".join(character for character in word.casefold() if character.isalnum())
+
+
+def _confident_new_words(reading: _OcrReading, native_words: set[str]) -> int:
+    return sum(
+        1 for word, confidence in reading.words
+        if confidence >= OCR_CONFIDENT_WORD and _word_key(word) not in native_words
+    )
+
+
+def _ocr_pdf_page(source: Path, page_number: int, *, native_text: str = "") -> PdfOcrResult:
     """Recognize a bounded page, retaining the reason no text was obtained."""
     environment = {
         "PATH": "/usr/bin:/bin",
@@ -269,29 +358,48 @@ def _ocr_pdf_page(source: Path, page_number: int) -> PdfOcrResult:
         # Automatic orientation/layout first; block fallback is only for an empty
         # result. Length is not a quality score and never replaces native text.
         for page_segmentation_mode in ("1", "6"):
-            recognized = subprocess.run(
-                [
-                    "/usr/bin/tesseract", "stdin", "stdout", "-l", language,
-                    "--psm", page_segmentation_mode,
-                ],
-                input=rendered.stdout,
-                capture_output=True,
-                check=False,
-                timeout=OCR_TIMEOUT_SECONDS,
-                env=environment,
+            reading = _tesseract_reading(
+                rendered.stdout, language, page_segmentation_mode, OCR_TIMEOUT_SECONDS, environment,
             )
-            if len(recognized.stdout) > MAX_PDF_PAGE_CHARS:
-                return PdfOcrResult(status="output_limit")
-            if recognized.returncode != 0:
-                return PdfOcrResult(status="failed")
-            text = recognized.stdout.decode("utf-8", errors="strict").strip()
-            if any(character.isalnum() for character in text):
-                return PdfOcrResult(text=text, status="recognized")
-        return PdfOcrResult(status="no_text")
+            if any(character.isalnum() for character in reading.text):
+                break
+        else:
+            return PdfOcrResult(status="no_text")
+    except _OcrStop as stop:
+        return PdfOcrResult(status=stop.status)
     except subprocess.TimeoutExpired:
         return PdfOcrResult(status="timed_out")
     except (OSError, UnicodeDecodeError):
         return PdfOcrResult(status="failed")
+    # Judge only what OCR adds: confident native stamp words must not mask a
+    # misread body.
+    native_words = {_word_key(word) for word in native_text.split()}
+    added = [confidence for word, confidence in reading.words if _word_key(word) not in native_words]
+    low = sum(1 for confidence in added if confidence < OCR_LOW_WORD_CONFIDENCE)
+    if not added or low < OCR_REORIENT_LOW_SHARE * len(added):
+        return PdfOcrResult(text=reading.text, status="recognized")
+    # Tesseract keeps the unrotated reading when its orientation estimate is
+    # weak (sparse text, or an upright stamp over a turned scan). Retry the
+    # other orientations within one extra timeout. A retry replaces the first
+    # reading only with more confident words that native text lacks; competing
+    # readings are never merged, and a failed retry keeps the first reading.
+    selected, best = reading, _confident_new_words(reading, native_words)
+    deadline = time.monotonic() + OCR_TIMEOUT_SECONDS
+    for degrees in OCR_REORIENT_DEGREES:
+        remaining = deadline - time.monotonic()
+        rotated = _rotate_pgm(rendered.stdout, degrees) if remaining > 0 else None
+        if rotated is None:
+            break
+        try:
+            candidate = _tesseract_reading(rotated, language, page_segmentation_mode, remaining, environment)
+        except (_OcrStop, subprocess.TimeoutExpired, OSError, UnicodeDecodeError):
+            break
+        score = _confident_new_words(candidate, native_words)
+        if score > best and any(character.isalnum() for character in candidate.text):
+            selected, best = candidate, score
+        if candidate.words and all(confidence >= OCR_LOW_WORD_CONFIDENCE for _, confidence in candidate.words):
+            break
+    return PdfOcrResult(text=selected.text, status="recognized")
 
 
 def _combine_pdf_text(native: str, recognized: str) -> str:
@@ -2087,7 +2195,12 @@ class PilotStore:
                         outcome = "page_limit"
                     else:
                         attempted += 1
-                        result = _ocr_pdf_page(source, page.page_number)
+                        # Native words let orientation retries ignore an
+                        # upright stamp; pages without them keep the plain call.
+                        result = (
+                            _ocr_pdf_page(source, page.page_number, native_text=text)
+                            if text else _ocr_pdf_page(source, page.page_number)
+                        )
                         outcome = result.status
                         if result.status == "recognized":
                             combined = _combine_pdf_text(text, result.text)

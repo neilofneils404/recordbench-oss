@@ -63,11 +63,11 @@ def _pdf_bytes(writer):
     return stream.getvalue()
 
 
-def _raster_body(tmp_path, phrase, *, pdftoppm=_PDFTOPPM):
+def _raster_body(tmp_path, phrase, *, lines=_BODY_LINES, pdftoppm=_PDFTOPPM):
     """Render synthetic native text once, then return its raw grayscale pixels."""
     writer = PdfWriter()
     page = writer.add_blank_page(width=612, height=792)
-    _native_text(writer, page, [line.format(phrase=phrase) for line in _BODY_LINES], size=17)
+    _native_text(writer, page, [line.format(phrase=phrase) for line in lines], size=17)
     source = tmp_path / "synthetic-raster-input.pdf"
     source.write_bytes(_pdf_bytes(writer))
     rendered = subprocess.run(
@@ -81,6 +81,18 @@ def _raster_body(tmp_path, phrase, *, pdftoppm=_PDFTOPPM):
     assert width > 1000 and height > 1000
     assert len(pixels) == width * height
     return width, height, pixels
+
+
+def _rotate_raster(raster, degrees):
+    """Turn scanned pixels clockwise without touching PDF page rotation."""
+    width, height, pixels = raster
+    if degrees == 180:
+        return width, height, pixels[::-1]
+    if degrees == 90:
+        return height, width, b"".join(pixels[(height - 1) * width + column::-width] for column in range(width))
+    if degrees == 270:
+        return height, width, b"".join(pixels[width - 1 - column::width] for column in range(width))
+    return raster
 
 
 def _image(writer, page, raster, *, width=612, height=792, left=0, bottom=0):
@@ -201,7 +213,11 @@ def synthetic_image_pdf(tmp_path, pages, *, pdftoppm=_PDFTOPPM):
         page = writer.add_blank_page(width=612, height=792)
         phrase = specification.get("image")
         if phrase:
-            raster = _raster_body(tmp_path, phrase, pdftoppm=pdftoppm)
+            raster = _raster_body(
+                tmp_path, phrase, lines=specification.get("lines", _BODY_LINES), pdftoppm=pdftoppm,
+            )
+            if specification.get("pixel_rotation"):
+                raster = _rotate_raster(raster, specification["pixel_rotation"])
             if specification.get("soft_mask"):
                 width, height, pixels = raster
                 raster = width, height, pixels.translate(bytes(reversed(range(256))))
@@ -463,19 +479,54 @@ def test_existing_native_ocr_layer_remains_searchable_without_repetition(tmp_pat
 
 
 @_REAL_OCR
-@pytest.mark.parametrize("rotation", [90, 180])
-def test_rotated_scan_is_selected_without_claiming_complete_ocr(tmp_path, monkeypatch, rotation):
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_page_rotation_scan_body_reaches_exact_search_without_claiming_complete_ocr(
+    tmp_path, monkeypatch, rotation,
+):
+    stamp = "SYNTHETIC ROTATED STAMP WITH MANY NATIVE CHARACTERS"
     payload = synthetic_image_pdf(tmp_path, [{
-        "image": "scarlet willow",
-        "native": ["SYNTHETIC ROTATED STAMP WITH MANY NATIVE CHARACTERS"],
-        "rotation": rotation,
+        "image": "scarlet willow", "native": [stamp], "rotation": rotation,
     }])
+    page = PdfReader(io.BytesIO(payload)).pages[0]
+    assert page.rotation == rotation
+    assert "scarlet willow" not in page.extract_text()
     store, document = _ingest(tmp_path, monkeypatch, payload)
-    # Rotation does not hide the image from selection. Orientation detection
-    # can still return garbled text on these real fixtures, so selection or a
-    # successful OCR exit must not be presented as complete recognition.
+    # /Rotate turns the stamp and the scan together. With a native stamp,
+    # Tesseract's own orientation estimate was too weak to apply at 180 degrees.
+    _assert_phrase(document, "scarlet willow", 1)
+    _assert_phrase(document, "SYNTHETIC ROTATED STAMP", 1)
     assert "OCR attempted on 1" in document.message
     assert "Complete page reading is not established" in document.message
-    _assert_phrase(document, "SYNTHETIC ROTATED STAMP", 1)
+    assert document.digest == hashlib.sha256(payload).hexdigest()
+    assert (store.files / document.stored_name).read_bytes() == payload
+
+
+@_REAL_OCR
+@pytest.mark.parametrize("stamp", [None, "SYNTHETIC UPRIGHT STAMP WITH MANY NATIVE CHARACTERS"])
+@pytest.mark.parametrize("pixel_rotation", [0, 90, 180, 270])
+def test_sparse_pixel_rotated_scan_on_upright_page_reaches_exact_search(
+    tmp_path, monkeypatch, pixel_rotation, stamp,
+):
+    # The page itself is upright; only the scanned pixels are turned. Sparse
+    # text is below Tesseract's orientation-detection minimum.
+    specification = {
+        "image": "saffron ledger", "lines": ("The {phrase} entry.",),
+        "pixel_rotation": pixel_rotation,
+    }
+    if pixel_rotation in (90, 270):
+        specification.update(image_width=612, image_height=473, image_bottom=150)
+    if stamp:
+        specification["native"] = [stamp]
+    payload = synthetic_image_pdf(tmp_path, [specification])
+    page = PdfReader(io.BytesIO(payload)).pages[0]
+    assert page.rotation == 0
+    assert "saffron ledger" not in page.extract_text()
+    store, document = _ingest(tmp_path, monkeypatch, payload)
+    _assert_phrase(document, "saffron ledger", 1)
+    if stamp:
+        _assert_phrase(document, "SYNTHETIC UPRIGHT STAMP", 1)
+        assert document.parsed_units()[0].text.startswith(stamp)
+    assert "OCR attempted on 1" in document.message
+    assert "Complete page reading is not established" in document.message
     assert document.digest == hashlib.sha256(payload).hexdigest()
     assert (store.files / document.stored_name).read_bytes() == payload
