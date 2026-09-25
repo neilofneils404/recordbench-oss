@@ -8,12 +8,10 @@ publication as RecordBench's desktop and mobile GitHub demos. Both show the
 fictional Harbor Street demonstration matter. The supplied files are preserved
 without re-encoding.
 
-The audio tracks in both walkthroughs are excluded from the repository's
-Apache-2.0 software license. No standalone audio license is granted. The
-maintainer supplied these tracks for inclusion in the published demos; obtain
-permission from the maintainer before extracting, adapting, or reusing the audio
-in other works. This exclusion applies to the audio in each of the two files
-named above, including any music, sound effects, and recorded speech.
+The maintainer confirms the rights to publish these AI-assisted demos and
+licenses both complete videos, including their audio tracks, under the
+repository's [Apache-2.0 license](../../LICENSE). No separate audio exclusion
+applies to either new walkthrough.
 
 ## Previous teaser
 

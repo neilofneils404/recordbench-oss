@@ -380,6 +380,7 @@ in [release readiness](docs/RELEASE_READINESS.md) and the
 RecordBench is licensed under [Apache-2.0](LICENSE). Dependencies, containers,
 and models retain their respective licenses and terms. Their notice inventory
 remains part of the [publication review](docs/PUBLICATION_CHECKLIST.md).
-The desktop and mobile walkthrough audio tracks and the previous teaser's
-original soundtrack are excluded from the Apache-2.0 software license;
+The new desktop and mobile walkthroughs, including their audio, are also
+licensed under Apache-2.0. Only the previous teaser's original soundtrack is
+excluded from the software license;
 see [media rights](docs/assets/MEDIA_RIGHTS.md).
