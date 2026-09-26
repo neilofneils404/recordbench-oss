@@ -30,6 +30,9 @@ REVIEWED_COMMIT_EMAIL_IDENTITIES = {
     "4b8d74be09f41a443abb705bed1c6ab8bb5371c7": {
         "33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b",
     },
+    "f8ccae72b39704942c23caecb8195874a74e7699": {
+        "33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b",
+    },
 }
 IGNORED_DIRECTORIES = {".git", ".venv", ".pytest_cache", "__pycache__", "node_modules"}
 FORBIDDEN_SUFFIXES = {
@@ -212,7 +215,17 @@ def _scan_bytes(
         if marker.lower() in lowered:
             pem_rules.add(rule)
     findings.extend(Finding(location, rule) for rule in sorted(pem_rules))
-    for raw in (*IPV4.findall(data), *IPV6.findall(data)):
+    network_data = data
+    logical_path = re.sub(r"^git:[0-9a-f]{12}:", "", location)
+    if logical_path == "services/transcription/requirements-nemotron.lock":
+        # Reviewed public PyPI CUDA dependency version, not a network endpoint.
+        # Exact package, version, file and requirement-line grammar only. Deny
+        # terms, secrets and every other occurrence still inspect original bytes.
+        network_data = re.sub(
+            rb"(?m)^nvidia-curand-cu12==10[.]3[.]9[.]90(?: \\)?$",
+            b"reviewed-public-dependency-version", data,
+        )
+    for raw in (*IPV4.findall(network_data), *IPV6.findall(network_data)):
         try:
             address = ipaddress.ip_address(raw.decode("ascii"))
         except ValueError:
@@ -666,14 +679,19 @@ def scan_history(
                     if item.rule != "non-example-email-address"
                 ]
             findings.extend(identity_findings)
-        allowed_span = None
+        allowed_spans = []
         if commit in public_merge_commits:
-            for name, _ in public_git_identities:
+            for name, email in public_git_identities:
                 pattern = rb"\AMerge pull request #[1-9][0-9]* from (" + re.escape(name) + rb")/"
                 match = re.match(pattern, message)
                 if match:
-                    allowed_span = match.span(1)
-                    break
+                    allowed_spans.append(match.span(1))
+                # GitHub squash merges can retain an explicit co-author trailer.
+                # Only the reviewed no-reply identity on this exact commit is
+                # eligible, and neither surrounding text nor other names pass.
+                trailer = (rb"(?m)^Co-authored-by: (" + re.escape(name)
+                           + rb" <" + re.escape(email) + rb">)$")
+                allowed_spans.extend(match.span(1) for match in re.finditer(trailer, message))
         # Scan generic rules against the original bytes. Only deny matches wholly
         # inside the exact reviewed attribution username may be adjudicated.
         findings.extend(_scan_bytes(message, location="git-metadata", deny=()))
@@ -682,7 +700,7 @@ def scan_history(
             offset = 0
             while term and (start := lowered.find(term.lower(), offset)) >= 0:
                 end = start + len(term)
-                if allowed_span is None or not (allowed_span[0] <= start and end <= allowed_span[1]):
+                if not any(left <= start and end <= right for left, right in allowed_spans):
                     findings.append(Finding("git-metadata", "operator-deny-term"))
                     break
                 offset = start + 1

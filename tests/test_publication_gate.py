@@ -380,6 +380,31 @@ def test_github_merge_service_address_is_public_but_other_addresses_still_block(
     assert publication._scan_bytes(service, location="git-metadata", deny=(b"github",))
 
 
+def test_reviewed_squash_coauthor_is_exact_commit_identity_and_trailer(tmp_path):
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+    git("init", "-q")
+    git("config", "user.name", "Synthetic Maintainer")
+    git("config", "user.email", "maintainer@example.com")
+    name = b"synthetic-public-contributor"
+    email = b"12345+synthetic-public-contributor@users.noreply.github.com"
+    trailer = b"Co-authored-by: " + name + b" <" + email + b">"
+    git("commit", "--allow-empty", "-qm", "Synthetic squash\n\n" + trailer.decode())
+    head = git("rev-parse", "HEAD")
+    def findings(*commits):
+        return publication.scan_history(tmp_path, (name,), public_git_identities=((name, email),),
+                                        public_merge_commits=commits)
+    assert findings()
+    assert not findings(head)
+    assert publication.scan_history(tmp_path, (name,), public_git_identities=((name, b"other@example.com"),),
+                                    public_merge_commits=(head,))
+    git("commit", "--allow-empty", "-qm", "Synthetic unreviewed squash\n\n" + trailer.decode())
+    assert findings(head)
+    second = git("rev-parse", "HEAD")
+    git("commit", "--allow-empty", "-qm", name.decode() + " is outside the trailer\n\n" + trailer.decode())
+    assert findings(head, second, git("rev-parse", "HEAD"))
+
+
 def test_reviewed_email_disposition_is_exact_and_metadata_only(tmp_path, monkeypatch):
     import hashlib
     name = 'Synthetic Maintainer'
@@ -434,3 +459,17 @@ def test_reviewed_personal_baseline_does_not_cover_ancestors(tmp_path, monkeypat
     exception = publication._baseline_public_git_identities([(reviewed, name, email)])
     assert publication.Finding('git-metadata', 'operator-deny-term') in publication.scan_history(
         tmp_path, (name.encode(),), baseline_public_git_identities=exception)
+
+
+def test_cuda_dependency_version_disposition_is_exact_and_context_bound():
+    version = b".".join((b"10", b"3", b"9", b"90"))
+    requirement = b"nvidia-curand-cu12==" + version + b" \\\n"
+    location = "services/transcription/requirements-nemotron.lock"
+    finding = publication.Finding(location, "private-network-address")
+    assert publication._scan_bytes(requirement, location=location, deny=()) == []
+    assert publication._scan_bytes(requirement, location="git:" + "a" * 12 + ":" + location, deny=()) == []
+    assert finding in publication._scan_bytes(requirement + b"# endpoint " + version, location=location, deny=())
+    assert finding in publication._scan_bytes(requirement.replace(b"curand", b"other"), location=location, deny=())
+    assert publication._scan_bytes(requirement, location="unreviewed.lock", deny=())
+    assert publication.Finding(location, "operator-deny-term") in publication._scan_bytes(
+        requirement, location=location, deny=(b"curand",))
