@@ -49,7 +49,8 @@ Readers open bounded regular files through directory descriptors without
 following symlinks. They do not create locks or write probes. Each login and
 session resolution reopens the path and checks directory ownership plus file
 type, owner, mode and size. A process retains one immutable validated snapshot
-keyed by directory/file identity, size and nanosecond modification/change times.
+keyed by directory/file identity, size, nanosecond modification/change times
+and the bounded file contents. A timestamp collision cannot hide changed bytes.
 Unchanged files avoid JSON parsing and validation of all accounts on every
 protected request. Atomic replacement or metadata/content changes trigger a
 bounded reload; concurrent in-place changes detected during a read are refused.
