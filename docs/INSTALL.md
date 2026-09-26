@@ -167,9 +167,9 @@ organization-trusted certificate.
    Authentication.
 4. Obtain DNS and a trusted TLS certificate for staff access.
 5. Choose transcription modules. Ungated ASR and English/Spanish alignment can
-   be staged independently. Enabling Community-1 diarization additionally
-   requires accepting its Hugging Face terms and a read-only token for the
-   one-time staging step.
+   be staged independently. `--enable-diarization` selects ungated Nemotron;
+   it needs no Hugging Face account or token. The optional legacy
+   `--diarization-backend community-1` still requires upstream access approval.
 6. Decide where the encrypted restic repository and independent recovery key
    will live.
 
@@ -526,8 +526,11 @@ hub token in `.env`, Compose YAML, service environment, logs, or Git.
 
 Transcription defaults to ungated ASR plus English alignment. Add Spanish with
 `--transcription-languages en,es`. Add speaker clustering only with
-`--enable-diarization --accept-model-terms`; the installer then requests a
-one-time read-only hub token. Whisper translation uses the staged ASR artifact
+`--enable-diarization`; new installations stage the pinned Nemotron model
+without a token or access-approval prompt. To retain Community-1, explicitly use
+`--diarization-backend community-1 --accept-model-terms`; only that gated backend
+requests a one-time read-only hub token. Resume preserves the saved backend and
+never silently converts an existing installation. Whisper translation uses the staged ASR artifact
 and does not add a separate model download. A deployment that omits diarization
 still produces transcripts and timestamps, with speaker separation explicitly
 reported as unavailable.

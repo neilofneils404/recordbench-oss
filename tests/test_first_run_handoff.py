@@ -407,7 +407,11 @@ def test_unattended_resume_requires_staging_inputs_only_when_cache_is_not_verifi
     monkeypatch.setattr(installer, '_password', lambda args: 'synthetic-bootstrap-password')
     root, _, paths = configured_node(tmp_path)
     installation = json.loads((root / "installation.json").read_text())
-    installation.update(models="transcription", transcription_diarization=True, profiles=["transcription"])
+    installation.update(models="transcription", transcription_diarization=True, profiles=["transcription"],
+                        diarization_backend="community-1")
+    env_file = root / "config/transcription.env"
+    env_file.write_text(env_file.read_text().replace('TRANSCRIPTION_V2_DIARIZATION_BACKEND="nemotron"',
+                                                   'TRANSCRIPTION_V2_DIARIZATION_BACKEND="community-1"'))
     (root / "installation.json").write_text(json.dumps(installation))
     if receipt_state != "missing":
         spec = importlib.util.spec_from_file_location("synthetic_resume_stager", ROOT / "scripts/stage-models.py")

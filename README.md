@@ -209,7 +209,7 @@ information live in [`config/models.json`](config/models.json).
 | **GTE ModernBERT reranker** | Reorders candidate passages so the strongest evidence reaches the answering model. |
 | **Qwen3.5 4B or 9B through vLLM** | Generates local answers, summaries, and review assistance from selected passages for source review. |
 | **WhisperX and faster-whisper large-v3** | Transcribe media and align transcript text to timestamps. |
-| **Optional pyannote diarization** | Separates anonymous speaker clusters when its separately gated models are enabled. |
+| **Optional speaker diarization** | Ungated Nemotron separates up to eight anonymous speakers; Community-1 remains an explicit gated alternative. |
 | **FFmpeg** | Probes media, prepares browser-compatible playback, and creates requested clips. |
 | **nginx, local accounts, OIDC, or Kerberos** | Provide HTTPS and selectable identity options for different organizations. |
 | **Docker Compose and restic** | Package the services and provide encrypted backup and restore tooling. |

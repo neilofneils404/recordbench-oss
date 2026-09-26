@@ -151,8 +151,10 @@ def test_installed_hook_does_not_execute_candidate_scanner(tmp_path):
     destination = tmp_path / "trusted-hook"
     result = command(root, sys.executable, str(ROOT / "scripts/install-publication-hook.py"), str(destination))
     assert result.returncode == 0, result.stderr
-    marker = tmp_path / "executed"
-    (root / "scripts/publication-check.py").write_text("from pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n")
+    marker = root / "executed"
+    # Keep the malicious fixture independent of the test runner's home path;
+    # that path is itself forbidden publication content.
+    (root / "scripts/publication-check.py").write_text("from pathlib import Path\nPath('executed').touch()\n")
     oid = commit(root)
     result = command(root, str(destination / "pre-push"), input=f"refs/heads/main {oid} refs/heads/main {'0' * 40}\n")
     assert result.returncode == 0, result.stderr

@@ -430,8 +430,14 @@ def test_cached_snapshot_never_masks_failed_read_and_sessions_stay_revoked(tmp_p
     assert service.resolve(fresh).is_administrator
 
 
-def test_same_size_edit_with_restored_mtime_reloads_cached_snapshot(tmp_path):
+@pytest.mark.parametrize("colliding_metadata", [False, True])
+def test_same_size_edit_with_restored_mtime_reloads_cached_snapshot(tmp_path, monkeypatch, colliding_metadata):
     repo = repository(tmp_path)
+    if colliding_metadata:
+        # Deterministically model a filesystem timestamp collision; do not wait
+        # for a kernel clock tick or depend on a particular filesystem.
+        key = local_accounts._file_identity(repo.path.stat())
+        monkeypatch.setattr(local_accounts, "_file_identity", lambda metadata: key)
     before = repo.read()
     metadata = repo.path.stat()
     original = repo.path.read_bytes()
@@ -439,9 +445,20 @@ def test_same_size_edit_with_restored_mtime_reloads_cached_snapshot(tmp_path):
     assert len(updated) == len(original)
     repo.path.write_bytes(updated)
     os.utime(repo.path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
-    assert repo.path.stat().st_ctime_ns != metadata.st_ctime_ns
     assert repo.read()["alice.admin"].display_name == "Other Administrator"
     assert before["alice.admin"].display_name == "Alice Administrator"
+
+
+def test_colliding_metadata_cannot_hide_invalid_account_bytes(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    key = local_accounts._file_identity(repo.path.stat())
+    monkeypatch.setattr(local_accounts, "_file_identity", lambda metadata: key)
+    repo.read()
+    data = repo.path.read_bytes()
+    repo.path.write_bytes(b"!" + data[1:])
+    with pytest.raises(RuntimeError, match="unreadable or invalid"):
+        repo.read()
+    assert repo._snapshot is None and repo._snapshot_data is None
 
 
 def test_snapshot_read_rejects_in_place_changes_during_validation(tmp_path, monkeypatch):

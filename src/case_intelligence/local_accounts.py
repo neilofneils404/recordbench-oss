@@ -226,16 +226,19 @@ class LocalAccountRepository:
         self._snapshot_lock = threading.Lock()
         self._snapshot_key: tuple[int, ...] | None = None
         self._snapshot: Mapping[str, LocalAccount] | None = None
+        self._snapshot_data: bytes | None = None
 
     def _invalidate_snapshot(self) -> None:
         with self._snapshot_lock:
             self._snapshot_key = None
             self._snapshot = None
+            self._snapshot_data = None
 
     def read(self) -> Mapping[str, LocalAccount]:
         # Keep only one immutable snapshot per repository. Every access still
         # traverses the safe path and validates the opened file's ownership/mode.
-        # Atomic replacements, in-place edits and metadata changes invalidate it.
+        # Stat timestamps can collide even at nanosecond resolution. Reuse a
+        # parsed snapshot only after checking the bounded bytes as well.
         with self._snapshot_lock:
             try:
                 with _parent(self.path) as directory:
@@ -245,12 +248,19 @@ class LocalAccountRepository:
                     try:
                         key = (parent.st_dev, parent.st_ino, *_file_identity(_private_metadata(descriptor)))
                         if self._snapshot is not None and key == self._snapshot_key:
-                            return self._snapshot
-                        _, _, accounts = _read_descriptor(descriptor)
+                            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                                data = stream.read(_MAX_BYTES + 1)
+                            if key != (parent.st_dev, parent.st_ino, *_file_identity(_private_metadata(descriptor))):
+                                raise RuntimeError("Local account file changed while reading")
+                            if data == self._snapshot_data:
+                                return self._snapshot
+                            os.lseek(descriptor, 0, os.SEEK_SET)
+                        data, _, accounts = _read_descriptor(descriptor)
                         if key != (parent.st_dev, parent.st_ino, *_file_identity(_private_metadata(descriptor))):
                             raise RuntimeError("Local account file changed while reading")
                         self._snapshot = MappingProxyType(accounts)
                         self._snapshot_key = key
+                        self._snapshot_data = data
                         return self._snapshot
                     finally:
                         os.close(descriptor)
@@ -258,6 +268,7 @@ class LocalAccountRepository:
                 # A previous good snapshot never masks a missing/unsafe/bad file.
                 self._snapshot_key = None
                 self._snapshot = None
+                self._snapshot_data = None
                 raise
 
     @contextmanager

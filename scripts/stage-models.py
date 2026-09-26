@@ -61,11 +61,14 @@ def _selected(
     groups: frozenset[str],
     *,
     review_profile: str,
+    diarization_backend: str = "community-1",
 ) -> bool:
     if value.get("group") not in groups:
         return False
     if value.get("group") == "review" and value.get("role") == "generator":
         return value.get("profile") == review_profile
+    if value.get("group") == "transcription-diarization":
+        return value.get("backend", "community-1") == diarization_backend
     return True
 
 
@@ -211,7 +214,7 @@ def _verify_snapshot_inventory(root: Path, names: Iterable[str]) -> None:
 
 
 def _stage_receipt(root: Path, catalog: Path, groups: frozenset[str], profile: str,
-                   files: Iterable[Path]) -> None:
+                   files: Iterable[Path], *, diarization_backend: str = "community-1") -> None:
     root = root.resolve(strict=True)
     inventory = {}
     for path in files:
@@ -222,6 +225,8 @@ def _stage_receipt(root: Path, catalog: Path, groups: frozenset[str], profile: s
     _verify_snapshot_inventory(root, inventory)
     payload = {"format_version": 2, "catalog_sha256": _sha256(catalog), "groups": sorted(groups),
                "review_profile": profile, "files": inventory}
+    if "transcription-diarization" in groups:
+        payload["diarization_backend"] = diarization_backend
     descriptor, temporary_name = tempfile.mkstemp(prefix=".stage-receipt-", dir=root)
     temporary = Path(temporary_name)
     try:
@@ -234,7 +239,8 @@ def _stage_receipt(root: Path, catalog: Path, groups: frozenset[str], profile: s
         temporary.unlink(missing_ok=True)
 
 
-def _verify_stage(root: Path, catalog: Path, groups: frozenset[str], profile: str) -> None:
+def _verify_stage(root: Path, catalog: Path, groups: frozenset[str], profile: str,
+                  *, diarization_backend: str = "community-1") -> None:
     """Verify the last complete exact selection without network or filesystem writes."""
     root = root.resolve(strict=True)
     receipt = root / ".recordbench-stage-receipt.json"
@@ -243,6 +249,8 @@ def _verify_stage(root: Path, catalog: Path, groups: frozenset[str], profile: st
     value = json.loads(receipt.read_text())
     if (not isinstance(value, dict) or value.get("format_version") != 2 or value.get("catalog_sha256") != _sha256(catalog)
             or value.get("groups") != sorted(groups) or value.get("review_profile") != profile
+            or ("transcription-diarization" in groups
+                and value.get("diarization_backend", "community-1") != diarization_backend)
             or not isinstance(value.get("files"), dict) or not value["files"]):
         raise RuntimeError("Model selection changed or staging is incomplete; resume staging")
     for name, metadata in value["files"].items():
@@ -269,6 +277,7 @@ def main() -> int:
         help="comma-separated review and transcription module groups",
     )
     parser.add_argument("--token-stdin", action="store_true")
+    parser.add_argument("--diarization-backend", choices=("nemotron", "community-1"), default="nemotron")
     parser.add_argument(
         "--review-profile",
         choices=("portable", "quality"),
@@ -286,7 +295,8 @@ def main() -> int:
     if args.command == "verify":
         if args.token_stdin:
             parser.error("offline verification does not accept a token")
-        _verify_stage(root, args.catalog, groups, args.review_profile)
+        _verify_stage(root, args.catalog, groups, args.review_profile,
+                      diarization_backend=args.diarization_backend)
         print("[vault] existing model selection verified offline; no model artifacts changed")
         return 0
     cache.mkdir(parents=True, exist_ok=True)
@@ -299,7 +309,8 @@ def main() -> int:
         staged_files: list[Path] = []
         for raw in payload.get("models", []):
             if not isinstance(raw, dict) or not _selected(
-                raw, groups, review_profile=args.review_profile
+                raw, groups, review_profile=args.review_profile,
+                diarization_backend=args.diarization_backend,
             ):
                 continue
             if raw.get("gated") and not token:
@@ -312,7 +323,8 @@ def main() -> int:
                     repo_id=str(raw["model_id"]),
                     revision=str(raw["revision"]),
                     cache_dir=cache,
-                    token=token,
+                    token=token or False,
+                    **({"allow_patterns": raw["allow_patterns"]} if "allow_patterns" in raw else {}),
                     local_files_only=False,
                 )
             )
@@ -330,7 +342,8 @@ def main() -> int:
                 )
         for raw in payload.get("direct_files", []):
             if not isinstance(raw, dict) or not _selected(
-                raw, groups, review_profile=args.review_profile
+                raw, groups, review_profile=args.review_profile,
+                diarization_backend=args.diarization_backend,
             ):
                 continue
             print(f"[vault] acquiring {raw['model_id']} alignment artifact")
@@ -359,7 +372,8 @@ def main() -> int:
             _write_manifest(cache, transcription_artifacts)
             staged_files.extend(path for path in nltk_root.rglob("*") if path.is_file())
             staged_files.append(cache / "approved-model-manifest.json")
-        _stage_receipt(root, args.catalog, groups, args.review_profile, staged_files)
+        _stage_receipt(root, args.catalog, groups, args.review_profile, staged_files,
+                       diarization_backend=args.diarization_backend)
     finally:
         token = None
     print("[vault] pinned model staging complete; no access token retained")

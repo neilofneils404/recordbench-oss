@@ -29,4 +29,9 @@ CMD ["streamlit", "run", "ui/streamlit_app.py", "--server.address", "0.0.0.0", "
 
 FROM base AS worker
 RUN pip install --no-cache-dir '.[ml]'
+COPY requirements-nemotron*.lock /opt/transcription/
+RUN python -m venv /opt/transcription/nemotron \
+    && /opt/transcription/nemotron/bin/pip install --no-cache-dir --require-hashes -r /opt/transcription/requirements-nemotron-build.lock \
+    && /opt/transcription/nemotron/bin/pip install --no-cache-dir --no-build-isolation --require-hashes -r /opt/transcription/requirements-nemotron.lock \
+    && /opt/transcription/nemotron/bin/pip check
 CMD ["transcription-v2", "worker"]

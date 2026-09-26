@@ -125,6 +125,7 @@ class ModelReadiness:
         *,
         role: str,
         model_id: str,
+        revision: str | None = None,
     ) -> bool:
         """Return whether an exact verified artifact file backs ``path``.
 
@@ -144,6 +145,7 @@ class ModelReadiness:
         return any(
             artifact.role == role
             and artifact.model_id == model_id
+            and (revision is None or artifact.revision == revision)
             and signature in artifact.verified_file_signatures
             for artifact in self.artifacts
         )

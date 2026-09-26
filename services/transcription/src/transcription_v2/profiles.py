@@ -8,7 +8,7 @@ are performed only when a job is executed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Iterable
 
 
@@ -329,15 +329,29 @@ EXPERIMENTAL_CANDIDATES: Final[tuple[ExperimentalCandidate, ...]] = (
 )
 
 
-def get_profile(name: str | None = None) -> TranscriptionProfile:
+def get_profile(name: str | None = None, *, diarization_backend: str = "community-1") -> TranscriptionProfile:
     """Return an immutable registered profile or raise a useful error."""
 
     normalized = (name or DEFAULT_PROFILE_NAME).strip().lower().replace("-", "_")
     try:
-        return _PROFILES[normalized]
+        profile = _PROFILES[normalized]
     except KeyError as exc:
         available = ", ".join(sorted(_PROFILES))
         raise KeyError(f"unknown transcription profile {name!r}; choose: {available}") from exc
+    if diarization_backend == "community-1":
+        return profile
+    if diarization_backend != "nemotron":
+        raise ValueError("unsupported diarization backend")
+    from .nemotron import MODEL_ID, MODEL_LICENSE
+    component = ComponentSpec(
+        name="NVIDIA Nemotron 3 Diarization", project_url=f"https://huggingface.co/{MODEL_ID}",
+        license_name=MODEL_LICENSE, model_id=MODEL_ID, gated=False,
+        notes="Up to eight anonymous speakers; speaker-count hints are not supported.",
+    )
+    return replace(profile, diarization_backend="transformers/nemotron3-diarization",
+                   diarization_model=MODEL_ID,
+                   components=tuple(component if item == _COMMUNITY_1 else item
+                                    for item in profile.components))
 
 
 def list_profiles() -> tuple[TranscriptionProfile, ...]:

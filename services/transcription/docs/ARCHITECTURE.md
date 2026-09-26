@@ -47,7 +47,8 @@ stage. Restarting the browser or API therefore does not lose a job.
 4. Produce the source-language transcript. The source transcript is never
    replaced by a translation.
 5. Force-align source-language text to produce word timestamps.
-6. Run diarization with optional speaker bounds. Preserve overlap evidence as
+6. Run the selected diarizer. Nemotron retains speaker bounds as unsupported
+   hints; Community-1 applies them. Preserve overlap evidence as
    well as an exclusive assignment used for readable transcript segments.
 7. Keep anonymous voice clusters separate from real-world identities. A name
    remains `suggested` until a reviewer confirms it.
@@ -98,6 +99,12 @@ events, exceptions returned to the browser, metrics labels, or process command
 lines.
 
 ## GPU isolation
+
+The [Nemotron adapter](NEMOTRON.md) runs in a separately pinned interpreter
+inside the worker container. It accepts only verified local artifacts and
+returns bounded anonymous speaker turns. The main WhisperX environment retains
+ASR, alignment and word assignment. No additional public service or port is
+introduced.
 
 The worker takes a cooperative file lock for an entire model run and checks free
 VRAM before admission. This coordinates only workers configured to share that

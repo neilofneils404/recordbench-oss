@@ -48,9 +48,12 @@ orientation rather than an every-source review.
 
 The transcription profile is modular: faster-whisper/WhisperX `large-v3` ASR,
 English alignment, Spanish alignment, translation through the staged ASR
-artifact, and Community-1 diarization are separately described and selected.
-Only diarization is gated by default. Community-1 produces anonymous speaker
-clusters, not identity. Transcripts describe what the machine heard and are not
+artifact, and Nemotron diarization are separately described and selected.
+Nemotron is ungated and supports up to eight anonymous speakers. Speaker-count
+hints are retained for review but not applied by this model. Community-1 remains
+an explicit gated alternative for existing installations. These models produce
+anonymous speaker clusters, not identities. See [Nemotron integration](../services/transcription/docs/NEMOTRON.md)
+for pinned inputs and the acceptance boundary. Transcripts describe what the machine heard and are not
 automatically treated as facts.
 
 Every model entry must retain model ID, exact immutable revision, license,

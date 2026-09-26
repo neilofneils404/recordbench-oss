@@ -1,5 +1,14 @@
 # Installed authentication diagnostics
 
+Local-account readers validate the file's safe path, ownership, permissions and
+bounded contents on every access. Unchanged contents reuse the parsed snapshot;
+an in-place edit is detected even if size and filesystem timestamps collide.
+This adds at most a 1 MiB account-file read per snapshot access, without repeated
+JSON or password-hash metadata parsing for unchanged accounts. Use the account
+commands or administrator UI for mutations: their locked atomic replacement and
+session-revision updates provide the supported concurrency and revocation
+contract. Direct concurrent file edits do not provide that transaction contract.
+
 An installed node must agree on three authentication settings: the intended
 `auth` mode in `installation.json`, the explicit
 `CASE_INTELLIGENCE_AUTH_MODE` in `config/recordbench.env`, and the mode loaded by

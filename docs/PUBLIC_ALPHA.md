@@ -35,6 +35,20 @@ The maintainer also approved the exact author attribution on merge commit
 `4b8d74be09f41a443abb705bed1c6ab8bb5371c7`. Its disposition follows the same
 commit-and-identity boundary above and grants no exception to later commits.
 
+The maintainer approved the existing attribution on commit
+`f8ccae72b39704942c23caecb8195874a74e7699` under the same exact-commit and
+identity-digest rule. This historical disposition does not rewrite published
+history. New commits and merges must use the maintainer's validated GitHub
+no-reply attribution; this exception does not authorize later personal-address
+attribution.
+
+Exact-commit public merge adjudications also recognize a complete
+`Co-authored-by` trailer for a configured, validated GitHub no-reply identity.
+Other message text, identities and commits retain the operator deny checks.
+The Nemotron dependency lock has one exact package/version-line disposition for
+a reviewed public CUDA dependency version that resembles a private IP address;
+other files, package names, endpoints, secret rules and deny terms remain checked.
+
 When using the GitHub CLI to merge, explicitly pass `--author-email` with the
 public no-reply address validated for the reviewed head. The account default may
 use a personal address even when local commits use no-reply attribution. If

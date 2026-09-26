@@ -489,6 +489,8 @@ class LocalWhisperXEngine:
         model_cache_dir: str | Path | None = None,
         diarization_model_path: str | Path | None = None,
         auth_token_env: str = "HF_TOKEN",
+        diarization_backend: str = "community-1",
+        nemotron_python: str = "/opt/transcription/nemotron/bin/python",
     ) -> None:
         self.model_cache_dir = (
             str(Path(model_cache_dir).expanduser()) if model_cache_dir else None
@@ -499,6 +501,10 @@ class LocalWhisperXEngine:
             else None
         )
         self.auth_token_env = auth_token_env
+        if diarization_backend not in {"community-1", "nemotron"}:
+            raise PipelineConfigurationError("unsupported diarization backend")
+        self.diarization_backend = diarization_backend
+        self.nemotron_python = nemotron_python
         self._lock = threading.RLock()
         self._asr_cache: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
         self._align_cache: OrderedDict[
@@ -734,8 +740,23 @@ class LocalWhisperXEngine:
         return str(config)
 
     def diarize(
-        self, request: TranscriptionRequest, profile: TranscriptionProfile
+        self, request: TranscriptionRequest, profile: TranscriptionProfile,
+        *, cancel_requested: Callable[[], bool] | None = None,
     ) -> DiarizationOutput:
+        if self.diarization_backend == "nemotron":
+            from .nemotron import run_diarization
+            if not self.diarization_model_path:
+                raise ModelApprovalError("Nemotron requires an approved local snapshot")
+            turns = run_diarization(
+                python=self.nemotron_python, model_path=self.diarization_model_path,
+                audio_path=str(request.audio_path), device=self._torch_device(request),
+                cancel_requested=cancel_requested,
+            )
+            # WhisperX assigns by interval overlap and expects these columns,
+            # including for silence (an empty but correctly shaped frame).
+            pandas = importlib.import_module("pandas")
+            native = pandas.DataFrame(turns, columns=["start", "end", "speaker"])
+            return DiarizationOutput(turns=turns, raw=turns, native=native)
         try:
             # WhisperX 3.8.x does not re-export this class from its top-level
             # package.  Importing the submodule here keeps construction lazy
@@ -847,9 +868,22 @@ class LocalWhisperXEngine:
         return {
             "engine": type(self).__name__,
             "packages": versions,
+            "diarization_backend": self.diarization_backend,
+            **self._diarization_provenance(),
             "model_cache_dir_configured": bool(self.model_cache_dir),
             "diarization_model_path_configured": bool(self.diarization_model_path),
         }
+
+    def _diarization_provenance(self) -> dict[str, Any]:
+        if self.diarization_backend != "nemotron":
+            return {}
+        from .nemotron import MODEL_ID, MODEL_REVISION, MODEL_LICENSE, RUNTIME_REVISION
+        return {"diarization_configuration": {
+            "model_id": MODEL_ID, "revision": MODEL_REVISION, "license": MODEL_LICENSE,
+            "transformers_source_revision": RUNTIME_REVISION, "dtype": "float32",
+            "speaker_limit": 8, "speaker_hints_supported": False,
+            "execution": "isolated-subprocess", "runtime_identity": "build-declared",
+        }}
 
 
 def create_pipeline_engine(
@@ -857,6 +891,7 @@ def create_pipeline_engine(
     *,
     model_cache_dir: str | Path | None = None,
     diarization_model_path: str | Path | None = None,
+    diarization_backend: str | None = None,
 ) -> PipelineEngine:
     """Create an explicitly selected engine without importing ML packages.
 
@@ -871,6 +906,10 @@ def create_pipeline_engine(
         return MockPipelineEngine()
     if selected in {"local", "whisperx", "open_local"}:
         return LocalWhisperXEngine(
+            diarization_backend=diarization_backend or os.environ.get(
+                "TRANSCRIPTION_V2_DIARIZATION_BACKEND", "community-1"),
+            nemotron_python=os.environ.get("TRANSCRIPTION_V2_NEMOTRON_PYTHON",
+                                           "/opt/transcription/nemotron/bin/python"),
             model_cache_dir=(
                 model_cache_dir
                 or os.environ.get("TRANSCRIPTION_V2_MODEL_CACHE")
@@ -932,7 +971,8 @@ class TranscriptionPipeline:
         pipeline_tick = self._monotonic()
         check_cancellation()
         try:
-            profile = get_profile(request.profile)
+            profile = get_profile(request.profile, diarization_backend=getattr(
+                self.engine, "diarization_backend", "community-1"))
         except (KeyError, ValueError) as exc:
             profile = get_profile()
             return self._configuration_failure(request, profile, exc, started_at, pipeline_tick)
@@ -1227,7 +1267,19 @@ class TranscriptionPipeline:
             diarization_stage = result.stage("diarization")
             diarization_tick = diarization_stage.start(self._now, self._monotonic)
             try:
-                diarization_output = self.engine.diarize(request, profile)
+                if isinstance(self.engine, LocalWhisperXEngine):
+                    diarization_output = self.engine.diarize(
+                        request, profile, cancel_requested=cancel_requested)
+                else:
+                    diarization_output = self.engine.diarize(request, profile)
+                if profile.diarization_backend == "transformers/nemotron3-diarization":
+                    result.add_warning(
+                        "diarization", "anonymous_speaker_limit",
+                        "Nemotron supports up to eight anonymous speakers; labels are not identities.")
+                    if request.min_speakers is not None or request.max_speakers is not None:
+                        result.add_warning(
+                            "diarization", "speaker_hints_unsupported",
+                            "Nemotron does not use speaker-count hints; the requested hints were retained for review.")
                 if not isinstance(diarization_output, DiarizationOutput):
                     raise RuntimeError("diarization returned an unsupported output object")
                 assigned = self.engine.assign_speakers(

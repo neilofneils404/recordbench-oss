@@ -1,0 +1,4 @@
+# Tools used to build the pinned Transformers source archive.
+pip
+setuptools
+wheel

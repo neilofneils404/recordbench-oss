@@ -96,9 +96,15 @@ def _manifest_file_present(settings: Settings) -> bool:
     )
 
 
-def _diarization_config_present(configured_path: Path | None) -> bool:
+def _diarization_config_present(configured_path: Path | None, backend: str = "community-1") -> bool:
     if configured_path is None:
         return False
+    if backend == "nemotron":
+        from .nemotron import MODEL_FILES
+        interpreter = os.environ.get("TRANSCRIPTION_V2_NEMOTRON_PYTHON",
+                                     "/opt/transcription/nemotron/bin/python")
+        return (Path(interpreter).is_file() and os.access(interpreter, os.X_OK)
+                and all((configured_path / name).is_file() for name in MODEL_FILES))
     candidate = (
         configured_path
         if configured_path.is_file()
@@ -145,8 +151,9 @@ def readiness(settings: Settings) -> dict[str, object]:
         ),
         "model_cache_present": settings.model_cache_dir.is_dir(),
         "diarization_model_present": _diarization_config_present(
-            diarization_path
+            diarization_path, settings.diarization_backend
         ),
+        "diarization_backend": settings.diarization_backend,
         "whisperx_version": whisperx_version,
         "whisperx_version_compatible": whisperx_version_ok,
         "packaged_vad_present": packaged_vad_present,
