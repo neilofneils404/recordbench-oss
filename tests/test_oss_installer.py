@@ -758,7 +758,7 @@ def test_preflight_rejects_invalid_model_option_combinations(tmp_path, ready_hos
 
 def test_preflight_nonempty_root_requires_explicit_resume(tmp_path, ready_host, monkeypatch):
     args = preflight_args(tmp_path)
-    args.root.mkdir()
+    args.root.mkdir(mode=0o700)
     (args.root / "existing.txt").write_text("synthetic existing data")
     original_stat = installer.Path.stat
     def synthetic_owned(path, *args, **kwargs):
@@ -959,6 +959,7 @@ def test_prepare_revalidates_directory_created_during_the_walk(tmp_path, monkeyp
     target = base / "raced" / "node"
     outside = base / "outside"
     outside.mkdir(mode=0o755)
+    outside.chmod(0o755)  # Test the declared mode independently of the caller umask.
     sentinel = outside / "sentinel.txt"
     sentinel.write_text("synthetic preserved content")
     original_mkdir, original_fstat = os.mkdir, os.fstat
@@ -1236,11 +1237,11 @@ def test_unattended_diarization_blocks_missing_staging_options_before_writes(
     monkeypatch.setattr(installer, "_hf_token", lambda *a: pytest.fail("preflight read a token"))
     monkeypatch.setattr(installer, "_prepare_directories", lambda *a, **k: pytest.fail("missing staging choices reached writes"))
     args = installer._parser().parse_args(["install", "--root", str(node), "--models", models,
-                                          "--enable-diarization", "--non-interactive", "--password-stdin", *flags])
+                                          "--enable-diarization", "--diarization-backend", "community-1", "--non-interactive", "--password-stdin", *flags])
     result = installer._collect_preflight(models, args)
     assert {row.name for row in result.checks if row.blocking and row.state == "fail"} == missing
     monkeypatch.setattr(sys, "argv", ["install", "--root", str(node), "--models", models,
-                                     "--enable-diarization", "--non-interactive", "--password-stdin", *flags])
+                                     "--enable-diarization", "--diarization-backend", "community-1", "--non-interactive", "--password-stdin", *flags])
     assert installer.main() == 1
     assert not node.exists()
 
@@ -1252,7 +1253,7 @@ def test_diarization_preflight_checks_flags_without_consuming_standard_input(tmp
     monkeypatch.setattr(sys, "stdin", UnreadInput())
     monkeypatch.setattr(installer, "_probe", lambda command: subprocess.CompletedProcess(command, 0,
         "0, Synthetic GPU, 49152, 47000, 8.9" if command[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
-    args = preflight_args(tmp_path, "--models", "transcription", "--enable-diarization", "--non-interactive",
+    args = preflight_args(tmp_path, "--models", "transcription", "--enable-diarization", "--diarization-backend", "community-1", "--non-interactive",
                           "--accept-model-terms", "--hf-token-stdin", "--password-stdin")
     result = installer._collect_preflight("transcription", args)
     assert result.ready
@@ -1270,6 +1271,7 @@ def saved_gpu_node(tmp_path, *, model_profile="quality", models="review"):
         "release_id": "synthetic", "release_path": str(ROOT), "auth": "local", "models": models,
         "profiles": ["ai"] if models == "review" else ["transcription"],
         "review_model_profile": model_profile, "gpu_layout": "shared",
+        "diarization_backend": "community-1",
         "gpu_topology": {"generator": ["0"], "transcription": "0", "retrieval_device": "cpu", "retrieval_gpu": None},
     })
     (root / "installation.json").write_text(json.dumps(installation))

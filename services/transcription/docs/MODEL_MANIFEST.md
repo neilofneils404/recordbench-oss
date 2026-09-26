@@ -37,7 +37,13 @@ The same relative file may appear in multiple roles only when its declared size
 and digest are identical. Keep the cache and manifest read-only to the runtime
 account after the separately approved staging process.
 
-Community-1 must use the exact role `diarization` and model ID
+Nemotron must use role `diarization`, model ID `nvidia/Nemotron-3-Diarization`,
+and revision `0f087031414a6616bda8228f447d915a70a25720`. Each configured
+`config.json`, `processor_config.json` and `model.safetensors` must be backed by
+that verified artifact. A valid manifest for a different revision or a manifest
+covering only the configuration cannot authorize execution.
+
+Optional Community-1 must use the exact role `diarization` and model ID
 `pyannote/speaker-diarization-community-1`. Its artifact must cover the regular
 cache blob behind the configured pinned snapshot `config.yaml`, as well as every
 other file required by that snapshot. A present but unlisted YAML file does not

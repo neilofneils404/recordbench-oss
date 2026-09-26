@@ -35,6 +35,7 @@ resolves the same staged snapshots.
 | WhisperX packaged pyannote VAD checkpoint | speech activity detection | model-specific; approval required | WhisperX 3.8.6 includes `whisperx/assets/pytorch_model.bin`. Record its package hash, checkpoint hash, origin, and approved license before real use. The registered profiles use this local checkpoint because WhisperX's Silero adapter calls Torch Hub at runtime. |
 | [pyannote.audio](https://github.com/pyannote/pyannote-audio) | diarization toolkit | MIT | Disable optional metrics/telemetry in the worker environment. |
 | [Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) | anonymous speaker diarization | CC-BY-4.0, gated | Accept access terms once, retain attribution, pin the snapshot, and use a read-only staging token. A token must not be embedded in code, manifests, logs, or delivery files. |
+| [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) | anonymous speaker diarization | OpenMDW-1.1, ungated | New installer selection; exact revision, separate hash-locked runtime and acceptance boundary in [NEMOTRON.md](NEMOTRON.md). No hub token required. |
 
 “Approved” means eligible for an isolated evaluation. It does not mean the
 model is accurate enough for users or approved for every language and domain.
@@ -61,7 +62,7 @@ All profiles follow the same stage order:
 
 1. source-language transcription;
 2. source-language forced alignment;
-3. Community-1 diarization and speaker assignment;
+3. selected Nemotron or Community-1 diarization and WhisperX speaker assignment;
 4. optional, separate English translation artifact.
 
 | Profile | Source ASR | Decoder | Intended use |

@@ -186,6 +186,9 @@ class Settings:
     )
     model_manifest_path: Path | None = None
     allow_degraded_diarization: bool = False
+    # Keep existing installations stable; new installer configurations select
+    # Nemotron explicitly and stage its ungated model separately.
+    diarization_backend: str = "community-1"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -291,11 +294,15 @@ class Settings:
             allow_degraded_diarization=_env_bool(
                 "TRANSCRIPTION_V2_ALLOW_DEGRADED_DIARIZATION", False
             ),
+            diarization_backend=os.environ.get(
+                "TRANSCRIPTION_V2_DIARIZATION_BACKEND", "community-1").strip(),
         )
         settings.validate()
         return settings
 
     def validate(self) -> None:
+        if self.diarization_backend not in {"community-1", "nemotron"}:
+            raise ValueError("TRANSCRIPTION_V2_DIARIZATION_BACKEND must be community-1 or nemotron")
         if self.bind_port > 65_535:
             raise ValueError("TRANSCRIPTION_V2_BIND_PORT must be at most 65535")
         if self.bind_host not in LOOPBACK_HOSTS and not self.api_token:
@@ -374,6 +381,7 @@ class Settings:
             "pipeline_backend": self.pipeline_backend,
             "model_manifest_required": self.pipeline_backend == "whisperx",
             "allow_degraded_diarization": self.allow_degraded_diarization,
+            "diarization_backend": self.diarization_backend,
             "max_upload_bytes": self.max_upload_bytes,
             "max_batch_upload_bytes": self.max_batch_upload_bytes,
             "max_files_per_request": self.max_files_per_request,

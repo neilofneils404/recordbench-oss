@@ -35,7 +35,8 @@ current declarations are:
 - faster-whisper large-v3: MIT as declared upstream;
 - torchaudio English and Spanish alignment artifacts: BSD-2-Clause as declared
   upstream;
-- pyannote Community-1 diarization: CC-BY-4.0 and gated upstream terms;
+- NVIDIA Nemotron 3 Diarization: [OpenMDW-1.1](https://huggingface.co/nvidia/Nemotron-3-Diarization/tree/0f087031414a6616bda8228f447d915a70a25720), ungated;
+- optional pyannote Community-1 diarization: CC-BY-4.0 and gated upstream terms;
 - Community-1 dependency artifacts: upstream-terms review is still required
   before any redistribution or supported deployment claim.
 

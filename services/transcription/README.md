@@ -1,7 +1,7 @@
 # RecordBench Transcription Service
 
 This bundled service provides RecordBench's durable media queue, WhisperX
-transcription, forced alignment, optional Community-1 speaker diarization,
+transcription, forced alignment, optional Nemotron or Community-1 speaker diarization,
 review exports, and short-lived delivery lifecycle. It can also run the
 optional Transcript Studio UI.
 
@@ -14,3 +14,8 @@ artifacts are staged with the root installer before the worker starts. The
 Hugging Face token is never placed in the runtime environment.
 
 See the root installation guide and [model policy](../../docs/MODELS.md).
+
+Nemotron setup, offline behavior and qualification limits are described in
+[the integration guide](docs/NEMOTRON.md). New installer configurations select
+ungated Nemotron when diarization is enabled; existing configurations retain
+their saved backend.

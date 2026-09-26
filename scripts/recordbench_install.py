@@ -243,8 +243,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--enable-diarization",
         action="store_true",
-        help="stage and enable the separately gated speaker-diarization module",
+        help="stage and enable speaker diarization (ungated Nemotron by default)",
     )
+    parser.add_argument("--diarization-backend", choices=("nemotron", "community-1"), default="nemotron")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true", help="emit a structured preflight result (preflight command only)")
@@ -1503,7 +1504,8 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
             "Stage the selected AI capabilities",
             "Choose --transcription-languages en, es, or en,es. Enable diarization only with --models transcription or all.")
         if (needs_model_staging and options.non_interactive
-                and options.enable_diarization and models in {"transcription", "all"}):
+                and options.enable_diarization and options.diarization_backend == "community-1"
+                and models in {"transcription", "all"}):
             add("model-terms", bool(options.accept_model_terms),
                 "Diarization terms acknowledged" if options.accept_model_terms else "Diarization terms acknowledgement missing",
                 "Stage the selected gated speaker module",
@@ -2122,9 +2124,13 @@ def _configure(
             "auto," + ",".join(transcription_languages)
         ),
         "TRANSCRIPTION_V2_MODEL_MANIFEST": "/models/huggingface/hub/approved-model-manifest.json",
+        "TRANSCRIPTION_V2_DIARIZATION_BACKEND": args.diarization_backend,
         "TRANSCRIPTION_V2_DIARIZATION_MODEL_PATH": (
+            ("/models/huggingface/hub/models--nvidia--Nemotron-3-Diarization/"
+             "snapshots/0f087031414a6616bda8228f447d915a70a25720"
+             if args.diarization_backend == "nemotron" else
             "/models/huggingface/hub/models--pyannote--speaker-diarization-community-1/"
-            "snapshots/3533c8cf8e369892e6b79ff1bf80f7b0286a54ee/config.yaml"
+            "snapshots/3533c8cf8e369892e6b79ff1bf80f7b0286a54ee/config.yaml")
             if args.enable_diarization
             else ""
         ),
@@ -2175,6 +2181,7 @@ def _configure(
                     "models": models,
                     "transcription_languages": list(transcription_languages),
                     "transcription_diarization": bool(args.enable_diarization),
+                    "diarization_backend": args.diarization_backend,
                     "gpu_layout": gpu_plan.layout,
                     "gpu_topology": {
                         "visible_devices": len(gpu_devices),
@@ -2504,7 +2511,8 @@ def _provision(
             )
         )
         verification = _run(console, [*compose, "run", "--rm", "--no-deps", "-T", "model-stager", "verify",
-            "--groups", groups, "--review-profile", args.review_model_profile], check=False, capture=True, dry_run=args.dry_run)
+            "--groups", groups, "--review-profile", args.review_model_profile,
+            "--diarization-backend", args.diarization_backend], check=False, capture=True, dry_run=args.dry_run)
         # A dry-run may reuse the launcher's read-only receipt verification.
         # Real provisioning always rechecks through the selected runtime image.
         verified = model_cache_verified if args.dry_run else verification.returncode == 0
@@ -2512,7 +2520,8 @@ def _provision(
             console.ok("Existing model selection verified offline; staging and token entry skipped")
         else:
             token = None
-            if models in {"all", "transcription"} and args.enable_diarization:
+            if (models in {"all", "transcription"} and args.enable_diarization
+                    and args.diarization_backend == "community-1"):
                 if not args.accept_model_terms:
                     if args.non_interactive:
                         raise RuntimeError("transcription staging requires --accept-model-terms")
@@ -2532,6 +2541,7 @@ def _provision(
                 groups,
                 "--review-profile",
                 args.review_model_profile,
+                "--diarization-backend", args.diarization_backend,
             ]
             if token is not None:
                 command.append("--token-stdin")
@@ -2765,6 +2775,11 @@ def _restore_model_options(
         raise RuntimeError("installed GPU metadata is invalid")
     args.transcription_languages = ",".join(languages)
     args.enable_diarization = bool(installation.get("transcription_diarization", False))
+    args.diarization_backend = str(installation.get("diarization_backend", "community-1"))
+    if (args.diarization_backend not in {"community-1", "nemotron"}
+            or (args.enable_diarization and transcription_env.get(
+                "TRANSCRIPTION_V2_DIARIZATION_BACKEND", "community-1") != args.diarization_backend)):
+        raise RuntimeError("installed diarization selections disagree")
     args.review_model_profile = str(installation.get("review_model_profile", "portable"))
     args.gpu_layout = compose_env.get("RECORDBENCH_GPU_LAYOUT", str(installation.get("gpu_layout", "shared")))
     args.generator_gpus = compose_env.get("RECORDBENCH_GENERATOR_GPU", ",".join(generator)) or None
@@ -2885,7 +2900,8 @@ def _saved_models_verified(args: argparse.Namespace, root: Path, release: Path) 
         result = subprocess.run(
             [sys.executable, "-I", "-S", str(tool), "verify", "--catalog", str(catalog),
              "--model-root", str(model_root), "--groups", ",".join(groups),
-             "--review-profile", args.review_model_profile],
+             "--review-profile", args.review_model_profile,
+            "--diarization-backend", args.diarization_backend],
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=1800, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -2900,6 +2916,7 @@ def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None
     auth, models, profiles = args.auth, args.models, installation["profiles"]
     needs_model_staging = not _saved_models_verified(args, root, _release)
     if (needs_model_staging and args.non_interactive and args.enable_diarization
+            and args.diarization_backend == "community-1"
             and not (args.accept_model_terms and args.hf_token_stdin)):
         raise RuntimeError("resumed model staging requires --accept-model-terms and --hf-token-stdin before runtime checks")
     prepared = _provisioning_complete(root, installation)

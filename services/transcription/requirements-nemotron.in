@@ -1,0 +1,5 @@
+# Isolated from WhisperX. Resolve on Linux x86-64 / Python 3.11.
+transformers @ https://github.com/huggingface/transformers/archive/002e1edf5b5198488297f401dd853056b6521d02.zip#sha256=6ad0ee824d900cb9d884f57579d1ae49cf16f66c02b68a64dc713874d0a3464c
+torch==2.8.0
+librosa==0.11.0
+soundfile==0.13.1

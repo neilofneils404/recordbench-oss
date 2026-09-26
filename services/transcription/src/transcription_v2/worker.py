@@ -67,7 +67,12 @@ def _approved_diarization_config_present(
     *,
     cache_root: Path,
     model_readiness: ModelReadiness,
+    backend: str = "community-1",
 ) -> bool:
+    if backend == "nemotron":
+        from .nemotron import approved_snapshot
+        return approved_snapshot(configured_path, cache_root=cache_root,
+                                 model_readiness=model_readiness)
     if not configured_path:
         return False
     path = Path(configured_path).expanduser()
@@ -212,6 +217,7 @@ class JobWorker:
                     diarization_model_path,
                     cache_root=self.settings.model_cache_dir,
                     model_readiness=self.model_readiness,
+                    backend=self.settings.diarization_backend,
                 )
             )
             if (
@@ -220,7 +226,7 @@ class JobWorker:
             ):
                 raise WorkerConfigurationError(
                     "approved local diarization model is not ready; "
-                    "stage Community-1 or explicitly allow degraded diarization"
+                    "stage the selected backend or explicitly allow degraded diarization"
                 )
         if pipeline_factory is None:
             # One single-threaded worker owns one bounded model cache. Reusing
@@ -229,6 +235,7 @@ class JobWorker:
                 self.settings.pipeline_backend,
                 model_cache_dir=self.settings.model_cache_dir,
                 diarization_model_path=diarization_model_path,
+                diarization_backend=self.settings.diarization_backend,
             )
             self._pipeline_factory = self._default_pipeline
         else:
