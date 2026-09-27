@@ -13,7 +13,8 @@ dependencies = [
   "anyio>=4.0,<5",
   "argon2-cffi>=23.1,<26",
   "authlib>=1.7.2,<1.8",
-  "fastapi>=0.116,<0.117",
+  "fastapi>=0.141.1,<0.142",
+  "starlette>=1.3.1,<2",
   "httpx>=0.28,<1",
   "jinja2>=3.1,<4",
   "jsonschema>=4,<5",
@@ -25,7 +26,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<9", "selenium>=4.29,<5"]
+dev = ["pytest>=9.0.3,<10", "selenium>=4.29,<5"]
 postgres = ["psycopg[binary]>=3.2,<4"]
 models = ["sentence-transformers>=5,<6"]
 

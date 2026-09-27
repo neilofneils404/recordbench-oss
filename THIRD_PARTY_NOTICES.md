@@ -43,3 +43,8 @@ current declarations are:
 No model weights are committed to this repository. The installer retrieves
 exact revisions only after the operator reviews applicable terms. A Hugging
 Face token is used for staging and is not retained by runtime services.
+
+The NLTK `punkt_tab` tokenizer resource is revision- and hash-pinned in
+`config/models.json`. Its upstream data terms remain under review; do not infer
+the model-data license from the NLTK software license. See
+[dependency qualification](docs/DEPENDENCIES.md#tokenizer-resource).

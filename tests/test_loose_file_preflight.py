@@ -148,7 +148,7 @@ def _raw_preflight_request(
         headers.append((b"content-length", content_length.encode("ascii")))
     scope = {
         "type": "http",
-        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
         "http_version": "1.1",
         "method": "POST",
         "scheme": "https",
@@ -166,7 +166,9 @@ def _raw_preflight_request(
         "app": app,
     }
     try:
-        asyncio.run(app.router(scope, receive, send))
+        # Exercise the middleware stack as well as routing; FastAPI owns its
+        # request cleanup context there. Do not fabricate framework-private scope.
+        asyncio.run(app(scope, receive, send))
     except HTTPException as exc:
         return exc.status_code, consumed_chunks
     response_start = next(

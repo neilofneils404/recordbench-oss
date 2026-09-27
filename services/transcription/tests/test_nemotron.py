@@ -67,15 +67,21 @@ time.sleep(30)
     with pytest.raises(nemotron.NemotronError, match="canceled" if cancel else "timed out"):
         nemotron.run_diarization(**args, cancel_requested=lambda: cancel and pid_file.exists())
     pid = int(pid_file.read_text())
-    # A killed child may briefly remain a zombie until the system reaps it.
+    # Linux may report zombie (Z) or dead (X) before removing the process.
+    # Read once per poll: the proc entry may disappear between filesystem calls.
+    import time
     status = Path(f"/proc/{pid}/stat")
-    if status.exists():
-        import time
-        for _ in range(20):
-            if not status.exists() or status.read_text().split()[2] == "Z":
-                break
-            time.sleep(0.01)
-        assert not status.exists() or status.read_text().split()[2] == "Z"
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            state = status.read_text().rsplit(")", 1)[1].split()[0]
+        except FileNotFoundError:
+            break
+        if state in {"Z", "X", "x"}:
+            break
+        assert time.monotonic() < deadline, "descendant is still running"
+        time.sleep(0.01)
+
 
 
 @pytest.mark.parametrize("row", [

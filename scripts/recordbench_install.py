@@ -40,6 +40,7 @@ RELEASE_DIRECTORIES = (
     "deploy",
     "docs",
     "migrations",
+    "requirements",
     "schemas",
     "scripts",
     "services",

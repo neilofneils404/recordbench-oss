@@ -2,7 +2,7 @@ name: ${RECORDBENCH_COMPOSE_PROJECT:-recordbench}
 
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
     restart: unless-stopped
     environment:
       POSTGRES_DB: recordbench
@@ -362,7 +362,7 @@ services:
     networks: [front, services, models]
 
   gateway:
-    image: nginx:1.28-alpine
+    image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
     restart: unless-stopped
     read_only: true
     security_opt: [no-new-privileges:true]

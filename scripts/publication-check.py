@@ -217,12 +217,16 @@ def _scan_bytes(
     findings.extend(Finding(location, rule) for rule in sorted(pem_rules))
     network_data = data
     logical_path = re.sub(r"^git:[0-9a-f]{12}:", "", location)
-    if logical_path == "services/transcription/requirements-nemotron.lock":
-        # Reviewed public PyPI CUDA dependency version, not a network endpoint.
-        # Exact package, version, file and requirement-line grammar only. Deny
-        # terms, secrets and every other occurrence still inspect original bytes.
+    reviewed_cuda_versions = {
+        "services/transcription/requirements-nemotron.lock": rb"10[.]3[.](?:9[.]90|7[.]77)",
+        "services/transcription/requirements-worker.lock": rb"10[.]3[.]9[.]90",
+        "requirements/retrieval.lock": rb"10[.]3[.]7[.]77",
+    }
+    if logical_path in reviewed_cuda_versions:
+        # Reviewed public dependency coordinates, not network endpoints. Exact
+        # file, package, version and line grammar only; other rules retain bytes.
         network_data = re.sub(
-            rb"(?m)^nvidia-curand-cu12==10[.]3[.]9[.]90(?: \\)?$",
+            rb"(?m)^nvidia-curand-cu12==" + reviewed_cuda_versions[logical_path] + rb"(?: \\)?$",
             b"reviewed-public-dependency-version", data,
         )
     for raw in (*IPV4.findall(network_data), *IPV6.findall(network_data)):

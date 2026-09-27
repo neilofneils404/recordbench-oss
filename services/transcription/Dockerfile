@@ -1,5 +1,5 @@
-# syntax=docker/dockerfile:1.7
-ARG PYTHON_IMAGE=python:3.11-slim-bookworm
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a36c24f9cbdf4fd0f52d67f0823eeac19c2028c637cecc392d97f980d4fec56b
 
 FROM ${PYTHON_IMAGE} AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -14,7 +14,11 @@ RUN python -m venv /opt/transcription/venv
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY ui ./ui
-RUN pip install --no-cache-dir .
+COPY requirements-api*.lock /opt/transcription/
+RUN pip install --no-cache-dir --no-build-isolation --require-hashes -r /opt/transcription/requirements-api-build.lock \
+    && pip install --no-cache-dir --no-build-isolation --require-hashes -r /opt/transcription/requirements-api.lock \
+    && pip install --no-cache-dir --no-deps --no-build-isolation . \
+    && pip check
 ENV HOME=/tmp/transcription-home
 
 FROM base AS api
@@ -28,10 +32,12 @@ EXPOSE 8511
 CMD ["streamlit", "run", "ui/streamlit_app.py", "--server.address", "0.0.0.0", "--server.port", "8511", "--server.baseUrlPath", "transcript-studio", "--server.maxUploadSize", "5121"]
 
 FROM base AS worker
-RUN pip install --no-cache-dir '.[ml]'
+COPY requirements-worker.lock /opt/transcription/
+RUN pip install --no-cache-dir --no-build-isolation --require-hashes -r /opt/transcription/requirements-worker.lock \
+    && pip check
 COPY requirements-nemotron*.lock /opt/transcription/
 RUN python -m venv /opt/transcription/nemotron \
-    && /opt/transcription/nemotron/bin/pip install --no-cache-dir --require-hashes -r /opt/transcription/requirements-nemotron-build.lock \
+    && /opt/transcription/nemotron/bin/pip install --no-cache-dir --no-build-isolation --require-hashes -r /opt/transcription/requirements-nemotron-build.lock \
     && /opt/transcription/nemotron/bin/pip install --no-cache-dir --no-build-isolation --require-hashes -r /opt/transcription/requirements-nemotron.lock \
     && /opt/transcription/nemotron/bin/pip check
 CMD ["transcription-v2", "worker"]

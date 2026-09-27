@@ -398,6 +398,10 @@ def test_release_capsule_is_content_addressed_and_allowlisted(tmp_path) -> None:
     assert len(manifest["source_sha256"]) == 64
     assert (release / "compose.yaml").is_file()
     assert (release / "services/transcription/src").is_dir()
+    for lock in ("requirements/application.lock", "requirements/build.lock",
+                 "services/transcription/requirements-api.lock",
+                 "deploy/model-stager/requirements.lock"):
+        assert (release / lock).read_bytes() == (ROOT / lock).read_bytes()
     assert not (release / ".git").exists()
     assert not (release / ".venv").exists()
     assert not (release / "tests").exists()

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import stat
 import sys
 import tempfile
 import urllib.request
-from pathlib import Path
+import zipfile
+from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping
 
 
@@ -120,6 +122,67 @@ def _download_direct(item: Mapping[str, object], cache: Path) -> Path:
     finally:
         temporary.unlink(missing_ok=True)
     return target
+
+
+def _stage_tokenizer(root: Path, resource: Mapping[str, object]) -> list[Path]:
+    """Verify the immutable archive before bounded extraction into a fresh tree."""
+    try:
+        with urllib.request.urlopen(str(resource["url"]), timeout=120) as response:
+            data = response.read(8 * 1024 * 1024 + 1)
+        if len(data) > 8 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != resource["sha256"]:
+            raise RuntimeError("tokenizer archive failed verification")
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            members = archive.infolist()
+            if not members or len(members) > 256 or sum(m.file_size for m in members) > 16 * 1024 * 1024:
+                raise RuntimeError("tokenizer archive exceeds extraction limits")
+            names = set()
+            for member in members:
+                path = PurePosixPath(member.filename)
+                mode = member.external_attr >> 16
+                if (path.is_absolute() or ".." in path.parts or "\\" in member.filename
+                        or not path.parts or path.parts[0] != "punkt_tab"
+                        or member.filename in names or member.flag_bits & 1
+                        or (stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR))):
+                    raise RuntimeError("tokenizer archive contains an unsafe entry")
+                names.add(member.filename)
+            parent = root / "nltk_data" / "tokenizers"
+            for directory in (root / "nltk_data", parent):
+                if directory.is_symlink():
+                    raise RuntimeError("tokenizer destination must not be a symlink")
+                directory.mkdir(exist_ok=True)
+            expected = {parent / m.filename for m in members if not m.is_dir()}
+            for existing in (root / "nltk_data").rglob("*"):
+                if existing.is_symlink() or (existing.is_file() and existing not in expected):
+                    raise RuntimeError("existing tokenizer inventory differs; use a fresh staging root")
+            target = parent / "punkt_tab"
+            if target.is_symlink():
+                raise RuntimeError("tokenizer destination must not be a symlink")
+            with tempfile.TemporaryDirectory(prefix=".tokenizer-stage-", dir=parent) as temporary:
+                stage = Path(temporary)
+                for member in members:
+                    destination = stage / member.filename
+                    if member.is_dir():
+                        destination.mkdir(parents=True, exist_ok=True)
+                    else:
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        with archive.open(member) as source, destination.open("xb") as output:
+                            # The verified archive declares a bounded total size.
+                            output.write(source.read())
+                staged = stage / "punkt_tab"
+                files = sorted(p.relative_to(staged) for p in staged.rglob("*") if p.is_file())
+                if not files:
+                    raise RuntimeError("tokenizer archive has no files")
+                if target.exists():
+                    existing = list(target.rglob("*"))
+                    if (any(p.is_symlink() for p in existing)
+                            or sorted(p.relative_to(target) for p in existing if p.is_file()) != files
+                            or any(_sha256(target / p) != _sha256(staged / p) for p in files)):
+                        raise RuntimeError("existing tokenizer differs from pinned resource; use a fresh staging root")
+                else:
+                    os.rename(staged, target)
+            return [target / p for p in files]
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
+        raise RuntimeError("tokenizer staging failed") from exc
 
 
 def _artifact(
@@ -362,15 +425,9 @@ def main() -> int:
                 )
             )
         if transcription_selected:
-            import nltk
-
-            nltk_root = root / "nltk_data"
-            nltk_root.mkdir(parents=True, exist_ok=True)
-            print("[vault] acquiring pinned-language tokenizer support: punkt_tab")
-            if not nltk.download("punkt_tab", download_dir=nltk_root, quiet=True):
-                raise RuntimeError("NLTK punkt_tab staging failed")
+            print("[vault] acquiring verified tokenizer support: punkt_tab")
+            staged_files.extend(_stage_tokenizer(root, payload["resources"]["punkt_tab"]))
             _write_manifest(cache, transcription_artifacts)
-            staged_files.extend(path for path in nltk_root.rglob("*") if path.is_file())
             staged_files.append(cache / "approved-model-manifest.json")
         _stage_receipt(root, args.catalog, groups, args.review_profile, staged_files,
                        diarization_backend=args.diarization_backend)

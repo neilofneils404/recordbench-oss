@@ -48,7 +48,7 @@ def test_stager_downloads_only_selected_ungated_files_and_binds_backend(tmp_path
             (snapshot / name).write_bytes(b"synthetic model bytes")
         return str(snapshot)
     monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=snapshot_download))
-    monkeypatch.setitem(sys.modules, "nltk", SimpleNamespace(download=lambda *a, **k: True))
+    monkeypatch.setattr(module, "_stage_tokenizer", lambda *a: [])
     args = ["stage-models", "--model-root", str(tmp_path), "--catalog", str(ROOT / "config/models.json"),
             "--groups", "transcription-diarization"]
     monkeypatch.setattr(sys, "argv", args)

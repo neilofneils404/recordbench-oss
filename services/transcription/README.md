@@ -19,3 +19,10 @@ Nemotron setup, offline behavior and qualification limits are described in
 [the integration guide](docs/NEMOTRON.md). New installer configurations select
 ungated Nemotron when diarization is enabled; existing configurations retain
 their saved backend.
+
+## Reproducible dependencies
+
+The API/UI and isolated Nemotron interpreter use hash-locked Python environments.
+Nemotron uses Torch 2.14.0 with CUDA 12.6; the WhisperX worker retains its separate
+dependency contract. See [dependency locks](../../docs/DEPENDENCIES.md) for
+regeneration, verified tokenizer staging, and remaining release qualification.

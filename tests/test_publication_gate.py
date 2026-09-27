@@ -7,6 +7,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from pypdf import PdfWriter
 
 
@@ -461,10 +463,15 @@ def test_reviewed_personal_baseline_does_not_cover_ancestors(tmp_path, monkeypat
         tmp_path, (name.encode(),), baseline_public_git_identities=exception)
 
 
-def test_cuda_dependency_version_disposition_is_exact_and_context_bound():
-    version = b".".join((b"10", b"3", b"9", b"90"))
+@pytest.mark.parametrize("location,tail", [
+    ("services/transcription/requirements-nemotron.lock", (b"9", b"90")),
+    ("services/transcription/requirements-nemotron.lock", (b"7", b"77")),
+    ("services/transcription/requirements-worker.lock", (b"9", b"90")),
+    ("requirements/retrieval.lock", (b"7", b"77")),
+])
+def test_cuda_dependency_version_disposition_is_exact_and_context_bound(location, tail):
+    version = b".".join((b"10", b"3", *tail))
     requirement = b"nvidia-curand-cu12==" + version + b" \\\n"
-    location = "services/transcription/requirements-nemotron.lock"
     finding = publication.Finding(location, "private-network-address")
     assert publication._scan_bytes(requirement, location=location, deny=()) == []
     assert publication._scan_bytes(requirement, location="git:" + "a" * 12 + ":" + location, deny=()) == []
@@ -473,3 +480,8 @@ def test_cuda_dependency_version_disposition_is_exact_and_context_bound():
     assert publication._scan_bytes(requirement, location="unreviewed.lock", deny=())
     assert publication.Finding(location, "operator-deny-term") in publication._scan_bytes(
         requirement, location=location, deny=(b"curand",))
+
+
+def test_cuda_version_from_another_runtime_is_not_adjudicated():
+    data = b"nvidia-curand-cu12==" + b".".join((b"10", b"3", b"9", b"90")) + b"\n"
+    assert publication._scan_bytes(data, location="requirements/retrieval.lock", deny=())

@@ -107,7 +107,7 @@ jobs:
           cache: pip
       - name: Install lightweight documentation test dependencies
         if: ${{ needs.change-scope.outputs.docs_only == 'true' }}
-        run: python -m pip install --disable-pip-version-check 'pytest>=8,<9'
+        run: python -m pip install --disable-pip-version-check 'pytest>=9.0.3,<10'
       - name: Run documentation and scope contracts
         if: ${{ needs.change-scope.outputs.docs_only == 'true' }}
         run: python -m pytest -q tests/test_documentation.py tests/test_quality_change_scope.py
