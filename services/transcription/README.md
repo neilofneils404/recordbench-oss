@@ -26,3 +26,9 @@ The API/UI and isolated Nemotron interpreter use hash-locked Python environments
 Nemotron uses Torch 2.14.0 with CUDA 12.6; the WhisperX worker retains its separate
 dependency contract. See [dependency locks](../../docs/DEPENDENCIES.md) for
 regeneration, verified tokenizer staging, and remaining release qualification.
+
+Installed workers load ASR from the exact manifest-approved snapshot directory,
+without relying on a mutable Hugging Face `main` cache reference. Missing or
+changed snapshots fail before model loading. The Fast profile needs its own
+approved Turbo artifact; the default catalog currently stages large-v3 only.
+It must not silently substitute a model or download one during a job.

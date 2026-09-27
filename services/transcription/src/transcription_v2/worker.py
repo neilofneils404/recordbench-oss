@@ -234,6 +234,7 @@ class JobWorker:
             self._engine = create_pipeline_engine(
                 self.settings.pipeline_backend,
                 model_cache_dir=self.settings.model_cache_dir,
+                model_readiness=self.model_readiness,
                 diarization_model_path=diarization_model_path,
                 diarization_backend=self.settings.diarization_backend,
             )

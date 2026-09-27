@@ -75,7 +75,7 @@ time.sleep(30)
     while True:
         try:
             state = status.read_text().rsplit(")", 1)[1].split()[0]
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             break
         if state in {"Z", "X", "x"}:
             break

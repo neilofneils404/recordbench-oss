@@ -33,6 +33,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
 
+from .model_manifest import ModelReadiness
+from .asr_models import approved_asr_snapshot
 from .profiles import DEFAULT_PROFILE_NAME, TranscriptionProfile, get_profile
 
 
@@ -491,6 +493,7 @@ class LocalWhisperXEngine:
         auth_token_env: str = "HF_TOKEN",
         diarization_backend: str = "community-1",
         nemotron_python: str = "/opt/transcription/nemotron/bin/python",
+        model_readiness: ModelReadiness | None = None,
     ) -> None:
         self.model_cache_dir = (
             str(Path(model_cache_dir).expanduser()) if model_cache_dir else None
@@ -505,6 +508,7 @@ class LocalWhisperXEngine:
             raise PipelineConfigurationError("unsupported diarization backend")
         self.diarization_backend = diarization_backend
         self.nemotron_python = nemotron_python
+        self.model_readiness = model_readiness
         self._lock = threading.RLock()
         self._asr_cache: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
         self._align_cache: OrderedDict[
@@ -542,6 +546,15 @@ class LocalWhisperXEngine:
             return f"cuda:{request.device_index}"
         return request.device
 
+    def _asr_location(self, model_name: str) -> str:
+        if self.model_readiness is None:
+            # Standalone adapters retain their explicit caller-managed cache.
+            return model_name
+        try:
+            return str(approved_asr_snapshot(self.model_cache_dir, self.model_readiness, model_name))
+        except ValueError as exc:
+            raise PipelineConfigurationError(str(exc)) from None
+
     def _base_asr_pipeline(
         self,
         request: TranscriptionRequest,
@@ -550,6 +563,7 @@ class LocalWhisperXEngine:
         model_name: str,
         task: str,
     ) -> Any:
+        model_location = self._asr_location(model_name)
         whisperx = self._import_whisperx()
         key = (
             model_name,
@@ -565,7 +579,7 @@ class LocalWhisperXEngine:
             cached = self._asr_cache.get(key)
             if cached is None:
                 cached = whisperx.load_model(
-                    model_name,
+                    model_location,
                     request.device,
                     device_index=request.device_index,
                     compute_type=profile.compute_type,
@@ -602,7 +616,7 @@ class LocalWhisperXEngine:
         options = profile.asr_options
         options["hotwords"] = ", ".join(request.hotwords)
         return whisperx.load_model(
-            model_name,
+            self._asr_location(model_name),
             request.device,
             device_index=request.device_index,
             compute_type=profile.compute_type,
@@ -892,6 +906,7 @@ def create_pipeline_engine(
     model_cache_dir: str | Path | None = None,
     diarization_model_path: str | Path | None = None,
     diarization_backend: str | None = None,
+    model_readiness: ModelReadiness | None = None,
 ) -> PipelineEngine:
     """Create an explicitly selected engine without importing ML packages.
 
@@ -906,6 +921,7 @@ def create_pipeline_engine(
         return MockPipelineEngine()
     if selected in {"local", "whisperx", "open_local"}:
         return LocalWhisperXEngine(
+            model_readiness=model_readiness,
             diarization_backend=diarization_backend or os.environ.get(
                 "TRANSCRIPTION_V2_DIARIZATION_BACKEND", "community-1"),
             nemotron_python=os.environ.get("TRANSCRIPTION_V2_NEMOTRON_PYTHON",
