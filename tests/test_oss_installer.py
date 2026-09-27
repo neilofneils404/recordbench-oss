@@ -409,6 +409,7 @@ def test_release_capsule_is_content_addressed_and_allowlisted(tmp_path) -> None:
 
 @pytest.mark.parametrize("cache_path", [
     ".pytest_cache/results", "__pycache__/results", "worker.pyc", "cache.pyc/results",
+    "worker.egg-info/PKG-INFO", "build/lib/worker.py",
 ])
 def test_release_identity_matches_staged_bytes_after_tests(tmp_path, monkeypatch, cache_path):
     source = tmp_path / "source"

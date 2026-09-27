@@ -574,8 +574,8 @@ not fetch or merge source code: review and update the clone first, then run:
 ```
 
 The capsule hash and copied files use the same generated-file exclusions:
-`__pycache__`, `*.pyc` and `.pytest_cache`. Running contributor tests must not
-change release identity; changes to included source files do. The source hash
+`__pycache__`, `*.pyc`, `.pytest_cache`, `*.egg-info` and `build`. Running
+contributor tests or building Python packages must not change release identity; changes to included source files do. The source hash
 identifies capsule content, not the installed image or runtime dependencies.
 
 An update requires a newly successful bundled encrypted backup unless no

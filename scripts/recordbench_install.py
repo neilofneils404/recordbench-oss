@@ -33,7 +33,7 @@ from typing import Iterable, Mapping, Sequence
 
 PROJECT = Path(__file__).resolve().parents[1]
 VERSION = "0.1.0-alpha.2"
-RELEASE_IGNORED_PATTERNS = ("__pycache__", "*.pyc", ".pytest_cache")
+RELEASE_IGNORED_PATTERNS = ("__pycache__", "*.pyc", ".pytest_cache", "*.egg-info", "build")
 RELEASE_DIRECTORIES = (
     "benchmarks",
     "config",
