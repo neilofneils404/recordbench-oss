@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fnmatch
 import getpass
 import hashlib
 import http.client
@@ -32,6 +33,7 @@ from typing import Iterable, Mapping, Sequence
 
 PROJECT = Path(__file__).resolve().parents[1]
 VERSION = "0.1.0-alpha.2"
+RELEASE_IGNORED_PATTERNS = ("__pycache__", "*.pyc", ".pytest_cache")
 RELEASE_DIRECTORIES = (
     "benchmarks",
     "config",
@@ -598,11 +600,16 @@ def _release_digest() -> str:
     for source in _release_sources():
         paths = [source] if source.is_file() else sorted(source.rglob("*"))
         for path in paths:
+            relative_path = path.relative_to(PROJECT)
+            if any(fnmatch.fnmatchcase(part, pattern)
+                   for part in relative_path.parts
+                   for pattern in RELEASE_IGNORED_PATTERNS):
+                continue
             if path.is_symlink():
                 raise RuntimeError(f"release source contains a symbolic link: {path}")
-            if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+            if not path.is_file():
                 continue
-            relative = path.relative_to(PROJECT).as_posix()
+            relative = relative_path.as_posix()
             digest.update(relative.encode("utf-8") + b"\0")
             with path.open("rb") as handle:
                 for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -617,7 +624,7 @@ def _copy_release_entry(source: Path, destination: Path) -> None:
             source,
             destination,
             symlinks=False,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+            ignore=shutil.ignore_patterns(*RELEASE_IGNORED_PATTERNS),
         )
     else:
         destination.parent.mkdir(parents=True, exist_ok=True)

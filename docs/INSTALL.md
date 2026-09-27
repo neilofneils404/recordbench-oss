@@ -573,6 +573,11 @@ not fetch or merge source code: review and update the clone first, then run:
 ./install update --root /srv/recordbench
 ```
 
+The capsule hash and copied files use the same generated-file exclusions:
+`__pycache__`, `*.pyc` and `.pytest_cache`. Running contributor tests must not
+change release identity; changes to included source files do. The source hash
+identifies capsule content, not the installed image or runtime dependencies.
+
 An update requires a newly successful bundled encrypted backup unless no
 bundled backup is configured and the operator supplies `--no-backup`. Operators
 using their own backup method can use that flag after verifying their external

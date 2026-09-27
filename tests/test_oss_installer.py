@@ -403,6 +403,48 @@ def test_release_capsule_is_content_addressed_and_allowlisted(tmp_path) -> None:
     assert not (release / "tests").exists()
 
 
+@pytest.mark.parametrize("cache_path", [
+    ".pytest_cache/results", "__pycache__/results", "worker.pyc", "cache.pyc/results",
+])
+def test_release_identity_matches_staged_bytes_after_tests(tmp_path, monkeypatch, cache_path):
+    source = tmp_path / "source"
+    component = source / "services/worker/component.py"
+    component.parent.mkdir(parents=True)
+    component.write_text('VALUE = "synthetic"\n')
+    monkeypatch.setattr(installer, "PROJECT", source)
+    monkeypatch.setattr(installer, "RELEASE_DIRECTORIES", ("services",))
+    monkeypatch.setattr(installer, "RELEASE_FILES", ())
+    clean_digest = installer._release_digest()
+    cached = source / "services/worker" / cache_path
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_text("synthetic cached test result\n")
+    assert installer._release_digest() == clean_digest
+    node = tmp_path / "node"
+    node.mkdir(mode=0o700)
+    release_id, release = installer._stage_release(
+        installer.Console(color=False, quiet=True), node, dry_run=False)
+    cached.write_text("different cached test result\n")
+    assert installer._stage_release(
+        installer.Console(color=False, quiet=True), node, dry_run=False) == (release_id, release)
+    monkeypatch.setattr(installer, "PROJECT", release)
+    assert installer._release_digest() == clean_digest
+    assert not (release / "services/worker" / cache_path).exists()
+    monkeypatch.setattr(installer, "PROJECT", source)
+    component.write_text('VALUE = "changed synthetic source"\n')
+    assert installer._release_digest() != clean_digest
+
+
+def test_release_identity_still_rejects_included_symlink(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    (source / "services").mkdir(parents=True)
+    (source / "services/component.py").symlink_to(tmp_path / "outside.py")
+    monkeypatch.setattr(installer, "PROJECT", source)
+    monkeypatch.setattr(installer, "RELEASE_DIRECTORIES", ("services",))
+    monkeypatch.setattr(installer, "RELEASE_FILES", ())
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        installer._release_digest()
+
+
 def test_generated_environment_is_quoted_and_rejects_line_injection() -> None:
     text = installer._env_text(
         {"RECORDBENCH_PATH": "/srv/Record Bench", "RECORDBENCH_VALUE": 7},
