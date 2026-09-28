@@ -159,10 +159,12 @@ class ApiClientTests(unittest.TestCase):
     def test_pilot_language_list_is_operator_bounded(self) -> None:
         with patch.dict(
             "os.environ",
-            {"TRANSCRIPTION_V2_PILOT_LANGUAGE_CODES": "auto,en,es"},
+            {"TRANSCRIPTION_V2_LANGUAGE_CODES": "auto,en,es"},
             clear=False,
         ):
-            available = _available_languages()
+            client = MagicMock()
+            client.profiles.return_value = {"languages": ["en", "es"]}
+            available = _available_languages(client)
 
         self.assertEqual(
             {
@@ -176,10 +178,16 @@ class ApiClientTests(unittest.TestCase):
     def test_unstaged_fast_profile_is_hidden_from_pilot(self) -> None:
         with patch.dict(
             "os.environ",
-            {"TRANSCRIPTION_V2_PILOT_PROFILE_NAMES": "balanced,high_accuracy"},
+            {"TRANSCRIPTION_V2_PROFILE_NAMES": "balanced,high_accuracy"},
             clear=False,
         ):
-            available = _available_profiles()
+            client = MagicMock()
+            client.profiles.return_value = {"profiles": [
+                {"name": "balanced", "available": True},
+                {"name": "high_accuracy", "available": True},
+                {"name": "fast", "available": False},
+            ]}
+            available = _available_profiles(client)
 
         self.assertEqual(
             {"Balanced": "balanced", "Highest accuracy": "high_accuracy"},

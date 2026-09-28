@@ -12,6 +12,8 @@ RUN apt-get update \
 WORKDIR /opt/transcription/app
 RUN python -m venv /opt/transcription/venv
 COPY pyproject.toml README.md ./
+COPY licenses ./licenses
+COPY licenses /usr/share/licenses/recordbench-transcription/
 COPY src ./src
 COPY ui ./ui
 COPY requirements-api*.lock /opt/transcription/

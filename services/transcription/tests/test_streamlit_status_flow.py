@@ -562,3 +562,20 @@ def test_direct_batch_child_link_redirects_to_combined_workflow() -> None:
     assert status == "processing"
     select_batch.assert_called_once_with(st, "batch_abc123")
     st.rerun.assert_called_once_with()
+
+
+def test_translation_choice_follows_the_selected_profiles_actual_availability() -> None:
+    client = MagicMock()
+    client.profiles.return_value = {"profiles": [
+        {"name": "high_accuracy", "available": True, "translation_available": False}],
+        "languages": ["en", "es"]}
+    st = _new_job_test_streamlit(files=[], submitted=False)
+    with patch.dict("os.environ", {"TRANSCRIPTION_V2_PROFILE_NAMES": "high_accuracy",
+                                   "TRANSCRIPTION_V2_LANGUAGE_CODES": "auto,en,es",
+                                   "TRANSCRIPTION_V2_ENABLE_TRANSLATION": "true"}):
+        _render_new_job(st, client)
+    translation = next(call for call in st.checkbox.call_args_list
+                       if call.args[0] == "Create an English translation")
+    assert translation.kwargs["disabled"] is True
+    assert "unavailable" in translation.kwargs["help"]
+    client.profiles.assert_called_once()

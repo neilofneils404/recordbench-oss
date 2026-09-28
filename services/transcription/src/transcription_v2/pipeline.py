@@ -653,10 +653,16 @@ class LocalWhisperXEngine:
         profile: TranscriptionProfile,
         source_result: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        whisperx = self._import_whisperx()
         language = str(source_result.get("language") or request.language or "").strip()
         if not language:
             raise RuntimeError("source language is unavailable; alignment cannot run")
+        alignment_model = request.alignment_model
+        if self.model_readiness is not None:
+            from .alignment_models import approved_alignment_model
+            alignment_model = approved_alignment_model(
+                self.model_cache_dir, self.model_readiness, language, alignment_model,
+            )
+        whisperx = self._import_whisperx()
 
         if request.local_files_only:
             # WhisperX 3.8.x otherwise calls nltk.download when Punkt is absent.
@@ -681,14 +687,14 @@ class LocalWhisperXEngine:
                 ) from exc
 
         torch_device = self._torch_device(request)
-        key = (language, request.alignment_model, torch_device, self.model_cache_dir)
+        key = (language, alignment_model, torch_device, self.model_cache_dir)
         with self._lock:
             aligner = self._align_cache.get(key)
             if aligner is None:
                 aligner = whisperx.load_align_model(
                     language_code=language,
                     device=torch_device,
-                    model_name=request.alignment_model,
+                    model_name=alignment_model,
                     model_dir=self.model_cache_dir,
                     model_cache_only=request.local_files_only,
                 )

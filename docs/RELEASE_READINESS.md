@@ -1,8 +1,34 @@
 # Release readiness
 
-RecordBench is a serious alpha, not yet a self-service public release. Feature
-work should not outrun proof that an unfamiliar operator can install, recover,
-update, and support the product without private deployment knowledge.
+RecordBench is currently alpha. The next community beta should make it easier
+to install, try with synthetic material, and contribute using public instructions.
+The full supported-deployment requirements below remain a separate acceptance
+target; they should not prevent publishing reviewed source improvements.
+
+## Community beta exit criteria
+
+A beta designation requires an exact reviewed candidate and explicit release
+approval. It does not follow merely from documenting these criteria.
+
+- The public contributor setup and one advertised reference installation/workflow
+  must work from clean task-owned state, with limitations and recovery steps
+  documented. Full GPU review/transcription remains the intended reference scope;
+  do not advertise that workflow as working based only on mock or import tests.
+- Required CI, publication checks, access boundaries and safe handling of source
+  data remain required. Record security findings with their concrete exposure,
+  mitigation or fix; neither an unassessed finding nor a blanket waiver suffices.
+- Identify what ships in source/packages/images and preserve its notices. For
+  operator-acquired models/resources, provide upstream terms and acquisition
+  instructions, expose unresolved terms before acquisition, and document adapter
+  compatibility. See [model configuration](MODEL_CONFIGURATION.md). Universal
+  certification of user-selected models is not a release requirement.
+- Provide reference-model results, ordinary failure/retry behavior and a useful
+  feedback path. Label untested hardware, model combinations and languages.
+- Independent operator review, broad human accuracy studies, comprehensive
+  hardware coverage and full production recovery certification remain follow-up
+  evidence. Their absence must limit the beta's claims rather than prevent safe
+  source collaboration. Do not promise production support before those relevant
+  acceptance requirements pass.
 
 ## Supported-profile objective
 
@@ -17,6 +43,17 @@ GPU count is adaptive rather than an edition boundary. One supported GPU is a
 valid full-profile target; larger hosts separate service lanes automatically or
 accept explicit assignments. Hardware support still requires a receipt from
 the exact card, VRAM, driver, runtime, collection, and concurrency shape.
+
+## First supported release target
+
+The initial target is the Full GPU profile with local accounts, English and
+Spanish transcription/alignment, and ungated Nemotron diarization. OIDC,
+Windows-domain sign-in and other transcription languages remain experimental
+until separately qualified. This narrows the initial support claim, not the
+requirements for confidential-data handling, recovery or disclosure review.
+This supported-deployment target is not yet qualified. See
+[the supported-release target](SUPPORTED_RELEASE_TARGET.md); the community beta
+above has a narrower installation and contribution promise.
 
 ## First-party release authorization
 
@@ -40,7 +77,10 @@ The following evidence is required before declaring a supported release or
 distributing first-party production images:
 
 1. documented first-party ownership/publication authorization;
-2. complete dependency, container, and model-license review;
+2. dependency/container notices and redistribution review for shipped artifacts;
+   upstream terms/acquisition records for reference models and clear operator
+   responsibility for their own model selection, without implying universal
+   model compatibility or licensing approval;
 3. a clean new root or explicitly approved history rewrite and author-email
    decision;
 4. locked Python resolution, digest-pinned build inputs, image SBOMs,
@@ -48,7 +88,9 @@ distributing first-party production images:
 5. green hosted CI plus clean-host CPU evaluation acceptance;
 6. acceptance receipts from a supported one-GPU review node and full media
    node;
-7. browser/accessibility, OIDC, and representative Kerberos acceptance;
+7. browser/accessibility and local-account acceptance for the initial supported
+   target; OIDC and representative Kerberos acceptance before either is promoted
+   from experimental support;
 8. encrypted backup, bare-metal restore, update, rollback, and queued-work
    restart evidence;
 9. versioned retrieval, citation, classification, transcription, latency, and

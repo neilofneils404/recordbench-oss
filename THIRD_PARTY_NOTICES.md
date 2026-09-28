@@ -48,3 +48,21 @@ The NLTK `punkt_tab` tokenizer resource is revision- and hash-pinned in
 `config/models.json`. Its upstream data terms remain under review; do not infer
 the model-data license from the NLTK software license. See
 [dependency qualification](docs/DEPENDENCIES.md#tokenizer-resource).
+
+## WhisperX bundled voice-activity checkpoint
+
+WhisperX 3.8.6 includes `whisperx/assets/pytorch_model.bin`. Its SHA-256,
+`0b5b3216d60a2d32fc086b47ea8c67589aaeb26b7e07fcbe620d6d0b83e209ea`,
+matches the published LFS object in
+[pyannote/segmentation at the recorded revision](https://huggingface.co/pyannote/segmentation/tree/660b9e20307a2b0cdb400d0f80aadc04a701fc54).
+The model repository's MIT license is Copyright (c) 2022 CNRS; the complete
+[notice is retained here](services/transcription/licenses/pyannote-segmentation-MIT.txt).
+The service wheel includes the notice in its license metadata, and service
+images copy it to `/usr/share/licenses/recordbench-transcription/`.
+
+This checkpoint detects speech activity; it is separate from the selected
+Nemotron speaker diarizer. Its upstream repository has a download gate, but
+the selected checkpoint is already bundled by the pinned WhisperX wheel.
+No runtime model-hub access or additional end-user token step is introduced.
+This exact-artifact attribution does not approve different model revisions or
+resolve the separate NLTK tokenizer-data terms.

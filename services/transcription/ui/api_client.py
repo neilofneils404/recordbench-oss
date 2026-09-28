@@ -101,6 +101,10 @@ class ApiError(RuntimeError):
             507: "The transcription service is preserving required free disk space. Delete finished jobs or ask an administrator to review capacity.",
         }
         message = messages.get(status_code, f"The transcription service returned HTTP {status_code}.")
+        if status_code == 409 and code == "profile_unavailable":
+            message = "This processing option is no longer available. Refresh and choose an available option."
+        if status_code == 409 and code == "language_unavailable":
+            message = "The selected spoken language is not ready on this service. Refresh and choose an available language."
         suffixes = []
         if code:
             suffixes.append(f"code {code}")
@@ -226,6 +230,9 @@ class ApiClient:
 
     def readiness(self) -> dict[str, Any]:
         return self._json_request("GET", "/ready")
+
+    def profiles(self) -> dict[str, Any]:
+        return self._json_request("GET", "/v1/profiles")
 
     def submit_job(self, files: Sequence[UploadPart], options: Mapping[str, Any]) -> dict[str, Any]:
         if not files:

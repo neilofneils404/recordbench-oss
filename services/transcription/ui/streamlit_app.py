@@ -241,7 +241,7 @@ def _upload_selection_summary(files: Iterable[Any]) -> str | None:
     return f"{summary} · total size unavailable"
 
 
-def _available_languages() -> dict[str, str | None]:
+def _available_languages(client: ApiClient, *, catalog: Any = None) -> dict[str, str | None]:
     """Return only languages whose local alignment models are approved."""
 
     configured = os.getenv(
@@ -253,13 +253,16 @@ def _available_languages() -> dict[str, str | None]:
         for value in configured.split(",")
         if value.strip()
     }
+    payload = client.profiles() if catalog is None else catalog
+    ready = payload.get("languages", []) if isinstance(payload, dict) else []
+    ready = {value for value in ready if isinstance(value, str)} if isinstance(ready, list) else set()
     available = {
         label: code
         for label, code in ALL_LANGUAGES.items()
         if ("auto" if code is None else code) in allowed
+        and (bool(ready) if code is None else code in ready)
     }
-    # A malformed operator value must never leave the form without a choice.
-    return available or {"English": "en"}
+    return available
 
 ALL_PROFILES = {
     "Fast": "fast",
@@ -268,22 +271,27 @@ ALL_PROFILES = {
 }
 
 
-def _available_profiles() -> dict[str, str]:
-    """Hide profiles whose exact offline model artifacts are not staged."""
+def _available_profiles(client: ApiClient, *, catalog: Any = None) -> dict[str, str]:
+    """Intersect the API's verified availability with an optional UI restriction."""
 
     configured = os.getenv(
         "TRANSCRIPTION_V2_PROFILE_NAMES",
-        "balanced,high_accuracy",
+        "balanced,high_accuracy,fast",
     )
     allowed = {
         value.strip().lower()
         for value in configured.split(",")
         if value.strip()
     }
-    available = {
-        label: name for label, name in ALL_PROFILES.items() if name in allowed
-    }
-    return available or {"Balanced": "balanced"}
+    payload = client.profiles() if catalog is None else catalog
+    rows = payload.get("profiles", []) if isinstance(payload, dict) else []
+    ready = {
+        row.get("name") for row in rows
+        if isinstance(row, dict) and row.get("available") is True
+        and isinstance(row.get("name"), str)
+    } if isinstance(rows, list) else set()
+    return {label: name for label, name in ALL_PROFILES.items()
+            if name in allowed and name in ready}
 
 RECORDING_TYPES = {
     "General recording": "general",
@@ -738,6 +746,20 @@ def _render_new_job(st: Any, client: ApiClient) -> None:
         unsafe_allow_html=True,
     )
 
+    try:
+        catalog = client.profiles()
+        profiles = _available_profiles(client, catalog=catalog)
+        languages = _available_languages(client, catalog=catalog)
+    except ApiError:
+        st.error("Processing options could not be checked. Try again shortly.")
+        return
+    if not profiles:
+        st.info("No processing options are ready. Ask the administrator to finish service setup.")
+        return
+    if not languages:
+        st.info("No spoken languages are ready. Ask the administrator to finish service setup.")
+        return
+
     max_file_bytes, max_request_bytes, max_files = _upload_limits()
     max_upload_mib = max(1, (max_file_bytes + MIB - 1) // MIB)
 
@@ -774,7 +796,6 @@ def _render_new_job(st: Any, client: ApiClient) -> None:
 
     with st.form(f"new-transcription-job-{form_generation}", clear_on_submit=False):
         st.markdown("#### Processing options")
-        profiles = _available_profiles()
         profile_col, type_col = st.columns(2)
         with profile_col:
             profile_label = st.selectbox(
@@ -786,8 +807,12 @@ def _render_new_job(st: Any, client: ApiClient) -> None:
         with type_col:
             recording_label = st.selectbox("Recording type", tuple(RECORDING_TYPES), index=0)
 
-        languages = _available_languages()
-        translation_enabled = _env_flag(
+        profile_rows = catalog.get("profiles", []) if isinstance(catalog, dict) else []
+        translation_available = isinstance(profile_rows, list) and any(
+            isinstance(row, dict) and row.get("name") == profiles[profile_label]
+            and row.get("translation_available") is True for row in profile_rows
+        )
+        translation_enabled = translation_available and _env_flag(
             "TRANSCRIPTION_V2_ENABLE_TRANSLATION", default=True
         )
         language_col, translation_col = st.columns(2)
@@ -803,7 +828,8 @@ def _render_new_job(st: Any, client: ApiClient) -> None:
                 "Create an English translation",
                 value=False,
                 disabled=not translation_enabled,
-                help="The source-language transcript is preserved; English is an additional output.",
+                help=("The source-language transcript is preserved; English is an additional output."
+                      if translation_enabled else "English translation is unavailable on this service."),
             )
 
         diarize_speakers = st.toggle(

@@ -161,11 +161,14 @@ _WHISPERX = ComponentSpec(
 )
 _WHISPERX_PACKAGED_VAD = ComponentSpec(
     name="WhisperX packaged pyannote VAD checkpoint",
-    project_url="https://github.com/m-bain/whisperX",
-    license_name="MODEL-SPECIFIC (ALLOWLIST REQUIRED)",
+    project_url="https://huggingface.co/pyannote/segmentation/tree/660b9e20307a2b0cdb400d0f80aadc04a701fc54",
+    license_name="MIT",
+    model_id="pyannote/segmentation",
     notes=(
-        "WhisperX 3.8.6 loads whisperx/assets/pytorch_model.bin locally. "
-        "Record and approve the packaged checkpoint's hash and model license."
+        "WhisperX 3.8.6 bundles checkpoint SHA-256 "
+        "0b5b3216d60a2d32fc086b47ea8c67589aaeb26b7e07fcbe620d6d0b83e209ea. "
+        "Copyright (c) 2022 CNRS; retain the bundled MIT notice. "
+        "The origin repository is gated; this wheel-bundled checkpoint needs no runtime hub access."
     ),
 )
 _COMMUNITY_1 = ComponentSpec(

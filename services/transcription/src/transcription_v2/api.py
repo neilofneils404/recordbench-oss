@@ -54,7 +54,8 @@ from .domain import (
     validate_batch_id,
 )
 from .media import MediaProbeError, validate_media_name
-from .profiles import DEFAULT_PROFILE_NAME, get_profile, list_profiles
+from .profiles import DEFAULT_PROFILE_NAME, get_profile
+from .profile_availability import ProfileAvailability
 from .resources import readiness
 from .review_exports import ReviewExportError, refresh_review_exports
 from .runtime import Runtime, build_runtime
@@ -285,6 +286,7 @@ def _normalized_options(raw: str, settings: Settings) -> tuple[str, Transcriptio
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     runtime = build_runtime(settings)
+    profile_availability = ProfileAvailability(runtime.settings)
     signing_secret = hashlib.sha256(
         runtime.settings.api_token.encode("utf-8")
         if runtime.settings.api_token
@@ -469,7 +471,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/profiles")
     def profiles(_owner: Owner) -> dict[str, Any]:
-        return {"profiles": [profile.to_dict() for profile in list_profiles()]}
+        return {"profiles": profile_availability.public_profiles(),
+                "languages": profile_availability.languages()}
 
     @app.post("/v1/jobs", status_code=201)
     def submit_jobs(
@@ -485,6 +488,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             profile, job_options = _normalized_options(options, runtime.settings)
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail="Invalid job options") from exc
+
+        if not profile_availability.available(
+            get_profile(profile), translate=job_options.translate_to_english,
+        ):
+            return JSONResponse(status_code=409, content={"code": "profile_unavailable"})
+        languages = profile_availability.languages()
+        if not languages or (job_options.source_language != "auto" and job_options.source_language not in languages):
+            return JSONResponse(status_code=409, content={"code": "language_unavailable"})
 
         declared_sizes: list[int] = []
         for upload in files:
