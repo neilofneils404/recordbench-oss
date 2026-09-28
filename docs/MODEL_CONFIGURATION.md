@@ -17,7 +17,7 @@ Accuracy and resource requirements depend on the selected models and inputs.
 | Answer generation | `CASE_INTELLIGENCE_GENERATOR_BACKEND` selects `ollama` or `openai`; `CASE_INTELLIGENCE_GENERATOR_URL` and `CASE_INTELLIGENCE_GENERATOR_MODEL` select an operator endpoint and model | The endpoint/model must satisfy the adapter's request, structured-response and citation contracts. The installer supplies a reference local configuration; an arbitrary compatible-looking API is not automatically qualified. |
 | Embeddings | `CASE_REVIEW_EMBEDDING_MODEL` and `CASE_REVIEW_EMBEDDING_REVISION` configure the SentenceTransformer worker | Local files are required; remote model code is disabled. Embedding dimensions, index compatibility and reindexing must be checked before changing a populated deployment. |
 | Reranking | `CASE_REVIEW_RERANKER_MODEL` and `CASE_REVIEW_RERANKER_REVISION` configure the CrossEncoder worker | Local files are required; remote model code is disabled. Ranking/output behavior still needs evaluation. |
-| Speech recognition | WhisperX/faster-whisper profiles use approved CTranslate2 snapshots | Installed profile-to-repository mappings are currently fixed in `asr_models.py`; there is no complete arbitrary-model import/selection workflow yet. |
+| Speech recognition | WhisperX/faster-whisper profiles use approved CTranslate2 snapshots | Version 2 inventories select exact compatible model identities for the existing profiles; [offline import](ASR_MODEL_IMPORT.md) copies prepared inventories to a new cache. Raw-model preparation and installer integration remain operator work. |
 | Word alignment | Manifest-approved English/Spanish Torchaudio checkpoints | Language-to-checkpoint bindings are currently fixed. Another language/checkpoint requires adapter and inventory support. |
 | Speaker diarization | Nemotron or Community-1 adapter selected during installation | These are separate implementations with their own artifact/runtime contracts. An unrelated diarization model cannot be substituted by changing a filename. |
 
@@ -26,7 +26,7 @@ installer exposes every choice interactively. Review the resolved service
 configuration when using an operator-managed deployment. Do not modify the
 Python mapping or remove manifest checks merely to make a custom model appear
 ready. Adding a new architecture may require a new adapter; a compatible model
-should eventually need only an administrator-owned configuration entry.
+can use the versioned ASR inventory when it satisfies the existing adapter contract.
 
 The current model-portfolio display also assumes reference generator IDs and
 retrieval metadata. Configurability of the underlying adapters does not yet
@@ -74,21 +74,21 @@ source playback and human review of generated transcripts and answers.
 
 ## Focused contribution work
 
-1. Add a versioned administrator model configuration mapping roles/profiles to
-   adapter-compatible local artifacts. Replace hard-coded repository bindings
-   with validated configuration while retaining hashes, no-symlink boundaries,
-   offline loading and profile availability checks. Portfolio/readiness metadata
-   must describe the selected configuration. Job requests must not supply
-   arbitrary model paths or executable code.
+1. Extend the implemented [ASR bindings and prepared-cache import](ASR_MODEL_IMPORT.md)
+   to operator-friendly raw-model preparation and installer integration, then
+   alignment configuration. Keep model files verified and inference offline.
+   The application portfolio still needs to reflect configured generator/retrieval
+   choices; ASR API/result metadata already records selected identities. Job
+   requests must not supply arbitrary model paths or executable code.
 2. Separate acquiring reference artifacts from importing an existing local
    model inventory. Show the selected resources and upstream terms before
    acquiring them; unresolved terms must be explicit. Do not claim a universal
-   import command until it exists and has tests. Keep credentials out of
+   importer beyond its tested prepared-inventory scope. Keep credentials out of
    manifests and logs, and keep runtime inference downloads disabled.
-3. Validate two independently constructed compatible synthetic model mappings,
-   rejection of incompatible/mutated files, persistence across restart/update,
-   unavailable-model recovery and useful user-facing errors. Then run an actual
-   reference-model workflow. A new architecture gets separate adapter tests.
+3. Run actual reference and alternative-model workflows. Synthetic ASR binding,
+   rejection, restart, provenance and separate-target import tests establish the
+   configuration contract, not model inference or language quality. A new
+   architecture gets separate adapter tests.
 
 Changing embeddings may require a new index; changing a transcription model
 must not relabel historical transcripts as if the new model produced them.

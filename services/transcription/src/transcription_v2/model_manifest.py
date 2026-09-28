@@ -20,6 +20,7 @@ from typing import Any, Mapping, Sequence
 
 
 MODEL_MANIFEST_SCHEMA = "transcription-v2-model-manifest-v1"
+MODEL_MANIFEST_SCHEMA_V2 = "transcription-v2-model-manifest-v2"
 DEFAULT_MODEL_MANIFEST_NAME = "approved-model-manifest.json"
 _MAX_MANIFEST_BYTES = 1024 * 1024
 _MAX_ARTIFACTS = 128
@@ -112,12 +113,26 @@ class ArtifactReadiness:
 
 
 @dataclass(frozen=True, slots=True)
+class ASRBinding:
+    slot: str
+    model_id: str
+    revision: str
+    adapter: str
+    supports_translation: bool
+
+    def public_dict(self) -> dict[str, object]:
+        return {"model_id": self.model_id, "revision": self.revision,
+                "adapter": self.adapter, "supports_translation": self.supports_translation}
+
+
+@dataclass(frozen=True, slots=True)
 class ModelReadiness:
     schema_version: str
     manifest_sha256: str
     artifacts: tuple[ArtifactReadiness, ...]
     verified_file_count: int
     verified_bytes: int
+    asr_bindings: tuple[ASRBinding, ...] = ()
 
     def authorizes_file(
         self,
@@ -161,6 +176,8 @@ class ModelReadiness:
             "verified_file_count": self.verified_file_count,
             "verified_bytes": self.verified_bytes,
             "artifacts": [artifact.public_dict() for artifact in self.artifacts],
+            **({"asr_bindings": {b.slot: b.public_dict() for b in self.asr_bindings}}
+               if self.schema_version == MODEL_MANIFEST_SCHEMA_V2 else {}),
         }
 
 
@@ -260,7 +277,9 @@ def _open_relative(
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
-    file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    # Opening a FIFO must not wait for a writer before the regular-file check.
+    file_flags = (os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+                  | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         for part in parts[:-1]:
             try:
@@ -360,7 +379,7 @@ def _exact_keys(value: Mapping[str, Any], expected: set[str]) -> None:
         raise ModelManifestError("manifest_invalid")
 
 
-def _parse_manifest(content: bytes) -> tuple[str, tuple[_Artifact, ...]]:
+def _parse_manifest(content: bytes) -> tuple[str, tuple[_Artifact, ...], tuple[ASRBinding, ...]]:
     try:
         document = json.loads(
             content.decode("utf-8"),
@@ -370,10 +389,11 @@ def _parse_manifest(content: bytes) -> tuple[str, tuple[_Artifact, ...]]:
         raise ModelManifestError("manifest_invalid_json") from None
     if not isinstance(document, Mapping):
         raise ModelManifestError("manifest_invalid")
-    _exact_keys(document, {"schema_version", "artifacts"})
     schema_version = document.get("schema_version")
-    if schema_version != MODEL_MANIFEST_SCHEMA:
+    if schema_version not in (MODEL_MANIFEST_SCHEMA, MODEL_MANIFEST_SCHEMA_V2):
         raise ModelManifestError("manifest_schema_unsupported")
+    _exact_keys(document, {"schema_version", "artifacts"} |
+                ({"asr_bindings"} if schema_version == MODEL_MANIFEST_SCHEMA_V2 else set()))
     artifact_values = document.get("artifacts")
     if (
         not isinstance(artifact_values, list)
@@ -448,7 +468,26 @@ def _parse_manifest(content: bytes) -> tuple[str, tuple[_Artifact, ...]]:
                 files=tuple(files),
             )
         )
-    return schema_version, tuple(artifacts)
+    bindings: list[ASRBinding] = []
+    if schema_version == MODEL_MANIFEST_SCHEMA_V2:
+        values = document["asr_bindings"]
+        if not isinstance(values, dict) or not values or not set(values) <= {"primary", "fast"}:
+            raise ModelManifestError("manifest_invalid")
+        for slot, value in sorted(values.items()):
+            if not isinstance(value, dict):
+                raise ModelManifestError("manifest_invalid")
+            _exact_keys(value, {"adapter", "model_id", "revision", "supports_translation"})
+            model_id = _safe_text(value["model_id"], maximum=256)
+            revision = _safe_text(value["revision"], maximum=256)
+            if (value["adapter"] != "faster-whisper"
+                    or not isinstance(value["supports_translation"], bool)
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", model_id) is None
+                    or re.fullmatch(r"(?:[0-9a-f]{40}|sha256-[0-9a-f]{64})", revision) is None
+                    or ("asr", model_id, revision) not in artifact_keys):
+                raise ModelManifestError("manifest_invalid")
+            bindings.append(ASRBinding(slot, model_id, revision, "faster-whisper",
+                                       value["supports_translation"]))
+    return schema_version, tuple(artifacts), tuple(bindings)
 
 
 def _verify_file(
@@ -531,7 +570,7 @@ def verify_model_manifest(
     try:
         manifest_parts = _relative_parts(root, manifest_path)
         manifest_content = _read_manifest(root_descriptor, manifest_parts)
-        schema_version, artifacts = _parse_manifest(manifest_content)
+        schema_version, artifacts, bindings = _parse_manifest(manifest_content)
         verified: dict[tuple[str, ...], _FileSignature] = {}
         for artifact in artifacts:
             for expected in artifact.files:
@@ -564,12 +603,15 @@ def verify_model_manifest(
             artifacts=artifact_reports,
             verified_file_count=len(unique_expectations),
             verified_bytes=sum(unique_expectations.values()),
+            asr_bindings=bindings,
         )
     finally:
         os.close(root_descriptor)
 
 
 __all__ = [
+    "ASRBinding",
+    "MODEL_MANIFEST_SCHEMA_V2",
     "ArtifactReadiness",
     "DEFAULT_MODEL_MANIFEST_NAME",
     "MODEL_MANIFEST_SCHEMA",

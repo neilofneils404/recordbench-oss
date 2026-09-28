@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from .model_manifest import ModelReadiness
-from .asr_models import approved_asr_snapshot
+from .asr_models import approved_asr_snapshot, profile_model_metadata
 from .profiles import DEFAULT_PROFILE_NAME, TranscriptionProfile, get_profile
 
 
@@ -546,12 +546,12 @@ class LocalWhisperXEngine:
             return f"cuda:{request.device_index}"
         return request.device
 
-    def _asr_location(self, model_name: str) -> str:
+    def _asr_location(self, model_name: str, *, translate: bool = False) -> str:
         if self.model_readiness is None:
             # Standalone adapters retain their explicit caller-managed cache.
             return model_name
         try:
-            return str(approved_asr_snapshot(self.model_cache_dir, self.model_readiness, model_name))
+            return str(approved_asr_snapshot(self.model_cache_dir, self.model_readiness, model_name, translate=translate))
         except ValueError as exc:
             raise PipelineConfigurationError(str(exc)) from None
 
@@ -563,7 +563,7 @@ class LocalWhisperXEngine:
         model_name: str,
         task: str,
     ) -> Any:
-        model_location = self._asr_location(model_name)
+        model_location = self._asr_location(model_name, translate=task == "translate")
         whisperx = self._import_whisperx()
         key = (
             model_name,
@@ -616,7 +616,7 @@ class LocalWhisperXEngine:
         options = profile.asr_options
         options["hotwords"] = ", ".join(request.hotwords)
         return whisperx.load_model(
-            self._asr_location(model_name),
+            self._asr_location(model_name, translate=task == "translate"),
             request.device,
             device_index=request.device_index,
             compute_type=profile.compute_type,
@@ -1004,7 +1004,7 @@ class TranscriptionPipeline:
             job_id=placeholder_job_id,
             status=PipelineStatus.SUCCEEDED,
             source={"file_name": Path(request.audio_path).name},
-            profile=profile.to_dict(),
+            profile=profile_model_metadata(profile, getattr(self.engine, "model_readiness", None)),
             stages=[
                 StageRecord(name=name, callback=self._stage_callback)
                 for name in self.STAGE_NAMES
@@ -1104,7 +1104,7 @@ class TranscriptionPipeline:
             )
             source.details.update(
                 {
-                    "model": profile.asr_model,
+                    "model": result.profile["asr_model"],
                     "task": "transcribe",
                     "language": result.source_language,
                     "segment_count": len(result.segments),
@@ -1420,7 +1420,7 @@ class TranscriptionPipeline:
                 "source_language": result.source_language,
                 "target_language": request.translation_target,
                 "method": "separate-speech-translation-pass",
-                "model": profile.translation_model,
+                "model": result.profile["translation_model"],
                 "text": "",
                 "segments": [],
                 "raw": None,
@@ -1465,7 +1465,7 @@ class TranscriptionPipeline:
                     "source_language": result.source_language,
                     "target_language": request.translation_target,
                     "method": "separate-speech-translation-pass",
-                    "model": profile.translation_model,
+                    "model": result.profile["translation_model"],
                     "text": translated_text,
                     "segments": translation_segments,
                     "raw": _plain_data(translated),
@@ -1482,7 +1482,7 @@ class TranscriptionPipeline:
                 }
                 translation_stage.details.update(
                     {
-                        "model": profile.translation_model,
+                        "model": result.profile["translation_model"],
                         "target_language": request.translation_target,
                         "segment_count": len(translation_segments),
                     }
@@ -1506,7 +1506,7 @@ class TranscriptionPipeline:
                     "source_language": result.source_language,
                     "target_language": request.translation_target,
                     "method": "separate-speech-translation-pass",
-                    "model": profile.translation_model,
+                    "model": result.profile["translation_model"],
                     "text": "",
                     "segments": [],
                     "raw": None,
@@ -1538,7 +1538,7 @@ class TranscriptionPipeline:
             job_id=request.job_id or "invalid-request",
             status=PipelineStatus.FAILED,
             source={"file_name": Path(request.audio_path).name},
-            profile=profile.to_dict(),
+            profile=profile_model_metadata(profile, getattr(self.engine, "model_readiness", None)),
             stages=[
                 StageRecord(name=name, callback=self._stage_callback)
                 for name in self.STAGE_NAMES

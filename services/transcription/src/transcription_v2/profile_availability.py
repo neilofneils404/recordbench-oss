@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import stat
 
-from .asr_models import approved_asr_snapshot
+from .asr_models import approved_asr_snapshot, profile_model_metadata
 from .alignment_models import ALIGNMENT_MODELS, approved_alignment_model
 from .model_manifest import ModelManifestError, ModelReadiness, verify_model_manifest
 from .profiles import TranscriptionProfile, get_profile, list_profiles
@@ -51,11 +51,10 @@ class ProfileAvailability:
         try:
             if self._manifest_signature() != self._manifest_identity:
                 return False
-            models = {profile.asr_model}
+            approved_asr_snapshot(self.settings.model_cache_dir, self._readiness, profile.asr_model)
             if translate:
-                models.add(profile.translation_model)
-            for model in models:
-                approved_asr_snapshot(self.settings.model_cache_dir, self._readiness, model)
+                approved_asr_snapshot(self.settings.model_cache_dir, self._readiness,
+                                      profile.translation_model, translate=True)
         except (OSError, ValueError):
             return False
         return True
@@ -66,7 +65,7 @@ class ProfileAvailability:
             profile = get_profile(registered.name, diarization_backend=self.settings.diarization_backend)
             available = self.available(profile)
             result.append({
-                **profile.to_dict(),
+                **profile_model_metadata(profile, self._readiness),
                 "available": available,
                 "unavailable_reason": None if available else "This processing option is not ready on this service.",
                 "translation_available": self.available(profile, translate=True),

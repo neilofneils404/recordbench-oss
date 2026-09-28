@@ -67,6 +67,18 @@ substitutes a model, and no API/UI availability result replaces worker checks.
 ## Operator-selected models
 
 The reference profiles are a tested-configuration target, not a universal model
-loader. See [model choice and compatibility](../../docs/MODEL_CONFIGURATION.md)
-for current ASR/alignment restrictions, upstream acquisition terms, and the
-planned administrator model configuration/import boundary.
+loader. Version 2 model manifests bind the primary and fast processing slots to
+operator-selected Whisper-compatible CTranslate2 snapshots; version 1 retains
+its existing defaults. API/result metadata records the selected identities,
+revisions, declared terms and manifest digest. English translation requires an
+explicitly capable primary model. Missing bindings never trigger a download or
+reference-model fallback.
+
+The [offline import guide](../../docs/ASR_MODEL_IMPORT.md) documents the schema,
+prepared-cache importer, copy limits and activation/rollback procedure. Imports
+require a new destination and publish its approved manifest only after copied
+bytes verify. Stop admission and drain queued/running work before switching
+caches; restart API and worker together. Reference staging refuses to overwrite
+custom inventories. Alignment bindings remain fixed and full GPU qualification
+is still required. See [model choice and compatibility](../../docs/MODEL_CONFIGURATION.md)
+for the remaining installer/portfolio work and upstream acquisition terms.

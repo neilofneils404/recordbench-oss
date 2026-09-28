@@ -200,7 +200,26 @@ def _artifact(
     }
 
 
+def _protect_operator_inventory(cache: Path) -> None:
+    """Reference acquisition must not reset a custom or unreadable inventory."""
+    manifest = cache / "approved-model-manifest.json"
+    if not manifest.exists() and not manifest.is_symlink():
+        return
+    try:
+        if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size > 1024 * 1024:
+            raise ValueError
+        value = json.loads(manifest.read_text(encoding="utf-8"))
+        if not isinstance(value, dict) or value.get("schema_version") != TRANSCRIPTION_SCHEMA:
+            raise ValueError
+    except (OSError, ValueError):
+        raise RuntimeError(
+            "Reference staging cannot replace this operator inventory. Use a new model root "
+            "and keep the existing selection for rollback."
+        ) from None
+
+
 def _write_manifest(cache: Path, artifacts: list[dict[str, object]]) -> None:
+    _protect_operator_inventory(cache)
     target = cache / "approved-model-manifest.json"
     descriptor, temporary_name = tempfile.mkstemp(prefix=".manifest-", dir=cache)
     temporary = Path(temporary_name)
@@ -362,6 +381,7 @@ def main() -> int:
                       diarization_backend=args.diarization_backend)
         print("[vault] existing model selection verified offline; no model artifacts changed")
         return 0
+    _protect_operator_inventory(cache)
     cache.mkdir(parents=True, exist_ok=True)
     payload = _catalog(args.catalog)
     token = _token(args)
