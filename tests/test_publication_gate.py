@@ -467,6 +467,7 @@ def test_reviewed_personal_baseline_does_not_cover_ancestors(tmp_path, monkeypat
     ("services/transcription/requirements-nemotron.lock", (b"9", b"90")),
     ("services/transcription/requirements-nemotron.lock", (b"7", b"77")),
     ("services/transcription/requirements-worker.lock", (b"9", b"90")),
+    ("services/transcription/requirements-worker.lock", (b"7", b"77")),
     ("requirements/retrieval.lock", (b"7", b"77")),
 ])
 def test_cuda_dependency_version_disposition_is_exact_and_context_bound(location, tail):

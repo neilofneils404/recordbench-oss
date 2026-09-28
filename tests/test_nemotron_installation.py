@@ -27,7 +27,7 @@ def test_new_nemotron_preflight_needs_no_gated_access(tmp_path, ready_host, monk
         "0, Synthetic GPU, 49152, 47000, 8.9" if command[0] == "nvidia-smi" else '{"nvidia": {}}', ""))
     monkeypatch.setattr(installer, "_hf_token", lambda *a: pytest.fail("ungated staging asked for a token"))
     args = preflight_args(tmp_path, "--models", models, "--enable-diarization",
-                          "--non-interactive", "--password-stdin")
+                          "--non-interactive", "--password-stdin", "--accept-model-terms")
     assert args.diarization_backend == "nemotron"
     result = installer._collect_preflight(models, args)
     assert result.ready
@@ -50,7 +50,7 @@ def test_stager_downloads_only_selected_ungated_files_and_binds_backend(tmp_path
     monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=snapshot_download))
     monkeypatch.setattr(module, "_stage_tokenizer", lambda *a: [])
     args = ["stage-models", "--model-root", str(tmp_path), "--catalog", str(ROOT / "config/models.json"),
-            "--groups", "transcription-diarization"]
+            "--groups", "transcription-diarization", "--accept-model-terms"]
     monkeypatch.setattr(sys, "argv", args)
     assert module.main() == 0
     assert len(calls) == 1

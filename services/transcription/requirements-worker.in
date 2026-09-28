@@ -1,0 +1,10 @@
+# Linux x86-64, CPython 3.11. Build the compatibility wheel first; see docs/DEPENDENCIES.md.
+# These origins are intentional: CUDA 13 TorchAudio is incompatible with CUDA 12.6 Torch.
+torch @ https://download.pytorch.org/whl/cu126/torch-2.14.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl
+torchaudio @ https://download-r2.pytorch.org/whl/cpu/torchaudio-2.11.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl#sha256=2ddcb49458aa9783121222c535c0eb9cd54445ec44bb8dd22c9e52cdb730dbc2
+torchvision @ https://download.pytorch.org/whl/cu126/torchvision-0.29.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl#sha256=708f5515b03c21579f74d2100c9a7d1ca807b65b5f9562760d2707b4290303ac
+torchcodec @ https://download.pytorch.org/whl/cpu/torchcodec-0.16.0%2Bcpu-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl#sha256=ba08634c44e0a262baf6b9e35999603f6d42bb70e2d8b6953d07301ba9c02657
+
+# Preserve the native-probed compatibility coordinates during lock regeneration.
+filelock==4.0.5
+nvidia-nvjitlink-cu12==12.9.86

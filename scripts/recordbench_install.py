@@ -237,7 +237,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--non-interactive", action="store_true")
     parser.add_argument("--password-stdin", action="store_true")
     parser.add_argument("--hf-token-stdin", action="store_true")
-    parser.add_argument("--accept-model-terms", action="store_true")
+    parser.add_argument("--accept-model-terms", action="store_true",
+                        help="acknowledge selected model and tokenizer resource terms")
     parser.add_argument(
         "--transcription-languages",
         default="en",
@@ -1512,6 +1513,13 @@ def _collect_preflight(models: str, args: argparse.Namespace | None = None, *,
             "Stage the selected AI capabilities",
             "Choose --transcription-languages en, es, or en,es. Enable diarization only with --models transcription or all.")
         if (needs_model_staging and options.non_interactive
+                and models in {"transcription", "all"}
+                and not (options.enable_diarization and options.diarization_backend == "community-1")):
+            add("resource-terms", bool(options.accept_model_terms),
+                "Model/resource terms acknowledged" if options.accept_model_terms else "Model/resource terms acknowledgement missing",
+                "Acquire the selected transcription models and tokenizer data",
+                "Review config/models.json and docs/MODEL_ACQUISITION.md, then pass --accept-model-terms. Nemotron needs no hub account or token.")
+        if (needs_model_staging and options.non_interactive
                 and options.enable_diarization and options.diarization_backend == "community-1"
                 and models in {"transcription", "all"}):
             add("model-terms", bool(options.accept_model_terms),
@@ -2528,6 +2536,16 @@ def _provision(
             console.ok("Existing model selection verified offline; staging and token entry skipped")
         else:
             token = None
+            _run(console, [*compose, "run", "--rm", "--no-deps", "-T", "model-stager", "plan",
+                "--groups", groups, "--review-profile", args.review_model_profile,
+                "--diarization-backend", args.diarization_backend], dry_run=args.dry_run)
+            if models in {"all", "transcription"} and not args.accept_model_terms:
+                if args.non_interactive:
+                    raise RuntimeError("transcription acquisition requires --accept-model-terms")
+                console.warn("Review the displayed model/resource sources. punkt_tab data terms require operator review; the NLTK code license does not cover them automatically.")
+                if not args.dry_run and input("Type ACCEPT after reviewing model and resource terms: ").strip() != "ACCEPT":
+                    raise RuntimeError("model/resource terms were not acknowledged")
+                args.accept_model_terms = True
             if (models in {"all", "transcription"} and args.enable_diarization
                     and args.diarization_backend == "community-1"):
                 if not args.accept_model_terms:
@@ -2551,6 +2569,8 @@ def _provision(
                 args.review_model_profile,
                 "--diarization-backend", args.diarization_backend,
             ]
+            if args.accept_model_terms:
+                command.append("--accept-model-terms")
             if token is not None:
                 command.append("--token-stdin")
             try:

@@ -23,8 +23,8 @@ their saved backend.
 ## Reproducible dependencies
 
 The API/UI and isolated Nemotron interpreter use hash-locked Python environments.
-Nemotron uses Torch 2.14.0 with CUDA 12.6; the WhisperX worker retains its separate
-dependency contract. See [dependency locks](../../docs/DEPENDENCIES.md) for
+Nemotron uses Torch 2.14.0 with CUDA 12.6. The WhisperX worker builds a
+[versioned compatibility wheel](compatibility/README.md) with a separate lock. See [dependency locks](../../docs/DEPENDENCIES.md) for
 regeneration, verified tokenizer staging, and remaining release qualification.
 
 Installed workers load ASR from the exact manifest-approved snapshot directory,
@@ -82,3 +82,6 @@ caches; restart API and worker together. Reference staging refuses to overwrite
 custom inventories. Alignment bindings remain fixed and full GPU qualification
 is still required. See [model choice and compatibility](../../docs/MODEL_CONFIGURATION.md)
 for the remaining installer/portfolio work and upstream acquisition terms.
+
+For candidate installation and feedback, follow the [GPU beta reference journey](../../docs/BETA_REFERENCE_INSTALL.md).
+Review the [acquisition plan](../../docs/MODEL_ACQUISITION.md) before obtaining weights or tokenizer data.

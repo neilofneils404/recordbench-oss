@@ -124,11 +124,19 @@ def _download_direct(item: Mapping[str, object], cache: Path) -> Path:
     return target
 
 
-def _stage_tokenizer(root: Path, resource: Mapping[str, object]) -> list[Path]:
+def _stage_tokenizer(root: Path, resource: Mapping[str, object],
+                     archive_path: Path | None = None) -> list[Path]:
     """Verify the immutable archive before bounded extraction into a fresh tree."""
     try:
-        with urllib.request.urlopen(str(resource["url"]), timeout=120) as response:
-            data = response.read(8 * 1024 * 1024 + 1)
+        if archive_path is None:
+            with urllib.request.urlopen(str(resource["url"]), timeout=120) as response:
+                data = response.read(8 * 1024 * 1024 + 1)
+        else:
+            descriptor = os.open(archive_path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+            with os.fdopen(descriptor, "rb") as source:
+                if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                    raise RuntimeError("tokenizer input must be a regular file")
+                data = source.read(8 * 1024 * 1024 + 1)
         if len(data) > 8 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != resource["sha256"]:
             raise RuntimeError("tokenizer archive failed verification")
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
@@ -348,9 +356,26 @@ def _verify_stage(root: Path, catalog: Path, groups: frozenset[str], profile: st
     _verify_snapshot_inventory(root, value["files"])
 
 
+def _acquisition_plan(payload: Mapping[str, object], groups: frozenset[str],
+                      review_profile: str, diarization_backend: str) -> dict:
+    artifacts = []
+    for section in ("models", "direct_files"):
+        for item in payload.get(section, []):
+            if isinstance(item, dict) and _selected(item, groups, review_profile=review_profile,
+                                                   diarization_backend=diarization_backend):
+                artifacts.append({key: item[key] for key in
+                    ("model_id", "revision", "license", "gated", "url", "sha256") if key in item})
+    resources = {}
+    if any(group.startswith("transcription-") for group in groups):
+        resources["punkt_tab"] = payload["resources"]["punkt_tab"]
+    return {"models": artifacts, "resources": resources,
+            "terms_note": "Catalog license labels are upstream declarations, not legal clearance. "
+                          "Review upstream terms, including tokenizer data, before acquisition."}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", nargs="?", choices=("stage", "verify"), default="stage")
+    parser.add_argument("command", nargs="?", choices=("stage", "verify", "plan"), default="stage")
     parser.add_argument("--catalog", type=Path, default=Path("config/models.json"))
     parser.add_argument("--model-root", type=Path, default=Path("/models"))
     parser.add_argument(
@@ -359,6 +384,10 @@ def main() -> int:
         help="comma-separated review and transcription module groups",
     )
     parser.add_argument("--token-stdin", action="store_true")
+    parser.add_argument("--accept-model-terms", action="store_true",
+                        help="acknowledge review of selected model and tokenizer resource terms")
+    parser.add_argument("--punkt-archive", type=Path,
+                        help="operator-supplied pinned punkt_tab ZIP; verified without downloading it")
     parser.add_argument("--diarization-backend", choices=("nemotron", "community-1"), default="nemotron")
     parser.add_argument(
         "--review-profile",
@@ -381,9 +410,18 @@ def main() -> int:
                       diarization_backend=args.diarization_backend)
         print("[vault] existing model selection verified offline; no model artifacts changed")
         return 0
+    if args.command == "plan":
+        if args.token_stdin:
+            parser.error("acquisition planning does not accept a token")
+        print(json.dumps(_acquisition_plan(_catalog(args.catalog), groups, args.review_profile,
+                                          args.diarization_backend), indent=2))
+        return 0
     _protect_operator_inventory(cache)
-    cache.mkdir(parents=True, exist_ok=True)
     payload = _catalog(args.catalog)
+    if transcription_selected and not args.accept_model_terms:
+        raise RuntimeError("review the acquisition plan, then pass --accept-model-terms for "
+                           "the selected models and punkt_tab resource; no artifacts acquired")
+    cache.mkdir(parents=True, exist_ok=True)
     token = _token(args)
     try:
         from huggingface_hub import snapshot_download
@@ -446,7 +484,7 @@ def main() -> int:
             )
         if transcription_selected:
             print("[vault] acquiring verified tokenizer support: punkt_tab")
-            staged_files.extend(_stage_tokenizer(root, payload["resources"]["punkt_tab"]))
+            staged_files.extend(_stage_tokenizer(root, payload["resources"]["punkt_tab"], args.punkt_archive))
             _write_manifest(cache, transcription_artifacts)
             staged_files.append(cache / "approved-model-manifest.json")
         _stage_receipt(root, args.catalog, groups, args.review_profile, staged_files,

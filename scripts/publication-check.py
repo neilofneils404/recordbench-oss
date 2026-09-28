@@ -219,7 +219,7 @@ def _scan_bytes(
     logical_path = re.sub(r"^git:[0-9a-f]{12}:", "", location)
     reviewed_cuda_versions = {
         "services/transcription/requirements-nemotron.lock": rb"10[.]3[.](?:9[.]90|7[.]77)",
-        "services/transcription/requirements-worker.lock": rb"10[.]3[.]9[.]90",
+        "services/transcription/requirements-worker.lock": rb"10[.]3[.](?:9[.]90|7[.]77)",
         "requirements/retrieval.lock": rb"10[.]3[.]7[.]77",
     }
     if logical_path in reviewed_cuda_versions:

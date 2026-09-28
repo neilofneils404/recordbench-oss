@@ -5,6 +5,9 @@ to install, try with synthetic material, and contribute using public instruction
 The full supported-deployment requirements below remain a separate acceptance
 target; they should not prevent publishing reviewed source improvements.
 
+The [GPU beta reference journey](BETA_REFERENCE_INSTALL.md) gives the candidate
+commands, concrete acceptance steps and the evidence still pending.
+
 ## Community beta exit criteria
 
 A beta designation requires an exact reviewed candidate and explicit release

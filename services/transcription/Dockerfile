@@ -33,9 +33,14 @@ FROM base AS studio
 EXPOSE 8511
 CMD ["streamlit", "run", "ui/streamlit_app.py", "--server.address", "0.0.0.0", "--server.port", "8511", "--server.baseUrlPath", "transcript-studio", "--server.maxUploadSize", "5121"]
 
+FROM base AS whisperx-builder
+COPY compatibility ./compatibility
+RUN python compatibility/build_whisperx.py --output /opt/transcription/wheels
+
 FROM base AS worker
+COPY --from=whisperx-builder /opt/transcription/wheels /opt/transcription/wheels
 COPY requirements-worker.lock /opt/transcription/
-RUN pip install --no-cache-dir --no-build-isolation --require-hashes -r /opt/transcription/requirements-worker.lock \
+RUN pip install --no-cache-dir --no-build-isolation --require-hashes --find-links=/opt/transcription/wheels -r /opt/transcription/requirements-worker.lock \
     && pip check
 COPY requirements-nemotron*.lock /opt/transcription/
 RUN python -m venv /opt/transcription/nemotron \

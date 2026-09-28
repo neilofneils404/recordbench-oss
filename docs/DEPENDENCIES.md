@@ -28,9 +28,11 @@ clean result.
 The base images and Dockerfile frontend are bound to immutable manifest
 digests. Those digests establish artifact identity, not vulnerability clearance.
 OS package acquisition, whole-image SBOMs and advisory dispositions remain
-incomplete before a supported release. The WhisperX lock retains known advisory
-matches; pinning it provides reproducibility and does not resolve those findings. WhisperX 3.8.6 declares Torch 2.8.x; its environment must not inherit
-the Nemotron Torch version. Do not use `--no-deps` to conceal that conflict.
+incomplete before a supported release. The ASR worker now builds the explicitly
+versioned [WhisperX compatibility wheel](../services/transcription/compatibility/README.md).
+Its reviewed metadata patch permits the locked runtime without changing upstream
+inference code. Package resolution and native CPU probes do not qualify GPU
+inference or establish that a whole image has no vulnerabilities.
 
 ## Reproduce the Python resolutions
 
@@ -42,7 +44,8 @@ uv pip compile pyproject.toml --extra postgres --python-version 3.12 --python-pl
 uv pip compile services/transcription/pyproject.toml --python-version 3.11 --python-platform x86_64-unknown-linux-gnu --generate-hashes --no-header --no-annotate -o services/transcription/requirements-api.lock
 uv pip compile deploy/model-stager/requirements.in --python-version 3.12 --python-platform x86_64-unknown-linux-gnu --generate-hashes --no-header --no-annotate -o deploy/model-stager/requirements.lock
 uv pip compile requirements/retrieval.in -c requirements/application.lock --python-version 3.12 --python-platform x86_64-unknown-linux-gnu --generate-hashes --no-header --no-annotate -o requirements/retrieval.lock
-uv pip compile services/transcription/pyproject.toml --extra ml -c services/transcription/requirements-api.lock --python-version 3.11 --python-platform x86_64-unknown-linux-gnu --generate-hashes --no-header --no-annotate -o services/transcription/requirements-worker.lock
+# First build the compatibility wheel using the pinned tools and recipe linked above.
+uv pip compile services/transcription/pyproject.toml services/transcription/requirements-worker.in --extra ml -c services/transcription/requirements-api.lock --find-links /tmp/recordbench-whisperx-wheels --python-version 3.11 --python-platform x86_64-unknown-linux-gnu --generate-hashes --no-header --no-annotate -o services/transcription/requirements-worker.lock
 uv pip compile services/transcription/requirements-nemotron.in --python-version 3.11 --python-platform x86_64-unknown-linux-gnu --generate-hashes --no-header --no-annotate -o services/transcription/requirements-nemotron.lock
 ```
 
@@ -86,3 +89,9 @@ The reviewed archive README and package metadata do not supply a clear license
 statement. Its catalog entry remains `UPSTREAM-TERMS-REVIEW-REQUIRED` until the
 resource terms are established. The NLTK software license is not automatically
 the tokenizer data's license.
+
+See [model acquisition](MODEL_ACQUISITION.md) for a no-network acquisition preview,
+explicit acknowledgement, and supplying the exact tokenizer ZIP locally.
+
+The [transcription runtime qualification record](TRANSCRIPTION_RUNTIME_QUALIFICATION.md)
+tracks the current package audit, scoped NLTK disposition and remaining GPU/image evidence.

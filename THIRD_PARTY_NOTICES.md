@@ -66,3 +66,9 @@ the selected checkpoint is already bundled by the pinned WhisperX wheel.
 No runtime model-hub access or additional end-user token step is introduced.
 This exact-artifact attribution does not approve different model revisions or
 resolve the separate NLTK tokenizer-data terms.
+
+The RecordBench compatibility distribution `whisperx==3.8.6+recordbench.1` builds
+from pinned upstream source with dependency metadata changes. Its wheel preserves
+the upstream BSD text and CNRS MIT notice, including the same VAD checkpoint.
+The [build recipe](services/transcription/compatibility/README.md) records the
+source identity, unchanged inference code and reproducibility checks.
