@@ -35,12 +35,18 @@ It must not silently substitute a model or download one during a job.
 
 ASR and Nemotron manifests bind each logical snapshot filename to its approved file identity.
 For Hugging Face symlink caches, staging records `snapshot_path` alongside each
-blob's `path`, size and hash. Swapped links and unrecorded aliases fail even after
+blob's `path`, size and hash. Every approved logical member must remain present,
+including additional configuration/model-card files and nested members. Missing
+members fail even when their blobs still exist. Swapped links and unrecorded aliases fail even after
 worker restart. Older blob-only approvals cannot establish those bindings: drain
 work, validate the intended snapshot against its pinned upstream revision, then
 regenerate the approval through model staging and restart the API and worker.
 Do not approve a changed cache merely to bypass a mismatch. Regular-file ASR
-imports continue to use their existing exact snapshot paths.
+imports continue to use their existing exact snapshot paths. Installed Nemotron
+adapters revalidate the complete snapshot immediately before every subprocess
+launch against the startup approval; a worker restart is not needed to detect
+later changes. Retain read-only mounts and prevent concurrent host-side mutation;
+these checks are not an atomic filesystem lock.
 
 ## Profile and language admission
 

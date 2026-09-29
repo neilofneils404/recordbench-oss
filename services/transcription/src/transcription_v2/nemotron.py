@@ -55,6 +55,7 @@ def approved_snapshot(path, *, cache_root, model_readiness) -> bool:
             return False
         if not all((root / filename).is_file() for filename in MODEL_FILES):
             return False
+        observed: set[str] = set()
         for target in root.rglob("*"):
             if target.is_dir():
                 if target.is_symlink():
@@ -65,7 +66,12 @@ def approved_snapshot(path, *, cache_root, model_readiness) -> bool:
                     target, role="diarization", model_id=MODEL_ID, revision=MODEL_REVISION,
                     require_snapshot_path=True):
                 return False
-        return True
+            observed.add(os.path.abspath(target))
+        expected = {name for artifact in model_readiness.artifacts
+                    if artifact.role == "diarization" and artifact.model_id == MODEL_ID
+                    and artifact.revision == MODEL_REVISION
+                    for name, _ in artifact.verified_snapshot_signatures}
+        return observed == expected
     except (OSError, ValueError):
         return False
 

@@ -767,9 +767,13 @@ class LocalWhisperXEngine:
         *, cancel_requested: Callable[[], bool] | None = None,
     ) -> DiarizationOutput:
         if self.diarization_backend == "nemotron":
-            from .nemotron import run_diarization
+            from .nemotron import approved_snapshot, run_diarization
             if not self.diarization_model_path:
                 raise ModelApprovalError("Nemotron requires an approved local snapshot")
+            if self.model_readiness is not None and not approved_snapshot(
+                    self.diarization_model_path, cache_root=self.model_cache_dir,
+                    model_readiness=self.model_readiness):
+                raise ModelApprovalError("Nemotron snapshot no longer matches its approved inventory")
             turns = run_diarization(
                 python=self.nemotron_python, model_path=self.diarization_model_path,
                 audio_path=str(request.audio_path), device=self._torch_device(request),
