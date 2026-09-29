@@ -234,3 +234,53 @@ def test_import_rejects_mapped_nemotron_blobs_before_creating_destination(linked
     with pytest.raises(ValueError, match="Local model import failed"):
         import_model_cache(root, target, max_bytes=1024 * 1024)
     assert not target.exists()
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_every_approved_nemotron_member_must_remain_present(linked_nemotron, restart):
+    root, snapshot, manifest = linked_nemotron
+    data = b"Synthetic model card"
+    digest = hashlib.sha256(data).hexdigest()
+    blob = snapshot.parent.parent / "blobs" / digest
+    blob.write_bytes(data)
+    path = snapshot / "README.md"
+    path.symlink_to(blob)
+    document = json.loads(manifest.read_text())
+    document["artifacts"][0]["files"].append({"path": blob.relative_to(root).as_posix(),
+        "snapshot_path": path.relative_to(root).as_posix(), "sha256": digest, "size_bytes": len(data)})
+    manifest.write_text(json.dumps(document))
+    readiness = verify_model_manifest(root, manifest)
+    assert nemotron.approved_snapshot(snapshot, cache_root=root, model_readiness=readiness)
+    path.unlink()
+    if restart:
+        readiness = verify_model_manifest(root, manifest)
+    assert not nemotron.approved_snapshot(snapshot, cache_root=root, model_readiness=readiness)
+
+
+@pytest.mark.parametrize("change", ["repoint", "replace", "remove"])
+def test_nemotron_rechecks_snapshot_before_each_subprocess(linked_nemotron, monkeypatch, change):
+    import sys
+    from types import SimpleNamespace
+    from transcription_v2.pipeline import LocalWhisperXEngine, ModelApprovalError
+    root, snapshot, manifest = linked_nemotron
+    readiness = verify_model_manifest(root, manifest)
+    engine = LocalWhisperXEngine(model_cache_dir=root, model_readiness=readiness,
+        diarization_backend="nemotron", diarization_model_path=snapshot)
+    calls = []
+    monkeypatch.setattr(nemotron, "run_diarization", lambda **kw: calls.append(kw) or [])
+    monkeypatch.setitem(sys.modules, "pandas", SimpleNamespace(DataFrame=lambda *a, **kw: object()))
+    request = TranscriptionRequest(root / "synthetic-not-read.wav", device="cpu")
+    profile = get_profile(diarization_backend="nemotron")
+    engine.diarize(request, profile)
+    engine.diarize(request, profile)
+    assert len(calls) == 2
+    target = snapshot / "config.json"
+    if change == "replace":
+        target.resolve().write_bytes(b"Changed synthetic model configuration")
+    else:
+        target.unlink()
+        if change == "repoint":
+            target.symlink_to((snapshot / "processor_config.json").resolve())
+    with pytest.raises(ModelApprovalError):
+        engine.diarize(request, profile)
+    assert len(calls) == 2

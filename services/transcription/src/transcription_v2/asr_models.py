@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import os
 from pathlib import Path
 
 from .model_manifest import ArtifactReadiness, ModelReadiness, MODEL_MANIFEST_SCHEMA_V2
@@ -92,6 +93,7 @@ def approved_artifact_snapshot(cache: str | Path | None, readiness: ModelReadine
             raise ValueError(failure)
         if not any((snapshot / name).is_file() for name in ("vocabulary.json", "vocabulary.txt")):
             raise ValueError(failure)
+        observed: set[str] = set()
         for path in snapshot.rglob("*"):
             if path.is_dir():
                 if path.is_symlink():
@@ -102,6 +104,10 @@ def approved_artifact_snapshot(cache: str | Path | None, readiness: ModelReadine
                                                     revision=artifact.revision,
                                                     require_snapshot_path=True)):
                 raise ValueError(failure)
+            observed.add(os.path.abspath(path))
+        expected = {name for name, _ in artifact.verified_snapshot_signatures}
+        if observed != expected:
+            raise ValueError(failure)
         return snapshot
     except (OSError, ValueError):
         raise ValueError(failure) from None

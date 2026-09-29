@@ -32,7 +32,11 @@ The worker verifies all manifest bytes before constructing an engine, then
 requires the selected snapshot's three runtime files plus any additional files
 to match their exact manifest-approved logical names, blobs and model revision.
 Staging records `snapshot_path` for symlinked files; swapped approved blobs,
-unrecorded aliases and linked directories are rejected even after restart.
+unrecorded aliases, missing approved members and linked directories are rejected
+even after restart. The installed adapter repeats this complete-inventory check
+against the startup approval immediately before each subprocess launch, so later
+cache changes fail before a new model load. Keep the cache immutable while work
+runs; validation is not an atomic lock against concurrent host-side writes.
 Older blob-only approvals require layout verification against the pinned
 revision and deliberate restaging before activation. Do not reapprove an
 unexplained cache modification. Keep the model cache read-only. The child

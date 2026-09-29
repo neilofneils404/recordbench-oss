@@ -228,3 +228,29 @@ def test_v1_regular_import_preserves_usable_snapshot(approved, tmp_path):
     assert import_model_cache(root, target, max_bytes=1024 * 1024)["ready"]
     ready = verify_model_manifest(target, target / "approved-model-manifest.json")
     assert approved_asr_snapshot(target, ready, "large-v3") == target / snapshot.relative_to(root)
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("name", ["generation_config.json", "nested/options.json"])
+def test_every_approved_asr_snapshot_member_must_remain_present(linked_snapshot, restart, name):
+    root, snapshot, _ = linked_snapshot
+    path = snapshot / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = b"Synthetic extra ASR configuration"
+    digest = hashlib.sha256(data).hexdigest()
+    blob = snapshot.parent.parent / "blobs" / digest
+    blob.write_bytes(data)
+    path.symlink_to(blob)
+    manifest = root / "approved-model-manifest.json"
+    document = json.loads(manifest.read_text())
+    document["artifacts"][0]["files"].append({"path": blob.relative_to(root).as_posix(),
+        "snapshot_path": path.relative_to(root).as_posix(), "sha256": digest, "size_bytes": len(data)})
+    manifest.write_text(json.dumps(document))
+    readiness = verify_model_manifest(root, manifest)
+    assert approved_asr_snapshot(root, readiness, "large-v3") == snapshot
+    path.unlink()
+    assert blob.is_file()
+    if restart:
+        readiness = verify_model_manifest(root, manifest)
+    with pytest.raises(ValueError, match="not approved and staged"):
+        approved_asr_snapshot(root, readiness, "large-v3")

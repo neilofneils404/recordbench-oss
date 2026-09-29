@@ -44,3 +44,7 @@ EN/ES alignment/transcription, offline and GPU workflow acceptance. Publish a
 new local version for changed package contents; do not reuse this version for a
 different patch. Report upstream API fixes separately if inference-code changes
 become necessary. This recipe does not declare the GPU workflow accepted.
+
+The [runtime qualification record](../../../docs/TRANSCRIPTION_RUNTIME_QUALIFICATION.md)
+separates the patched-runtime synthetic GPU trial from the remaining final-candidate
+and representative-quality acceptance gates.
