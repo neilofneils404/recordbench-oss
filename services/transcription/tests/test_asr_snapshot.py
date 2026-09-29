@@ -80,7 +80,8 @@ def test_fast_profile_requires_separately_approved_artifact(approved):
         approved_asr_snapshot(root, readiness, "turbo")
 
 
-def test_snapshot_links_must_point_to_verified_blobs_inside_cache(approved):
+@pytest.fixture
+def linked_snapshot(approved):
     root, snapshot, _ = approved
     manifest = root / "approved-model-manifest.json"
     value = json.loads(manifest.read_text())
@@ -91,10 +92,33 @@ def test_snapshot_links_must_point_to_verified_blobs_inside_cache(approved):
         blob = blobs / row["sha256"]
         source.rename(blob)
         source.symlink_to(blob)
+        row["snapshot_path"] = row["path"]
         row["path"] = str(blob.relative_to(root))
     manifest.write_text(json.dumps(value))
     readiness = verify_model_manifest(root, manifest)
+    return root, snapshot, readiness
+
+
+def test_snapshot_links_must_point_to_verified_blobs_inside_cache(linked_snapshot):
+    root, snapshot, readiness = linked_snapshot
     assert approved_asr_snapshot(root, readiness, "large-v3") == snapshot
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("change", ["swap", "extra-alias"])
+def test_snapshot_names_cannot_reuse_another_approved_blob(linked_snapshot, monkeypatch, restart, change):
+    root, snapshot, readiness = linked_snapshot
+    target = snapshot / ("config.json" if change == "swap" else "extra.json")
+    if target.exists():
+        target.unlink()
+    target.symlink_to((snapshot / "tokenizer.json").resolve())
+    if restart:
+        readiness = verify_model_manifest(root, root / "approved-model-manifest.json")
+    engine = LocalWhisperXEngine(model_cache_dir=root, model_readiness=readiness)
+    monkeypatch.setattr(engine, "_import_whisperx", lambda: pytest.fail("changed layout reached model loading"))
+    request = TranscriptionRequest(audio_path=root / "synthetic-not-read.wav", device="cpu")
+    with pytest.raises(PipelineConfigurationError):
+        engine._base_asr_pipeline(request, get_profile("balanced"), model_name="large-v3", task="transcribe")
 
 
 def test_hotword_wrapper_keeps_the_approved_snapshot(approved, monkeypatch):
@@ -109,3 +133,64 @@ def test_hotword_wrapper_keeps_the_approved_snapshot(approved, monkeypatch):
     assert len(calls) == 2
     assert all(args[0] == str(snapshot) for args, _ in calls)
     assert calls[1][1]["model"] is base.model
+
+
+def test_legacy_blob_only_manifest_requires_reapproval(linked_snapshot):
+    root, snapshot, _ = linked_snapshot
+    manifest = root / "approved-model-manifest.json"
+    document = json.loads(manifest.read_text())
+    for row in document["artifacts"][0]["files"]:
+        row.pop("snapshot_path")
+    manifest.write_text(json.dumps(document))
+    readiness = verify_model_manifest(root, manifest)
+    with pytest.raises(ValueError, match="not approved and staged"):
+        approved_asr_snapshot(root, readiness, "large-v3")
+
+
+@pytest.mark.parametrize("change", ["escape", "other-revision", "ambiguous", "non-asr"])
+def test_invalid_snapshot_bindings_fail_manifest_validation(linked_snapshot, change):
+    from transcription_v2.model_manifest import ModelManifestError
+    root, _, _ = linked_snapshot
+    manifest = root / "approved-model-manifest.json"
+    document = json.loads(manifest.read_text())
+    artifact = document["artifacts"][0]
+    rows = artifact["files"]
+    if change == "escape":
+        rows[0]["snapshot_path"] = "../config.json"
+    elif change == "other-revision":
+        rows[0]["snapshot_path"] = rows[0]["snapshot_path"].replace("a" * 40, "b" * 40)
+    elif change == "ambiguous":
+        rows[1]["snapshot_path"] = rows[0]["snapshot_path"]
+    else:
+        artifact["role"] = "alignment_en"
+    manifest.write_text(json.dumps(document))
+    with pytest.raises(ModelManifestError, match="required schema"):
+        verify_model_manifest(root, manifest)
+
+
+def test_stager_binds_every_snapshot_name_including_shared_blobs(linked_snapshot):
+    import runpy
+    stage = runpy.run_path(str(Path(__file__).resolve().parents[3] / "scripts/stage-models.py"))
+    root, snapshot, _ = linked_snapshot
+    alias = snapshot / "additional-config.json"
+    alias.symlink_to((snapshot / "config.json").resolve())
+    files = stage["_snapshot_files"](snapshot, root, bind_snapshot=True)
+    assert len(files) == 5
+    assert len({row["path"] for row in files}) == 4
+    assert {row["snapshot_path"] for row in files} == {
+        path.relative_to(root).as_posix() for path in snapshot.iterdir()}
+    manifest = root / "approved-model-manifest.json"
+    document = json.loads(manifest.read_text())
+    document["artifacts"][0]["files"] = files
+    manifest.write_text(json.dumps(document))
+    readiness = verify_model_manifest(root, manifest)
+    assert approved_asr_snapshot(root, readiness, "large-v3") == snapshot
+    assert str(root) not in json.dumps(readiness.public_dict())
+    assert "snapshot_signatures" not in repr(readiness)
+    config = snapshot / "config.json"
+    config.unlink()
+    config.symlink_to((snapshot / "tokenizer.json").resolve())
+    # Rechecking the unchanged approval cannot bless a changed logical mapping.
+    readiness = verify_model_manifest(root, manifest)
+    with pytest.raises(ValueError, match="not approved and staged"):
+        approved_asr_snapshot(root, readiness, "large-v3")

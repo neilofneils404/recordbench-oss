@@ -241,3 +241,24 @@ def test_ui_never_falls_back_to_an_unstaged_language(monkeypatch):
     assert _available_languages(client) == {"Auto-detect (recommended)": None, "Spanish": "es"}
     client.profiles.return_value = {"languages": []}
     assert _available_languages(client) == {}
+
+
+def test_nemotron_api_readiness_does_not_probe_worker_interpreter(tmp_path, monkeypatch):
+    import transcription_v2.resources as resources
+    configuration = settings(tmp_path, ["large-v3"])
+    assert configuration.diarization_backend == "nemotron"
+    assert not configuration.allow_degraded_diarization
+    for key in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
+        monkeypatch.setenv(key, "1")
+    monkeypatch.setenv("TRANSCRIPTION_V2_NEMOTRON_PYTHON", str(tmp_path / "worker-only-python"))
+    monkeypatch.setattr(resources, "_diarization_config_present", lambda *a, **kw: pytest.fail("API inspected worker interpreter"))
+    monkeypatch.setattr(resources, "gpu_states", lambda: pytest.fail("API inspected worker GPU"))
+    monkeypatch.setattr(resources, "_whisperx_runtime_checks", lambda: pytest.fail("API inspected worker packages"))
+    monkeypatch.setattr(resources.shutil, "which", lambda name: "/usr/bin/" + name)
+    with TestClient(create_app(configuration)) as client:
+        response = client.get("/ready", headers={"X-User-ID": "synthetic-user"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"
+        assert response.json()["scope"] == "queue"
+        (configuration.model_cache_dir / "approved-model-manifest.json").unlink()
+        assert client.get("/ready", headers={"X-User-ID": "synthetic-user"}).json()["status"] == "not_ready"

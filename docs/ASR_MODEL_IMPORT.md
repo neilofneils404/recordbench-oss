@@ -12,7 +12,7 @@ new model with synthetic audio before using it for work.
 
 ## Selection contract
 
-The worker and API accept `transcription-v2-model-manifest-v1` unchanged. It
+The worker and API accept `transcription-v2-model-manifest-v1`. It
 retains the reference large-v3/Turbo mappings. Version 2 adds a required
 `asr_bindings` object to the existing manifest:
 
@@ -52,8 +52,20 @@ example identity and revision are synthetic, not downloadable models.
 
 Each binding must match exactly one `artifacts` entry with role `asr`, the same
 `model_id` and `revision`, a `license` description, and a nonempty `files` list.
-Each file entry has exactly `path` (cache-relative), `size_bytes` (integer), and
+Each file entry has `path` (cache-relative), `size_bytes` (integer), and
 `sha256` (64 hexadecimal characters). Include every file the snapshot contains.
+For ASR symlink caches, also provide `snapshot_path`: the exact cache-relative
+logical name under `models--<owner>--<model>/snapshots/<revision>/`. Its `path`
+identifies the regular blob whose hash is approved. Both manifest versions bind
+each ASR snapshot name to that exact verified file; approving a blob does not
+approve other filenames pointing to it. Conflicting filename bindings are invalid.
+Regular snapshot files use `path` itself as the logical name and need no extra
+field. Other artifact roles do not accept `snapshot_path`.
+
+Older symlink-cache manifests containing only blob paths must be regenerated
+through staging after verifying the intended layout against the pinned upstream
+revision. Stop admission and drain work first; restart both API and worker after
+activation. Do not regenerate approval over an unexplained modified cache.
 
 The canonical snapshot layout is:
 

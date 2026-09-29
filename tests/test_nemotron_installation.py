@@ -82,3 +82,34 @@ def test_configured_backend_agreement_and_legacy_default(tmp_path):
     del config["TRANSCRIPTION_V2_DIARIZATION_BACKEND"]
     installer._restore_model_options(args, installation, compose, config)
     assert args.diarization_backend == "community-1"
+
+
+def test_reference_asr_staging_records_logical_snapshot_bindings(tmp_path, monkeypatch):
+    import hashlib
+    module = stager_module()
+    def snapshot_download(**kwargs):
+        repository = kwargs["cache_dir"] / ("models--" + kwargs["repo_id"].replace("/", "--"))
+        snapshot = repository / "snapshots" / kwargs["revision"]
+        snapshot.mkdir(parents=True)
+        blobs = repository / "blobs"
+        blobs.mkdir()
+        for name in ("config.json", "model.bin", "tokenizer.json", "vocabulary.json"):
+            data = ("synthetic " + name).encode()
+            blob = blobs / hashlib.sha256(data).hexdigest()
+            blob.write_bytes(data)
+            (snapshot / name).symlink_to(blob)
+        return str(snapshot)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=snapshot_download))
+    monkeypatch.setattr(module, "_stage_tokenizer", lambda *a: [])
+    monkeypatch.setattr(sys, "argv", ["stage-models", "--model-root", str(tmp_path),
+        "--catalog", str(ROOT / "config/models.json"), "--groups", "transcription-asr"])
+    assert module.main() == 0
+    manifest = json.loads((tmp_path / "huggingface/hub/approved-model-manifest.json").read_text())
+    artifacts = [row for row in manifest["artifacts"] if row["role"] == "asr"]
+    assert artifacts
+    for artifact in artifacts:
+        prefix = "models--" + artifact["model_id"].replace("/", "--")
+        assert len(artifact["files"]) == 4
+        for row in artifact["files"]:
+            assert row["path"].startswith(prefix + "/blobs/")
+            assert row["snapshot_path"].startswith(prefix + "/snapshots/" + artifact["revision"] + "/")

@@ -33,12 +33,25 @@ changed snapshots fail before model loading. The Fast profile needs its own
 approved Turbo artifact; the default catalog currently stages large-v3 only.
 It must not silently substitute a model or download one during a job.
 
+ASR manifests bind each logical snapshot filename to its approved file identity.
+For Hugging Face symlink caches, staging records `snapshot_path` alongside each
+blob's `path`, size and hash. Swapped links and unrecorded aliases fail even after
+worker restart. Older blob-only approvals cannot establish those bindings: drain
+work, validate the intended snapshot against its pinned upstream revision, then
+regenerate the approval through model staging and restart the API and worker.
+Do not approve a changed cache merely to bypass a mismatch. Regular-file ASR
+imports continue to use their existing exact snapshot paths.
+
 ## Profile and language admission
 
 The API verifies the approved model manifest once at startup without importing
 ML libraries or running inference. `/v1/profiles` reports ASR availability,
 English-translation availability, and locally approved alignment languages.
 These describe model inventory, not GPU capacity or whole-worker readiness.
+The API `/ready` route checks queue resources, disk reserve, media tools, offline
+configuration and manifest presence. It does not require the worker-only Nemotron
+interpreter, ML packages or GPU. Worker diagnostics and admission retain those
+checks; API readiness alone does not establish worker readiness.
 An unavailable profile or language is rejected before durable upload ingestion
 and job creation. The HTTP multipart parser may already have spooled the request;
 this is not a promise to reject before receiving request bytes.

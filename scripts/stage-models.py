@@ -74,7 +74,7 @@ def _selected(
     return True
 
 
-def _snapshot_files(snapshot: Path, cache: Path) -> list[dict[str, object]]:
+def _snapshot_files(snapshot: Path, cache: Path, *, bind_snapshot: bool = False) -> list[dict[str, object]]:
     files: dict[str, dict[str, object]] = {}
     cache_resolved = cache.resolve()
     for candidate in sorted(snapshot.rglob("*")):
@@ -88,9 +88,11 @@ def _snapshot_files(snapshot: Path, cache: Path) -> list[dict[str, object]]:
         metadata = resolved.stat()
         if not stat.S_ISREG(metadata.st_mode):
             raise RuntimeError("staged model contains a non-regular artifact")
-        key = relative.as_posix()
+        logical = candidate.absolute().relative_to(cache.absolute()).as_posix()
+        key = logical if bind_snapshot else relative.as_posix()
         files[key] = {
-            "path": key,
+            "path": relative.as_posix(),
+            **({"snapshot_path": logical} if bind_snapshot else {}),
             "size_bytes": metadata.st_size,
             "sha256": _sha256(resolved),
         }
@@ -421,7 +423,7 @@ def main() -> int:
                     dependency_index += 1
                     role = f"diarization_dependency_{dependency_index}"
                 transcription_artifacts.append(
-                    _artifact(raw, _snapshot_files(snapshot_path, cache), role=role)
+                    _artifact(raw, _snapshot_files(snapshot_path, cache, bind_snapshot=role == "asr"), role=role)
                 )
         for raw in payload.get("direct_files", []):
             if not isinstance(raw, dict) or not _selected(

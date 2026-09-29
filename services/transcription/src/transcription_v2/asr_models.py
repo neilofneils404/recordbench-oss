@@ -93,7 +93,8 @@ def approved_asr_snapshot(cache: str | Path | None, readiness: ModelReadiness,
                 continue
             if (not path.resolve(strict=True).is_relative_to(root.resolve(strict=True))
                     or not readiness.authorizes_file(path, role="asr", model_id=model_id,
-                                                    revision=artifact.revision)):
+                                                    revision=artifact.revision,
+                                                    require_snapshot_path=True)):
                 raise ValueError(failure)
         return snapshot
     except (OSError, ValueError):
