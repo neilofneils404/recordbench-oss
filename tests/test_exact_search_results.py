@@ -984,7 +984,7 @@ def test_media_search_links_open_matching_page_despite_overlapping_segments(tmp_
             speaker_identity_state='unconfirmed', speaker_revision=0, created_at='2026-01-01T00:00:00Z',
         ) for index, unit in enumerate(media.units, 1))
         original = bench.media_review
-        monkeypatch.setattr(bench, 'media_review', lambda *args, **kwargs: replace(original(*args, **kwargs), segments=segments, transcript=SimpleNamespace(segment_count=len(segments), review_state='machine_draft')))
+        monkeypatch.setattr(bench, 'media_review', lambda *args, **kwargs: replace(original(*args, **kwargs), segments=segments, transcript=SimpleNamespace(segment_count=len(segments), review_state='machine_draft', warnings=(), quality={})))
         result = client.get(f'/matters/{slug}/exact-search', params={'words': 'red'})
         links = re.findall(r'<a class="find-location" href="([^"]+)">', result.text)
         assert len(links) == 2
