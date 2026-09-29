@@ -2165,7 +2165,7 @@ def test_late_gpu_resume_restores_scoped_services_after_partial_stop_or_provisio
         assert "probe-stopped" not in events and "build" not in events
 
 
-@pytest.mark.parametrize("running", ["", "app\ngateway\npostgres\n", "app\ntranscription-worker\n"])
+@pytest.mark.parametrize("running", ["", "\n", "\n\n", "app\ngateway\npostgres\n", "app\ntranscription-worker\n"])
 def test_late_gpu_resume_without_running_models_still_requires_actual_free_memory(tmp_path, monkeypatch, request, running):
     root, args, events, _commands, before = synthetic_late_gpu_resume(tmp_path, monkeypatch, request, running=running)
     with pytest.raises(RuntimeError, match="prerequisites"):
@@ -3051,3 +3051,22 @@ def test_preflight_blocks_replaceable_home_ancestry(tmp_path, ready_host, monkey
     assert not result.ready
     assert checks_by_name(result)["service-home"].state == "fail"
     assert not (home / ".docker").exists()
+
+
+@pytest.mark.parametrize("running", ["\n", "\n\n"])
+def test_prepared_resume_accepts_compose_blank_running_service_output(tmp_path, monkeypatch, request, running):
+    root, args, events, commands, _before = synthetic_late_gpu_resume(
+        tmp_path, monkeypatch, request, running=running, live_free=47000)
+    installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert "stop" not in events and "start" not in events
+    assert events.count("probe-live") == 2
+    assert events.index("ps") < events.index("build") < events.index("up") < events.index("health")
+
+
+@pytest.mark.parametrize("running", ["\ninvalid service\n", "\n--all\n"])
+def test_prepared_resume_still_rejects_malformed_service_names(tmp_path, monkeypatch, request, running):
+    root, args, events, _commands, _before = synthetic_late_gpu_resume(
+        tmp_path, monkeypatch, request, running=running, live_free=47000)
+    with pytest.raises(RuntimeError, match="could not safely identify"):
+        installer._resume_node(installer.Console(color=False, quiet=True), args, root)
+    assert all(event not in events for event in ("stop", "start", "build", "up"))

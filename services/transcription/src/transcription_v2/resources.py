@@ -17,6 +17,7 @@ from .settings import Settings
 
 
 PINNED_WHISPERX_VERSION = "3.8.6"
+QUALIFIED_WHISPERX_VERSIONS = frozenset({PINNED_WHISPERX_VERSION, "3.8.6+recordbench.1"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +78,7 @@ def _whisperx_runtime_checks() -> tuple[bool, bool, str | None]:
     vad_asset = Path(
         distribution.locate_file("whisperx/assets/pytorch_model.bin")
     )
-    return version == PINNED_WHISPERX_VERSION, vad_asset.is_file(), version
+    return version in QUALIFIED_WHISPERX_VERSIONS, vad_asset.is_file(), version
 
 
 def _manifest_file_present(settings: Settings) -> bool:
@@ -111,6 +112,31 @@ def _diarization_config_present(configured_path: Path | None, backend: str = "co
         else configured_path / "config.yaml"
     )
     return candidate.is_file()
+
+
+def queue_readiness(settings: Settings) -> dict[str, object]:
+    """Report API admission checks without claiming to observe a separate worker.
+
+    Workers verify approved artifact bytes at startup and enforce actual GPU
+    capacity before claiming work. The lightweight API has neither ML packages
+    nor GPU visibility; applying worker-local checks here deadlocks admission.
+    """
+    usage = shutil.disk_usage(settings.data_root)
+    checks: dict[str, object] = {
+        "data_root_writable": settings.data_root.is_dir() and os.access(settings.data_root, os.W_OK | os.X_OK),
+        "disk_admission_ready": usage.free >= settings.minimum_free_disk_bytes,
+        "ffmpeg_available": shutil.which("ffmpeg") is not None,
+        "ffprobe_available": shutil.which("ffprobe") is not None,
+        "model_cache_present": settings.model_cache_dir.is_dir(),
+        "model_manifest_present": _manifest_file_present(settings),
+        "offline_runtime": all(os.environ.get(name, "").strip() == "1"
+                               for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")),
+    }
+    ready = bool(checks["data_root_writable"] and checks["disk_admission_ready"])
+    if settings.pipeline_backend != "mock":
+        ready = ready and all(bool(value) for value in checks.values())
+    return {"status": "ready" if ready else "not_ready", "scope": "queue", "checks": checks,
+            "worker_admission": "artifact_verification_at_start_and_gpu_capacity_at_claim"}
 
 
 def readiness(settings: Settings) -> dict[str, object]:

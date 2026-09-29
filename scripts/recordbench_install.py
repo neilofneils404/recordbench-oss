@@ -2961,8 +2961,10 @@ def _resume_node(console: Console, args: argparse.Namespace, root: Path) -> None
             if args.dry_run:
                 console.note("Dry run: observe this node's running services, stop them if a selected model is running, then recheck GPU capacity; actual free-memory admission is deferred")
             else:
-                enabled = set(_run(console, [*compose, "config", "--services"], capture=True).stdout.splitlines())
-                observed = set(_run(console, [*compose, "ps", "--status", "running", "--services", "--orphans=false"], capture=True).stdout.splitlines())
+                enabled = {line for line in _run(console, [*compose, "config", "--services"], capture=True).stdout.splitlines() if line}
+                # Compose may emit a bare newline when no service is running.
+                # Ignore empty records only; malformed names must still fail closed.
+                observed = {line for line in _run(console, [*compose, "ps", "--status", "running", "--services", "--orphans=false"], capture=True).stdout.splitlines() if line}
                 if any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", service) is None for service in enabled | observed):
                     raise RuntimeError("could not safely identify this node's running services")
                 model_services = set()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import asynccontextmanager
 import os
 from typing import Any
 
@@ -78,7 +79,16 @@ class RerankPayload(BaseModel):
     query: str
     texts: list[str]
 
-app = FastAPI(title="Case Review Retrieval Worker")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Compose readiness requires both offline models before the app may start.
+    # Loading only on the first application request creates a startup deadlock.
+    _embedding_model()
+    _reranker_model()
+    yield
+
+
+app = FastAPI(title="Case Review Retrieval Worker", lifespan=_lifespan)
 app.add_middleware(RequestBodyLimitMiddleware)
 _embedding: Any = None
 _reranker: Any = None

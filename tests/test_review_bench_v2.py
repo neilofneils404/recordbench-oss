@@ -151,6 +151,7 @@ def test_worker_rejects_oversized_and_unknown_payloads_before_model_use(monkeypa
 
     fake = FakeEmbedding()
     monkeypatch.setattr(retrieval_worker, "_embedding", fake)
+    monkeypatch.setattr(retrieval_worker, "_reranker", object())
     with TestClient(retrieval_worker.app) as client:
         oversized = client.post(
             "/embed",
@@ -405,3 +406,30 @@ def test_extended_source_postgres_migration_matches_operator_copy():
     ).read_bytes() == (
         root / "migrations/postgresql/0005_extended_source_media_types.sql"
     ).read_bytes()
+
+
+def test_retrieval_startup_loads_both_offline_models_before_readiness(monkeypatch):
+    monkeypatch.setattr(retrieval_worker, "_embedding", None)
+    monkeypatch.setattr(retrieval_worker, "_reranker", None)
+    calls = []
+    def embedding():
+        calls.append("embedding")
+        retrieval_worker._embedding = object()
+    def reranker():
+        calls.append("reranker")
+        retrieval_worker._reranker = object()
+    monkeypatch.setattr(retrieval_worker, "_embedding_model", embedding)
+    monkeypatch.setattr(retrieval_worker, "_reranker_model", reranker)
+    with TestClient(retrieval_worker.app) as client:
+        state = client.get("/health").json()
+        assert state["embedding_loaded"] and state["reranker_loaded"]
+    assert calls == ["embedding", "reranker"]
+
+
+def test_retrieval_startup_failure_does_not_serve_false_readiness(monkeypatch):
+    def fail():
+        raise RuntimeError("synthetic missing offline artifact")
+    monkeypatch.setattr(retrieval_worker, "_embedding_model", fail)
+    with pytest.raises(RuntimeError, match="synthetic missing offline artifact"):
+        with TestClient(retrieval_worker.app):
+            pytest.fail("Unavailable models must stop service startup")

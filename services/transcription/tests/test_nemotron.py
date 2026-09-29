@@ -24,12 +24,19 @@ def runner(tmp_path, monkeypatch, body):
 def test_process_protocol_is_offline_and_does_not_inherit_credentials(tmp_path, monkeypatch):
     monkeypatch.setenv("HF_TOKEN", "synthetic-token")
     monkeypatch.setenv("HTTPS_PROXY", "synthetic-proxy")
+    monkeypatch.setenv("TRITON_CACHE_DIR", "/untrusted-parent-cache")
     args = runner(tmp_path, monkeypatch, '''import json, os, sys
+from pathlib import Path
 request = json.load(sys.stdin)
 assert os.environ['HF_HUB_OFFLINE'] == '1'
 assert os.environ['TRANSFORMERS_OFFLINE'] == '1'
 assert 'HF_TOKEN' not in os.environ and 'HTTPS_PROXY' not in os.environ
 assert request['audio_path'] not in sys.argv
+native_cache = Path(os.environ['TRITON_CACHE_DIR'])
+assert native_cache.parent == Path(os.environ['NUMBA_CACHE_DIR']).parent
+assert native_cache != Path('/untrusted-parent-cache')
+native_cache.mkdir()
+(native_cache / 'synthetic-cache-entry').write_bytes(b'synthetic')
 print(json.dumps({'schema': 'recordbench-nemotron-v1', 'turns': [
     {'start': 1, 'end': 3, 'speaker': 1}, {'start': 0, 'end': 2, 'speaker': 0}]}))
 ''')

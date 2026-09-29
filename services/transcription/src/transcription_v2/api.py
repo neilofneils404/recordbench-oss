@@ -56,7 +56,7 @@ from .domain import (
 from .media import MediaProbeError, validate_media_name
 from .profiles import DEFAULT_PROFILE_NAME, get_profile
 from .profile_availability import ProfileAvailability
-from .resources import readiness
+from .resources import queue_readiness
 from .review_exports import ReviewExportError, refresh_review_exports
 from .runtime import Runtime, build_runtime
 from .settings import Settings
@@ -467,7 +467,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/ready")
     def ready(_owner: Owner) -> dict[str, object]:
-        return readiness(runtime.settings)
+        return queue_readiness(runtime.settings)
 
     @app.get("/v1/profiles")
     def profiles(_owner: Owner) -> dict[str, Any]:

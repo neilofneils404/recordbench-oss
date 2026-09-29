@@ -38,6 +38,10 @@ COPY compatibility ./compatibility
 RUN python compatibility/build_whisperx.py --output /opt/transcription/wheels
 
 FROM base AS worker
+# Pinned PyTorch native GPU kernels compile small launchers at runtime.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=whisperx-builder /opt/transcription/wheels /opt/transcription/wheels
 COPY requirements-worker.lock /opt/transcription/
 RUN pip install --no-cache-dir --no-build-isolation --require-hashes --find-links=/opt/transcription/wheels -r /opt/transcription/requirements-worker.lock \

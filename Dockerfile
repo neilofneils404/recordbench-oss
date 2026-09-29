@@ -38,6 +38,10 @@ HEALTHCHECK --interval=20s --timeout=5s --start-period=20s --retries=6 \
 CMD ["python", "-m", "case_intelligence.workbench", "--host", "0.0.0.0", "--port", "8786", "--runtime", "/var/lib/recordbench/runtime"]
 
 FROM application AS retrieval
+# PyTorch native GPU kernels can compile launchers even during eager execution.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir --no-build-isolation --require-hashes -r /opt/recordbench/requirements/retrieval.lock \
     && pip check
 EXPOSE 8787

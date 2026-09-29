@@ -127,3 +127,42 @@ class ReadinessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QueueReadinessTests(ReadinessTests):
+    def _queue_report(self):
+        with mock.patch.dict(os.environ, self.environment, clear=True), mock.patch.object(
+            resources, "gpu_states", side_effect=AssertionError("API must not inspect GPUs")
+        ), mock.patch.object(resources, "_whisperx_runtime_checks", side_effect=AssertionError("API must not inspect worker packages")), mock.patch.object(
+            resources.shutil, "which", return_value="/usr/bin/tool"
+        ):
+            return resources.queue_readiness(self.settings)
+
+    def test_api_can_admit_without_local_gpu_or_ml_packages(self):
+        result = self._queue_report()
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["scope"], "queue")
+        self.assertNotIn("reserved_gpu_ready", result["checks"])
+        self.assertEqual(result["worker_admission"], "artifact_verification_at_start_and_gpu_capacity_at_claim")
+
+    def test_queue_still_requires_manifest_and_offline_configuration(self):
+        self.manifest.unlink()
+        self.assertEqual(self._queue_report()["status"], "not_ready")
+        self.manifest.write_text("{}")
+        self.environment["HF_HUB_OFFLINE"] = "0"
+        self.assertEqual(self._queue_report()["status"], "not_ready")
+
+    def test_queue_still_enforces_disk_reserve(self):
+        from dataclasses import replace
+        self.settings = replace(self.settings, minimum_free_disk_bytes=10**18)
+        self.assertEqual(self._queue_report()["status"], "not_ready")
+
+    def test_only_explicitly_qualified_whisperx_versions_are_accepted(self):
+        package_root = self.root / "versions"
+        vad = package_root / "whisperx/assets/pytorch_model.bin"
+        vad.parent.mkdir(parents=True)
+        vad.write_bytes(b"synthetic")
+        for version, expected in [("3.8.6+recordbench.1", True), ("3.8.6+unknown.1", False), ("3.8.7", False)]:
+            with self.subTest(version=version):
+                result = self._report(_FakeDistribution(package_root, version))
+                self.assertEqual(result["checks"]["whisperx_version_compatible"], expected)

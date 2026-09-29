@@ -88,6 +88,7 @@ def run_diarization(*, python: str, model_path: str, audio_path: str,
     with (tempfile.TemporaryDirectory(prefix="recordbench-nemotron-") as scratch,
           tempfile.TemporaryFile() as input_file, tempfile.TemporaryFile() as output):
         env.update(NUMBA_CACHE_DIR=str(Path(scratch) / "numba"),
+                   TRITON_CACHE_DIR=str(Path(scratch) / "triton"),
                    HF_HOME=str(Path(scratch) / "huggingface"),
                    XDG_CACHE_HOME=str(Path(scratch) / "cache"),
                    TORCH_HOME=str(Path(scratch) / "torch"))

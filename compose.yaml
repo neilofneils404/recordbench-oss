@@ -106,6 +106,8 @@ services:
       CASE_REVIEW_RERANKER_MODEL: ${RECORDBENCH_RERANKER_MODEL:-Alibaba-NLP/gte-reranker-modernbert-base}
       CASE_REVIEW_RERANKER_REVISION: ${RECORDBENCH_RERANKER_REVISION:-f7481e6055501a30fb19d090657df9ec1f79ab2c}
       CUDA_VISIBLE_DEVICES: ${RECORDBENCH_RETRIEVAL_GPU:-0}
+      TMPDIR: /tmp/retrieval-native
+      TRITON_CACHE_DIR: /tmp/retrieval-native/triton
       HF_HOME: /models/huggingface
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
@@ -116,6 +118,7 @@ services:
         read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=2g
+      - /tmp/retrieval-native:rw,exec,nosuid,nodev,size=512m
       - /tmp/recordbench-home:rw,noexec,nosuid,nodev,size=32m
     networks: [models]
 
@@ -140,7 +143,7 @@ services:
         target: /models
         read_only: true
     tmpfs:
-      - /tmp/vllm-cache:rw,noexec,nosuid,nodev,size=8g
+      - /tmp/vllm-cache:rw,exec,nosuid,nodev,size=8g
     networks: [models]
     command:
       - --model
@@ -236,8 +239,10 @@ services:
       TRANSCRIPTION_V2_DATABASE: /var/lib/recordbench/transcription/jobs.sqlite3
       TRANSCRIPTION_V2_MODEL_CACHE: /models/huggingface/hub
       CUDA_VISIBLE_DEVICES: ${RECORDBENCH_TRANSCRIPTION_GPU:-0}
+      TMPDIR: /tmp/transcription-native
+      TRITON_CACHE_DIR: /tmp/transcription-native/triton
       HF_HOME: /models/huggingface
-      TORCH_HOME: /models/torch
+      TORCH_HOME: /models/huggingface/hub
       NLTK_DATA: /models/nltk_data
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
@@ -257,6 +262,7 @@ services:
         read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=8g
+      - /tmp/transcription-native:rw,exec,nosuid,nodev,size=512m
       - /tmp/transcription-home:rw,noexec,nosuid,nodev,size=32m
 
   transcription-cleanup:
@@ -398,6 +404,10 @@ services:
     image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/model-stager:${RECORDBENCH_RELEASE_ID:-dev}
     build:
       context: deploy/model-stager
+    environment:
+      HF_HOME: /models/huggingface
+      HF_XET_CACHE: /models/huggingface/xet
+      HF_HUB_DISABLE_XET: "1"
     user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
     read_only: true
     security_opt: [no-new-privileges:true]

@@ -69,6 +69,14 @@ class ApiAdmissionTests(unittest.TestCase):
         self.addCleanup(client.close)
         return client, app
 
+    def test_ready_endpoint_reports_queue_scope_without_worker_gpu_probe(self):
+        client, _app = self._client()
+        with patch("transcription_v2.resources.gpu_states", side_effect=AssertionError("No GPU in API role")):
+            response = client.get("/ready", headers={"X-User-ID": "synthetic-reviewer"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["scope"], "queue")
+        self.assertEqual(response.json()["status"], "ready")
+
     @staticmethod
     def _files(*sizes: int):
         return [

@@ -6,6 +6,28 @@ license does not grant rights to separately acquired models or tokenizer data.
 A different model architecture may need a different adapter; see
 [model configuration](MODEL_CONFIGURATION.md) and [ASR import](ASR_MODEL_IMPORT.md).
 
+The acquisition container keeps both the Hugging Face Hub cache and its Xet
+download cache under the writable model mount. Its root filesystem stays
+read-only. A missing auxiliary-cache location can otherwise interrupt a fresh
+download even when the model snapshot directory is writable. Runtime model
+services retain their separate offline and read-only model boundaries.
+Acquisition defaults to streaming HTTP with `HF_HUB_DISABLE_XET=1` to avoid the
+larger memory demand of concurrent Xet reconstruction. This changes the download
+transport, not selected revisions, artifact verification or runtime inference.
+Operators may enable Xet in their own staging override after qualifying its
+memory requirements; its auxiliary cache must remain writable.
+
+After building the acquisition image, contributors can exercise this boundary
+without downloading models or allowing network access:
+
+```sh
+RECORDBENCH_STAGER_TEST_IMAGE=recordbench/model-stager:dev \
+  python -m pytest tests/test_model_stager_container.py -q
+```
+
+Use the locally built image's actual tag when it differs. This optional test
+requires Docker and never pulls an image; it uses a fresh synthetic model mount.
+
 Before downloading, from the checkout run this standard-library-only command:
 
 ```sh
@@ -57,3 +79,6 @@ verified selection skips acquisition and acknowledgement. Changed/missing
 artifacts need acquisition again. The receipt binds the catalog, selected
 modules and every staged file. An acknowledgement does not waive hash checks,
 replace model provenance, or permit reference staging over a custom inventory.
+
+For offline model loading, compiler-cache requirements and prepared-node resume,
+see [runtime startup](RUNTIME_STARTUP.md).
