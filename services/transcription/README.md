@@ -33,7 +33,7 @@ changed snapshots fail before model loading. The Fast profile needs its own
 approved Turbo artifact; the default catalog currently stages large-v3 only.
 It must not silently substitute a model or download one during a job.
 
-ASR manifests bind each logical snapshot filename to its approved file identity.
+ASR and Nemotron manifests bind each logical snapshot filename to its approved file identity.
 For Hugging Face symlink caches, staging records `snapshot_path` alongside each
 blob's `path`, size and hash. Swapped links and unrecorded aliases fail even after
 worker restart. Older blob-only approvals cannot establish those bindings: drain
@@ -47,6 +47,14 @@ imports continue to use their existing exact snapshot paths.
 The API verifies the approved model manifest once at startup without importing
 ML libraries or running inference. `/v1/profiles` reports ASR availability,
 English-translation availability, and locally approved alignment languages.
+A language is available only when its approved alignment checkpoint and all four
+Punkt tokenizer files are present. Configure the same absolute `NLTK_DATA`
+directories in API and worker; Compose uses `/models/nltk_data` for both.
+The check reads file metadata without importing NLTK or ML libraries and refuses
+missing, unreadable, linked or incomplete language resources. An earlier
+incomplete directory cannot be masked by a later search-path entry. Staging
+verifies the tokenizer archive; this admission check establishes availability,
+not fresh per-request hash verification. The worker rechecks before alignment.
 These describe model inventory, not GPU capacity or whole-worker readiness.
 The API `/ready` route checks queue resources, disk reserve, media tools, offline
 configuration and manifest presence. It does not require the worker-only Nemotron

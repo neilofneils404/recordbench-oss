@@ -659,6 +659,9 @@ class LocalWhisperXEngine:
         alignment_model = request.alignment_model
         if self.model_readiness is not None:
             from .alignment_models import approved_alignment_model
+            from .tokenizer_resources import punkt_language_ready
+            if not punkt_language_ready(language):
+                raise ValueError("The spoken language's tokenizer data is not approved and staged for offline use.")
             alignment_model = approved_alignment_model(
                 self.model_cache_dir, self.model_readiness, language, alignment_model,
             )

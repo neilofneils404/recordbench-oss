@@ -9,6 +9,7 @@ from .alignment_models import ALIGNMENT_MODELS, approved_alignment_model
 from .model_manifest import ModelManifestError, ModelReadiness, verify_model_manifest
 from .profiles import TranscriptionProfile, get_profile, list_profiles
 from .settings import Settings
+from .tokenizer_resources import punkt_language_ready
 
 
 class ProfileAvailability:
@@ -88,5 +89,6 @@ class ProfileAvailability:
                 approved_alignment_model(self.settings.model_cache_dir, self._readiness, language)
             except ValueError:
                 continue
-            available.append(language)
+            if punkt_language_ready(language):
+                available.append(language)
         return available

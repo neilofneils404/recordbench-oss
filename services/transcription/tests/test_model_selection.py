@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("punkt_inventory")
+
 from transcription_v2.model_manifest import ModelManifestError, verify_model_manifest
 from transcription_v2.asr_models import approved_asr_snapshot, profile_model_metadata
 from transcription_v2.model_import import import_model_cache

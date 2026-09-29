@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 import stat
 
-from .asr_models import approved_asr_snapshot
+from .asr_models import approved_artifact_snapshot
 from .model_manifest import (
     DEFAULT_MODEL_MANIFEST_NAME, ModelManifestError, _cache_root, _changed,
     _open_relative, _parse_manifest, _read_manifest, verify_model_manifest,
@@ -39,7 +39,12 @@ def import_model_cache(source: Path, destination: Path, *, max_bytes: int) -> di
         if destination.exists() or not destination.parent.is_dir():
             raise ValueError(_FAILURE)
         content = _read_manifest(source_fd, (DEFAULT_MODEL_MANIFEST_NAME,))
-        _, artifacts, bindings = _parse_manifest(content)
+        _, artifacts, _ = _parse_manifest(content)
+        # Imports copy regular paths only; they never reconstruct aliases for
+        # ASR or diarization. Reject mapped blob layouts before creating output.
+        if any(f.snapshot_parts is not None and f.snapshot_parts != f.parts
+               for artifact in artifacts for f in artifact.files):
+            raise ValueError(_FAILURE)
         files = {f.parts: f for artifact in artifacts for f in artifact.files}
         if ((DEFAULT_MODEL_MANIFEST_NAME,) in files
                 or (".pending-model-manifest.json",) in files):
@@ -50,9 +55,10 @@ def import_model_cache(source: Path, destination: Path, *, max_bytes: int) -> di
         ready = verify_model_manifest(root, root / DEFAULT_MODEL_MANIFEST_NAME)
         if ready.manifest_sha256 != hashlib.sha256(content).hexdigest():
             raise ValueError(_FAILURE)
-        for binding in bindings:
-            alias = "large-v3" if binding.slot == "primary" else "turbo"
-            snapshot = approved_asr_snapshot(root, ready, alias)
+        for artifact in ready.artifacts:
+            if artifact.role != "asr":
+                continue
+            snapshot = approved_artifact_snapshot(root, ready, artifact)
             if any(path.is_symlink() for path in snapshot.rglob("*")):
                 raise ValueError(_FAILURE)
         destination.mkdir(mode=0o700, exist_ok=False)
@@ -88,8 +94,9 @@ def import_model_cache(source: Path, destination: Path, *, max_bytes: int) -> di
             output.flush()
             os.fsync(output.fileno())
         result = verify_model_manifest(destination, pending)
-        for binding in bindings:
-            approved_asr_snapshot(destination, result, "large-v3" if binding.slot == "primary" else "turbo")
+        for artifact in result.artifacts:
+            if artifact.role == "asr":
+                approved_artifact_snapshot(destination, result, artifact)
         # The cache is usable only after every destination byte verifies. link()
         # refuses an existing target; unlike replace(), it never overwrites it.
         os.link(pending, destination / DEFAULT_MODEL_MANIFEST_NAME, follow_symlinks=False)

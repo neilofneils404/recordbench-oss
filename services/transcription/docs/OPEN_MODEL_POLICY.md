@@ -52,9 +52,11 @@ It must never silently claim word timing or speaker attribution.
 
 WhisperX 3.8.x also uses NLTK `punkt_tab` sentence data during alignment and can
 try to download it when missing. Pre-stage and license-review the required Punkt
-language resources in the worker's `NLTK_DATA` directory. The v2 adapter checks
-for the resource in offline mode and fails alignment before WhisperX can invoke
-its downloader.
+language resources in matching API and worker `NLTK_DATA` directories. Language
+admission checks the four required regular files without importing NLTK or ML
+libraries. Missing or incomplete resources suppress that language and reject new
+requests before durable job creation. The worker rechecks before alignment and
+fails offline before WhisperX can invoke its downloader.
 
 ## Initial profiles
 

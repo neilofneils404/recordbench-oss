@@ -7,6 +7,8 @@ import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("punkt_inventory")
 from fastapi.testclient import TestClient
 from transcription_v2.model_manifest import MODEL_MANIFEST_SCHEMA
 from transcription_v2.profile_availability import ProfileAvailability
@@ -262,3 +264,78 @@ def test_nemotron_api_readiness_does_not_probe_worker_interpreter(tmp_path, monk
         assert response.json()["scope"] == "queue"
         (configuration.model_cache_dir / "approved-model-manifest.json").unlink()
         assert client.get("/ready", headers={"X-User-ID": "synthetic-user"}).json()["status"] == "not_ready"
+
+
+def test_missing_punkt_blocks_languages_and_job_admission(tmp_path, monkeypatch):
+    monkeypatch.setenv("NLTK_DATA", str(tmp_path / "absent-tokenizers"))
+    app = create_app(settings(tmp_path, ["large-v3"]))
+    with TestClient(app) as client:
+        headers = {"X-User-ID": "synthetic-user"}
+        assert client.get("/v1/profiles", headers=headers).json()["languages"] == []
+        response = submit(client, "balanced")
+        assert response.status_code == 409
+        assert response.json() == {"code": "language_unavailable"}
+        assert app.state.runtime.store.retained_usage() == (0, 0)
+
+
+@pytest.mark.parametrize("failure", ["missing-file", "directory", "file-link", "language-link", "unreadable"])
+def test_punkt_inventory_changes_remove_only_affected_language(tmp_path, punkt_inventory, failure):
+    app = create_app(settings(tmp_path, ["large-v3"]))
+    directory = punkt_inventory / "tokenizers/punkt_tab/spanish"
+    target = directory / "ortho_context.tab"
+    if failure == "unreadable":
+        target.chmod(0)
+    elif failure == "language-link":
+        moved = directory.with_name("moved")
+        directory.rename(moved)
+        directory.symlink_to(moved, target_is_directory=True)
+    else:
+        target.unlink()
+        if failure == "directory":
+            target.mkdir()
+        elif failure == "file-link":
+            target.symlink_to(directory / "abbrev_types.txt")
+    with TestClient(app) as client:
+        headers = {"X-User-ID": "synthetic-user"}
+        assert client.get("/v1/profiles", headers=headers).json()["languages"] == ["en"]
+        response = client.post("/v1/jobs", headers=headers,
+            data={"options": json.dumps({"source_language": "es"})},
+            files=[("files", ("synthetic.wav", b"synthetic", "audio/wav"))])
+        assert response.status_code == 409
+        assert response.json() == {"code": "language_unavailable"}
+        assert app.state.runtime.store.retained_usage() == (0, 0)
+
+
+def test_worker_rejects_lost_punkt_before_importing_model(tmp_path, punkt_inventory, monkeypatch):
+    from transcription_v2.model_manifest import verify_model_manifest
+    from transcription_v2.pipeline import LocalWhisperXEngine, TranscriptionRequest
+    config = settings(tmp_path, ["large-v3"])
+    readiness = verify_model_manifest(config.model_cache_dir, config.approved_model_manifest_path)
+    engine = LocalWhisperXEngine(model_cache_dir=config.model_cache_dir, model_readiness=readiness)
+    (punkt_inventory / "tokenizers/punkt_tab/english/abbrev_types.txt").unlink()
+    monkeypatch.setattr(engine, "_import_whisperx", lambda: pytest.fail("missing tokenizer reached ML import"))
+    with pytest.raises(ValueError, match="tokenizer data"):
+        engine.align_source(TranscriptionRequest(audio_path=tmp_path / "synthetic.wav", device="cpu"),
+                            get_profile("balanced"), {"language": "en", "segments": []})
+
+
+def test_punkt_checks_use_configured_search_order_without_imports(tmp_path, punkt_inventory, monkeypatch):
+    import builtins
+    import os
+    from transcription_v2.tokenizer_resources import punkt_language_ready
+    original = builtins.__import__
+    def no_ml(name, *args, **kwargs):
+        if name.split(".")[0] in {"nltk", "torch", "whisperx"}:
+            pytest.fail("tokenizer readiness imported a model dependency")
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", no_ml)
+    monkeypatch.delenv("NLTK_DATA")
+    assert not punkt_language_ready("en")
+    monkeypatch.setenv("NLTK_DATA", os.pathsep.join([str(tmp_path / "absent"), str(punkt_inventory)]))
+    assert punkt_language_ready("en")
+    assert punkt_language_ready("es")
+    assert not punkt_language_ready("fr")
+    early = tmp_path / "early"
+    (early / "tokenizers/punkt_tab/english").mkdir(parents=True)
+    monkeypatch.setenv("NLTK_DATA", os.pathsep.join([str(early), str(punkt_inventory)]))
+    assert not punkt_language_ready("en")

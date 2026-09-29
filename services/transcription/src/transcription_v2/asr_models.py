@@ -69,8 +69,14 @@ def profile_model_metadata(profile: TranscriptionProfile, readiness: ModelReadin
 def approved_asr_snapshot(cache: str | Path | None, readiness: ModelReadiness,
                           model_name: str, *, translate: bool = False) -> Path:
     """Reject missing profiles, unapproved bytes and mutable cache references."""
-    failure = "Selected ASR model is not approved and staged for offline use."
     artifact = approved_asr_artifact(readiness, model_name, translate=translate)
+    return approved_artifact_snapshot(cache, readiness, artifact)
+
+
+def approved_artifact_snapshot(cache: str | Path | None, readiness: ModelReadiness,
+                               artifact: ArtifactReadiness) -> Path:
+    """Validate an ASR artifact independently of v1/v2 profile bindings."""
+    failure = "Selected ASR model is not approved and staged for offline use."
     model_id = artifact.model_id
     if cache is None or not re.fullmatch(r"(?:[0-9a-f]{40}|sha256-[0-9a-f]{64})", artifact.revision):
         raise ValueError(failure)

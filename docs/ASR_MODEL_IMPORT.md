@@ -60,7 +60,8 @@ identifies the regular blob whose hash is approved. Both manifest versions bind
 each ASR snapshot name to that exact verified file; approving a blob does not
 approve other filenames pointing to it. Conflicting filename bindings are invalid.
 Regular snapshot files use `path` itself as the logical name and need no extra
-field. Other artifact roles do not accept `snapshot_path`.
+field. Diarization snapshots also support this binding; alignment and other
+artifact roles do not accept `snapshot_path`.
 
 Older symlink-cache manifests containing only blob paths must be regenerated
 through staging after verifying the intended layout against the pinned upstream
@@ -81,7 +82,11 @@ approved-model-manifest.json
 ```
 
 `vocabulary.txt` may replace `vocabulary.json`. The importer described below
-requires regular snapshot files, not symlinks. Existing runtime caches may
+requires regular snapshot files, not symlinks, for both v1 and v2 inventories.
+Mapped blob layouts are rejected before a destination is created. Every ASR
+artifact is checked before copying and again before publishing the destination
+manifest, including v1 defaults and artifacts without a v2 processing-slot binding.
+Existing runtime caches may
 retain supported Hugging Face links to verified blobs within the same cache.
 Materializing such a cache for import is a separate preparation step; this
 command does not recreate link topology or follow arbitrary links.
@@ -91,6 +96,11 @@ Include their independently acquired resources in the inventory if those
 features are needed. The importer does not supply missing alignment checkpoints,
 Punkt data, Nemotron weights or software dependencies. Missing alignment
 inventory prevents new jobs through the API even when ASR files are available.
+Punkt is a separate staged resource, outside the imported model manifest. Set
+matching `NLTK_DATA` roots in API and worker. Language admission requires the
+four regular files `collocations.tab`, `sent_starters.txt`, `abbrev_types.txt`
+and `ortho_context.tab` under `tokenizers/punkt_tab/english/` or `spanish/`.
+An empty or incomplete directory is insufficient; no runtime download is attempted.
 Do not put tokens, private acquisition URLs or user identities in metadata.
 Keep upstream terms and conversion/acquisition records with operator documents.
 A declared license or a verified hash does not grant additional model rights.

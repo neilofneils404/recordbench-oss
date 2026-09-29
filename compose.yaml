@@ -205,6 +205,7 @@ services:
       TRANSCRIPTION_V2_DATA_ROOT: /var/lib/recordbench/transcription
       TRANSCRIPTION_V2_DATABASE: /var/lib/recordbench/transcription/jobs.sqlite3
       TRANSCRIPTION_V2_MODEL_CACHE: /models/huggingface/hub
+      NLTK_DATA: /models/nltk_data
     volumes:
       - type: bind
         source: ${RECORDBENCH_TRANSCRIPTION_ROOT:?set RECORDBENCH_TRANSCRIPTION_ROOT}

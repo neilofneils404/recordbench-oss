@@ -162,3 +162,75 @@ def test_profile_and_exported_outcome_identify_actual_backend(tmp_path):
     assert skipped.diarization["status"] == "skipped"
     assert skipped.diarization["model"] is None
     assert "speaker_hints_unsupported" not in {item["code"] for item in skipped.warnings}
+
+
+@pytest.fixture
+def linked_nemotron(tmp_path):
+    root = tmp_path / "cache"
+    snapshot = root / "models--nvidia--Nemotron-3-Diarization" / "snapshots" / nemotron.MODEL_REVISION
+    snapshot.mkdir(parents=True)
+    blobs = snapshot.parent.parent / "blobs"
+    blobs.mkdir()
+    files = []
+    for name in nemotron.MODEL_FILES:
+        data = ("Synthetic Nemotron " + name).encode()
+        digest = hashlib.sha256(data).hexdigest()
+        blob = blobs / digest
+        blob.write_bytes(data)
+        (snapshot / name).symlink_to(blob)
+        files.append({"path": blob.relative_to(root).as_posix(),
+                      "snapshot_path": (snapshot / name).relative_to(root).as_posix(),
+                      "size_bytes": len(data), "sha256": digest})
+    manifest = root / "approved-model-manifest.json"
+    manifest.write_text(json.dumps({"schema_version": MODEL_MANIFEST_SCHEMA, "artifacts": [{
+        "role": "diarization", "model_id": nemotron.MODEL_ID, "revision": nemotron.MODEL_REVISION,
+        "license": nemotron.MODEL_LICENSE, "files": files}]}))
+    return root, snapshot, manifest
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_nemotron_rejects_retargeted_approved_blob(linked_nemotron, restart):
+    root, snapshot, manifest = linked_nemotron
+    readiness = verify_model_manifest(root, manifest)
+    config = snapshot / "config.json"
+    config.unlink()
+    config.symlink_to((snapshot / "processor_config.json").resolve())
+    if restart:
+        readiness = verify_model_manifest(root, manifest)
+    assert not nemotron.approved_snapshot(snapshot, cache_root=root, model_readiness=readiness)
+
+
+def test_nemotron_accepts_bound_links_but_rejects_legacy_blob_inventory(linked_nemotron):
+    root, snapshot, manifest = linked_nemotron
+    readiness = verify_model_manifest(root, manifest)
+    assert nemotron.approved_snapshot(snapshot, cache_root=root, model_readiness=readiness)
+    document = json.loads(manifest.read_text())
+    for row in document["artifacts"][0]["files"]:
+        row.pop("snapshot_path")
+    manifest.write_text(json.dumps(document))
+    assert not nemotron.approved_snapshot(snapshot, cache_root=root,
+                                         model_readiness=verify_model_manifest(root, manifest))
+
+
+@pytest.mark.parametrize("change", ["extra-alias", "directory-link", "snapshot-link"])
+def test_nemotron_rejects_unapproved_snapshot_topology(linked_nemotron, change):
+    root, snapshot, manifest = linked_nemotron
+    if change == "extra-alias":
+        (snapshot / "extra.json").symlink_to((snapshot / "config.json").resolve())
+    elif change == "directory-link":
+        (snapshot / "extra").symlink_to(snapshot, target_is_directory=True)
+    else:
+        alias = snapshot.with_name("alias")
+        alias.symlink_to(snapshot, target_is_directory=True)
+        snapshot = alias
+    assert not nemotron.approved_snapshot(snapshot, cache_root=root,
+                                         model_readiness=verify_model_manifest(root, manifest))
+
+
+def test_import_rejects_mapped_nemotron_blobs_before_creating_destination(linked_nemotron, tmp_path):
+    from transcription_v2.model_import import import_model_cache
+    root, _, _ = linked_nemotron
+    target = tmp_path / "imported"
+    with pytest.raises(ValueError, match="Local model import failed"):
+        import_model_cache(root, target, max_bytes=1024 * 1024)
+    assert not target.exists()
