@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PATH=/opt/transcription/venv/bin:$PATH
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl \
+    && apt-get install -y --no-install-recommends ffmpeg curl libssl3 openssl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/transcription/app
 RUN python -m venv /opt/transcription/venv

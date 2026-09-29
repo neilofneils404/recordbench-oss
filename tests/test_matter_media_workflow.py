@@ -2249,3 +2249,71 @@ def test_transcript_overview_export_requires_current_exact_timestamps(
             names = archive.namelist()
             assert any(name.startswith("transcripts/") for name in names)
             assert not any(name.startswith("transcript-overviews/") for name in names)
+
+
+@pytest.mark.parametrize("status, warning_only", [
+    ("failed", False), ("succeeded", False), ("skipped", False), ("", True),
+])
+def test_transcript_processing_notices_are_visible_escaped_and_exported(
+    tmp_path, status, warning_only
+):
+    hostile_notice = "Synthetic caution <script>window.syntheticLeak=true</script>"
+
+    class QualityProcessor(ImmediateMediaProcessor):
+        def transcript(self, owner, external_job_id):
+            result = dict(super().transcript(owner, external_job_id))
+            result["quality"] = {"diarization_status": status}
+            result["warnings"] = (
+                [{"code": "speaker_attribution_unavailable", "user_message": hostile_notice}]
+                if warning_only else
+                [{"code": "synthetic_quality_notice", "user_message": hostile_notice}]
+                if status == "failed" else []
+            )
+            return result
+
+    app = create_workbench_app(
+        tmp_path / "runtime", generator=UnavailableGenerator(), auth_mode="test",
+        media_processor=QualityProcessor(), media_poll_seconds=0.01,
+    )
+    with TestClient(app) as client:
+        slug = _matter(client, "Generated transcript quality matter")
+        _document, token = _upload_and_wait(client, slug)
+        source = f"/matters/{slug}/sources/{token}"
+        review = client.get(source)
+        assert review.status_code == 200
+        failed = status == "failed" or warning_only
+        assert ('data-transcript-notices' in review.text) is (failed or status == "skipped")
+        assert ('Automatic speaker attribution failed.' in review.text) is failed
+        assert ('Speaker attribution was skipped.' in review.text) is (status == "skipped")
+        if failed:
+            assert 'Unreviewed speaker labels are placeholders' in review.text
+            assert '&lt;script&gt;window.syntheticLeak=true&lt;/script&gt;' in review.text
+            assert '<script>window.syntheticLeak' not in review.text
+        exported = client.get(source + '/transcript-export?format=json')
+        assert exported.status_code == 200
+        notices = exported.json().get('processing_notices', [])
+        assert bool(notices) is (failed or status == "skipped")
+        if failed:
+            assert any('Automatic speaker attribution failed.' in n for n in notices)
+            assert hostile_notice in notices
+        for kind in ['txt', 'markdown', 'docx']:
+            artifact = client.get(source + '/transcript-export?format=' + kind)
+            assert artifact.status_code == 200
+            if failed:
+                body = artifact.content
+                if kind == 'docx':
+                    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                        body = archive.read('word/document.xml')
+                assert b'Automatic speaker attribution failed.' in body
+        # Notices describe processing; they must never become timed speech cues.
+        subtitles = client.get(source + '/transcript-export?format=srt')
+        assert subtitles.status_code == 200
+        assert b'Automatic speaker attribution failed.' not in subtitles.content
+        if failed:
+            bundle = client.get(f'/matters/{slug}/export')
+            assert bundle.status_code == 200
+            with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+                transcripts = [n for n in archive.namelist()
+                               if n.startswith('transcripts/') and n.endswith('.json')]
+                assert len(transcripts) == 1
+                assert json.loads(archive.read(transcripts[0]))['processing_notices'] == notices

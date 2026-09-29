@@ -80,3 +80,21 @@ at a nonexistent directory under the read-only model mount. The optional
 `test_worker_packaged_vad_loads_with_read_only_staged_cache` container test loads
 that packaged VAD on CPU, offline, with an otherwise empty read-only staged
 cache and verifies that the cache contents are unchanged.
+
+## Cleanup process status
+
+The one-shot transcription cleanup and cleanup daemon reuse the API image but
+serve no HTTP endpoint. Their Compose definitions disable the image's HTTP
+health check; the API retains its own probe. A running cleanup container reports
+process liveness, not proof that its most recent cleanup succeeded.
+
+Each successful `purge-expired` invocation prints content-free `purged_jobs`
+and `wal_checkpointed` fields. The daemon waits five minutes only after a
+successful invocation. An error exits the shell with a nonzero status, which
+is visible in the container's exit/restart state. Check that state and the
+cleanup result when diagnosing retention; do not infer success from `running`
+alone. This status correction does not change expiry, deletion or retry policy.
+
+Companion images are built and updated by the installer; see
+[managed services](MANAGED_SERVICES.md) for host prerequisites, model acquisition
+and the security-update boundary.

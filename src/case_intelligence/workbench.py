@@ -101,6 +101,7 @@ from .media_evidence import (
     transcript_summary_basis,
     transcript_summary_windows,
     transcript_speaker_labels,
+    transcript_processing_notices,
     transcript_units,
 )
 from .managed_storage import ManagedMatterStorage, StoragePolicy, format_bytes
@@ -7161,11 +7162,11 @@ def create_workbench_app(
                     summary_markdown = None
                     summary_coverage = None
             markdown = export_transcript(
-                document.display_name, segments, "markdown"
+                document.display_name, segments, "markdown", notices=transcript_processing_notices(transcript)
             ).body
             srt = export_transcript(document.display_name, segments, "srt").body
             json_body = export_transcript(
-                document.display_name, segments, "json"
+                document.display_name, segments, "json", notices=transcript_processing_notices(transcript)
             ).body
             projected_bytes = prepared_bytes + sum(
                 len(body)
@@ -12353,6 +12354,7 @@ def create_workbench_app(
                         "speaker_labels": speaker_labels,
                         "transcript_flag": flag,
                         "summary_failure": _media_summary_failure_view(media.summary),
+                        "transcript_notices": transcript_processing_notices(media.transcript),
                         "source_sequence": source_sequence,
                         "format_timestamp": format_timestamp,
                         "notice": notice,
@@ -12800,7 +12802,13 @@ def create_workbench_app(
             segments = bench.workspace.transcript_segments(
                 matter.matter_id, document.document_id, document.version_id
             )
-            artifact = export_transcript(document.display_name, segments, format_name)
+            transcript = bench.workspace.media_transcript(
+                matter.matter_id, document.document_id, document.version_id
+            )
+            artifact = export_transcript(
+                document.display_name, segments, format_name,
+                notices=transcript_processing_notices(transcript),
+            )
         except KeyError as exc:
             raise HTTPException(404, "Transcript not found") from exc
         except ValueError as exc:

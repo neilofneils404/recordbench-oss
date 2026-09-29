@@ -3070,3 +3070,40 @@ def test_prepared_resume_still_rejects_malformed_service_names(tmp_path, monkeyp
     with pytest.raises(RuntimeError, match="could not safely identify"):
         installer._resume_node(installer.Console(color=False, quiet=True), args, root)
     assert all(event not in events for event in ("stop", "start", "build", "up"))
+
+
+@pytest.mark.parametrize("models", ["none", "review", "transcription", "all"])
+def test_initial_build_includes_managed_companion_security_images(tmp_path, monkeypatch, models):
+    from tests.test_first_run_handoff import configured_node
+    root, args, _ = configured_node(tmp_path)
+    args.dry_run = True
+    commands = []
+    def capture(console, command, **kwargs):
+        commands.append(command)
+        if "build" in command:
+            raise RuntimeError("synthetic stop before image build")
+    monkeypatch.setattr(installer, "_run", capture)
+    with pytest.raises(RuntimeError, match="synthetic stop"):
+        installer._provision(installer.Console(color=False, quiet=True), args, root,
+            "local", models, "alice.admin", "Alice Administrator",
+            password_input=["synthetic-unused-password"])
+    build = next(command for command in commands if "build" in command)
+    targets = set(build[build.index("build") + 1:])
+    assert {"gateway", "clamav", "postgres", "app", "account-admin"} <= targets
+    assert ("retrieval" in targets) is (models in {"review", "all"})
+    assert ("transcription-worker" in targets) is (models in {"transcription", "all"})
+
+
+def test_update_builds_companion_images_before_node_swap(tmp_path, monkeypatch, request):
+    root, args, events, _ = synthetic_live_update(tmp_path, monkeypatch, request)
+    original_run = installer._run
+    builds = []
+    def capture(console, command, **kwargs):
+        if "build" in command:
+            builds.append(command[command.index("build") + 1:])
+        return original_run(console, command, **kwargs)
+    monkeypatch.setattr(installer, "_run", capture)
+    installer._update(installer.Console(color=False, quiet=True), args, root)
+    assert len(builds) == 1
+    assert {"gateway", "clamav", "postgres"} <= set(builds[0])
+    assert events.index("build-new") < events.index("stop-old") < events.index("up-new")

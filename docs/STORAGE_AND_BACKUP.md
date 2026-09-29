@@ -314,3 +314,8 @@ original paths unavailable, reopens original support and exports, then purges.
 These do not replace an operator's own encrypted backup/replacement-host drill.
 Stop writers before upgrade. Mixed-version writers are unsupported; rollback
 uses the verified pre-upgrade complete backup and matching application revision.
+
+For the local-account reference profile, continue from verified files to an
+actual isolated PostgreSQL import and application boot using
+[isolated node recovery](ISOLATED_NODE_RECOVERY.md). The original node must stay
+outside every replacement mount and volume boundary.

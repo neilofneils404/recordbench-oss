@@ -32,7 +32,7 @@ from typing import Iterable, Mapping, Sequence
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-VERSION = "0.1.0-alpha.2"
+VERSION = "0.1.0-beta.1"
 RELEASE_IGNORED_PATTERNS = ("__pycache__", "*.pyc", ".pytest_cache", "*.egg-info", "build")
 RELEASE_DIRECTORIES = (
     "benchmarks",
@@ -2451,13 +2451,7 @@ def _provision(
     console.phase(5, "FORGE RUNTIME", "Building isolated OCR, review, retrieval, and transcription images")
     if not args.dry_run:
         _install_phase(root, "runtime", "checking")
-    targets = ["app", "account-admin"]
-    if auth == "kerberos":
-        targets.append("kerberos-proxy")
-    if models in {"all", "review"}:
-        targets.extend(("retrieval",))
-    if models in {"all", "transcription"}:
-        targets.extend(("transcription-api", "transcription-worker"))
+    targets = _build_targets(auth, models)
     _run(console, [*compose, "build", *targets], dry_run=args.dry_run)
     if not args.dry_run:
         _install_phase(root, "runtime", "complete")
@@ -3133,7 +3127,7 @@ def _restore(console: Console, args: argparse.Namespace, root: Path) -> None:
 
 
 def _build_targets(auth: str, models: str) -> list[str]:
-    targets = ["app", "account-admin"]
+    targets = ["app", "account-admin", "gateway", "clamav", "postgres"]
     if auth == "kerberos":
         targets.append("kerberos-proxy")
     if models in {"all", "review"}:

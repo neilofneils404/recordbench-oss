@@ -7,6 +7,9 @@ Spanish transcription/alignment, and ungated Nemotron diarization. It is not
 production certification for confidential workloads. Other identity providers,
 languages, GPUs and operator model combinations need their own evidence.
 
+See [what the installer manages](MANAGED_SERVICES.md) for the division between
+host prerequisites, managed service containers and operator-selected models.
+
 ## Start from the exact reviewed revision
 
 Use a new dedicated Linux x86-64 node, an empty state root, and synthetic data.
@@ -114,9 +117,10 @@ and contribution templates; do not upload an environment dump or runtime logs.
 | Deterministic patched wheel, unchanged upstream Python and retained notices | Two equal fresh CPU builds; exact digest in compatibility guide |
 | Installer/stager and service regressions | Locally checked; full required CI belongs to the published final commit |
 | Fresh combined dependency install/native audio probes | Fresh 155-package environment, dependency check, 11 imports and synthetic audio probes passed; no GPU/model inference |
-| Clean GPU install; browser, review, EN/ES/Nemotron exports | Pending real reference acceptance |
-| Offline inference; failure/retry; isolated restart/restore | Pending reference acceptance |
-| Final image identities/SBOM and advisory dispositions | Pending actual image builds |
+| Isolated GPU install; browser, review, EN/ES/Nemotron exports | Passed synthetic reference workflow from new application state and verified warm model artifacts; no clean-OS/cold-download claim |
+| Offline inference; malformed input; worker restart | Passed synthetic workflow with observed outbound model-network denial |
+| Isolated restore and replacement-node boot | Encrypted snapshot/data verification, fresh PostgreSQL import, restored sign-in/access and identical EN/ES exports passed; new-job result belongs to the exact candidate acceptance receipt |
+| Actual image identities/SBOM and advisory dispositions | Initial image set inventoried and audited; available companion-service fixes are being qualified. Remaining native-parser and dependency findings require explicit release disposition |
 | Independent unfamiliar operator and human language-quality review | Not yet available; explicit beta limitation |
 | Tag, checksummed artifacts and release notes | Prepare from accepted commit; explicit maintainer release approval required |
 
@@ -125,3 +129,12 @@ allows a community beta decision. Broad hardware support, universal model
 compatibility, high availability and production recovery certification remain
 separate work. Contributors can review and improve this candidate before all
 those broader goals are complete.
+
+## Read processing outcomes and complete recovery
+
+Check [transcript processing notices](TRANSCRIPT_PROCESSING_NOTICES.md) before
+accepting speaker labels or sharing exports. A usable transcript with failed
+speaker attribution is a partial result, not a passed Nemotron workflow.
+After the backup file-verification drill, follow
+[isolated node recovery](ISOLATED_NODE_RECOVERY.md) for actual database import,
+restored sign-in and a new synthetic transcription job.

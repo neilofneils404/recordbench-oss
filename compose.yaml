@@ -2,7 +2,9 @@ name: ${RECORDBENCH_COMPOSE_PROJECT:-recordbench}
 
 services:
   postgres:
-    image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/postgres:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: ./deploy/postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: recordbench
@@ -21,7 +23,9 @@ services:
       start_period: 10s
 
   clamav:
-    image: clamav/clamav:stable@sha256:594d54aff5ad3b1a5211d67cdc6d49a9a332276da35d821c3dd4cf6c4cdf6237
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/clamav:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: ./deploy/clamav
     restart: unless-stopped
     cpus: "${RECORDBENCH_CLAMAV_CPUS:-4.0}"
     mem_limit: ${RECORDBENCH_CLAMAV_MEMORY:-6g}
@@ -62,7 +66,9 @@ services:
   # Keep the hostile-file parser offline. Only this updater receives egress,
   # and it shares signatures—not uploaded evidence—with the scanner.
   clamav-updater:
-    image: clamav/clamav:stable@sha256:594d54aff5ad3b1a5211d67cdc6d49a9a332276da35d821c3dd4cf6c4cdf6237
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/clamav:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: ./deploy/clamav
     restart: unless-stopped
     cpus: "${RECORDBENCH_CLAMAV_UPDATE_CPUS:-1.0}"
     mem_limit: ${RECORDBENCH_CLAMAV_UPDATE_MEMORY:-1g}
@@ -274,6 +280,8 @@ services:
     user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
     read_only: true
     network_mode: none
+    healthcheck:
+      disable: true
     env_file:
       - ${RECORDBENCH_CONFIG_ROOT:?set RECORDBENCH_CONFIG_ROOT}/transcription.env
     environment:
@@ -297,6 +305,8 @@ services:
     user: "${RECORDBENCH_UID:-1000}:${RECORDBENCH_GID:-1000}"
     read_only: true
     network_mode: none
+    healthcheck:
+      disable: true
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     env_file:
@@ -368,7 +378,9 @@ services:
     networks: [front, services, models]
 
   gateway:
-    image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    image: ${RECORDBENCH_IMAGE_NAMESPACE:-recordbench}/gateway:${RECORDBENCH_RELEASE_ID:-dev}
+    build:
+      context: ./deploy/gateway
     restart: unless-stopped
     read_only: true
     security_opt: [no-new-privileges:true]

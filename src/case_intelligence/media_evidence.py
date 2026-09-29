@@ -33,6 +33,7 @@ from .workspace_store import (
     MediaClipRecord,
     MediaJobRecord,
     MediaSummaryRecord,
+    MediaTranscriptRecord,
     MatterRecord,
     TranscriptSegmentRecord,
     WorkspaceStore,
@@ -1257,17 +1258,46 @@ def export_media_summary(
     raise ValueError("unsupported transcript overview export")
 
 
+def transcript_processing_notices(transcript: MediaTranscriptRecord | None) -> tuple[str, ...]:
+    """Present bounded staff-facing outcomes, without exposing backend diagnostics."""
+    if transcript is None:
+        return ()
+    warnings = [item for item in transcript.warnings[:20] if isinstance(item, Mapping)]
+    status = transcript.quality.get("diarization_status")
+    notices: list[str] = []
+    if status == "failed" or any(item.get("code") == "speaker_attribution_unavailable" for item in warnings):
+        notices.append(
+            "Automatic speaker attribution failed. The transcript is available. "
+            "Unreviewed speaker labels are placeholders, not detected speaker groupings. "
+            "Check the recording before assigning names."
+        )
+    elif status == "skipped":
+        notices.append(
+            "Speaker attribution was skipped. Unreviewed speaker labels are placeholders; "
+            "check the recording before assigning names."
+        )
+    for item in warnings:
+        message = item.get("user_message")
+        if isinstance(message, str) and message.strip():
+            message = message.strip()[:1000]
+            if message not in notices:
+                notices.append(message)
+    return tuple(notices)
+
+
 def export_transcript(
     source_name: str,
     segments: Sequence[TranscriptSegmentRecord],
     format_name: str,
+    *,
+    notices: Sequence[str] = (),
 ) -> MediaExport:
     if not segments:
         raise ValueError("transcript is empty")
     portable_segments = _portable_transcript_segments(segments)
     kind = format_name.strip().casefold()
     if kind == "txt":
-        lines = [
+        lines = [f"Processing notice: {notice}" for notice in notices] + [
             f"[{item.start}–{item.end}] {item.speaker}: {item.text}"
             for item in portable_segments
         ]
@@ -1276,6 +1306,7 @@ def export_transcript(
         # Keep the transcript's existing capacity and timestamp layout. The
         # generic block serializer has a lower whole-document size limit.
         lines = [f"# Transcript — {_markdown_escape(source_name)}", ""]
+        lines.extend(f"**Processing notice:** {_markdown_escape(notice)}\n" for notice in notices)
         for item in portable_segments:
             lines.extend(
                 [
@@ -1299,6 +1330,7 @@ def export_transcript(
                 f"Exported from {PRODUCT_NAME} at {created}.", "metadata"
             ),
         ]
+        blocks.extend(ExportBlock(f"Processing notice: {notice}") for notice in notices)
         for item in portable_segments:
             blocks.extend(
                 (
@@ -1388,6 +1420,8 @@ def export_transcript(
                 for item in portable_segments
             ],
         }
+        if notices:
+            payload["processing_notices"] = list(notices)
         return MediaExport(
             (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
             "application/json",

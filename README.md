@@ -18,10 +18,10 @@ tools can support other legal and investigation teams.
 RecordBench is designed to run on infrastructure you control. Its bundled AI
 workflows use local models for retrieval, answers, and media transcription.
 
-> **Development alpha:** Start with synthetic material. RecordBench is not yet
-> a self-service production release or validated for confidential casework.
-> See [release readiness](docs/RELEASE_READINESS.md) for the validation still
-> ahead.
+> **Community beta candidate:** Follow the [GPU reference installation](docs/BETA_REFERENCE_INSTALL.md)
+> with synthetic material. The beta has not been released yet; final reference
+> acceptance and maintainer approval are pending. This is not production
+> certification for confidential casework. See the [candidate release notes](docs/BETA_RELEASE_NOTES.md).
 
 ## See RecordBench in action
 
@@ -49,7 +49,7 @@ synthetic test material, and clear bug reports are as useful as code.
 
 ## Help build RecordBench
 
-This is a maintainer-led contributor alpha. It does not publish any
+This is a maintainer-led community beta candidate. It does not publish any
 organization's private deployment, records, or endorsement. Contributions use
 synthetic examples only, including issue descriptions, screenshots, and logs.
 
@@ -220,7 +220,7 @@ upstream model terms require separate acceptance.
 
 ## Hardware planning targets
 
-These are starting targets for alpha evaluation, not validated minimums or
+These are starting targets for prerelease evaluation, not validated minimums or
 collection-size and concurrency guarantees. Larger matters, longer recordings,
 and more simultaneous users need additional storage and capacity. Consult
 [release readiness](docs/RELEASE_READINESS.md) before treating a configuration
@@ -297,7 +297,7 @@ for either method.
 
 ## Data and repository boundaries
 
-The current alpha uses temporary review workspaces. Matter bytes live under the
+RecordBench uses temporary review workspaces. Matter bytes live under the
 operator-selected managed storage path. Manual closure or scheduled expiry can
 permanently remove that workspace, so users should export and verify anything
 they need to retain. The complete matter bundle includes saved Reports, preserving their
@@ -340,7 +340,7 @@ The [current assessment and delivery plan](docs/PRODUCT_DIRECTION_2026-09-12.md)
 identifies what exists, the remaining gaps, and a staged path forward. The
 [exit-alpha cruise](docs/EXIT_ALPHA_CRUISE.md) selects the active build step.
 
-These are development goals. They are not all available in the current alpha.
+These are development goals. They are not all available in the current prerelease.
 
 ## Help build it
 
@@ -356,9 +356,9 @@ details out of issues, pull requests, and screenshots.
 
 ## Project status
 
-RecordBench is a prerelease project in active alpha development. The source is
-public as a contributor alpha; supported production-release requirements remain
-open. Sharing the source and supporting confidential casework each require the evidence described
+RecordBench is preparing its first community beta. The reviewed source is
+available for evaluation and contribution; the beta tag and final reference
+acceptance remain pending. Supported production-release requirements remain open. Sharing the source and supporting confidential casework each require the evidence described
 in [release readiness](docs/RELEASE_READINESS.md) and the
 [publication checklist](docs/PUBLICATION_CHECKLIST.md).
 

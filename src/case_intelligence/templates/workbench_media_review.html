@@ -40,6 +40,13 @@
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
 
+  {% if transcript_notices %}
+  <section class="media-processing-card" role="status" aria-labelledby="transcript-notices-heading" data-transcript-notices>
+    <h2 id="transcript-notices-heading">Transcript processing notices</h2>
+    {% for message in transcript_notices %}<p>{{ message }}</p>{% endfor %}
+  </section>
+  {% endif %}
+
   {% if media.job and media.job.state in ('queued', 'running') %}
   <section class="media-processing-card" aria-live="polite" data-media-job data-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status">
     <div class="media-processing-copy">
@@ -178,6 +185,7 @@
       <section class="media-export-card media-tool-panel" id="media-export" role="tabpanel" aria-labelledby="media-tool-tab-export" data-media-tool-panel data-media-tool="export" hidden>
         <div class="media-card-heading"><div><p class="eyebrow">Work product</p><h2 id="media-export-heading">Export transcript</h2></div></div>
         <p>Exports use the current reviewed text and confirmed case labels. The immutable machine draft remains in the workbench and is not included in exported files.</p>
+        {% if transcript_notices %}<p>Processing notices are included in Word, Markdown, Text and JSON exports. Subtitle and CSV files contain transcript rows only; include the JSON export to retain these notices.</p>{% endif %}
         <div class="media-export-links">
           {% for value, label in [('docx', 'Word report'), ('markdown', 'Markdown'), ('txt', 'Text'), ('srt', 'SRT'), ('vtt', 'VTT'), ('csv', 'CSV'), ('json', 'JSON')] %}
           <a class="button button-secondary" href="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/transcript-export?format={{ value }}">{{ label }}</a>

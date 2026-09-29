@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "recordbench"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "Local-first evidence and matter review workbench for RecordBench"
 readme = "README.md"
 license = "Apache-2.0"
