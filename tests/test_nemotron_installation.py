@@ -42,7 +42,7 @@ def test_stager_downloads_only_selected_ungated_files_and_binds_backend(tmp_path
         assert kwargs["token"] is False
         assert kwargs["repo_id"] == "nvidia/Nemotron-3-Diarization"
         assert kwargs["revision"] == "0f087031414a6616bda8228f447d915a70a25720"
-        snapshot = kwargs["cache_dir"] / "models--synthetic--diarizer/snapshots" / kwargs["revision"]
+        snapshot = kwargs["cache_dir"] / ("models--" + kwargs["repo_id"].replace("/", "--")) / "snapshots" / kwargs["revision"]
         snapshot.mkdir(parents=True)
         for name in kwargs["allow_patterns"]:
             (snapshot / name).write_bytes(b"synthetic model bytes")
@@ -58,6 +58,9 @@ def test_stager_downloads_only_selected_ungated_files_and_binds_backend(tmp_path
     manifest = json.loads((tmp_path / "huggingface/hub/approved-model-manifest.json").read_text())
     assert len(manifest["artifacts"]) == 1
     assert manifest["artifacts"][0]["license"] == "OpenMDW-1.1"
+    assert all("snapshot_path" in row for row in manifest["artifacts"][0]["files"])
+    assert all(row["snapshot_path"].startswith("models--nvidia--Nemotron-3-Diarization/snapshots/")
+               for row in manifest["artifacts"][0]["files"])
     groups = frozenset({"transcription-diarization"})
     module._verify_stage(tmp_path, ROOT / "config/models.json", groups, "portable", diarization_backend="nemotron")
     with pytest.raises(RuntimeError, match="selection changed"):
@@ -113,3 +116,13 @@ def test_reference_asr_staging_records_logical_snapshot_bindings(tmp_path, monke
         for row in artifact["files"]:
             assert row["path"].startswith(prefix + "/blobs/")
             assert row["snapshot_path"].startswith(prefix + "/snapshots/" + artifact["revision"] + "/")
+
+
+def test_api_and_worker_share_explicit_tokenizer_root():
+    import re
+    compose = (ROOT / "compose.yaml").read_text()
+    for name in ("transcription-api", "transcription-worker"):
+        section = compose.split("\n  " + name + ":\n", 1)[1]
+        section = re.split(r"\n  [a-z][a-z-]*:\n", section, maxsplit=1)[0]
+        assert "      NLTK_DATA: /models/nltk_data\n" in section
+        assert "        target: /models\n        read_only: true" in section

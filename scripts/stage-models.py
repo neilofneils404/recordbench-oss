@@ -423,7 +423,7 @@ def main() -> int:
                     dependency_index += 1
                     role = f"diarization_dependency_{dependency_index}"
                 transcription_artifacts.append(
-                    _artifact(raw, _snapshot_files(snapshot_path, cache, bind_snapshot=role == "asr"), role=role)
+                    _artifact(raw, _snapshot_files(snapshot_path, cache, bind_snapshot=role in {"asr", "diarization"}), role=role)
                 )
         for raw in payload.get("direct_files", []):
             if not isinstance(raw, dict) or not _selected(

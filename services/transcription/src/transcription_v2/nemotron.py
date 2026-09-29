@@ -46,13 +46,24 @@ def validate_turns(value: object) -> list[dict[str, object]]:
 def approved_snapshot(path, *, cache_root, model_readiness) -> bool:
     if not path:
         return False
-    root = Path(path)
+    root = Path(path).expanduser().absolute()
+    cache = Path(cache_root).expanduser().absolute()
     try:
-        for filename in MODEL_FILES:
-            target = root / filename
-            target.resolve(strict=True).relative_to(Path(cache_root).resolve(strict=True))
+        relative = root.relative_to(cache)
+        if any(cache.joinpath(*relative.parts[:i]).is_symlink()
+               for i in range(len(relative.parts) + 1)):
+            return False
+        if not all((root / filename).is_file() for filename in MODEL_FILES):
+            return False
+        for target in root.rglob("*"):
+            if target.is_dir():
+                if target.is_symlink():
+                    return False
+                continue
+            target.resolve(strict=True).relative_to(cache.resolve(strict=True))
             if not model_readiness.authorizes_file(
-                    target, role="diarization", model_id=MODEL_ID, revision=MODEL_REVISION):
+                    target, role="diarization", model_id=MODEL_ID, revision=MODEL_REVISION,
+                    require_snapshot_path=True):
                 return False
         return True
     except (OSError, ValueError):

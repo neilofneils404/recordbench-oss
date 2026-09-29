@@ -194,3 +194,37 @@ def test_stager_binds_every_snapshot_name_including_shared_blobs(linked_snapshot
     readiness = verify_model_manifest(root, manifest)
     with pytest.raises(ValueError, match="not approved and staged"):
         approved_asr_snapshot(root, readiness, "large-v3")
+
+
+def test_import_rejects_v1_symlink_snapshot_inventory(linked_snapshot, tmp_path):
+    from transcription_v2.model_import import import_model_cache
+    root, _, _ = linked_snapshot
+    target = tmp_path / "imported"
+    with pytest.raises(ValueError, match="Local model import failed"):
+        import_model_cache(root, target, max_bytes=1024 * 1024)
+    assert not target.exists()
+
+
+def test_v1_regular_import_checks_destination_before_approval(approved, tmp_path, monkeypatch):
+    import transcription_v2.model_import as importer
+    root, snapshot, _ = approved
+    target = tmp_path / "imported"
+    verify = importer.verify_model_manifest
+    def change_after_hashing(cache, manifest):
+        result = verify(cache, manifest)
+        if Path(cache) == target:
+            (target / snapshot.relative_to(root) / "tokenizer.json").unlink()
+        return result
+    monkeypatch.setattr(importer, "verify_model_manifest", change_after_hashing)
+    with pytest.raises(ValueError, match="Local model import failed"):
+        importer.import_model_cache(root, target, max_bytes=1024 * 1024)
+    assert not (target / "approved-model-manifest.json").exists()
+
+
+def test_v1_regular_import_preserves_usable_snapshot(approved, tmp_path):
+    from transcription_v2.model_import import import_model_cache
+    root, snapshot, _ = approved
+    target = tmp_path / "imported"
+    assert import_model_cache(root, target, max_bytes=1024 * 1024)["ready"]
+    ready = verify_model_manifest(target, target / "approved-model-manifest.json")
+    assert approved_asr_snapshot(target, ready, "large-v3") == target / snapshot.relative_to(root)

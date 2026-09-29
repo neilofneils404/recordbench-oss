@@ -153,7 +153,7 @@ class ModelReadiness:
         allowing a manifest to approve the regular blob while the model loader
         receives ``snapshots/<revision>/config.yaml``. File identities remain
         private and are intentionally omitted from :meth:`public_dict`.
-        ASR loaders additionally require the exact manifest-approved logical
+        Snapshot loaders additionally require the exact manifest-approved logical
         snapshot pathname, not just any approved inode in that artifact.
         """
 
@@ -448,10 +448,10 @@ def _parse_manifest(content: bytes) -> tuple[str, tuple[_Artifact, ...], tuple[A
             if not isinstance(file_value, Mapping):
                 raise ModelManifestError("manifest_invalid")
             _exact_keys(file_value, {"path", "size_bytes", "sha256"} |
-                        ({"snapshot_path"} if role == "asr" and "snapshot_path" in file_value else set()))
+                        ({"snapshot_path"} if role in {"asr", "diarization"} and "snapshot_path" in file_value else set()))
             parts = _manifest_path_parts(file_value.get("path"))
             snapshot_parts = None
-            if role == "asr":
+            if role in {"asr", "diarization"}:
                 snapshot_parts = _manifest_path_parts(file_value.get("snapshot_path", file_value["path"]))
                 if "snapshot_path" in file_value:
                     prefix = ("models--" + model_id.replace("/", "--"), "snapshots", revision)

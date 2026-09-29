@@ -29,8 +29,13 @@ Image-wide reproducibility and vulnerability acceptance require the remaining
 release artifact gates; these locks alone do not establish them.
 
 The worker verifies all manifest bytes before constructing an engine, then
-requires the selected snapshot's three runtime files to match the verified
-Nemotron artifact and exact revision. Keep the model cache read-only. The child
+requires the selected snapshot's three runtime files plus any additional files
+to match their exact manifest-approved logical names, blobs and model revision.
+Staging records `snapshot_path` for symlinked files; swapped approved blobs,
+unrecorded aliases and linked directories are rejected even after restart.
+Older blob-only approvals require layout verification against the pinned
+revision and deliberate restaging before activation. Do not reapprove an
+unexplained cache modification. Keep the model cache read-only. The child
 uses local files only and offline library settings; the worker's network policy
 must independently deny egress. Private input paths travel over stdin rather
 than process arguments. Dependency stderr is discarded and never becomes an
