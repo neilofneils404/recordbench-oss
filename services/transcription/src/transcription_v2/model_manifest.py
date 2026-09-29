@@ -101,6 +101,10 @@ class ArtifactReadiness:
         compare=False,
     )
 
+    verified_snapshot_signatures: frozenset[tuple[str, _FileSignature]] = field(
+        default_factory=frozenset, repr=False, compare=False,
+    )
+
     def public_dict(self) -> dict[str, object]:
         return {
             "role": self.role,
@@ -141,6 +145,7 @@ class ModelReadiness:
         role: str,
         model_id: str,
         revision: str | None = None,
+        require_snapshot_path: bool = False,
     ) -> bool:
         """Return whether an exact verified artifact file backs ``path``.
 
@@ -148,6 +153,8 @@ class ModelReadiness:
         allowing a manifest to approve the regular blob while the model loader
         receives ``snapshots/<revision>/config.yaml``. File identities remain
         private and are intentionally omitted from :meth:`public_dict`.
+        ASR loaders additionally require the exact manifest-approved logical
+        snapshot pathname, not just any approved inode in that artifact.
         """
 
         try:
@@ -162,6 +169,8 @@ class ModelReadiness:
             and artifact.model_id == model_id
             and (revision is None or artifact.revision == revision)
             and signature in artifact.verified_file_signatures
+            and (not require_snapshot_path or
+                 (str(_absolute_path(path)), signature) in artifact.verified_snapshot_signatures)
             for artifact in self.artifacts
         )
 
@@ -188,6 +197,7 @@ class _ExpectedFile:
     sha256: str
     artifact_role: str
     file_index: int
+    snapshot_parts: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -433,11 +443,24 @@ def _parse_manifest(content: bytes) -> tuple[str, tuple[_Artifact, ...], tuple[A
         if total_files > _MAX_FILES:
             raise ModelManifestError("manifest_invalid")
         files: list[_ExpectedFile] = []
+        snapshot_targets: dict[tuple[str, ...], tuple[str, ...]] = {}
         for file_index, file_value in enumerate(file_values):
             if not isinstance(file_value, Mapping):
                 raise ModelManifestError("manifest_invalid")
-            _exact_keys(file_value, {"path", "size_bytes", "sha256"})
+            _exact_keys(file_value, {"path", "size_bytes", "sha256"} |
+                        ({"snapshot_path"} if role == "asr" and "snapshot_path" in file_value else set()))
             parts = _manifest_path_parts(file_value.get("path"))
+            snapshot_parts = None
+            if role == "asr":
+                snapshot_parts = _manifest_path_parts(file_value.get("snapshot_path", file_value["path"]))
+                if "snapshot_path" in file_value:
+                    prefix = ("models--" + model_id.replace("/", "--"), "snapshots", revision)
+                    if snapshot_parts[:3] != prefix or len(snapshot_parts) <= 3:
+                        raise ModelManifestError("manifest_invalid")
+                previous_target = snapshot_targets.get(snapshot_parts)
+                if previous_target is not None and previous_target != parts:
+                    raise ModelManifestError("manifest_invalid")
+                snapshot_targets[snapshot_parts] = parts
             size_bytes = file_value.get("size_bytes")
             if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0:
                 raise ModelManifestError("manifest_invalid")
@@ -457,6 +480,7 @@ def _parse_manifest(content: bytes) -> tuple[str, tuple[_Artifact, ...], tuple[A
                     sha256=sha256,
                     artifact_role=role,
                     file_index=file_index,
+                    snapshot_parts=snapshot_parts,
                 )
             )
         artifacts.append(
@@ -588,6 +612,10 @@ def verify_model_manifest(
                 verified_bytes=sum(item.size_bytes for item in artifact.files),
                 verified_file_signatures=frozenset(
                     verified[item.parts] for item in artifact.files
+                ),
+                verified_snapshot_signatures=frozenset(
+                    (str(root.joinpath(*item.snapshot_parts)), verified[item.parts])
+                    for item in artifact.files if item.snapshot_parts is not None
                 ),
             )
             for artifact in artifacts

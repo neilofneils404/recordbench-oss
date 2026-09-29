@@ -166,3 +166,18 @@ class QueueReadinessTests(ReadinessTests):
             with self.subTest(version=version):
                 result = self._report(_FakeDistribution(package_root, version))
                 self.assertEqual(result["checks"]["whisperx_version_compatible"], expected)
+
+    def test_worker_still_requires_executable_nemotron_interpreter(self):
+        from transcription_v2.nemotron import MODEL_FILES
+        model = self.cache / "nemotron"
+        model.mkdir()
+        for name in MODEL_FILES:
+            (model / name).write_bytes(b"synthetic")
+        interpreter = self.root / "worker-python"
+        with mock.patch.dict(os.environ, {"TRANSCRIPTION_V2_NEMOTRON_PYTHON": str(interpreter)}):
+            self.assertFalse(resources._diarization_config_present(model, "nemotron"))
+            interpreter.write_text("#!/bin/sh\nexit 0\n")
+            interpreter.chmod(0o600)
+            self.assertFalse(resources._diarization_config_present(model, "nemotron"))
+            interpreter.chmod(0o700)
+            self.assertTrue(resources._diarization_config_present(model, "nemotron"))
