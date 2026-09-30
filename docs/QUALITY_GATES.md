@@ -79,3 +79,38 @@ suite is expected only when the scope check proved the documentation allowance;
 it must never be reported as an executed test pass. Record run IDs and observed
 outcomes in the PR rather than creating another receipt commit solely to record
 the preceding receipt's checks.
+
+## Diagnose incomplete application runs
+
+The full application suite prints each test node and its outcome as it runs,
+with unbuffered output. A failure is identifiable even if a later test stalls
+and the job reaches its timeout. Short tracebacks, failure/skip summaries and
+the 25 slowest test phases are printed when pytest finishes. This does not stop
+at the first failure, retry failing tests, change selection or extend timeouts.
+Captured stdout, stderr and logs are excluded from failure output and JUnit
+logging; fixtures and assertion messages must still be synthetic.
+
+The job attempts to retain only `application-results.xml` for five days, on
+success or failure, with the run ID and attempt in the artifact name. JUnit XML
+is finalized at session end: a hard cancellation can prevent both report
+creation and artifact upload. Use the streamed job log for an incomplete run;
+missing XML is not evidence of success. No workspace, database, media, secret
+scanner output or environment dump is uploaded by this step.
+
+### Duplicate push and PR runs
+
+Branch pushes and PR merge candidates still run independently. Deduplication
+is deferred: an open PR alone does not prove that its current merge-candidate
+workflow will run. In particular, [GitHub does not run `pull_request` workflows
+on merge conflicts](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request).
+A shared concurrency key can cancel the required integration run, while simply
+skipping a same-named required job can produce an ambiguous green result.
+Read-only `contents` permission also does not establish PR/API access.
+
+A follow-up must prove exact-head and base coverage, missing/failed API lookup
+fallback, fork/conflict and event-race behavior, and native required-check
+eligibility before suppressing work. Default-branch and tag pushes, branches
+without a PR, exact-head publication inspection and secret scanning must retain
+their existing coverage. Until then, inspect both runs and do not describe a
+cancelled or skipped application run as a test pass. Required names, triggers,
+permissions, concurrency and the conservative scope policy are unchanged.

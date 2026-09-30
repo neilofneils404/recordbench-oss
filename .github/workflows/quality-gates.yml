@@ -136,7 +136,20 @@ jobs:
           # Hosted runners are intentionally smaller than supported review nodes.
           # Production keeps the 100 GiB default from recordbench.env.example.
           CASE_INTELLIGENCE_STORAGE_RESERVE_GIB: "0"
-        run: .venv/bin/python -m pytest -q
+        # Unbuffered verbose output identifies failed/active nodes before timeout.
+        # Captured streams stay private; only synthetic failure tracebacks are shown.
+        run: >-
+          .venv/bin/python -u -m pytest -v --tb=short --show-capture=no
+          -ra --durations=25 -o junit_logging=no
+          --junitxml="${{ runner.temp }}/application-results.xml"
+      - name: Retain application test report
+        if: ${{ always() && needs.change-scope.outputs.docs_only != 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: application-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/application-results.xml
+          if-no-files-found: warn
+          retention-days: 5
 
   postgres-integration:
     needs: change-scope
