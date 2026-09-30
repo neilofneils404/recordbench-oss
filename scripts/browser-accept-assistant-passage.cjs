@@ -124,6 +124,7 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   await page.locator(`[data-assistant-dock][data-conversation-id="${fixture.conversation}"][data-bound="true"]`).waitFor();
   await page.goBack(); assert.equal(page.url(), reader);
   await page.goForward(); assert.equal(new URL(page.url()).pathname, fixture.matter + '/notebook');
+  await page.locator(`[data-assistant-dock][data-conversation-id="${fixture.conversation}"][data-bound="true"]`).waitFor();
   await page.goBack(); await page.reload();
   await page.locator(`[data-assistant-dock][data-conversation-id="${fixture.conversation}"][data-bound="true"]`).waitFor();
   await page.locator('[data-assistant-save-passage]').first().locator('button').click();

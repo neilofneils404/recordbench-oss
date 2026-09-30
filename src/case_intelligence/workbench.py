@@ -15160,8 +15160,10 @@ def create_workbench_app(
         return_path = _source_review_return_href(slug, return_to)
 
         def return_with_feedback(message: str, *, error: bool = False):
-            parsed = urlparse(return_path or _query_url(
-                f"/matters/{slug}", conversation=conversation_id) + "#latest")
+            fallback = _query_url(f"/matters/{slug}", conversation=conversation_id)
+            if not error:
+                fallback += "#latest"
+            parsed = urlparse(return_path or fallback)
             query = parse_qs(parsed.query, keep_blank_values=True)
             query.pop("error", None)
             query.pop("notice", None)

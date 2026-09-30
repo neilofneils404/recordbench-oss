@@ -98,6 +98,14 @@ def test_stale_citation_and_lost_access_do_not_save(saved_answer):
     stale = client.post(url, headers={'Accept': 'application/json'})
     assert stale.status_code == 409
     assert 'message' in stale.json()
+    legacy = client.post(url, follow_redirects=False)
+    assert legacy.status_code == 303
+    assert urlsplit(legacy.headers['location']).fragment == ''
+    assert 'error' in parse_qs(urlsplit(legacy.headers['location']).query)
+    reader = f'/matters/{matter.slug}/sources?query=gauge#source-section-2'
+    fallback = client.post(url, data={'return_to': reader}, follow_redirects=False)
+    assert urlsplit(fallback.headers['location']).fragment == 'source-section-2'
+    assert parse_qs(urlsplit(fallback.headers['location']).query)['query'] == ['gauge']
     assert not bench.workspace.all_notebook_items(matter.matter_id, ACTOR)
     bench.workspace.revoke_member(matter.matter_id, ACTOR, 'synthetic-dock-owner')
     denied = client.post(url, headers={'Accept': 'application/json'})
