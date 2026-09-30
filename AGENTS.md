@@ -28,6 +28,24 @@ All fixtures must be synthetic. Model changes require an exact revision,
 license record, local/offline readiness test, and representative evaluation.
 Schema or storage changes require backup and clean restore evidence.
 
+## Start and resume here
+
+Start by reading **Current state** and **PR rules** in
+[docs/EXIT_ALPHA_CRUISE.md](docs/EXIT_ALPHA_CRUISE.md) and the relevant linked
+brief. Verify the actual checkout, branch and upstream PR state before acting.
+Respect existing holds; when no product increment is selected, ask before
+choosing a new one.
+
+Update that existing **Current state** section with the normal authorized
+commit/PR only when the goal, unresolved blocker or next useful action
+materially changes. Keep it short, link evidence, distinguish proposed, local
+and landed work, and preserve historical receipts. Do not add session logs,
+duplicate Git/CI summaries, new tracking files or manual handoff requests.
+
+This continuity practice preserves all existing publication, validation and
+authorization safeguards; it grants no additional commit, push, merge or
+deployment authorization.
+
 ## Upstream role
 
 This repository is the authoritative source for portable RecordBench product
