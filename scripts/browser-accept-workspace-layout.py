@@ -426,7 +426,7 @@ def main(argv=None):
                 viewport(width, height)
                 driver.get(base + prefix + "/setup?view=list")
                 disclosure, summary, links = disclosure_links()
-                assert "Sources" in summary.text
+                assert "Document review" in summary.text
                 destinations = [(link.text, link.get_attribute("href")) for link in links]
                 if width == 390:
                     for label, destination in destinations:
