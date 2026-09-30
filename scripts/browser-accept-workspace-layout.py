@@ -200,9 +200,21 @@ def main(argv=None):
                 # below the manual-note form at both normal and short heights.
                 find(".suggestion-tool select").send_keys(Keys.TAB)
                 suggestion = find(".suggestion-tool button")
-                wait.until(lambda _: driver.switch_to.active_element == suggestion
-                    and rect(suggestion)["top"] >= rect(find(".topbar"))["bottom"]
-                    and rect(suggestion)["bottom"] <= height)
+                def discovery_visible(_):
+                    # Native focus scrolling can land on a fractional CSS pixel.
+                    # Measure one frame, allowing the same 1px rounding tolerance
+                    # used elsewhere while also checking the center is unobscured.
+                    result = js("""const e=arguments[0],r=e.getBoundingClientRect();
+                        const top=document.querySelector('.topbar').getBoundingClientRect().bottom;
+                        const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+                        return {focused:document.activeElement===e,top:r.top,bottom:r.bottom,
+                            topbar_bottom:top,viewport_height:innerHeight,
+                            unobscured:e.contains(hit)};""", suggestion)
+                    measurements[f"notes_discovery_focus_{height}"] = result
+                    return (result["focused"] and result["unobscured"]
+                        and result["top"] >= result["topbar_bottom"] - 1
+                        and result["bottom"] <= result["viewport_height"] + 1)
+                wait.until(discovery_visible)
 
                 rail, matter_list = find(".matter-rail"), find(".matter-list")
                 rail_before = rect(rail)

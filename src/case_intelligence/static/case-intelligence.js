@@ -3399,7 +3399,16 @@
   let assistantDraft = false;
   let assistantDraftBuffer = null;
   let assistantEpoch = 0;
+  let assistantHistorySwitch = null;
   let reviewQuestionScope = null;
+
+  const releaseAssistantHistorySwitch = (operation = assistantHistorySwitch) => {
+    if (!operation || assistantHistorySwitch !== operation) return;
+    assistantHistorySwitch = null;
+    if (operation.dock !== assistantDock || !operation.picker.isConnected) return;
+    operation.picker.disabled = false;
+    operation.picker.value = assistantDraft ? "__draft__" : assistantDock.dataset.conversationId || "";
+  };
 
   const assistantConversationPreferenceKey = () => {
     const matterId = assistantDock?.dataset.matterId || "";
@@ -3534,6 +3543,7 @@
     if (!assistantDock) return;
     assistantEpoch += 1;
     window.clearTimeout(assistantPollTimer);
+    releaseAssistantHistorySwitch();
     if (assistantDraft && assistantDock.querySelector("[data-assistant-question-form]")?.getAttribute("aria-busy") !== "true") {
       const picker = assistantDock.querySelector("[data-assistant-conversation-picker]");
       if (picker) { picker.value = "__draft__"; picker.disabled = false; }
@@ -3588,6 +3598,7 @@
     if (scope) {
       scope.value = buffered?.sourceSet || "";
       if (scope.selectedIndex < 0) scope.selectedIndex = 0;
+      reviewQuestionScope = { id: scope.value, name: scope.selectedOptions[0]?.textContent || "" };
     }
     const requestKey = form?.querySelector("[data-assistant-request-key]");
     if (requestKey && buffered?.requestKey) requestKey.value = buffered.requestKey;
@@ -3645,6 +3656,7 @@
 
   const refreshAssistant = async (requestedFragmentUrl = "") => {
     window.clearTimeout(assistantPollTimer);
+    if (!requestedFragmentUrl) releaseAssistantHistorySwitch();
     const fragmentUrl = requestedFragmentUrl || assistantDock?.dataset.fragmentUrl;
     if (!fragmentUrl) return;
     const epoch = ++assistantEpoch;
@@ -3772,6 +3784,7 @@
     assistantDock.querySelector('select[name="source_set"]')?.addEventListener("change", (event) => {
       assistantEpoch += 1;
       window.clearTimeout(assistantPollTimer);
+      releaseAssistantHistorySwitch();
       reviewQuestionScope = { id: event.target.value, name: event.target.selectedOptions[0]?.textContent || "" };
       resumeAssistantAfterScopeChange();
     });
@@ -3830,10 +3843,12 @@
           };
         }
       }
+      releaseAssistantHistorySwitch();
+      const historyOperation = { dock: assistantDock, picker: conversationPicker };
+      assistantHistorySwitch = historyOperation;
       conversationPicker.disabled = true;
       const switchEpoch = assistantEpoch + 1;
       try {
-        saveAssistantConversationPreference(conversationId);
         await refreshAssistant(assistantFragmentUrl(conversationId));
       } catch (_error) {
         if (switchEpoch !== assistantEpoch) return;
@@ -3845,6 +3860,8 @@
           status.classList.add("is-terminal", "is-failed");
         }
         if (copy) copy.textContent = "That saved chat could not be opened. Try again.";
+      } finally {
+        releaseAssistantHistorySwitch(historyOperation);
       }
     });
 
@@ -3872,6 +3889,11 @@
         return;
       }
       if (form.getAttribute("aria-busy") === "true") return;
+      // A new submission supersedes history work even when that work began
+      // at the terminal transition of the previous question.
+      assistantEpoch += 1;
+      window.clearTimeout(assistantPollTimer);
+      releaseAssistantHistorySwitch();
       const epoch = assistantEpoch;
       const originatingDock = assistantDock;
       const submittedQuestion = textarea.value.trim();
@@ -3899,6 +3921,9 @@
         const job = await assistantJson(response);
         if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
         if (submittedDraft) saveAcceptedAssistantDraft(job);
+        // The accepted request keeps its captured key. The next intentional
+        // question needs a new key even before terminal history refreshes.
+        newAssistantRequestKey();
         textarea.value = "";
         resizeAssistantTextarea(textarea);
         appendAssistantUserMessage(submittedQuestion);
@@ -4040,7 +4065,7 @@
     }
   }
 
-  window.addEventListener("pagehide", () => { assistantEpoch += 1; window.clearTimeout(assistantPollTimer); });
+  window.addEventListener("pagehide", () => { assistantEpoch += 1; window.clearTimeout(assistantPollTimer); releaseAssistantHistorySwitch(); });
   window.addEventListener("pageshow", (event) => { if (event.persisted && assistantDock) pollAssistant(); });
 
   const reviewWorkspace = document.querySelector("[data-review-workspace]");
@@ -4055,6 +4080,46 @@
     const noteTime = noteForm?.querySelector("[data-note-media-time]");
     let noteSubmission = null;
     let savedNote = false;
+    let noteRetryMetadata = null;
+    let noteRestoreProblem = "";
+    const restoreNoteAttempt = () => {
+      const metadata = window.history.state?.recordbenchSourceNote;
+      if (!metadata || !noteForm) return;
+      // Only retry identity and source coordinates enter browser history. The
+      // prose is never stored here; the server checks it against any saved key.
+      const sameSource = typeof metadata === "object" && metadata.action === noteForm.action
+        && ["source_version_id", "source_basis", "unit"].every((name) =>
+          (metadata[name] || "") === (noteForm.querySelector(`[name="${name}"]`)?.value || ""))
+        && /^[A-Za-z0-9_-]{16,80}$/.test(metadata.request_key || "")
+        && (!noteTime || /^\d+$/.test(metadata.start_ms || ""));
+      if (!sameSource) {
+        noteRestoreProblem = "The earlier note’s source context could not be restored safely. Inspect saved case notes, then explicitly start another note.";
+      } else {
+        noteRetryMetadata = metadata;
+        noteForm.querySelector('[name="request_key"]').value = metadata.request_key;
+        if (noteTime) noteTime.value = metadata.start_ms;
+      }
+      noteForm.querySelector("[data-source-note-new]").hidden = false;
+      noteForm.querySelector("[data-source-note-status]").textContent = noteRestoreProblem
+        || "Earlier save attempt restored. Saving retries that same note and position. If its text was not restored, open saved case notes or explicitly write another note.";
+    };
+    restoreNoteAttempt();
+    window.addEventListener("pageshow", () => window.setTimeout(() => {
+      // Chromium restores form values after pageshow. Making a new textarea
+      // readonly earlier can prevent that native restoration altogether.
+      restoreNoteAttempt();
+      if (noteRetryMetadata || noteRestoreProblem) {
+        noteBody.readOnly = true;
+        noteForm.querySelector('button[type="submit"]').disabled = savedNote || !noteBody.value.trim() || Boolean(noteRestoreProblem);
+        if (!noteBody.value.trim()) noteForm.querySelector("[data-source-note-status]").textContent = "An earlier save attempt exists, but this browser did not restore its text. Open saved case notes to inspect it, or explicitly write another note.";
+      }
+    }, 0));
+    const persistNoteAttempt = () => {
+      const metadata = { action: noteForm.action };
+      ["request_key", "source_version_id", "source_basis", "unit", "start_ms"].forEach((name) => { metadata[name] = noteSubmission.get(name) || ""; });
+      window.history.replaceState({ ...(window.history.state || {}), recordbenchSourceNote: metadata }, "");
+      noteRetryMetadata = metadata;
+    };
     let layout = {};
     try {
       const savedLayout = JSON.parse(localStorage.getItem(preference) || "{}");
@@ -4077,6 +4142,7 @@
     setWidth(layout.width);
     paneWidth?.addEventListener("input", () => { setWidth(paneWidth.value); saveLayout(); });
     const snapshotPlayback = () => {
+      if (noteRetryMetadata || noteRestoreProblem) return;
       const player = document.querySelector("[data-media-player]");
       if (noteTime && player && Number.isFinite(player.currentTime)) noteTime.value = String(Math.floor(player.currentTime * 1000));
     };
@@ -4122,6 +4188,7 @@
         }
         assistantEpoch += 1;
         window.clearTimeout(assistantPollTimer);
+        releaseAssistantHistorySwitch();
         reviewQuestionScope = { id: result.source_set_id, name: result.name };
         applyReviewQuestionScope();
         resumeAssistantAfterScopeChange();
@@ -4136,8 +4203,13 @@
       if (noteForm.getAttribute("aria-busy") === "true" || savedNote) return;
       const button = noteForm.querySelector('button[type="submit"]');
       const feedback = noteForm.querySelector("[data-source-note-status]");
+      if (!noteBody.value.trim()) {
+        feedback.textContent = "No note text is available to retry. Open saved case notes or explicitly write another note.";
+        return;
+      }
       // Freeze body, version, section and timestamp across lost-response retries.
       // An explicit new note is the only action that starts a fresh save identity.
+      restoreNoteAttempt();
       if (!noteSubmission) { snapshotPlayback(); noteSubmission = new FormData(noteForm); }
       noteBody.readOnly = true;
       if (noteTime) noteTime.readOnly = true;
@@ -4145,6 +4217,10 @@
       button.disabled = true;
       feedback.textContent = "Saving your source-linked note…";
       try {
+        if (noteRestoreProblem) throw new Error(noteRestoreProblem);
+        // Persist the immutable retry identity before a request can commit.
+        // If this fails, no write is sent under an identity Back could lose.
+        persistNoteAttempt();
         const response = await fetch(noteForm.action, { method: "POST", body: noteSubmission, headers: { Accept: "application/json", "X-CSRF-Token": csrfToken } });
         const result = await assistantJson(response);
         if (!result.item_id) throw new Error("The save could not be confirmed.");
@@ -4160,7 +4236,16 @@
     });
     noteForm?.querySelector("[data-source-note-new]")?.addEventListener("click", () => {
       if (noteForm.getAttribute("aria-busy") === "true") return;
+      try {
+        const state = { ...(window.history.state || {}) };
+        delete state.recordbenchSourceNote;
+        window.history.replaceState(state, "");
+      } catch (_error) {
+        noteForm.querySelector("[data-source-note-status]").textContent = "The earlier retry identity could not be cleared. Inspect saved case notes before starting another note.";
+        return;
+      }
       noteSubmission = null; savedNote = false;
+      noteRetryMetadata = null; noteRestoreProblem = "";
       const bytes = new Uint8Array(16); window.crypto.getRandomValues(bytes);
       noteForm.querySelector('[name="request_key"]').value = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
       noteBody.readOnly = false; noteBody.value = "";

@@ -57,9 +57,18 @@ with tempfile.TemporaryDirectory() as temporary:
     bench.workspace.append_message(matter.matter_id, alternate.conversation_id, 'assistant', 'Historical synthetic alternate answer.')
     prefix = f'/matters/{matter.slug}'
     paths = {kind:prefix+'/sources/'+bench.source_store(matter).action_token(doc)+'?browse=sort%3Dname&unit=1&start_ms=1000&conversation='+conversation.conversation_id for kind, doc in documents.items()}
+    @client.app.get('/synthetic-note-evidence/{item_id}')
+    def note_evidence(item_id: str):
+        item=bench.workspace.notebook_item(matter.matter_id,'development-taylor-morgan',item_id)
+        refs=bench.workspace.notebook_references(matter.matter_id,'development-taylor-morgan',item_id)
+        support=bench.support(matter,refs[0].support_token)
+        return dict(item_id=item.item_id,body=item.body,origin=item.origin,status=item.status,
+            source_version_id=refs[0].source_version_id,document_id=refs[0].document_id,
+            location=refs[0].location,start_ms=support.start_ms,end_ms=support.end_ms,
+            total=len(bench.workspace.all_notebook_items(matter.matter_id,'development-taylor-morgan')))
     listener = socket.socket()
     listener.bind(('127.0.0.1',0))
-    print(json.dumps(dict(base='http://127.0.0.1:'+str(listener.getsockname()[1]),reader=paths['pdf'],media=paths['video'],audio=paths['transcript'],matter=prefix,conversation=conversation.conversation_id,alternate=alternate.conversation_id)),flush=True)
+    print(json.dumps(dict(base='http://127.0.0.1:'+str(listener.getsockname()[1]),reader=paths['pdf'],media=paths['video'],audio=paths['transcript'],matter=prefix,conversation=conversation.conversation_id,alternate=alternate.conversation_id,video_id=video.document_id,video_version=video.version_id)),flush=True)
     try:
         uvicorn.Server(uvicorn.Config(client.app,lifespan='off',log_level='warning')).run(sockets=[listener])
     finally:
@@ -73,6 +82,7 @@ const deadline = setTimeout(() => {
   process.exitCode = 1;
 }, 90000);
 const checks = [];
+const observations = {};
 const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim());
 (async () => {
@@ -119,6 +129,73 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   await note.locator('button[type=submit]').click();
   await note.locator('[role=status]').filter({hasText:/already/i}).waitFor();
   checks.push('Lost save response retains draft and retries the same note without duplicate creation.');
+  await note.locator('[data-source-note-new]').click();
+  const navigationBody='Synthetic note saved before navigation response was received.';
+  await note.locator('textarea').fill(navigationBody);
+  const navigationSubmission=await note.evaluate(e=>Object.fromEntries(new FormData(e)));
+  let releaseNoteNavigation,arrivedNoteNavigation,savedNavigation;
+  const noteNavigationHold=new Promise(r=>releaseNoteNavigation=r),noteNavigationArrived=new Promise(r=>arrivedNoteNavigation=r);
+  await page.route('**'+noteAction,async route=>{const response=await route.fetch();savedNavigation=await response.json();arrivedNoteNavigation();await noteNavigationHold;await route.fulfill({response}).catch(()=>{});});
+  await note.locator('button[type=submit]').click();await noteNavigationArrived;
+  const storedNoteMetadata=await page.evaluate(()=>history.state.recordbenchSourceNote);
+  assert.deepEqual(Object.keys(storedNoteMetadata).sort(),['action','request_key','source_version_id','source_basis','unit','start_ms'].sort());
+  assert.equal(await page.evaluate(value=>JSON.stringify(history.state).includes(value),navigationBody),false);
+
+  const stayDialog=new Promise(resolve=>page.once('dialog',async dialog=>{assert.equal(dialog.type(),'beforeunload');await dialog.dismiss();resolve();}));
+  await page.getByRole('link',{name:'Case notes',exact:true}).click({noWaitAfter:true});await stayDialog;
+  assert.equal(page.url(),reader);
+  assert.equal(await note.locator('textarea').inputValue(),navigationBody);
+  const leaveDialog=new Promise(resolve=>page.once('dialog',async dialog=>{assert.equal(dialog.type(),'beforeunload');await dialog.accept();resolve();}));
+  await page.getByRole('link',{name:'Case notes',exact:true}).click({noWaitAfter:true});await leaveDialog;
+  await page.waitForURL('**/notebook');releaseNoteNavigation();
+  await page.unroute('**'+noteAction);
+  await page.goBack();await note.waitFor();
+  observations.human_note_draft_after_confirmed_navigation=await note.locator('textarea').inputValue();
+  observations.human_note_returned_request_key_matches=await note.locator('[name=request_key]').inputValue()===navigationSubmission.request_key;
+  observations.human_note_returned_save_disabled=await note.locator('button[type=submit]').isDisabled();
+  observations.human_note_returned_busy=await note.getAttribute('aria-busy');
+  // The original request receipt is retained by this test, not by a claim that
+  // the UI restores abandoned drafts. Verify its retry boundary independently.
+  const navigationEvidence=await (await page.request.get(fixture.base+'/synthetic-note-evidence/'+savedNavigation.item_id)).json();
+  assert.equal(navigationEvidence.body,navigationBody);
+  const retryAfterNavigation=await page.request.post(fixture.base+noteAction,{form:navigationSubmission,headers:{Accept:'application/json'}});
+  assert.equal(retryAfterNavigation.status(),200);
+  const retriedNavigation=await retryAfterNavigation.json();
+  assert.equal(retriedNavigation.created,false);assert.equal(retriedNavigation.item_id,savedNavigation.item_id);
+  const navigationEvidenceAfter=await (await page.request.get(fixture.base+'/synthetic-note-evidence/'+savedNavigation.item_id)).json();
+  assert.equal(navigationEvidenceAfter.total,navigationEvidence.total);
+  const returnedUiResponse=page.waitForResponse(response=>response.request().method()==='POST'&&response.url().endsWith('/notes'));
+  await note.locator('button[type=submit]').click();
+  const returnedUiResult=await returnedUiResponse;
+  const returnedUiSave=await returnedUiResult.json();
+  observations.human_note_returned_ui_status=returnedUiResult.status();
+  observations.human_note_returned_ui_created=returnedUiSave.created;
+  assert.equal(returnedUiSave.item_id,savedNavigation.item_id,'Restored human-note UI must retain its retry identity');
+  assert.equal(returnedUiSave.created,false,'Returning after an uncertain save must not create a duplicate');
+  const afterReturnedUi=await (await page.request.get(fixture.base+'/synthetic-note-evidence/'+savedNavigation.item_id)).json();
+  assert.equal(afterReturnedUi.total,navigationEvidence.total);
+  await note.locator('[data-source-note-new]').click();
+  await note.locator('textarea').fill('Synthetic deliberate new note after returning to this source.');
+  const intentionalResponse=page.waitForResponse(response=>response.request().method()==='POST'&&response.url().endsWith('/notes'));
+  await note.locator('button[type=submit]').click();
+  const intentionalSave=await (await intentionalResponse).json();
+  assert.equal(intentionalSave.created,true);assert.notEqual(intentionalSave.item_id,savedNavigation.item_id);
+  const afterIntentional=await (await page.request.get(fixture.base+'/synthetic-note-evidence/'+intentionalSave.item_id)).json();
+  assert.equal(afterIntentional.total,navigationEvidence.total+1);
+  const missingDraft=await context.newPage();let missingDraftPosts=0;
+  missingDraft.on('request',request=>{if(request.method()==='POST'&&request.url().endsWith('/notes'))missingDraftPosts+=1;});
+  await missingDraft.goto(fixture.base+fixture.reader);
+  await missingDraft.evaluate(metadata=>{history.replaceState({...history.state,recordbenchSourceNote:metadata},'');window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));},storedNoteMetadata);
+  await missingDraft.waitForFunction(()=>document.querySelector('[data-source-note-form] button[type=submit]').disabled);
+  assert.equal(await missingDraft.locator('[data-source-note-form] textarea').inputValue(),'');
+  assert.match(await missingDraft.locator('[data-source-note-status]').innerText(),/not restored|no text|saved case notes/i);
+  assert.equal(await missingDraft.locator('[data-source-note-new]').isEnabled(),true);assert.equal(missingDraftPosts,0);
+  await missingDraft.close();
+
+
+
+  checks.push('Cancelling unload keeps a pending note; Back retries the original save without duplication, while explicit new-note creation remains distinct and history stores no prose.');
+
   await page.locator('[data-review-note-close]').click();
   await expand();
   // Delayed saved-chat fragment must not restore old history after New chat.
@@ -145,6 +222,25 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   assert.equal(await page.locator('[data-assistant-conversation-picker]').isDisabled(),false);
   await page.unroute('**/assistant?**');
   checks.push('Repeated New chat from a draft invalidates a pending saved-chat selection while preserving the draft.');
+  let releaseScopeHistory,arrivedScopeHistory;
+  const scopeHistoryHold=new Promise(r=>releaseScopeHistory=r),scopeHistoryArrived=new Promise(r=>arrivedScopeHistory=r);
+  await page.route('**/assistant?**',async route=>{const response=await route.fetch();arrivedScopeHistory();await scopeHistoryHold;await route.fulfill({response}).catch(()=>{});});
+  await page.locator('[data-assistant-conversation-picker]').selectOption(fixture.alternate);await scopeHistoryArrived;
+  const scopeHistoryDraft=await page.locator('#assistant-question').inputValue();
+  await page.locator('[data-review-ask-source] button').click();
+  await page.locator('[data-review-ask-source] [role=status]').filter({hasText:'Source selected'}).waitFor();
+  assert.equal(await page.locator('[data-assistant-conversation-picker]').isDisabled(),false);
+  releaseScopeHistory();await page.waitForTimeout(150);
+  assert.equal(await page.locator('#assistant-question').inputValue(),scopeHistoryDraft);
+  assert.equal(await page.locator('[data-assistant-dock]').getAttribute('data-conversation-id'),'');
+  assert.match(await page.locator('#assistant-source-set option:checked').innerText(),/Synthetic extended/);
+  await page.unroute('**/assistant?**');
+  await page.locator('[data-assistant-conversation-picker]').selectOption(fixture.alternate);
+  await page.locator(`[data-assistant-dock][data-conversation-id="${fixture.alternate}"]`).waitFor();
+  await page.locator('[data-assistant-new-chat]').click();
+  await page.locator('#assistant-question').fill('New draft after delayed history.');
+  checks.push('Source selection invalidates held history, preserves draft/scope and re-enables the saved-chat picker for another selection.');
+
   // Delay accepted question response, then deliberately change composer state.
   let releaseAsk, arrivedAsk;
   const askHold=new Promise(r=>releaseAsk=r),askArrived=new Promise(r=>arrivedAsk=r);
@@ -187,6 +283,24 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   await player.evaluate(e=>{e.pause();e.currentTime=1;});
   await page.waitForTimeout(150);
   await page.locator('[data-transcript-segment].is-active').waitFor();
+  await page.locator('[data-review-note-open]').click();
+  const mediaNote=page.locator('[data-source-note-form]');
+  const displayedTime=Number(await mediaNote.locator('[data-note-media-time]').inputValue());
+  assert.equal(displayedTime,Math.floor(await player.evaluate(e=>e.currentTime*1000)));
+  await mediaNote.locator('textarea').fill('Synthetic human note at the displayed video position.');
+  const mediaNoteResponse=page.waitForResponse(response=>response.request().method()==='POST'&&response.url().endsWith('/notes'));
+  await mediaNote.locator('button[type=submit]').click();
+  const savedMedia=await (await mediaNoteResponse).json();
+  await mediaNote.locator('[role=status]').filter({hasText:/saved/i}).waitFor();
+  const mediaEvidence=await (await page.request.get(fixture.base+'/synthetic-note-evidence/'+savedMedia.item_id)).json();
+  assert.equal(mediaEvidence.origin,'manual');assert.equal(mediaEvidence.status,'needs_review');
+  assert.equal(mediaEvidence.document_id,fixture.video_id);assert.equal(mediaEvidence.source_version_id,fixture.video_version);
+  assert.ok(mediaEvidence.start_ms<=displayedTime&&displayedTime<mediaEvidence.end_ms);
+  assert.equal(await player.evaluate(e=>Math.floor(e.currentTime*1000)),displayedTime);
+  await page.screenshot({path:path.join(output,'synthetic-video-human-note-1280x604.png')});
+  await page.locator('[data-review-note-close]').click();
+  checks.push('A real video note saves the displayed playback position against canonical source-version/transcript support as a human Needs-review note.');
+
   await expand();
   await page.locator('[data-assistant-conversation-picker]').selectOption(fixture.alternate);
   await page.locator(`[data-assistant-dock][data-conversation-id="${fixture.alternate}"]`).waitFor();
@@ -224,6 +338,9 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   await page.locator('[data-assistant-status]').evaluate((e,value)=>{if(value.state===undefined)delete e.dataset.state;else e.dataset.state=value.state;if(value.statusUrl===undefined)delete e.dataset.statusUrl;else e.dataset.statusUrl=value.statusUrl;},savedStatus);
   await page.unroute('**'+terminalStatusUrl);
   checks.push('Failed, cancelled and completed historical job URLs never poll or replace drafts after source selection or persisted pageshow.');
+  assert.match(await page.locator('#assistant-source-set option:checked').innerText(),/Synthetic blue training video/);
+  await page.locator('[data-assistant-new-chat]').click();
+  assert.equal(await page.locator('#assistant-source-set').inputValue(),'');
   let releaseTerminalFragment,arrivedTerminalFragment;
   const terminalFragmentHold=new Promise(r=>releaseTerminalFragment=r),terminalFragmentArrived=new Promise(r=>arrivedTerminalFragment=r);
   await page.route('**/answer-jobs/*',async route=>{
@@ -239,6 +356,7 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   await terminalFragmentArrived;
   const terminalConversation=await page.locator('[data-assistant-dock]').getAttribute('data-conversation-id');
   const terminalScope=await page.locator('#assistant-source-set').inputValue();
+  assert.equal(terminalScope,'');
   await page.locator('#assistant-question').fill('New same-conversation draft during terminal fragment refresh.');
   releaseTerminalFragment();await page.waitForTimeout(150);
   assert.equal(await page.locator('#assistant-question').inputValue(),'New same-conversation draft during terminal fragment refresh.');
@@ -247,7 +365,36 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   assert.equal(await page.locator('#assistant-question').evaluate(e=>e===document.activeElement),true);
   assert.equal(await page.locator('#assistant-question').evaluate(e=>e.selectionStart), 'New same-conversation draft during terminal fragment refresh.'.length);
   await page.unroute('**/answer-jobs/*');await page.unroute('**/assistant?**');
-  checks.push('A delayed terminal fragment retains a newer draft and source scope in the same conversation.');
+  checks.push('A delayed terminal fragment retains a newer draft and source scope in the same conversation; New chat All-sources scope stays consistent through admission and refresh.');
+  let releaseOldTerminal,arrivedOldTerminal;
+  const oldTerminalHold=new Promise(r=>releaseOldTerminal=r),oldTerminalArrived=new Promise(r=>arrivedOldTerminal=r);
+  await page.route('**/answer-jobs/*',async route=>{const cancelled=await page.request.post(route.request().url()+'/cancel',{headers:{Accept:'application/json'}});await route.fulfill({status:200,contentType:'application/json',body:await cancelled.text()});});
+  await page.route('**/assistant?**',async route=>{const response=await route.fetch();arrivedOldTerminal();await oldTerminalHold;await route.fulfill({response}).catch(()=>{});});
+  await page.locator('#assistant-question').fill('Synthetic request A before superseding request B.');
+  await page.locator('[data-assistant-question-form] button[type=submit]').click();await oldTerminalArrived;
+  await page.unroute('**/answer-jobs/*');
+  let releaseNewAdmission,arrivedNewAdmission,newAdmissionPayload,newAdmissions=0;
+  const newAdmissionHold=new Promise(r=>releaseNewAdmission=r),newAdmissionArrived=new Promise(r=>arrivedNewAdmission=r);
+  const newerAction=await page.locator('[data-assistant-question-form]').getAttribute('action');
+  await page.route('**'+newerAction,async route=>{newAdmissions+=1;const response=await route.fetch();newAdmissionPayload=await response.json();arrivedNewAdmission();await newAdmissionHold;await route.fulfill({response}).catch(()=>{});});
+  await page.locator('#assistant-question').fill('Synthetic request B owns the current composer.');
+  await page.locator('[data-assistant-question-form] button[type=submit]').click();await newAdmissionArrived;
+  const newerDock=await page.locator('[data-assistant-dock]').elementHandle();
+  releaseOldTerminal();await page.waitForTimeout(150);
+  assert.equal(await newerDock.evaluate(e=>e===document.querySelector('[data-assistant-dock]')),true);
+  assert.equal(await page.locator('[data-assistant-question-form]').getAttribute('aria-busy'),'true');
+  await page.unroute('**/assistant?**');releaseNewAdmission();
+  await page.waitForFunction(url=>document.querySelector('[data-assistant-status]')?.dataset.statusUrl===url,newAdmissionPayload.status_url);
+  await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));
+  await page.waitForTimeout(150);
+  assert.equal(await page.locator('[data-assistant-status]').getAttribute('data-status-url'),newAdmissionPayload.status_url);
+  assert.equal(await page.locator('[data-assistant-question-form]').getAttribute('aria-busy'),'true');
+  assert.equal(newAdmissions,1);
+  await page.unroute('**'+newerAction);
+  await page.locator('[data-assistant-cancel]').click();
+  await page.waitForFunction(()=>!document.querySelector('[data-assistant-question-form]').hasAttribute('aria-busy'));
+  checks.push('Submitting request B invalidates delayed terminal-A history; B retains busy status and polling ownership across persisted pageshow with one admission.');
+
   let releaseScopedAsk, arrivedScopedAsk;
   const scopedHold=new Promise(r=>releaseScopedAsk=r),scopedArrived=new Promise(r=>arrivedScopedAsk=r);
   const scopedAction=await page.locator('[data-assistant-question-form]').getAttribute('action');
@@ -317,7 +464,7 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   assert.equal(new URL(fallback.url()).pathname,new URL(fixture.base+fixture.reader).pathname);
   assert.match(new URL(fallback.url()).searchParams.get('notice'),/saved/);
   checks.push('JavaScript-disabled human note form saves and returns to the same source.');
-  fs.writeFileSync(path.join(output,'receipt.json'),JSON.stringify({synthetic_only:true,passed:true,revision,dirty,checks,limitations:['No real model/GPU qualification','640x302 simulates the CSS viewport at200%; native browser zoom not tested','Transcript pagination and playback-history restoration not yet verified']},null,2));
+  fs.writeFileSync(path.join(output,'receipt.json'),JSON.stringify({synthetic_only:true,passed:true,revision,dirty,checks,observations,limitations:['No real model/GPU qualification','640x302 simulates the CSS viewport at200%; native browser zoom not tested','Transcript pagination and playback-history restoration not yet verified','Browser-native draft restoration varies; this run verifies Back retry in installed Chromium and a missing-text safe fallback, not cross-browser or browser-restart recovery']},null,2));
   console.log(JSON.stringify(checks,null,2));
 })().catch(async error => {
   if (activePage && !activePage.isClosed()) {
@@ -326,7 +473,7 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   }
   console.error(error);
   fs.writeFileSync(path.join(output, 'receipt.json'), JSON.stringify({ synthetic_only: true,
-    passed: false, revision, dirty, checks, error: String(error).slice(0, 2000) }, null, 2));
+    passed: false, revision, dirty, checks, observations, error: String(error).slice(0, 2000) }, null, 2));
   process.exitCode = 1;
 }).finally(async () => {
   clearTimeout(deadline);

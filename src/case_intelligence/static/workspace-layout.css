@@ -401,3 +401,10 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
 @media (max-width: 900px) {
   .source-review-heading > div:first-child { flex: 0 1 auto; width: 100%; }
 }
+/* Player columns, not nested cards, own sticky positioning. Status actions
+   respond to the available card width rather than the outer viewport. */
+.source-review-main .media-player-card { position: static; }
+.source-review-main .playback-compatibility { grid-template-columns: auto minmax(0, 1fr); }
+.source-review-main .playback-compatibility form { grid-column: 1 / -1; }
+.source-review-main .playback-compatibility .quiet-action { width: 100%; white-space: normal; }
+.source-review-main .media-tool-nav { position: static; }

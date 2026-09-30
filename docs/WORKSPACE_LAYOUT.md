@@ -103,7 +103,11 @@ remain available.
 existing Case notes, with manual origin and Needs review status. Saving a note
 or marking a source reviewed does not confirm its claims, transcript or entities.
 An immutable draft identity makes uncertain retries safe; **Write another note**
-starts a separate note, including on the same passage. The server rechecks matter
+starts a separate note, including on the same passage. Before sending, the reader
+keeps only retry identity and source coordinates in that browser history entry,
+so Back and reload cannot silently turn a restored draft into a second note.
+Note prose is not persisted by this mechanism. If the browser does not restore
+the text, inspect saved Case notes or explicitly start another note. The server rechecks matter
 access, source version and extraction basis before saving. A changed source is
 rejected for renewed review. Existing AI passage saves retain suggested status
 and preserve later human decisions on retries.
