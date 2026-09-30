@@ -3398,6 +3398,8 @@
   let assistantPollTimer = 0;
   let assistantDraft = false;
   let assistantDraftBuffer = null;
+  let assistantEpoch = 0;
+  let reviewQuestionScope = null;
 
   const assistantConversationPreferenceKey = () => {
     const matterId = assistantDock?.dataset.matterId || "";
@@ -3530,7 +3532,12 @@
 
   const beginAssistantDraft = () => {
     if (!assistantDock) return;
-    if (assistantDraft) {
+    assistantEpoch += 1;
+    window.clearTimeout(assistantPollTimer);
+    if (assistantDraft && assistantDock.querySelector("[data-assistant-question-form]")?.getAttribute("aria-busy") !== "true") {
+      const picker = assistantDock.querySelector("[data-assistant-conversation-picker]");
+      if (picker) { picker.value = "__draft__"; picker.disabled = false; }
+      assistantDraftBuffer = null;
       assistantDock.querySelector("textarea")?.focus({ preventScroll: true });
       return;
     }
@@ -3623,6 +3630,12 @@
       status.dataset.state = job.state || "";
       status.classList.toggle("is-terminal", !working);
       status.classList.toggle("is-failed", job.state === "failed");
+      let cancel = status.querySelector("[data-assistant-cancel]");
+      if (working && job.can_cancel && job.cancel_url) {
+        if (!cancel) { cancel = document.createElement("button"); cancel.type = "button"; cancel.dataset.assistantCancel = ""; cancel.textContent = "Cancel"; status.append(cancel); }
+        cancel.dataset.actionUrl = job.cancel_url;
+        cancel.disabled = false;
+      } else cancel?.remove();
     }
     if (copy) copy.textContent = assistantStatusMessage(job);
     if (textarea) textarea.disabled = working || form.dataset.sourcesReady !== "true";
@@ -3634,6 +3647,8 @@
     window.clearTimeout(assistantPollTimer);
     const fragmentUrl = requestedFragmentUrl || assistantDock?.dataset.fragmentUrl;
     if (!fragmentUrl) return;
+    const epoch = ++assistantEpoch;
+    const originatingDock = assistantDock;
     const response = await fetch(fragmentUrl, {
       headers: { Accept: "text/html" },
       cache: "no-store",
@@ -3641,6 +3656,7 @@
     if (!response.ok) throw new Error("Assistant status is temporarily unavailable.");
     const holder = document.createElement("div");
     holder.innerHTML = await response.text();
+    if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
     const replacement = holder.querySelector("[data-assistant-dock]");
     if (!replacement || !assistantDock) throw new Error("Assistant response was incomplete.");
     assistantDock.replaceWith(replacement);
@@ -3658,12 +3674,15 @@
     const status = assistantDock?.querySelector("[data-assistant-status]");
     const statusUrl = status?.dataset.statusUrl;
     if (!statusUrl) return;
+    const epoch = assistantEpoch;
+    const originatingDock = assistantDock;
     try {
       const response = await fetch(statusUrl, {
         headers: { Accept: "application/json" },
         cache: "no-store",
       });
       const job = await assistantJson(response);
+      if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
       renderAssistantJob(job);
       if (job.state === "succeeded") {
         await refreshAssistant();
@@ -3675,6 +3694,7 @@
       }
       assistantPollTimer = window.setTimeout(pollAssistant, 1000);
     } catch (_error) {
+      if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
       const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
       if (copy) copy.textContent = "Reconnecting to the saved request…";
       assistantPollTimer = window.setTimeout(pollAssistant, 3500);
@@ -3687,9 +3707,39 @@
     textarea.style.height = `${Math.min(textarea.scrollHeight, 102)}px`;
   };
 
+  const resumeAssistantAfterScopeChange = () => {
+    const status = assistantDock?.querySelector("[data-assistant-status]");
+    if (status?.dataset.statusUrl) { pollAssistant(); return; }
+    const composer = assistantDock?.querySelector("[data-assistant-question-form]");
+    if (composer?.getAttribute("aria-busy") === "true") {
+      composer.removeAttribute("aria-busy");
+      composer.querySelectorAll("textarea, button[type=submit]").forEach((control) => { control.disabled = composer.dataset.sourcesReady !== "true"; });
+      newAssistantRequestKey();
+      const copy = status?.querySelector("[data-assistant-status-copy]");
+      if (copy) copy.textContent = "Scope changed. Any earlier submitted question remains in its original conversation.";
+    }
+  };
+
+  const applyReviewQuestionScope = () => {
+    if (!reviewQuestionScope || !assistantDock) return;
+    const select = assistantDock.querySelector('select[name="source_set"]');
+    if (!select) return;
+    if (!Array.from(select.options).some((option) => option.value === reviewQuestionScope.id)) {
+      select.add(new Option(reviewQuestionScope.name, reviewQuestionScope.id));
+    }
+    select.value = reviewQuestionScope.id;
+  };
+
   function bindAssistant() {
     if (!assistantDock || assistantDock.dataset.bound === "true") return;
     assistantDock.dataset.bound = "true";
+    applyReviewQuestionScope();
+    assistantDock.querySelector('select[name="source_set"]')?.addEventListener("change", (event) => {
+      assistantEpoch += 1;
+      window.clearTimeout(assistantPollTimer);
+      reviewQuestionScope = { id: event.target.value, name: event.target.selectedOptions[0]?.textContent || "" };
+      resumeAssistantAfterScopeChange();
+    });
     assistantDock.querySelector("[data-assistant-collapse]")?.addEventListener("click", () => {
       setAssistantCollapsed(true, { focus: true });
     });
@@ -3746,10 +3796,12 @@
         }
       }
       conversationPicker.disabled = true;
+      const switchEpoch = assistantEpoch + 1;
       try {
         saveAssistantConversationPreference(conversationId);
         await refreshAssistant(assistantFragmentUrl(conversationId));
       } catch (_error) {
+        if (switchEpoch !== assistantEpoch) return;
         conversationPicker.disabled = false;
         const status = assistantDock?.querySelector("[data-assistant-status]");
         const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
@@ -3784,6 +3836,9 @@
         textarea?.focus();
         return;
       }
+      if (form.getAttribute("aria-busy") === "true") return;
+      const epoch = assistantEpoch;
+      const originatingDock = assistantDock;
       const submittedQuestion = textarea.value.trim();
       const submittedDraft = !form.querySelector('input[name="conversation"]')?.value;
       // Capture successful controls before the busy state disables the
@@ -3807,6 +3862,7 @@
           headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
         });
         const job = await assistantJson(response);
+        if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
         if (submittedDraft) saveAcceptedAssistantDraft(job);
         textarea.value = "";
         resizeAssistantTextarea(textarea);
@@ -3814,6 +3870,7 @@
         renderAssistantJob(job);
         pollAssistant();
       } catch (error) {
+        if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
         form.removeAttribute("aria-busy");
         textarea.disabled = form.dataset.sourcesReady !== "true";
         if (submit) submit.disabled = form.dataset.sourcesReady !== "true";
@@ -3837,19 +3894,25 @@
       assistantDock?.querySelector("textarea")?.focus({ preventScroll: true });
     });
 
-    assistantDock.querySelector("[data-assistant-cancel]")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget;
+    assistantDock.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-assistant-cancel]");
+      if (!button) return;
       const actionUrl = button.dataset.actionUrl;
       if (!actionUrl) return;
+      const epoch = assistantEpoch;
+      const originatingDock = assistantDock;
       button.disabled = true;
       try {
         const response = await fetch(actionUrl, {
           method: "POST",
           headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
         });
-        renderAssistantJob(await assistantJson(response));
+        const job = await assistantJson(response);
+        if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
+        renderAssistantJob(job);
         await refreshAssistant();
       } catch (error) {
+        if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
         button.disabled = false;
         const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
         if (copy) copy.textContent = error.message;
@@ -3876,7 +3939,7 @@
     const hint = assistantDock.querySelector("[data-assistant-readiness-hint]");
     if (hint) {
       hint.textContent = readiness.partial_query === true
-        ? readiness.coverage_notice || "Answers use the searchable sources; affected sources are excluded."
+        ? "Partial searchable text only. Inspect Search coverage & extraction limits above."
         : ready
           ? "Generated answers use selected passages; check claims against the original sources."
           : readiness.state === "preparing"
@@ -3930,12 +3993,148 @@
           .some((option) => option.value === preferredConversation)
       : false;
     if (preferredConversation && preferredConversation !== currentConversation && preferredOption) {
+      const preferenceEpoch = assistantEpoch + 1;
+      const preferenceDock = assistantDock;
       refreshAssistant(assistantFragmentUrl(preferredConversation)).catch(() => {
+        if (preferenceEpoch !== assistantEpoch || preferenceDock !== assistantDock) return;
         saveAssistantConversationPreference(currentConversation);
       });
     } else {
       saveAssistantConversationPreference(currentConversation);
     }
+  }
+
+  window.addEventListener("pagehide", () => { assistantEpoch += 1; window.clearTimeout(assistantPollTimer); });
+  window.addEventListener("pageshow", (event) => { if (event.persisted && assistantDock) pollAssistant(); });
+
+  const reviewWorkspace = document.querySelector("[data-review-workspace]");
+  if (reviewWorkspace) {
+    body.classList.add("review-enhanced");
+    const preference = `recordbench:review-layout:${reviewWorkspace.dataset.reviewMatter}`;
+    const queueToggle = reviewWorkspace.querySelector("[data-review-queue-toggle]");
+    const paneWidth = reviewWorkspace.querySelector("[data-review-pane-width]");
+    const notePanel = reviewWorkspace.querySelector("[data-source-note-panel]");
+    const noteForm = notePanel?.querySelector("form");
+    const noteBody = noteForm?.querySelector("textarea");
+    const noteTime = noteForm?.querySelector("[data-note-media-time]");
+    let noteSubmission = null;
+    let savedNote = false;
+    let layout = {};
+    try {
+      const savedLayout = JSON.parse(localStorage.getItem(preference) || "{}");
+      if (savedLayout && typeof savedLayout === "object" && !Array.isArray(savedLayout)) layout = savedLayout;
+    } catch (_error) { /* Optional preference. */ }
+    const saveLayout = () => { try { localStorage.setItem(preference, JSON.stringify(layout)); } catch (_error) { /* No persistence required. */ } };
+    const showQueue = (open) => {
+      body.classList.toggle("review-queue-open", open);
+      queueToggle?.setAttribute("aria-expanded", String(open));
+      layout.queue = open;
+    };
+    showQueue(layout.queue === true);
+    queueToggle?.addEventListener("click", () => { showQueue(!layout.queue); saveLayout(); });
+    const setWidth = (value) => {
+      const width = Math.max(300, Math.min(520, Number(value) || 380));
+      body.style.setProperty("--assistant-width", `${width}px`);
+      if (paneWidth) paneWidth.value = String(width);
+      layout.width = width;
+    };
+    setWidth(layout.width);
+    paneWidth?.addEventListener("input", () => { setWidth(paneWidth.value); saveLayout(); });
+    const snapshotPlayback = () => {
+      const player = document.querySelector("[data-media-player]");
+      if (noteTime && player && Number.isFinite(player.currentTime)) noteTime.value = String(Math.floor(player.currentTime * 1000));
+    };
+    if (noteTime) noteTime.readOnly = true;
+    document.querySelector("[data-media-player]")?.addEventListener("timeupdate", () => {
+      if (!noteSubmission && !notePanel?.hidden) snapshotPlayback();
+    });
+    const showNote = (open, focus = true) => {
+      if (!notePanel) return;
+      notePanel.hidden = !open;
+      reviewWorkspace.querySelector("[data-review-note-open]")?.setAttribute("aria-expanded", String(open));
+      body.classList.toggle("review-notes-open", open);
+      layout.notes = open;
+      saveLayout();
+      if (open && !noteSubmission) snapshotPlayback();
+      if (focus) (open ? noteBody : reviewWorkspace.querySelector("[data-review-note-open]"))?.focus({ preventScroll: true });
+    };
+    showNote(Boolean(noteBody?.value) || layout.notes === true, false);
+    window.addEventListener("beforeunload", (event) => {
+      if (noteBody?.value.trim() && !savedNote) { event.preventDefault(); event.returnValue = ""; }
+    });
+    reviewWorkspace.querySelector("[data-review-note-open]")?.addEventListener("click", (event) => { event.preventDefault(); showNote(true); });
+    notePanel?.querySelector("[data-review-note-close]")?.addEventListener("click", () => showNote(false));
+    notePanel?.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); showNote(false); } });
+    reviewWorkspace.querySelector("[data-review-ask-source]")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector("button");
+      if (button.disabled) return;
+      button.disabled = true;
+      let feedback = form.querySelector("[role=status]");
+      if (!feedback) { feedback = document.createElement("span"); feedback.setAttribute("role", "status"); form.append(feedback); }
+      feedback.textContent = "Selecting source…";
+      const epoch = assistantEpoch;
+      const originatingDock = assistantDock;
+      try {
+        const response = await fetch(form.action, { method: "POST", body: new FormData(form), headers: { Accept: "application/json", "X-CSRF-Token": csrfToken } });
+        const result = await assistantJson(response);
+        if (!result.source_set_id || typeof result.name !== "string") throw new Error("The source selection could not be confirmed. Try again.");
+        if (epoch !== assistantEpoch || originatingDock !== assistantDock) {
+          feedback.textContent = "The conversation changed. Select this source again for the current question.";
+          return;
+        }
+        assistantEpoch += 1;
+        window.clearTimeout(assistantPollTimer);
+        reviewQuestionScope = { id: result.source_set_id, name: result.name };
+        applyReviewQuestionScope();
+        resumeAssistantAfterScopeChange();
+        showNote(false, false);
+        setAssistantCollapsed(false, { focus: true });
+        feedback.textContent = "Source selected for your next question.";
+      } catch (error) { feedback.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    noteForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (noteForm.getAttribute("aria-busy") === "true" || savedNote) return;
+      const button = noteForm.querySelector('button[type="submit"]');
+      const feedback = noteForm.querySelector("[data-source-note-status]");
+      // Freeze body, version, section and timestamp across lost-response retries.
+      // An explicit new note is the only action that starts a fresh save identity.
+      if (!noteSubmission) { snapshotPlayback(); noteSubmission = new FormData(noteForm); }
+      noteBody.readOnly = true;
+      if (noteTime) noteTime.readOnly = true;
+      noteForm.setAttribute("aria-busy", "true");
+      button.disabled = true;
+      feedback.textContent = "Saving your source-linked note…";
+      try {
+        const response = await fetch(noteForm.action, { method: "POST", body: noteSubmission, headers: { Accept: "application/json", "X-CSRF-Token": csrfToken } });
+        const result = await assistantJson(response);
+        if (!result.item_id) throw new Error("The save could not be confirmed.");
+        if (!noteForm.isConnected) return;
+        savedNote = true;
+        feedback.textContent = result.message || "Human note saved as Needs review.";
+      } catch (error) { feedback.textContent = `${error.message} Your original note and position are kept. Retry the same save, or explicitly start another note.`; }
+      finally {
+        noteForm.removeAttribute("aria-busy");
+        button.disabled = savedNote;
+        noteForm.querySelector("[data-source-note-new]").hidden = false;
+      }
+    });
+    noteForm?.querySelector("[data-source-note-new]")?.addEventListener("click", () => {
+      if (noteForm.getAttribute("aria-busy") === "true") return;
+      noteSubmission = null; savedNote = false;
+      const bytes = new Uint8Array(16); window.crypto.getRandomValues(bytes);
+      noteForm.querySelector('[name="request_key"]').value = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+      noteBody.readOnly = false; noteBody.value = "";
+      if (noteTime) noteTime.readOnly = true;
+      snapshotPlayback();
+      noteForm.querySelector('button[type="submit"]').disabled = false;
+      noteForm.querySelector("[data-source-note-new]").hidden = true;
+      noteForm.querySelector("[data-source-note-status]").textContent = "";
+      noteBody.focus({ preventScroll: true });
+    });
   }
 
   const workflowMonitors = Array.from(document.querySelectorAll("[data-workflow-monitor]"));

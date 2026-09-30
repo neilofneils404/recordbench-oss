@@ -1,0 +1,286 @@
+#!/usr/bin/env node
+// Synthetic manual-review acceptance with deterministic answers/transcription and a generated video.
+// Usage: node scripts/browser-accept-manual-review.cjs /path/to/chromium /tmp/fresh-output
+const { chromium } = require('playwright');
+const { spawn, execFileSync } = require('node:child_process');
+const { once } = require('node:events');
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const root = path.resolve(__dirname, '..');
+const output = path.resolve(process.argv[3]);
+fs.mkdirSync(output); // Retain prior receipts; never overwrite them.
+const server = spawn(path.join(root, '.venv/bin/python'), ['-u', '-c', `
+import json, socket, tempfile, sys, subprocess, time
+from pathlib import Path
+sys.path.insert(0, 'scripts')
+from synthetic_browser_environment import isolate_environment
+isolate_environment()
+import uvicorn
+from pytest import MonkeyPatch
+from tests.test_saved_answer_report_support import cedar
+with tempfile.TemporaryDirectory() as temporary:
+    fixture = cedar.__wrapped__(Path(temporary), MonkeyPatch())
+    client, bench, matter, documents = next(fixture)
+    # The deterministic processor fixture accepts WAV only; its transcription
+    # response is deliberately reused for generated video, not speech recognition.
+    fixture_submit = bench.media.processor.submit
+    bench.media.processor.submit = lambda owner, source, media_type, source_sha256: fixture_submit(owner,source,'audio/wav',source_sha256)
+    video_path = Path(temporary) / 'synthetic-video.mp4'
+    subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=blue:s=640x360:r=10:d=8','-f','lavfi','-i','anullsrc=r=8000:cl=mono','-t','8','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(video_path)],check=True)
+    response = client.post(f'/matters/{matter.slug}/uploads',files=[('files',('Synthetic blue training video.mp4',video_path.read_bytes(),'video/mp4'))],follow_redirects=False)
+    assert response.status_code == 303
+    deadline = time.monotonic()+15
+    continued = set()
+    while time.monotonic()<deadline:
+        video = next((doc for doc in bench.source_store(matter).documents.values() if doc.media_type=='video/mp4'),None)
+        if video and video.state=='ready': break
+        if video and video.state=='needs_review':
+            job=bench.workspace.media_job(matter.matter_id,video.document_id,video.version_id)
+            inspection=job.preflight.get('inspection_id') if job else None
+            if inspection and inspection not in continued:
+                client.post(f'/matters/{matter.slug}/sources/{bench.source_store(matter).action_token(video)}/recording-check',data=dict(action='continue',inspection_id=inspection),follow_redirects=False)
+                continued.add(inspection)
+        time.sleep(.02)
+    assert video and video.state=='ready', [(doc.media_type,doc.state,doc.message) for doc in bench.source_store(matter).documents.values()]
+    documents['video']=video
+    conversation = bench.workspace.get_conversation(matter.matter_id)
+    from tests.test_saved_answer_report_support import inspection_pdf
+    response = client.post(f'/matters/{matter.slug}/uploads',files=[('files',('Synthetic extended review observation with a deliberately long descriptive filename for the Cedar training exercise.pdf',inspection_pdf()+bytes([10]),'application/pdf'))],follow_redirects=False)
+    assert response.status_code==303
+    pdf=next(doc for doc in bench.source_store(matter).documents.values() if doc.display_name.startswith('Synthetic extended'))
+    documents['pdf']=pdf
+    citation = bench._citation(matter, bench._candidate(matter, pdf, pdf.parsed_units()[0], 1))
+    bench.workspace.append_message(matter.matter_id, conversation.conversation_id, 'user', 'What did the synthetic gauge show?')
+    bench.workspace.append_message(matter.matter_id, conversation.conversation_id, 'assistant', 'Synthetic gauge observation', {'kind':'generated','claims':[{'text':'The synthetic gauge showed eighteen units.','citations':[bench._saved_answer_citation_payload(citation)]}]})
+    alternate = bench.workspace.create_conversation(matter.matter_id, 'Synthetic alternate history', actor_id='development-taylor-morgan')
+    bench.workspace.append_message(matter.matter_id, alternate.conversation_id, 'assistant', 'Historical synthetic alternate answer.')
+    prefix = f'/matters/{matter.slug}'
+    paths = {kind:prefix+'/sources/'+bench.source_store(matter).action_token(doc)+'?browse=sort%3Dname&unit=1&start_ms=1000&conversation='+conversation.conversation_id for kind, doc in documents.items()}
+    listener = socket.socket()
+    listener.bind(('127.0.0.1',0))
+    print(json.dumps(dict(base='http://127.0.0.1:'+str(listener.getsockname()[1]),reader=paths['pdf'],media=paths['video'],audio=paths['transcript'],matter=prefix,conversation=conversation.conversation_id,alternate=alternate.conversation_id)),flush=True)
+    try:
+        uvicorn.Server(uvicorn.Config(client.app,lifespan='off',log_level='warning')).run(sockets=[listener])
+    finally:
+        fixture.close()
+`], { cwd: root, stdio: ['ignore', 'pipe', 'inherit'] });
+let browser, activePage;
+const deadline = setTimeout(() => {
+  console.error('Synthetic browser acceptance exceeded 90 seconds.');
+  server.kill('SIGTERM');
+  if (browser) browser.close();
+  process.exitCode = 1;
+}, 90000);
+const checks = [];
+const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim());
+(async () => {
+  const [data] = await Promise.race([once(server.stdout, 'data'), once(server,'exit').then(([code])=>{throw new Error('Synthetic server exited before ready: '+code);})]);
+  const fixture = JSON.parse(data.toString().trim());
+  browser = await chromium.launch({ executablePath: process.argv[2], headless: true, args: ['--no-sandbox'] });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  activePage = page;
+  await page.goto(fixture.base + fixture.reader);
+  const go = async url => { const response = await page.goto(fixture.base+url); assert.equal(response.status(),200); };
+  const expand = async () => { const button=page.locator('[data-assistant-expand]'); if(await button.isVisible()) await button.click(); };
+  const noOverflow = async () => assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No horizontal page overflow');
+  await go(fixture.reader);
+  await page.setViewportSize({width:1280,height:604});
+  await expand();
+  await noOverflow();
+  const dockGeometry=await page.locator('[data-assistant-dock]').evaluate(e=>[...e.children].filter(x=>getComputedStyle(x).display!=='none'&&x.getBoundingClientRect().height>0).map(x=>({name:x.className,top:x.getBoundingClientRect().top,bottom:x.getBoundingClientRect().bottom})));
+  for(let i=1;i<dockGeometry.length;i++)assert.ok(dockGeometry[i].top>=dockGeometry[i-1].bottom-1,JSON.stringify(dockGeometry));
+  const pdfTop = await page.locator('.document-reader').evaluate(e=>e.getBoundingClientRect().top);
+  assert.ok(pdfTop<330,`PDF starts at ${pdfTop}`);
+  await page.waitForTimeout(800);
+  await page.screenshot({path:path.join(output,'synthetic-pdf-1280x604.png')});
+  checks.push('Rendered PDF begins within first330px at1280x604 with assistant open.');
+  await page.locator('[data-review-note-open]').click();
+  const note=page.locator('[data-source-note-form]');
+  await note.locator('textarea').fill('Synthetic human note preserves the page.');
+  const reader=page.url();
+  await note.locator('button[type=submit]').click();
+  await note.locator('[role=status]').filter({hasText:/saved/i}).waitFor();
+  assert.equal(page.url(),reader);
+  assert.equal(await note.locator('button[type=submit]').isDisabled(),true);
+  assert.equal(await note.locator('[data-source-note-new]').isVisible(),true);
+  checks.push('Human note saves inline and success disables duplicate submission without moving PDF.');
+  await page.screenshot({path:path.join(output,'synthetic-human-note-1280x604.png')});
+  await note.locator('[data-source-note-new]').click();
+  await note.locator('textarea').fill('Synthetic second deliberate note with uncertain response.');
+  const noteAction=await note.getAttribute('action');
+  await page.route('**'+noteAction,async route=>{await route.fetch();await route.abort('failed');});
+  await note.locator('button[type=submit]').click();
+  await note.locator('[role=status]').filter({hasText:/try|retry|failed/i}).waitFor();
+  assert.equal(await note.locator('textarea').inputValue(),'Synthetic second deliberate note with uncertain response.');
+  await page.unroute('**'+noteAction);
+  await note.locator('button[type=submit]').click();
+  await note.locator('[role=status]').filter({hasText:/already/i}).waitFor();
+  checks.push('Lost save response retains draft and retries the same note without duplicate creation.');
+  await page.locator('[data-review-note-close]').click();
+  await expand();
+  // Delayed saved-chat fragment must not restore old history after New chat.
+  let releaseFragment, arrivedFragment;
+  const fragmentHold=new Promise(r=>releaseFragment=r), fragmentArrived=new Promise(r=>arrivedFragment=r);
+  await page.route('**/assistant?**',async route=>{const response=await route.fetch();arrivedFragment();await fragmentHold;await route.fulfill({response}).catch(()=>{});});
+  await page.locator('[data-assistant-conversation-picker]').selectOption(fixture.alternate);
+  await fragmentArrived;
+  await page.locator('[data-assistant-new-chat]').click();
+  await page.locator('#assistant-question').fill('New draft after delayed history.');
+  releaseFragment();
+  await page.waitForTimeout(150);
+  assert.equal(await page.locator('#assistant-question').inputValue(),'New draft after delayed history.');
+  assert.equal(await page.locator('[data-assistant-dock]').getAttribute('data-conversation-id'),'');
+  await page.unroute('**/assistant?**');
+  checks.push('Delayed history fragment cannot replace New chat or clear its draft.');
+  let releaseDraftFragment,arrivedDraftFragment;
+  const draftFragmentHold=new Promise(r=>releaseDraftFragment=r),draftFragmentArrived=new Promise(r=>arrivedDraftFragment=r);
+  await page.route('**/assistant?**',async route=>{const response=await route.fetch();arrivedDraftFragment();await draftFragmentHold;await route.fulfill({response}).catch(()=>{});});
+  await page.locator('[data-assistant-conversation-picker]').selectOption(fixture.alternate);await draftFragmentArrived;
+  await page.locator('[data-assistant-new-chat]').click();releaseDraftFragment();await page.waitForTimeout(150);
+  assert.equal(await page.locator('#assistant-question').inputValue(),'New draft after delayed history.');
+  assert.equal(await page.locator('[data-assistant-dock]').getAttribute('data-conversation-id'),'');
+  assert.equal(await page.locator('[data-assistant-conversation-picker]').isDisabled(),false);
+  await page.unroute('**/assistant?**');
+  checks.push('Repeated New chat from a draft invalidates a pending saved-chat selection while preserving the draft.');
+  // Delay accepted question response, then deliberately change composer state.
+  let releaseAsk, arrivedAsk;
+  const askHold=new Promise(r=>releaseAsk=r),askArrived=new Promise(r=>arrivedAsk=r);
+  const askAction=await page.locator('[data-assistant-question-form]').getAttribute('action');
+  await page.route('**'+askAction,async route=>{const response=await route.fetch();arrivedAsk();await askHold;await route.fulfill({response}).catch(()=>{});});
+  await page.locator('[data-assistant-question-form] button[type=submit]').click();
+  await askArrived;
+  await page.locator('[data-assistant-new-chat]').click();
+  await page.locator('#assistant-question').fill('New draft after delayed accepted question.');
+  releaseAsk();await page.waitForTimeout(150);
+  assert.equal(await page.locator('#assistant-question').inputValue(),'New draft after delayed accepted question.');
+  assert.equal(await page.locator('[data-assistant-dock]').getAttribute('data-conversation-id'),'');
+  await page.unroute('**'+askAction);
+  checks.push('Delayed accepted question cannot overwrite a newer chat or draft.');
+  let releasePoll, arrivedPoll, releaseCancel, arrivedCancel;
+  const pollHold=new Promise(r=>releasePoll=r), pollArrived=new Promise(r=>arrivedPoll=r);
+  const cancelHold=new Promise(r=>releaseCancel=r), cancelArrived=new Promise(r=>arrivedCancel=r);
+  await page.route('**/answer-jobs/*',async route=>{const response=await route.fetch();arrivedPoll();await pollHold;await route.fulfill({response}).catch(()=>{});});
+  await page.route('**/answer-jobs/*/cancel',async route=>{const response=await route.fetch();arrivedCancel();await cancelHold;await route.fulfill({response}).catch(()=>{});});
+  await page.locator('[data-assistant-question-form] button[type=submit]').click();
+  await pollArrived;
+  await page.locator('[data-assistant-cancel]').click();
+  await cancelArrived;
+  await page.locator('[data-assistant-new-chat]').click();
+  await page.locator('#assistant-question').fill('Preserve draft after old polling and cancellation.');
+  releasePoll();releaseCancel();await page.waitForTimeout(150);
+  assert.equal(await page.locator('#assistant-question').inputValue(),'Preserve draft after old polling and cancellation.');
+  assert.equal(await page.locator('[data-assistant-dock]').getAttribute('data-conversation-id'),'');
+  await page.unroute('**/answer-jobs/*');await page.unroute('**/answer-jobs/*/cancel');
+  checks.push('Delayed polling and cancellation responses cannot restore an old conversation or clear the new draft.');
+  await go(fixture.media);
+  const player=page.locator('video[data-media-player]');
+  await player.waitFor();
+  await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);
+  await player.evaluate(async e=>{e.currentTime=1;e.muted=true;await e.play();});
+  await page.locator('[data-review-note-open]').click();
+  assert.equal(await player.evaluate(e=>e.paused),false);
+  assert.ok(await player.evaluate(e=>e.currentTime>=1));
+  await page.locator('[data-review-note-close]').click();
+  await player.evaluate(e=>{e.pause();e.currentTime=1;});
+  await page.waitForTimeout(150);
+  await page.locator('[data-transcript-segment].is-active').waitFor();
+  await expand();
+  await page.locator('[data-assistant-conversation-picker]').selectOption(fixture.alternate);
+  await page.locator(`[data-assistant-dock][data-conversation-id="${fixture.alternate}"]`).waitFor();
+  const playerHandle=await player.elementHandle();
+  await page.locator('[data-review-ask-source] button').click();
+  await page.locator('[data-review-ask-source] [role=status]').filter({hasText:'Source selected'}).waitFor();
+  assert.equal(await playerHandle.evaluate(e=>e===document.querySelector('video')),true);
+  assert.equal(await player.evaluate(e=>Math.floor(e.currentTime)),1);
+  assert.match(await page.locator('#assistant-source-set option:checked').innerText(),/Synthetic blue training video/);
+  assert.match(await page.locator('[data-assistant-thread]').innerText(),/Historical answer/);
+  checks.push('Ask using this video preserves player/time and explicitly separates next question scope from historical answer.');
+  await page.screenshot({path:path.join(output,'synthetic-video-1280x604.png')});
+  let releaseScopedAsk, arrivedScopedAsk;
+  const scopedHold=new Promise(r=>releaseScopedAsk=r),scopedArrived=new Promise(r=>arrivedScopedAsk=r);
+  const scopedAction=await page.locator('[data-assistant-question-form]').getAttribute('action');
+  await page.route('**'+scopedAction,async route=>{const response=await route.fetch();arrivedScopedAsk();await scopedHold;await route.fulfill({response}).catch(()=>{});});
+  await page.locator('#assistant-question').fill('Question submitted before source scope change.');
+  await page.locator('[data-assistant-question-form] button[type=submit]').click();await scopedArrived;
+  await page.locator('[data-review-ask-source] button').click();
+  await page.locator('[data-review-ask-source] [role=status]').filter({hasText:'Source selected'}).waitFor();
+  await page.locator('#assistant-question').fill('Draft after source selection during pending admission.');
+  releaseScopedAsk();await page.waitForTimeout(150);
+  assert.equal(await page.locator('#assistant-question').inputValue(),'Draft after source selection during pending admission.');
+  assert.match(await page.locator('#assistant-source-set option:checked').innerText(),/Synthetic blue training video/);
+  await page.unroute('**'+scopedAction);
+  checks.push('Selecting source during pending answer admission preserves the new scope and later draft.');
+  checks.push('Synthetic video loads and continues playback while notes toggle; transcript remains mounted.');
+  await page.locator('[data-review-queue-toggle]').focus();
+  await page.locator('[data-review-queue-toggle]').press('Enter');
+  assert.equal(await page.locator('[data-review-queue-toggle]').getAttribute('aria-expanded'),'true');
+  await page.locator('summary').filter({hasText:'Review actions'}).click();
+  const width=page.locator('[data-review-pane-width]');
+  await width.focus();await width.press('ArrowRight');
+  const savedWidth=await width.inputValue();
+  await page.locator('[data-review-note-open]').click();
+  await page.locator('#source-note-body').press('Escape');
+  assert.equal(await page.locator('[data-review-note-open]').evaluate(e=>e===document.activeElement),true);
+  await page.reload();await player.waitFor();
+  assert.equal(await page.locator('[data-review-queue-toggle]').getAttribute('aria-expanded'),'true');
+  assert.equal(await page.locator('[data-review-pane-width]').inputValue(),savedWidth);
+  const previous=page.locator('a.review-sequence-neighbor.previous');
+  await previous.click();
+  assert.equal(new URLSearchParams(new URL(page.url()).searchParams.get('browse')).get('sort'),'name');
+  assert.equal(await page.locator('[data-review-queue-toggle]').getAttribute('aria-expanded'),'true');
+  await page.goBack();await player.waitFor();
+  checks.push('Keyboard queue toggle, pane-width adjustment and note Escape focus work; filtered queue/layout survive previous source and reload.');
+  await page.goBack();await page.goForward();
+  assert.equal(new URL(page.url()).pathname,new URL(fixture.base+fixture.media).pathname);
+  checks.push('Reload and Back/Forward return to the media source.');
+  for(const size of [{width:390,height:844},{width:640,height:302}]){
+    await page.setViewportSize(size);await page.waitForTimeout(300);
+    const rail=page.locator('[data-rail-toggle]');
+    if(await rail.getAttribute('aria-expanded')==='true')await rail.click();
+    if(await page.locator('[data-review-queue-toggle]').getAttribute('aria-expanded')==='true')await page.locator('[data-review-queue-toggle]').click();
+    await player.scrollIntoViewIfNeeded();await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);await player.evaluate(async e=>{e.muted=true;await e.play();});await page.waitForTimeout(150);await player.evaluate(e=>e.pause());await page.waitForTimeout(150);await noOverflow();
+    await page.screenshot({path:path.join(output,`synthetic-video-${size.width}x${size.height}.png`)});
+  }
+  checks.push('Media review has no page overflow at390px and640x302 (200% viewport-equivalent; not native zoom).');
+  await page.setViewportSize({width:1280,height:604});
+  await go(fixture.reader);
+  await page.getByRole('link',{name:'Case notes',exact:true}).click();
+  const toolsPane=page.locator('.notebook-tools');
+  const toolsStyle=await toolsPane.evaluate(e=>({overflow:getComputedStyle(e).overflowY,position:getComputedStyle(e).position,height:e.clientHeight,scroll:e.scrollHeight}));
+  assert.equal(toolsStyle.overflow,'visible');assert.equal(toolsStyle.position,'static');assert.ok(toolsStyle.height>=toolsStyle.scroll-1);
+  const suggestions=page.locator('.suggestion-tool button');
+  await page.locator('.suggestion-tool select').focus();await page.keyboard.press('Tab');
+  assert.equal(await suggestions.evaluate(e=>e===document.activeElement),true);
+  await page.waitForFunction(()=>{const r=document.querySelector('.suggestion-tool button').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;},{},{timeout:3000});
+  await page.screenshot({path:path.join(output,'synthetic-notebook-tools-1280x604.png')});
+  await go(fixture.reader);
+  await page.locator('.review-toolbar a').filter({hasText:'Discover entities'}).click();
+  await page.locator('#discovery-heading').waitFor();
+  assert.match(await page.locator('#discovery-heading').innerText(),/guided discovery/);
+  checks.push('Case notes discovery tools use ordinary document flow and keyboard focus; entity discovery is directly reachable from reader.');
+  const nojs=await browser.newContext({javaScriptEnabled:false,viewport:{width:1280,height:604}});
+  const fallback=await nojs.newPage();await fallback.goto(fixture.base+fixture.reader);
+  await fallback.locator('[data-source-note-form] textarea').fill('Synthetic no-JavaScript human note.');
+  await fallback.locator('[data-source-note-form] button[type=submit]').click();
+  assert.equal(new URL(fallback.url()).pathname,new URL(fixture.base+fixture.reader).pathname);
+  assert.match(new URL(fallback.url()).searchParams.get('notice'),/saved/);
+  checks.push('JavaScript-disabled human note form saves and returns to the same source.');
+  fs.writeFileSync(path.join(output,'receipt.json'),JSON.stringify({synthetic_only:true,passed:true,revision,dirty,checks,limitations:['No real model/GPU qualification','640x302 simulates the CSS viewport at200%; native browser zoom not tested','Transcript pagination and playback-history restoration not yet verified']},null,2));
+  console.log(JSON.stringify(checks,null,2));
+})().catch(async error => {
+  if (activePage && !activePage.isClosed()) {
+    await activePage.screenshot({ path: path.join(output, 'synthetic-failure.png') }).catch(() => {});
+    console.error(await activePage.locator('[data-assistant-dock]').innerText().catch(() => 'Dock unavailable'));
+  }
+  console.error(error);
+  fs.writeFileSync(path.join(output, 'receipt.json'), JSON.stringify({ synthetic_only: true,
+    passed: false, revision, dirty, checks, error: String(error).slice(0, 2000) }, null, 2));
+  process.exitCode = 1;
+}).finally(async () => {
+  clearTimeout(deadline);
+  if (browser) await browser.close();
+  server.kill('SIGTERM');
+});

@@ -9,6 +9,7 @@ from dataclasses import asdict, replace
 import hashlib
 import html
 import io
+import re
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -172,7 +173,10 @@ def test_pdf_full_source_selects_cited_physical_page_after_unsearchable_pages(lo
     assert selected_page == "Page 2 of 4"
     assert '<pre>' + STATEMENT + '</pre>' in source.text
     assert '<pre>' + later_text + '</pre>' not in source.text
-    assert '/content#page=2"' in source.text
+    iframe = re.search(r'<iframe[^>]+src="([^"]+)"', source.text)
+    assert iframe is not None
+    fragment = parse_qs(urlsplit(html.unescape(iframe.group(1))).fragment)
+    assert fragment == {'page': ['2'], 'view': ['FitH'], 'navpanes': ['0']}
     assert parse_qs(urlsplit(value["source_href"]).query)["unit"] == ["1"]
     assert bench.workspace.messages(matter.matter_id, conversation.conversation_id) == before
     assert message.payload["claims"][0]["citations"][0] == saved_reference(bench, citation)

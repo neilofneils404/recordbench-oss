@@ -33,20 +33,29 @@ B acceptance remains complete.
 PR #107 landed at the reference revision above after full Quality, requested
 hosted code review and fixed-corpus real-model acceptance. The
 [landing receipt](#continuity-c-landing-receipt) records the evidence and limits.
-**Selected next increment (local implementation, not landed):** Save passage to
-Case notes beside generated claims in the review assistant dock. Reuse the
-existing authenticated, CSRF-protected save, citation validation, suggested
-status and deterministic deduplication. Preserve reader location, filters,
-conversation and draft with inline accessible feedback and a validated
-same-matter non-JavaScript return. Full conversation remains compatible.
-Synthetic route and browser acceptance cover repeated saves, lost access,
-stale citations and navigation. No new storage, chat, graph or model system;
-no deployment or merge is selected. The [workspace contract](WORKSPACE_LAYOUT.md#save-an-assistant-passage-during-review)
-records the behavior and synthetic acceptance commands. Local full-suite
-acceptance is limited by container directory-ownership checks that also fail on
-unchanged main; final-head hosted Quality is required before any landing.
+**Assistant dock passage save is Done:** [PR #123](https://github.com/neilofneils404/recordbench-oss/pull/123)
+landed at `63d807f503501aec9e65b5ea3dd1199536c1459d`. Its PR records exact-head
+Quality and synthetic acceptance, including local environment limitations.
 
-Model/runtime changes, visual work/slice 21, Mac work/PR #34,
+**Selected next increment (approved; local implementation, not landed):**
+A dependable manual review workspace: open a source, read or watch it, write a
+source-linked human note or ask about it, then move through the filtered queue.
+Default manual review reaches the sources/viewer; automated screening remains
+available under an explicit name. A compact persistent reader with optional
+queue and adjustable/collapsible questions/notes keeps source location visible.
+Current question scope and historical answer provenance remain distinct;
+in-flight responses cannot replace a newer source or conversation. Human notes
+reuse existing provenance, review status, authorization, CSRF and deduplication.
+Saved work and guarded entity discovery remain reachable. Preserve reports,
+exports, full conversations, extraction cautions and deletion policy.
+Synthetic baseline screenshots, rendered PDF/media checks, navigation/race/error
+regressions and current Quality gates bound acceptance. No new model, graph,
+storage system, automatic ingestion extraction or CI deduplication. Draft PR
+publication is selected; merge, deployment and production-server acceptance
+remain paused. The [workspace contract](WORKSPACE_LAYOUT.md) records behavior
+and acceptance commands as implementation is validated.
+
+Model/runtime changes, unrelated visual work/slice 21, Mac work/PR #34,
 PR #87, wider onboarding, later slice-19 work, deployment and supported-release
 claims remain unselected or held. Parallel release-readiness evidence continues;
 this increment does not qualify or change any model/runtime profile.
@@ -66,7 +75,7 @@ and subsequent delivery stages. Slice 19's first single-run adapter is landed
 as recorded below. Multiple-run aggregation, new questions, background material,
 matter memory, production imports and larger capacity remain separately scoped
 work. Slice 20 is landed as recorded below. The bounded Linux CPU contributor
-node path (B-lite) and Continuity A/B/C are Done. The dock passage-save increment above is selected.
+node path (B-lite) and Continuity A/B/C are Done. The manual review workspace increment above is selected.
 
 **Last updated:** 2026-09-30
 
@@ -289,7 +298,8 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 13 | **Continuity A:** connect existing Case notes to authoritative saved identities and events/assertions | **Done** — PR #100 at `dd367cc`; [landing receipt](#continuity-a-landing-receipt), Quality **35610419040** |
 | 14 | **Continuity B:** explicit, durable reviewer-owned context selection; no answer integration | **Done** — PR #103 at `d21c1d4`; [landing receipt](#continuity-b-landing-receipt), Quality **35722012792** |
 | 15 | **Continuity C:** explicit selected context in queued focused answers, immutable submission and dispatch receipts | **Done** — PR #107 at `3c814e3`; [landing receipt](#continuity-c-landing-receipt), fixed-corpus model acceptance and full Quality passed |
-| 16 | **Assistant dock passage save:** existing Case notes capture with inline feedback and retained reader context | **Next — local implementation; not landed** |
+| 16 | **Assistant dock passage save:** existing Case notes capture with inline feedback and retained reader context | **Done — PR #123 at `63d807f`** |
+| 17 | **Manual review workspace:** persistent source reader, human notes and honest question/answer context | **Next — approved local implementation; draft publication only** |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 The September 19 landing completes slice 20 under
@@ -298,8 +308,8 @@ The September 19 landing completes slice 20 under
 The bounded **20b B-lite** node path is Done with its dated clean-node and
 Quality receipt. Code-only contribution remains
 `make bootstrap/check`; running the product uses the existing `./install`.
-Continuity A, B and C are Done. The dock passage-save increment above is Next.
-Slice 21, further visual experiments and additional work on PR #34 or PR #87
+Continuity A, B and C are Done. The manual review workspace increment above is Next.
+Slice 21, unrelated visual experiments and additional work on PR #34 or PR #87
 remain on hold. High-resolution retrieval work remains
 local and outside this PR. Existing text and transcript support is not native
 image understanding. Later slice-19 work, model deployment and larger-capacity

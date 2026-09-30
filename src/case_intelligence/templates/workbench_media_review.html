@@ -4,21 +4,24 @@
 {% block body_class %}source-review-page media-review-page{% endblock %}
 
 {% block content %}
-<main id="main-content" tabindex="-1" class="source-review-main media-review-main" data-media-review data-start-ms="{{ media.start_ms }}" data-transcript-page="{{ segment_page }}" data-transcript-pages="{{ segment_pages }}" data-transcript-filtered="{{ 'true' if transcript_query or transcript_speaker or transcript_flag else 'false' }}" data-media-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status" data-media-resume-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/resume" data-media-job-state="{{ media.job.display_state if media.job else 'unavailable' }}" data-playback-state="{{ media.document.playback_state or 'unknown' }}" data-summary-state="{{ media.summary.state if media.summary else 'not_created' }}">
+<main data-review-workspace data-review-matter="{{ matter.matter_id }}" id="main-content" tabindex="-1" class="source-review-main media-review-main" data-media-review data-start-ms="{{ media.start_ms }}" data-transcript-page="{{ segment_page }}" data-transcript-pages="{{ segment_pages }}" data-transcript-filtered="{{ 'true' if transcript_query or transcript_speaker or transcript_flag else 'false' }}" data-media-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status" data-media-resume-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/resume" data-media-job-state="{{ media.job.display_state if media.job else 'unavailable' }}" data-playback-state="{{ media.document.playback_state or 'unknown' }}" data-summary-state="{{ media.summary.state if media.summary else 'not_created' }}">
   <header class="source-review-heading media-review-heading">
     <div>
       <a class="back-link" href="{{ source_sequence.library_href }}">← Review sources</a>
       {% set review_return = source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) %}{% if review_return %}<a class="back-link" href="{{ review_return }}">Return to review context</a>{% endif %}
-      <p class="eyebrow">{{ media.row.collection_name }} · {{ media.row.kind }} · {{ format_timestamp(media.document.duration_ms) }}</p>
-      <h1>{{ media.row.name }}</h1>
+      <h1 title="{{ media.row.name }}">{{ media.row.name }}</h1>
+      <details class="review-source-details"><summary>Source details &amp; extraction</summary><p class="review-full-source-name">{{ media.row.name }}</p><p class="eyebrow">{{ media.row.collection_name }} · {{ media.row.kind }} · {{ format_timestamp(media.document.duration_ms) }}</p>
+
       <p>{{ media.row.state }}{% if media.transcript %} · {{ media.transcript.segment_count }} transcript passage{% if media.transcript.segment_count != 1 %}s{% endif %} · {{ 'Reviewed transcript' if media.transcript.review_state == 'human_reviewed' else 'Draft transcript' }}{% endif %}</p>
+      </details>
     </div>
     <div class="source-review-actions">
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/ask?entity_return_to={{ request.query_params.get('entity_return_to', '')|urlencode }}">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/ask?entity_return_to={{ request.query_params.get('entity_return_to', '')|urlencode }}" data-review-ask-source>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="button button-ink" type="submit" {% if media.document.state != 'ready' %}disabled{% endif %}>Ask using this source</button>
       </form>
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/review-state?browse={{ (source_sequence.context if request.query_params.get('browse') else '')|urlencode }}&amp;entity_return_to={{ source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))|urlencode }}">
+      <a href="#source-note-panel" class="button button-secondary" data-review-note-open aria-controls="source-note-panel" aria-expanded="true">Write a note</a>
+      <details class="review-actions-menu"><summary class="button button-secondary">Review actions</summary><div>      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/review-state?browse={{ (source_sequence.context if request.query_params.get('browse') else '')|urlencode }}&amp;entity_return_to={{ source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))|urlencode }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="state" value="{{ 'unreviewed' if media.row.review_state == 'reviewed' else 'reviewed' }}">
         <button class="button button-secondary" type="submit">{{ 'Mark unreviewed' if media.row.review_state == 'reviewed' else 'Mark reviewed' }}</button>
@@ -28,9 +31,17 @@
         <input type="hidden" name="state" value="flagged">
         <button class="button button-secondary" type="submit">{{ 'Flagged' if media.row.review_state == 'flagged' else 'Flag for follow-up' }}</button>
       </form>
+    <label class="review-pane-width">Pane width <input type="range" min="300" max="520" step="20" value="380" data-review-pane-width aria-label="Questions and notes pane width"></label></div></details>
     </div>
   </header>
-  {% with active='sources' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  <nav class="review-toolbar" aria-label="Review workspace tools">
+    <button type="button" class="button button-secondary" data-review-queue-toggle aria-expanded="true" aria-controls="review-source-queue">Sources in this view</button>
+    <details class="review-workspace-menu"><summary>Workspace</summary>{% with active='sources', hide_processing_status=true %}{% include "workbench_matter_tabs.html" %}{% endwith %}</details>
+    <a href="/matters/{{ matter.slug }}/notebook">Case notes</a>
+    <a href="/matters/{{ matter.slug }}/entities">People &amp; places</a>
+    <a href="/matters/{{ matter.slug }}/entities#discovery-heading">Discover entities</a>
+
+  </nav>
   {% include "workbench_retention_notice.html" %}
   <div class="source-browser-layout">
   {% include "workbench_source_browser.html" %}
@@ -41,10 +52,10 @@
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
 
   {% if transcript_notices %}
-  <section class="media-processing-card" role="status" aria-labelledby="transcript-notices-heading" data-transcript-notices>
+  <details class="media-processing-card review-media-notices" aria-labelledby="transcript-notices-heading" data-transcript-notices><summary>Transcript processing notices</summary>
     <h2 id="transcript-notices-heading">Transcript processing notices</h2>
     {% for message in transcript_notices %}<p>{{ message }}</p>{% endfor %}
-  </section>
+  </details>
   {% endif %}
 
   {% if media.job and media.job.state in ('queued', 'running') %}
@@ -66,7 +77,7 @@
 
   {% if media.job and media.job.preflight %}
   {% set check = media.job.preflight %}
-  <section class="media-processing-card" data-recording-check aria-labelledby="recording-check-heading">
+  <details class="media-processing-card review-media-notices" data-recording-check aria-labelledby="recording-check-heading" {% if media.job.display_state == 'needs_review' %}open{% endif %}><summary>Recording check &amp; transcription coverage</summary>
     <h2 id="recording-check-heading">{{ {'no_audio': 'Video without audio', 'no_speech': 'No speech detected', 'uncertain': 'Listen before transcribing', 'failed': 'Recording check did not finish', 'ready': 'Likely speech found'}.get(check.outcome, 'Recording check') }}</h2>
     {% if media.job.display_state in ('needs_review', 'playback_only') %}<p>{{ media.job.message }}</p>{% endif %}
     {% if check.outcome != 'no_audio' %}
@@ -88,7 +99,7 @@
       <button class="button button-secondary" name="action" value="retry" type="submit">Check recording again</button>
     </form>
     {% endif %}
-  </section>
+  </details>
   {% endif %}
 
   <div class="media-review-layout">
@@ -103,7 +114,7 @@
       {% endif %}
       <div class="media-tool-panels">
       <section class="media-player-card media-tool-panel" id="media-playback" aria-labelledby="{{ 'media-tool-tab-playback' if media.transcript else 'media-player-heading' }}" {% if media.transcript %}role="tabpanel" data-media-tool-panel data-media-tool="playback"{% endif %}>
-        <header><div><p class="eyebrow">Matter source</p><h2 id="media-player-heading">Authenticated playback</h2></div><span class="media-current-time" data-media-time>00:00</span></header>
+        <header><div><p class="eyebrow">Matter source</p><h2 id="media-player-heading">Recording</h2></div><span class="media-current-time" data-media-time>00:00</span></header>
         {% if media.player_kind == 'video' %}
         <video id="matter-media-player" controls preload="metadata" data-media-player>
           <source src="{{ media.playback_href }}" type="{{ media.playback_media_type }}">
@@ -122,7 +133,7 @@
           {% if media.document.playback_state in ('failed', 'original', 'ready') %}<form method="post" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/playback/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="quiet-action" type="submit">{{ 'Try playback again' if media.document.playback_state == 'failed' else 'Playback trouble? Convert video' }}</button></form>{% endif %}
         </div>
         {% endif %}
-        <p class="media-security-note">Playback is available independently from transcription. It is membership-checked and byte-range streamed from this matter; when a browser copy is needed, RecordBench reuses compatible streams and converts only what is necessary while the original remains unchanged.</p>
+        <details class="media-playback-provenance"><summary>Playback &amp; original provenance</summary><p class="media-security-note">Playback is available independently from transcription. It is membership-checked and byte-range streamed from this matter; when a browser copy is needed, RecordBench reuses compatible streams and converts only what is necessary while the original remains unchanged.</p></details>
       </section>
 
       {% if media.transcript %}
@@ -255,6 +266,8 @@
           </div>
         </div>
       </details>
+      <details class="review-transcript-search" {% if transcript_query or transcript_speaker or transcript_flag %}open{% endif %}>
+        <summary>Find in transcript</summary>
       <form class="transcript-filters" method="get" action="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}">
         <input type="hidden" name="browse" value="{{ source_sequence.context if request.query_params.get('browse') else '' }}">
         <input type="hidden" name="entity_return_to" value="{{ source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) }}">
@@ -264,6 +277,7 @@
         <button class="button button-secondary" type="submit">Apply</button>
         {% if transcript_query or transcript_speaker or transcript_flag %}<a href="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}?browse={{ (source_sequence.context if request.query_params.get('browse') else '')|urlencode }}&amp;entity_return_to={{ source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))|urlencode }}">Clear</a>{% endif %}
       </form>
+      </details>
       <div class="transcript-list" data-transcript-list>
         {% for segment in segments %}
         <article id="segment-{{ segment.ordinal }}" class="transcript-segment{% if segment.segment_id == media.focus_segment_id %} focus-segment{% endif %}" data-transcript-segment data-segment-id="{{ segment.segment_id }}" data-start-ms="{{ segment.start_ms }}" data-end-ms="{{ segment.end_ms }}">
@@ -292,5 +306,6 @@
   </div>
   </div>
   </div>
+  {% include "workbench_source_note.html" %}
 </main>
 {% endblock %}

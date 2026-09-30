@@ -3269,6 +3269,65 @@ class CaseIntelligenceWorkbench:
             references=references,
         )
 
+    @staticmethod
+    def source_note_basis(document: PilotDocument) -> str:
+        """Fingerprint the displayed extraction without introducing stored state."""
+        units = document.parsed_units() if document.state == "ready" else ()
+        return hashlib.sha256(json.dumps([
+            document.version_id,
+            [(unit.number, unit.excerpt_digest, unit.start_ms, unit.end_ms,
+              unit.line_start, unit.line_end) for unit in units],
+        ], separators=(",", ":")).encode()).hexdigest()
+
+    def save_source_note(
+        self, matter: MatterRecord, actor_id: str, token: str, *,
+        source_version_id: str, source_basis: str, body: str, request_key: str,
+        unit_number: int = 1, start_ms: int = 0,
+    ) -> tuple[NotebookItemRecord, bool]:
+        """Capture a human note against a currently available canonical source unit."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", request_key):
+            raise WorkspaceProblem("Reload the source before saving this note.")
+        if not body.strip():
+            raise WorkspaceProblem("Write a note before saving it.")
+        store = self.source_store(matter)
+        with store.mutation_guard(), self.workspace._lock:
+            self.workspace.membership(matter.matter_id, actor_id)
+            document = store.get_by_action_token(token)
+            if document.version_id != source_version_id or document.state != "ready":
+                raise WorkspaceProblem("This source changed or is unavailable. Reload it before saving your note.")
+            if source_basis != self.source_note_basis(document):
+                raise WorkspaceProblem("The source text changed while you were writing. Reload and check the source before saving your note.")
+            units = document.parsed_units()
+            if is_media_type(document.media_type):
+                index = next((index for index, candidate in enumerate(units)
+                    if int(candidate.start_ms if candidate.start_ms is not None else candidate.line_start or 0)
+                    <= start_ms < int(candidate.end_ms if candidate.end_ms is not None else candidate.line_end or 0)), None)
+                if index is None:
+                    raise WorkspaceProblem("Choose a transcribed playback position before saving a source-linked note.")
+            else:
+                index = unit_number - 1
+                if not 0 <= index < len(units):
+                    raise WorkspaceProblem("Choose an available source page before saving your note.")
+            candidate = self._candidate(matter, document, units[index], index + 1)
+            support = self._citation(matter, candidate).support_token
+            reference = self.notebook_reference_from_support(matter, support)
+            # A draft identity belongs to one author. Reusing it with changed
+            # content or source must not silently create or overwrite a note.
+            digest = hashlib.sha256(json.dumps([actor_id, request_key]).encode()).hexdigest()
+            item, created = self.workspace.create_notebook_item(
+                matter.matter_id, actor_id, item_type="note", status="needs_review",
+                title=self._notebook_title(body), body=body, origin="manual",
+                dedupe_key=f"manual-source:{digest}", references=(reference,),
+            )
+            if not created:
+                references = self.workspace.notebook_references(matter.matter_id, actor_id, item.item_id)
+                normalized_body = self.workspace._derived_text(
+                    body, label="Notebook details", maximum=20_000, required=False, multiline=True)
+                if (item.origin != "manual" or item.body != normalized_body
+                        or len(references) != 1 or references[0].support_token != support):
+                    raise WorkspaceProblem("This draft was already saved with different text or source support. Start a new note to save these changes.")
+            return item, created
+
     def save_support_to_notebook(
         self, matter: MatterRecord, actor_id: str, token: str
     ) -> tuple[NotebookItemRecord, bool]:
@@ -12261,12 +12320,14 @@ def create_workbench_app(
                 _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
             )
             if is_media_type(document.media_type):
-                media = bench.media_review(
-                    matter,
-                    token,
-                    start_ms=start_ms,
-                    focus_segment_id=segment,
-                )
+                with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
+                    media = bench.media_review(
+                        matter,
+                        token,
+                        start_ms=start_ms,
+                        focus_segment_id=segment,
+                    )
+                    source_note_basis = bench.source_note_basis(media.document)
                 speaker_labels = transcript_speaker_labels(media.segments)
                 query_key = " ".join(q.split()).casefold()
                 selected = tuple(
@@ -12356,12 +12417,17 @@ def create_workbench_app(
                         "summary_failure": _media_summary_failure_view(media.summary),
                         "transcript_notices": transcript_processing_notices(media.transcript),
                         "source_sequence": source_sequence,
+                        "source_note_request_key": getattr(request.state, "source_note_request_key", uuid.uuid4().hex),
+                        "source_note_draft": getattr(request.state, "source_note_draft", ""),
+                        "source_note_basis": source_note_basis,
                         "format_timestamp": format_timestamp,
                         "notice": notice,
                         "error": error,
                     },
                 )
-            source = bench.source_review(matter, token, unit_number=unit or 1)
+            with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
+                source = bench.source_review(matter, token, unit_number=unit or 1)
+                source_note_basis = bench.source_note_basis(source.document)
             if not administrator_override:
                 bench.workspace.record_matter_activity(
                     matter.matter_id,
@@ -12396,10 +12462,82 @@ def create_workbench_app(
                     if source.document.media_type in EMAIL_MEDIA_TYPES or source.document.media_type == "application/pdf" else ""
                 ),
                 "source_sequence": source_sequence,
+                "source_note_request_key": getattr(request.state, "source_note_request_key", uuid.uuid4().hex),
+                "source_note_draft": getattr(request.state, "source_note_draft", ""),
+                "source_note_basis": source_note_basis,
                 "notice": notice,
                 "error": error,
             },
         )
+
+    @app.post("/matters/{slug}/sources/{token}/notes",
+              dependencies=[Depends(require_csrf), Depends(require_matter_response_lease)])
+    def create_source_note(
+        request: Request, slug: str, token: str,
+        body: str = Form(..., max_length=20_000),
+        source_version_id: str = Form(..., max_length=160),
+        source_basis: str = Form(..., max_length=64),
+        request_key: str = Form(..., max_length=80),
+        unit: int = Form(1, ge=1, le=100_000),
+        start_ms: int = Form(0, ge=0, le=43_200_000),
+        return_to: str = Form("", max_length=8192),
+    ):
+        def finish(response):
+            response.headers["Cache-Control"] = "no-store"
+            return transfer_matter_response_lease(request, response, through_send=True)
+
+        context = auth_context(request)
+        wants_json = "application/json" in request.headers.get("accept", "")
+        return_path = _source_review_return_href(slug, return_to)
+        fallback = _query_url(f"/matters/{slug}/sources/{token}", unit=unit, start_ms=start_ms)
+        try:
+            matter = authorized_matter(request, slug)
+            with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
+                refresh_context_authority(request, slug, context, False)
+                item, created = bench.save_source_note(
+                    matter, context.principal_id, token, source_version_id=source_version_id,
+                    source_basis=source_basis, body=body, request_key=request_key,
+                    unit_number=unit, start_ms=start_ms,
+                )
+        except KeyError as exc:
+            raise HTTPException(404, "Source not found") from exc
+        except WorkspaceProblem as exc:
+            if wants_json:
+                return finish(JSONResponse({"message": str(exc)}, status_code=409))
+            # Render the reader with the submitted draft intact; do not put
+            # human notes in redirect URLs or silently discard failed saves.
+            request.state.source_note_draft = body
+            request.state.source_note_request_key = request_key
+            recovery_query = urlparse(return_path or fallback).query
+            query = parse_qs(recovery_query)
+            page_value = query.get("page", ["1"])[0]
+            recovery_page = min(max(int(page_value), 1), 100_000) if re.fullmatch(r"[0-9]{1,6}", page_value) else 1
+            # The response contains a reader, so its links/forms must point at
+            # that reader rather than at the POST-only save endpoint.
+            recovery_request = Request({**request.scope,
+                "path": f"/matters/{slug}/sources/{token}",
+                "query_string": recovery_query.encode("utf-8")})
+            response = review_source(recovery_request, slug, token,
+                browse=query.get("browse", [""])[0], unit=unit, start_ms=start_ms,
+                segment=query.get("segment", [""])[0], q=query.get("q", [""])[0],
+                speaker=query.get("speaker", [""])[0], speaker_review=query.get("speaker_review", [""])[0],
+                flag=query.get("flag", [""])[0],
+                page=recovery_page,
+                notice="", error=str(exc))
+            response.status_code = 409
+            return finish(response)
+        audit(request, "notebook.item_create", "success", context=context, matter=matter,
+              object_type="notebook_item", object_id=item.item_id,
+              details={"created": created, "state": item.status})
+        notice = "Your note was saved to case notes for review." if created else "This note was already saved to case notes."
+        if wants_json:
+            return finish(JSONResponse({"message": notice, "created": created,
+                                        "item_id": item.item_id, "status": item.status}))
+        parsed = urlparse(return_path or fallback)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        query.pop("error", None)
+        query["notice"] = [notice]
+        return finish(RedirectResponse(parsed._replace(query=urlencode(query, doseq=True)).geturl(), status_code=303))
 
     @app.get("/matters/{slug}/sources/{token}/media-status")
     def media_status(request: Request, slug: str, token: str):
@@ -13113,23 +13251,28 @@ def create_workbench_app(
     )
     def ask_using_source(request: Request, slug: str, token: str):
         context = auth_context(request)
+        wants_json = "application/json" in request.headers.get("accept", "")
         try:
             matter = authorized_matter(request, slug)
-            document = bench.source_store(matter).get_by_action_token(token)
-            if document.state != "ready":
-                raise WorkspaceProblem(
-                    "This source must finish processing before it can answer questions."
+            with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
+                refresh_context_authority(request, slug, context, False)
+                document = bench.source_store(matter).get_by_action_token(token)
+                if document.state != "ready":
+                    raise WorkspaceProblem(
+                        "This source must finish processing before it can answer questions."
+                    )
+                label = f"Only · {document.display_name}"
+                source_set = bench.workspace.singleton_source_set(
+                    matter.matter_id,
+                    document.document_id,
+                    label[:160],
+                    context.principal_id,
                 )
-            label = f"Only · {document.display_name}"
-            source_set = bench.workspace.singleton_source_set(
-                matter.matter_id,
-                document.document_id,
-                label[:160],
-                context.principal_id,
-            )
         except KeyError as exc:
             raise HTTPException(404, "Source not found") from exc
         except WorkspaceProblem as exc:
+            if wants_json:
+                return JSONResponse({"message": str(exc)}, status_code=409, headers={"Cache-Control": "no-store"})
             return RedirectResponse(
                 _query_url(f"/matters/{slug}/sources/{token}", error=str(exc)),
                 status_code=303,
@@ -13144,6 +13287,9 @@ def create_workbench_app(
             object_id=source_set.source_set_id,
             details={"count": 1},
         )
+        if wants_json:
+            return JSONResponse({"source_set_id": source_set.source_set_id, "name": label[:160]},
+                                headers={"Cache-Control": "no-store"})
         return RedirectResponse(
             _query_url(
                 f"/matters/{slug}",

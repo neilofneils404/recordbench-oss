@@ -4,21 +4,25 @@
 {% block body_class %}source-review-page{% endblock %}
 
 {% block content %}
-<main id="main-content" tabindex="-1" class="source-review-main">
+<main data-review-workspace data-review-matter="{{ matter.matter_id }}" id="main-content" tabindex="-1" class="source-review-main">
   <header class="source-review-heading">
     <div>
       <a class="back-link" href="{{ source_sequence.library_href }}">← Review sources</a>
       {% set review_return = source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) %}{% if review_return %}<a class="back-link" href="{{ review_return }}">Return to review context</a>{% endif %}
-      <p class="eyebrow">{{ source.row.collection_name }} · {{ source.row.kind }}</p>
-      <h1>{{ source.row.name }}</h1>
+      <h1 title="{{ source.row.name }}">{{ source.row.name }}</h1>
+      <details class="review-source-details"><summary>Source details &amp; extraction</summary><p class="review-full-source-name">{{ source.row.name }}</p><p class="eyebrow">{{ source.row.collection_name }} · {{ source.row.kind }}</p>
+
       <p>{{ source.position_label }} · {{ source.row.state }}</p>
+      {% if source_coverage_notice %}<p>{{ source_coverage_notice }}</p>{% endif %}
+      </details>
     </div>
     <div class="source-review-actions">
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/ask?entity_return_to={{ request.query_params.get('entity_return_to', '')|urlencode }}">
+      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/ask?entity_return_to={{ request.query_params.get('entity_return_to', '')|urlencode }}" data-review-ask-source>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="button button-ink" type="submit" {% if source.document.state != 'ready' %}disabled{% endif %}>Ask using this source</button>
       </form>
-      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state?browse={{ (source_sequence.context if request.query_params.get('browse') else '')|urlencode }}&amp;entity_return_to={{ source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))|urlencode }}">
+      <a href="#source-note-panel" class="button button-secondary" data-review-note-open aria-controls="source-note-panel" aria-expanded="true">Write a note</a>
+      <details class="review-actions-menu"><summary class="button button-secondary">Review actions</summary><div>      <form method="post" action="/matters/{{ matter.slug }}/sources/{{ source.row.action_token }}/review-state?browse={{ (source_sequence.context if request.query_params.get('browse') else '')|urlencode }}&amp;entity_return_to={{ source_review_return_href(matter.slug, request.query_params.get('entity_return_to', ''))|urlencode }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="state" value="{{ 'unreviewed' if source.row.review_state == 'reviewed' else 'reviewed' }}">
         <button class="button button-secondary" type="submit">{{ 'Mark unreviewed' if source.row.review_state == 'reviewed' else 'Mark reviewed' }}</button>
@@ -29,9 +33,17 @@
         <button class="button button-secondary" type="submit">{{ 'Flagged' if source.row.review_state == 'flagged' else 'Flag for follow-up' }}</button>
       </form>
       <a class="button button-secondary" href="/matters/{{ matter.slug }}/exact-search?collection={{ (source_sequence.library.collection_id if request.query_params.get('browse') else source.row.collection_id)|urlencode }}&amp;source_set={{ source_sequence.library.source_set_id|urlencode }}">Search document contents</a>
+    <label class="review-pane-width">Pane width <input type="range" min="300" max="520" step="20" value="380" data-review-pane-width aria-label="Questions and notes pane width"></label></div></details>
     </div>
   </header>
-  {% with active='sources' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  <nav class="review-toolbar" aria-label="Review workspace tools">
+    <button type="button" class="button button-secondary" data-review-queue-toggle aria-expanded="true" aria-controls="review-source-queue">Sources in this view</button>
+    <details class="review-workspace-menu"><summary>Workspace</summary>{% with active='sources', hide_processing_status=true %}{% include "workbench_matter_tabs.html" %}{% endwith %}</details>
+    <a href="/matters/{{ matter.slug }}/notebook">Case notes</a>
+    <a href="/matters/{{ matter.slug }}/entities">People &amp; places</a>
+    <a href="/matters/{{ matter.slug }}/entities#discovery-heading">Discover entities</a>
+
+  </nav>
   {% include "workbench_retention_notice.html" %}
   <div class="source-browser-layout">
   {% include "workbench_source_browser.html" %}
@@ -40,10 +52,12 @@
 
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
-  {% if source_coverage_notice %}
-  <div class="notice" role="note" aria-label="Source extraction coverage">{{ source_coverage_notice }}</div>
-  {% endif %}
 
+
+<div class="review-page-navigation"><span>Selected searchable section {{ source.unit_index }}</span>      <nav class="reader-pagination" aria-label="Source section navigation">
+        {% if source.previous_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.previous_href, request.query_params.get('entity_return_to', '')), source_sequence.context if request.query_params.get('browse') else '') }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
+        {% if source.next_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.next_href, request.query_params.get('entity_return_to', '')), source_sequence.context if request.query_params.get('browse') else '') }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
+      </nav></div>
   {% if source.embedded_content_href %}
   {% if source.row.kind == 'IMAGE' %}
   <figure class="document-reader image-reader" aria-label="Image source viewer">
@@ -51,7 +65,7 @@
   </figure>
   {% else %}
   <section class="document-reader" aria-label="PDF source viewer">
-    <iframe src="{{ source.embedded_content_href }}" title="{{ source.row.name }} PDF viewer"></iframe>
+    <iframe src="{{ source.embedded_content_href }}{{ '&' if '#' in source.embedded_content_href else '#' }}view=FitH&amp;navpanes=0" title="{{ source.row.name }} PDF viewer"></iframe>
   </section>
   {% endif %}
   {% endif %}
@@ -62,10 +76,7 @@
         <p class="eyebrow">Searchable content</p>
         <h2 id="extracted-reader-heading">{{ source.position_label }}</h2>
       </div>
-      <nav class="reader-pagination" aria-label="Source section navigation">
-        {% if source.previous_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.previous_href, request.query_params.get('entity_return_to', '')), source_sequence.context if request.query_params.get('browse') else '') }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
-        {% if source.next_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.next_href, request.query_params.get('entity_return_to', '')), source_sequence.context if request.query_params.get('browse') else '') }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
-      </nav>
+
     </header>
     {% if source.unit %}
     {% if entity_support_token %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/entities?support={{ entity_support_token }}&amp;return_to={{ (request.query_params.get('entity_return_to') or (request.url.path ~ '?' ~ request.url.query))|urlencode }}">Attach passage to entity</a> <a class="button button-secondary" href="/matters/{{ matter.slug }}/chronology?support={{ entity_support_token }}&amp;return_to={{ (request.query_params.get('entity_return_to') or (request.url.path ~ '?' ~ request.url.query))|urlencode }}">Use in event or assertion</a>{% endif %}
@@ -79,5 +90,6 @@
   </section>
   </div>
   </div>
+  {% include "workbench_source_note.html" %}
 </main>
 {% endblock %}
