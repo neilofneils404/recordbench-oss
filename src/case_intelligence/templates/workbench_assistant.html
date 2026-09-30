@@ -66,6 +66,12 @@
               {% for claim in message.payload.claims %}
               {% set claim_index = loop.index0 %}
               <li>{{ claim.text }}
+                <form class="save-claim-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ assistant.conversation.conversation_id }}/messages/{{ message.message_id }}/notebook/claims/{{ claim_index }}" data-assistant-save-passage>
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="return_to" value="{{ source_review_return_href(matter.slug, request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) if not request.url.path.endswith('/assistant') else assistant.open_url }}">
+                  <button type="submit">Save passage to case notes</button>
+                  <span data-save-passage-status role="status" aria-live="polite" aria-atomic="true"></span>
+                </form>
                 {% if claim.citations %}
                 <div class="assistant-citations cited-context-list">
                   {% for citation in claim.citations %}

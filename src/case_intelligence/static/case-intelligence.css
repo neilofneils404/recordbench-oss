@@ -5789,6 +5789,7 @@ select.source-scope {
 .notebook-empty p { margin: 5px 0 0; font-size: 12px; }
 
 .save-claim-form { margin: 5px 0 0; }
+[data-assistant-save-passage] [data-save-passage-status] { display: block; font-size: 12px; }
 .save-claim-form button, .citation-with-save form button { padding: 2px 0; border: 0; background: transparent; color: var(--accent-dark); cursor: pointer; font: 700 10px var(--font-ui); }
 .citation-with-save { display: inline-flex; align-items: stretch; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--canvas); }
 .citation-with-save .citation { border: 0; border-radius: 0; }

@@ -3697,6 +3697,35 @@
       setAssistantCollapsed(false, { focus: true });
     });
 
+    assistantDock.querySelectorAll("[data-assistant-save-passage]").forEach((saveForm) => {
+      saveForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (saveForm.getAttribute("aria-busy") === "true") return;
+        const button = saveForm.querySelector('button[type="submit"]');
+        const feedback = saveForm.querySelector("[data-save-passage-status]");
+        const submission = new FormData(saveForm);
+        saveForm.setAttribute("aria-busy", "true");
+        button.setAttribute("aria-disabled", "true");
+        feedback.textContent = "Saving passage…";
+        try {
+          const response = await fetch(saveForm.action, {
+            method: "POST", body: submission,
+            headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+          });
+          const result = await assistantJson(response);
+          if (!result.item_id) throw new Error("The save could not be confirmed.");
+          // A late response belongs only to its original claim, never a newly
+          // selected conversation or reader. Do not refresh either surface.
+          if (saveForm.isConnected) feedback.textContent = result.message;
+        } catch (error) {
+          if (saveForm.isConnected) feedback.textContent = `${error.message} You can safely try saving again.`;
+        } finally {
+          saveForm.removeAttribute("aria-busy");
+          button.removeAttribute("aria-disabled");
+        }
+      });
+    });
+
     const conversationPicker = assistantDock.querySelector("[data-assistant-conversation-picker]");
     conversationPicker?.addEventListener("change", async () => {
       const conversationId = conversationPicker.value;

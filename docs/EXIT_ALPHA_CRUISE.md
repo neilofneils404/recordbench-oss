@@ -4,7 +4,7 @@ Binding execution order for leaving public contributor alpha.
 Product slice briefs under `docs/product-slices/` remain the implementation
 specs. When numeric slice order conflicts with this file, **this file wins**.
 
-## Current state — September 22, 2026
+## Current state — September 30, 2026
 
 Reference upstream revision: `3c814e37adf18a84de9191bad84e0e8a2745e525`.
 Manual entities, entity discovery, events/assertions, the first single-run
@@ -33,7 +33,18 @@ B acceptance remains complete.
 PR #107 landed at the reference revision above after full Quality, requested
 hosted code review and fixed-corpus real-model acceptance. The
 [landing receipt](#continuity-c-landing-receipt) records the evidence and limits.
-No further product increment is selected.
+**Selected next increment (local implementation, not landed):** Save passage to
+Case notes beside generated claims in the review assistant dock. Reuse the
+existing authenticated, CSRF-protected save, citation validation, suggested
+status and deterministic deduplication. Preserve reader location, filters,
+conversation and draft with inline accessible feedback and a validated
+same-matter non-JavaScript return. Full conversation remains compatible.
+Synthetic route and browser acceptance cover repeated saves, lost access,
+stale citations and navigation. No new storage, chat, graph or model system;
+no deployment or merge is selected. The [workspace contract](WORKSPACE_LAYOUT.md#save-an-assistant-passage-during-review)
+records the behavior and synthetic acceptance commands. Local full-suite
+acceptance is limited by container directory-ownership checks that also fail on
+unchanged main; final-head hosted Quality is required before any landing.
 
 Model/runtime changes, visual work/slice 21, Mac work/PR #34,
 PR #87, wider onboarding, later slice-19 work, deployment and supported-release
@@ -55,10 +66,9 @@ and subsequent delivery stages. Slice 19's first single-run adapter is landed
 as recorded below. Multiple-run aggregation, new questions, background material,
 matter memory, production imports and larger capacity remain separately scoped
 work. Slice 20 is landed as recorded below. The bounded Linux CPU contributor
-node path (B-lite) and Continuity A/B/C are Done. No further product increment
-is selected.
+node path (B-lite) and Continuity A/B/C are Done. The dock passage-save increment above is selected.
 
-**Last updated:** 2026-09-22
+**Last updated:** 2026-09-30
 
 ## Continuity C landing receipt
 
@@ -279,6 +289,7 @@ scope and local baseline failures; those are diagnostic, not waived gates.
 | 13 | **Continuity A:** connect existing Case notes to authoritative saved identities and events/assertions | **Done** — PR #100 at `dd367cc`; [landing receipt](#continuity-a-landing-receipt), Quality **35610419040** |
 | 14 | **Continuity B:** explicit, durable reviewer-owned context selection; no answer integration | **Done** — PR #103 at `d21c1d4`; [landing receipt](#continuity-b-landing-receipt), Quality **35722012792** |
 | 15 | **Continuity C:** explicit selected context in queued focused answers, immutable submission and dispatch receipts | **Done** — PR #107 at `3c814e3`; [landing receipt](#continuity-c-landing-receipt), fixed-corpus model acceptance and full Quality passed |
+| 16 | **Assistant dock passage save:** existing Case notes capture with inline feedback and retained reader context | **Next — local implementation; not landed** |
 | ∥ | Parallel release-readiness evidence (`docs/RELEASE_READINESS.md`) | Ongoing alongside active slices |
 
 The September 19 landing completes slice 20 under
@@ -287,7 +298,7 @@ The September 19 landing completes slice 20 under
 The bounded **20b B-lite** node path is Done with its dated clean-node and
 Quality receipt. Code-only contribution remains
 `make bootstrap/check`; running the product uses the existing `./install`.
-Continuity A, B and C are Done. No next product increment is selected.
+Continuity A, B and C are Done. The dock passage-save increment above is Next.
 Slice 21, further visual experiments and additional work on PR #34 or PR #87
 remain on hold. High-resolution retrieval work remains
 local and outside this PR. Existing text and transcript support is not native

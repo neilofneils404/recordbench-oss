@@ -15153,8 +15153,20 @@ def create_workbench_app(
         conversation_id: str,
         message_id: str,
         claim_index: int,
+        return_to: str = Form("", max_length=4000),
     ):
         context = auth_context(request)
+        wants_json = "application/json" in request.headers.get("accept", "")
+        return_path = _source_review_return_href(slug, return_to)
+
+        def return_with_feedback(message: str, *, error: bool = False):
+            parsed = urlparse(return_path or _query_url(
+                f"/matters/{slug}", conversation=conversation_id) + "#latest")
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            query.pop("error", None)
+            query.pop("notice", None)
+            query["error" if error else "notice"] = [message]
+            return RedirectResponse(parsed._replace(query=urlencode(query, doseq=True)).geturl(), status_code=303)
         try:
             matter = authorized_matter(request, slug)
             item, created = bench.save_answer_to_notebook(
@@ -15167,12 +15179,10 @@ def create_workbench_app(
         except KeyError as exc:
             raise HTTPException(404, "Saved answer passage not found") from exc
         except WorkspaceProblem as exc:
-            return RedirectResponse(
-                _query_url(
-                    f"/matters/{slug}", conversation=conversation_id, error=str(exc)
-                ),
-                status_code=303,
-            )
+            if wants_json:
+                return JSONResponse({"message": str(exc)}, status_code=409,
+                                    headers={"Cache-Control": "no-store"})
+            return return_with_feedback(str(exc), error=True)
         audit(
             request,
             "notebook.capture_answer",
@@ -15183,15 +15193,13 @@ def create_workbench_app(
             object_id=item.item_id,
             details={"created": created, "state": item.status},
         )
-        return RedirectResponse(
-            _query_url(
-                f"/matters/{slug}",
-                conversation=conversation_id,
-                notice="Answer passage saved for notebook review" if created else "That answer passage was already saved",
-            )
-            + "#latest",
-            status_code=303,
-        )
+        notice = ("Passage saved to case notes for review." if created
+                  else "That passage was already saved to case notes.")
+        if wants_json:
+            return JSONResponse({"message": notice, "created": created,
+                                 "item_id": item.item_id, "status": item.status},
+                                headers={"Cache-Control": "no-store"})
+        return return_with_feedback(notice)
 
     @app.post(
         "/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/notebook/claims/{claim_index}/citations/{citation_index}",

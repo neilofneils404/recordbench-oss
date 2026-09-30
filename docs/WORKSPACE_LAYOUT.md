@@ -51,3 +51,35 @@ This layout-only contribution starts from the accepted selected integration.
 The frozen review-acceptance manifest remains unchanged: its integrity tests
 pass without importing the broader integration's changed media test or updating
 its recorded digest.
+
+## Save an assistant passage during review
+
+Each generated claim in the assistant dock has **Save passage to case notes**.
+The existing save checks matter access and current citation support, creates a
+suggested note for human review, and deduplicates repeated saves. A save only
+updates the claim's accessible inline feedback; it keeps the reader document,
+section, scroll, URL, filters, selected chat and unsent question in place. A
+pending response cannot replace a newly opened reader or chat. An uncertain
+response can be retried safely. Saving does not confirm the generated claim.
+
+Without JavaScript, the form returns to the validated same-matter reader URL
+with a notice or error. A full page submission cannot preserve an unsent
+client-only draft or arbitrary pixel scroll; source section and filters remain
+in the return URL. Full conversation's existing forms and redirects still work.
+No new storage, conversation, graph or generation contract is introduced.
+
+Supplemental browser acceptance uses an explicitly selected Chromium executable
+and Playwright available to Node, plus the existing Python development environment:
+
+```console
+node scripts/browser-accept-assistant-passage.cjs /path/to/chromium /tmp/new-dock-acceptance
+```
+
+It starts an ephemeral loopback application with generated text and an unavailable
+model. The receipt and screenshot contain only synthetic evidence. It checks
+keyboard feedback, retained reader/composer state, repeated saves, pending chat
+and reader navigation, Back/Forward, reload and JavaScript-disabled submission.
+Simulated error responses test inline recovery; the Python route regressions in
+`tests/test_assistant_passage_save.py` separately prove real stale-citation,
+revoked-access and CSRF rejection without writes. This supplemental run does not
+replace the pinned browser or other hosted Quality gates.
