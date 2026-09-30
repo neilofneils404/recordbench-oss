@@ -502,11 +502,33 @@ def main(argv=None):
             # follow the generated candidate all the way to its original support.
             viewport(1440, 480)
             go(paths["notes"])
-            tools = find(".notebook-tools")
-            js("arguments[0].scrollIntoView({block:'start',behavior:'instant'})", tools)
-            tools.send_keys(Keys.END)
+            # The tools now belong to the document. End would start a smooth
+            # scroll to the bottom of the entire notes collection, racing an
+            # immediate scrollIntoView. Traverse to the action as a keyboard
+            # reviewer does, then wait for its native focus scroll to settle.
+            find(".suggestion-tool select").send_keys(Keys.TAB)
             suggestion = find(".suggestion-tool button")
-            reachable(suggestion)
+            previous_suggestion_geometry = None
+
+            def suggestion_ready(_):
+                nonlocal previous_suggestion_geometry
+                result = js("""const e=arguments[0],r=e.getBoundingClientRect();
+                    const top=document.querySelector('.topbar').getBoundingClientRect().bottom;
+                    return {focused:document.activeElement===e,top:r.top,bottom:r.bottom,
+                        topbar_bottom:top,viewport_height:innerHeight,scroll_y:scrollY,
+                        unobscured:e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))};""", suggestion)
+                measurements["short_desktop_suggestion_click"] = result
+                geometry = (result["top"], result["bottom"], result["scroll_y"])
+                settled = (previous_suggestion_geometry is not None
+                    and all(abs(current - previous) <= .5
+                        for current, previous in zip(geometry, previous_suggestion_geometry)))
+                previous_suggestion_geometry = geometry
+                return (settled and result["focused"] and result["unobscured"]
+                    and result["top"] >= result["topbar_bottom"] - 1
+                    and result["bottom"] <= result["viewport_height"] + 1)
+
+            wait.until(suggestion_ready)
+            fits(suggestion)
             suggestion.click()
             wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, ".notebook-item.status-suggested .notebook-provenance a"))
             candidate = next(item for item in driver.find_elements(By.CSS_SELECTOR, ".notebook-item.status-suggested") if "North Annex" in item.text)
@@ -517,7 +539,7 @@ def main(argv=None):
             wait.until(lambda _: find(".support-pane").is_displayed())
             assert "North Annex" in find(".support-pane").text
             screenshot("notes-suggestion-original-support")
-            checks.append("At 1440x480, End reaches Find review suggestions; submitting produces a Suggested North Annex candidate and its source support opens")
+            checks.append("At 1440x480, native Tab reaches Find review suggestions and settles visibly; native click produces a Suggested North Annex candidate and its source support opens")
 
             def keyboard_focus(element):
                 reachable(element)
