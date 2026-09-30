@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from case_intelligence.generation import UnavailableGenerator
 from case_intelligence.workbench import create_workbench_app
+from tests.test_evidence_graph_workflow import _LinkParser
 
 ROOT = Path(__file__).parents[1]
 PDF = ROOT / "src/case_intelligence/demo_data/synthetic_case_report.pdf"
@@ -177,7 +178,9 @@ def test_full_matter_upload_search_generated_answer_support_and_restart(tmp_path
         assert 'data-answer-wait-status' in workspace.text
         assert 'role="status"' in workspace.text
         assert 'class="matter-section-tabs"' in workspace.text
-        assert ">Sources<" in workspace.text
+        links = [(href, label.strip()) for href, label in _LinkParser(workspace.text).links]
+        assert (f"/matters/{slug}/setup?view=list&page_size=100#source-library", "Document review") in links
+        assert (f"/matters/{slug}/full-review", "Automated screening") in links
         assert "Case notes" in workspace.text
         assert "Case conversation" in workspace.text
         assert "Request sent" in workspace.text

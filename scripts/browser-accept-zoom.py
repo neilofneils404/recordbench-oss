@@ -147,7 +147,7 @@ def main():
                 no_overflow()
                 disclosure = find('.matter-section-disclosure')
                 summary = disclosure.find_element(By.CSS_SELECTOR, 'summary')
-                assert 'Sources' in summary.text
+                assert 'Document review' in summary.text
                 reachable(summary)
                 summary.send_keys(Keys.ENTER)
                 links = disclosure.find_elements(By.CSS_SELECTOR, 'a')

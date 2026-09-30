@@ -3649,6 +3649,8 @@
     if (!fragmentUrl) return;
     const epoch = ++assistantEpoch;
     const originatingDock = assistantDock;
+    const originatingComposer = originatingDock.querySelector("[data-assistant-question-form]");
+    const savedContextAtStart = originatingComposer?.querySelector('[name="use_saved_context"]')?.checked;
     const response = await fetch(fragmentUrl, {
       headers: { Accept: "text/html" },
       cache: "no-store",
@@ -3659,12 +3661,36 @@
     if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
     const replacement = holder.querySelector("[data-assistant-dock]");
     if (!replacement || !assistantDock) throw new Error("Assistant response was incomplete.");
+    // A terminal job enables writing before its refreshed history arrives.
+    // Preserve edits in that interval only within the same conversation and
+    // epoch (scope changes and New chat invalidate the refresh above).
+    const sameConversation = replacement.dataset.conversationId === originatingDock.dataset.conversationId;
+    const currentTextarea = originatingComposer?.querySelector("textarea");
+    const replacementComposer = replacement.querySelector("[data-assistant-question-form]");
+    const replacementTextarea = replacementComposer?.querySelector("textarea");
+    const retainFocus = sameConversation && document.activeElement === currentTextarea;
+    const selection = retainFocus ? [currentTextarea.selectionStart, currentTextarea.selectionEnd] : null;
+    if (sameConversation && currentTextarea && replacementTextarea) {
+      replacementTextarea.value = currentTextarea.value;
+      const currentContext = originatingComposer.querySelector('[name="use_saved_context"]');
+      const replacementContext = replacementComposer.querySelector('[name="use_saved_context"]');
+      if (currentContext && replacementContext && currentContext.checked !== savedContextAtStart) {
+        replacementContext.checked = currentContext.checked;
+        const revision = originatingComposer.querySelector('[name="expected_selection_revision"]');
+        const replacementRevision = replacementComposer.querySelector('[name="expected_selection_revision"]');
+        if (revision && replacementRevision) replacementRevision.value = revision.value;
+      }
+    }
     assistantDock.replaceWith(replacement);
     assistantDock = replacement;
     assistantDraft = false;
     saveAssistantConversationPreference(assistantDock.dataset.conversationId || "");
     ensureAssistantDraftOption();
     bindAssistant();
+    if (retainFocus && replacementTextarea && !replacementTextarea.disabled) {
+      replacementTextarea.focus({ preventScroll: true });
+      replacementTextarea.setSelectionRange(...selection);
+    }
     const thread = assistantDock.querySelector("[data-assistant-thread]");
     if (thread?.dataset.hasMessages === "true") thread.scrollTop = thread.scrollHeight;
   };
@@ -3673,7 +3699,9 @@
     window.clearTimeout(assistantPollTimer);
     const status = assistantDock?.querySelector("[data-assistant-status]");
     const statusUrl = status?.dataset.statusUrl;
-    if (!statusUrl) return;
+    // Terminal jobs have already restored the composer. Re-polling them can
+    // replace a newer draft after a scope change or a bfcache restoration.
+    if (!statusUrl || !["queued", "running"].includes(status?.dataset.state || "")) return;
     const epoch = assistantEpoch;
     const originatingDock = assistantDock;
     try {
@@ -3696,6 +3724,10 @@
     } catch (_error) {
       if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
       const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
+      if (!["queued", "running"].includes(status.dataset.state || "")) {
+        if (copy) copy.textContent = "The request finished, but its history could not refresh. Your draft is kept. Open Full conversation to inspect the saved result.";
+        return;
+      }
       if (copy) copy.textContent = "Reconnecting to the saved request…";
       assistantPollTimer = window.setTimeout(pollAssistant, 3500);
     }
@@ -3709,7 +3741,10 @@
 
   const resumeAssistantAfterScopeChange = () => {
     const status = assistantDock?.querySelector("[data-assistant-status]");
-    if (status?.dataset.statusUrl) { pollAssistant(); return; }
+    if (status?.dataset.statusUrl && ["queued", "running"].includes(status.dataset.state)) {
+      pollAssistant();
+      return;
+    }
     const composer = assistantDock?.querySelector("[data-assistant-question-form]");
     if (composer?.getAttribute("aria-busy") === "true") {
       composer.removeAttribute("aria-busy");
@@ -3931,7 +3966,8 @@
     const form = assistantDock.querySelector("[data-assistant-question-form]");
     if (form) form.dataset.sourcesReady = ready ? "true" : "false";
     const status = assistantDock.querySelector("[data-assistant-status]");
-    const working = ["queued", "running"].includes(status?.dataset.state || "");
+    const working = form?.getAttribute("aria-busy") === "true"
+      || ["queued", "running"].includes(status?.dataset.state || "");
     const textarea = form?.querySelector("textarea");
     const submit = form?.querySelector('button[type="submit"]');
     if (textarea) textarea.disabled = !ready || working;

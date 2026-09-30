@@ -13,6 +13,7 @@
       <details class="review-source-details"><summary>Source details &amp; extraction</summary><p class="review-full-source-name">{{ media.row.name }}</p><p class="eyebrow">{{ media.row.collection_name }} · {{ media.row.kind }} · {{ format_timestamp(media.document.duration_ms) }}</p>
 
       <p>{{ media.row.state }}{% if media.transcript %} · {{ media.transcript.segment_count }} transcript passage{% if media.transcript.segment_count != 1 %}s{% endif %} · {{ 'Reviewed transcript' if media.transcript.review_state == 'human_reviewed' else 'Draft transcript' }}{% endif %}</p>
+      {% include "workbench_review_readiness.html" %}
       </details>
     </div>
     <div class="source-review-actions">
@@ -114,7 +115,7 @@
       {% endif %}
       <div class="media-tool-panels">
       <section class="media-player-card media-tool-panel" id="media-playback" aria-labelledby="{{ 'media-tool-tab-playback' if media.transcript else 'media-player-heading' }}" {% if media.transcript %}role="tabpanel" data-media-tool-panel data-media-tool="playback"{% endif %}>
-        <header><div><p class="eyebrow">Matter source</p><h2 id="media-player-heading">Recording</h2></div><span class="media-current-time" data-media-time>00:00</span></header>
+        <header><div><p class="eyebrow">Matter source</p><h2 id="media-player-heading">Authenticated playback</h2></div><span class="media-current-time" data-media-time>00:00</span></header>
         {% if media.player_kind == 'video' %}
         <video id="matter-media-player" controls preload="metadata" data-media-player>
           <source src="{{ media.playback_href }}" type="{{ media.playback_media_type }}">

@@ -199,6 +199,55 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   assert.match(await page.locator('[data-assistant-thread]').innerText(),/Historical answer/);
   checks.push('Ask using this video preserves player/time and explicitly separates next question scope from historical answer.');
   await page.screenshot({path:path.join(output,'synthetic-video-1280x604.png')});
+  // A retained terminal job URL is historical status, never a reason to poll
+  // and replace a live composer after a scope change or bfcache restoration.
+  let terminalPolls=0;
+  const terminalStatusUrl=fixture.matter+'/answer-jobs/synthetic-terminal-status';
+  await page.route('**'+terminalStatusUrl,route=>{terminalPolls+=1;return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({state:'failed',message:'Synthetic historical terminal request.'})});});
+  const terminalDock=await page.locator('[data-assistant-dock]').elementHandle();
+  const savedStatus=await page.locator('[data-assistant-status]').evaluate(e=>({state:e.dataset.state,statusUrl:e.dataset.statusUrl}));
+  for(const state of ['failed','cancelled','succeeded']){
+    await page.locator('[data-assistant-status]').evaluate((e,value)=>{e.dataset.state=value.state;e.dataset.statusUrl=value.url;},{state,url:terminalStatusUrl});
+    const draft='Preserve draft beside historical '+state+' request.';
+    await page.locator('#assistant-question').fill(draft);
+    await page.locator('[data-review-ask-source] button').click();
+    await page.locator('[data-review-ask-source] [role=status]').filter({hasText:'Source selected'}).waitFor();
+    await page.waitForTimeout(150);
+    assert.equal(terminalPolls,0,'Scope changes must not poll terminal jobs');
+    assert.equal(await page.locator('#assistant-question').inputValue(),draft);
+    await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));
+    await page.waitForTimeout(150);
+    assert.equal(terminalPolls,0,'Restored pages must not poll terminal jobs');
+    assert.equal(await page.locator('#assistant-question').inputValue(),draft);
+    assert.equal(await terminalDock.evaluate(e=>e===document.querySelector('[data-assistant-dock]')),true);
+  }
+  await page.locator('[data-assistant-status]').evaluate((e,value)=>{if(value.state===undefined)delete e.dataset.state;else e.dataset.state=value.state;if(value.statusUrl===undefined)delete e.dataset.statusUrl;else e.dataset.statusUrl=value.statusUrl;},savedStatus);
+  await page.unroute('**'+terminalStatusUrl);
+  checks.push('Failed, cancelled and completed historical job URLs never poll or replace drafts after source selection or persisted pageshow.');
+  let releaseTerminalFragment,arrivedTerminalFragment;
+  const terminalFragmentHold=new Promise(r=>releaseTerminalFragment=r),terminalFragmentArrived=new Promise(r=>arrivedTerminalFragment=r);
+  await page.route('**/answer-jobs/*',async route=>{
+    // Complete the real queued synthetic request through its ordinary cancel
+    // endpoint, then return its terminal state to the waiting poll.
+    const cancelled=await page.request.post(route.request().url()+'/cancel',{headers:{Accept:'application/json'}});
+    assert.equal(cancelled.status(),200);
+    await route.fulfill({status:200,contentType:'application/json',body:await cancelled.text()});
+  });
+  await page.route('**/assistant?**',async route=>{const response=await route.fetch();arrivedTerminalFragment();await terminalFragmentHold;await route.fulfill({response}).catch(()=>{});});
+  await page.locator('#assistant-question').fill('Synthetic question whose completion refresh is delayed.');
+  await page.locator('[data-assistant-question-form] button[type=submit]').click();
+  await terminalFragmentArrived;
+  const terminalConversation=await page.locator('[data-assistant-dock]').getAttribute('data-conversation-id');
+  const terminalScope=await page.locator('#assistant-source-set').inputValue();
+  await page.locator('#assistant-question').fill('New same-conversation draft during terminal fragment refresh.');
+  releaseTerminalFragment();await page.waitForTimeout(150);
+  assert.equal(await page.locator('#assistant-question').inputValue(),'New same-conversation draft during terminal fragment refresh.');
+  assert.equal(await page.locator('[data-assistant-dock]').getAttribute('data-conversation-id'),terminalConversation);
+  assert.equal(await page.locator('#assistant-source-set').inputValue(),terminalScope);
+  assert.equal(await page.locator('#assistant-question').evaluate(e=>e===document.activeElement),true);
+  assert.equal(await page.locator('#assistant-question').evaluate(e=>e.selectionStart), 'New same-conversation draft during terminal fragment refresh.'.length);
+  await page.unroute('**/answer-jobs/*');await page.unroute('**/assistant?**');
+  checks.push('A delayed terminal fragment retains a newer draft and source scope in the same conversation.');
   let releaseScopedAsk, arrivedScopedAsk;
   const scopedHold=new Promise(r=>releaseScopedAsk=r),scopedArrived=new Promise(r=>arrivedScopedAsk=r);
   const scopedAction=await page.locator('[data-assistant-question-form]').getAttribute('action');

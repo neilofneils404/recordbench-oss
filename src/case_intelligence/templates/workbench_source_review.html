@@ -14,6 +14,7 @@
 
       <p>{{ source.position_label }} · {{ source.row.state }}</p>
       {% if source_coverage_notice %}<p>{{ source_coverage_notice }}</p>{% endif %}
+      {% include "workbench_review_readiness.html" %}
       </details>
     </div>
     <div class="source-review-actions">

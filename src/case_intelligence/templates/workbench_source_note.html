@@ -15,7 +15,7 @@
     <input type="hidden" name="unit" value="{{ source.unit_index }}">
     {% endif %}
     <p class="source-note-provenance">Source: <strong>{{ note_source.row.name }}</strong>{% if source is defined %}<br>{{ source.position_label }}{% endif %}</p>
-    {% if source is defined and source.embedded_content_href %}<small>Notes attach to the selected searchable section shown above. The PDF’s own page toolbar does not change this selection; use Previous / Next section above the viewer.</small>{% endif %}
+    {% if source is defined and source.row.kind == 'PDF' and source.embedded_content_href %}<small>Notes attach to the selected searchable section shown above. The PDF’s own page toolbar does not change this selection; use Previous / Next section above the viewer.</small>{% endif %}
     <label for="source-note-body">Your note</label>
     <textarea id="source-note-body" name="body" rows="8" maxlength="20000" required>{{ source_note_draft }}</textarea>
     <button class="button button-primary" type="submit">Save human note</button>
