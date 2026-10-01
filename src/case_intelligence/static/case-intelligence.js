@@ -4182,6 +4182,31 @@
     };
     setWidth(layout.width);
     paneWidth?.addEventListener("input", () => { setWidth(paneWidth.value); saveLayout(); });
+    // The PDF opens at whole-page fit; a reviewer may prefer page width instead.
+    const pdfViewer = reviewWorkspace.querySelector("[data-pdf-viewer]");
+    const fitToggle = reviewWorkspace.querySelector("[data-pdf-fit-toggle]");
+    const setFit = (value) => {
+      const fit = value === "width" ? "width" : "page";
+      fitToggle?.querySelectorAll("[data-pdf-fit]").forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.pdfFit === fit));
+      });
+      if (pdfViewer?.dataset.pdfBase) {
+        const base = pdfViewer.dataset.pdfBase;
+        const source = `${base}${base.includes("#") ? "&" : "#"}view=${fit === "width" ? "FitH" : "Fit"}&navpanes=0`;
+        if (pdfViewer.getAttribute("src") !== source) pdfViewer.setAttribute("src", source);
+      }
+      layout.pdfFit = fit;
+    };
+    if (pdfViewer && fitToggle) {
+      fitToggle.hidden = false;
+      setFit(layout.pdfFit);
+      fitToggle.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-pdf-fit]");
+        if (!button) return;
+        setFit(button.dataset.pdfFit);
+        saveLayout();
+      });
+    }
     const snapshotPlayback = () => {
       if (noteRetryMetadata || noteRestoreProblem) return;
       const player = document.querySelector("[data-media-player]");

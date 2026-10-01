@@ -499,3 +499,28 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
 .source-review-main .matter-bar { margin-top: 0; }
 .source-review-main .source-review-heading { padding-top: 4px; padding-bottom: 4px; }
 .source-review-main .review-toolbar { margin-block: 4px; }
+
+/* Reader v2: PDF zoom choice beside the section controls. */
+.pdf-fit-toggle { display: inline-flex; gap: 4px; margin-inline: auto 8px; }
+.pdf-fit-toggle[hidden] { display: none; }
+.pdf-fit-toggle .button { min-height: 28px; padding: 3px 10px; font-size: 11px; }
+.pdf-fit-toggle .button[aria-pressed="true"] { border-color: var(--ink); color: var(--ink); font-weight: 800; }
+
+/* Reader v2: folders inside the source queue. */
+.source-browser-folders { display: grid; gap: 4px; margin-block: 6px 10px; font-size: 12px; }
+.source-browser-folders p { margin: 0; overflow-wrap: anywhere; }
+.source-browser-folders ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.source-browser-folders li a { display: flex; justify-content: space-between; gap: 8px; padding: 4px 6px; border-radius: 4px; }
+.source-browser-folders li a span { flex: 1; overflow-wrap: anywhere; }
+.source-browser-folders li a small { color: var(--ink-faint); }
+.source-browser-folders li a:hover { background: var(--surface-strong); }
+
+/* Reader v2: find inside the open file. */
+.review-find { flex: 1 1 120px; min-width: 110px; max-width: 240px; margin-left: auto; }
+.review-find input { width: 100%; min-height: 30px; padding: 4px 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-lifted); color: var(--ink); font-size: 12px; }
+.review-find-results { margin-block: 6px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-lifted); font-size: 12px; }
+.review-find-results h2 { margin: 0 0 6px; font-size: 13px; }
+.review-find-results ol { display: grid; gap: 4px; max-height: 180px; margin: 0; padding-left: 18px; overflow: auto; }
+.review-find-results a[aria-current="true"] strong { text-decoration: underline; }
+.review-find-results mark, .extracted-reader mark { padding: 1px 2px; border-radius: 2px; background: var(--highlight); color: inherit; }
+.review-find-results p { margin: 6px 0 0; }

@@ -1,7 +1,12 @@
 <aside class="source-browser" id="review-source-queue" aria-label="Sources in this view" data-source-browser>
   <h2>Sources in this view</h2>
-  <a href="{{ source_sequence.library_href }}">Browse collections, folders and filters</a>
-  <p>{{ source_sequence.library.folder or 'All folders' }} · {{ source_sequence.library.total }} sources</p>
+  {% set folders = source_sequence.folders %}
+  <nav class="source-browser-folders" aria-label="Folders in this view" data-source-browser-folders>
+    <p>{% if folders.current %}<a href="{{ folders.all_href }}">All folders</a> / <strong>{{ folders.current }}</strong>{% else %}All folders{% endif %} · {{ source_sequence.library.total }} sources</p>
+    {% if folders.parent_href %}<a class="source-folder-parent" href="{{ folders.parent_href }}">Up one folder</a>{% endif %}
+    {% if folders['items'] %}<ul>{% for folder in folders['items'] %}<li><a href="{{ folder.href }}"><span>{{ folder.name }}</span><small>{{ folder.count }}</small></a></li>{% endfor %}</ul>{% endif %}
+    {% if folders.more %}<a href="{{ source_sequence.library_href }}">More folders</a>{% endif %}
+  </nav>
   {% if source_sequence.scope_labels %}<p>{{ source_sequence.scope_labels|join(" · ") }}</p>{% endif %}
   {% if source_sequence.library.query %}<p>Filename or folder: {{ source_sequence.library.query }}</p>{% endif %}
   <p>Page {{ source_sequence.library.page }} of {{ source_sequence.library.total_pages }} · {{ source_sequence.library.sort }}</p>
@@ -15,5 +20,5 @@
     {% else %}<li>No sources match these filters.</li>{% endfor %}
     </ul>
   </nav>
-  <a href="{{ source_sequence.library_href }}">All source pages and folders</a>
+  <a href="{{ source_sequence.library_href }}">Open in Review with all filters</a>
 </aside>
