@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from case_intelligence.branding import PRODUCT_NAME, PRODUCT_TAGLINE
 from case_intelligence.generation import UnavailableGenerator
+from case_intelligence.static_assets import asset_url
 from case_intelligence.workbench import create_workbench_app
 
 
@@ -31,7 +32,7 @@ def test_recordbench_identity_is_consistent_across_health_login_and_mark(tmp_pat
         assert f"Sign in · {PRODUCT_NAME}" in login.text
         assert PRODUCT_TAGLINE in login.text
         assert 'class="login-brand-mark"' in login.text
-        assert login.text.count("/static/favicon.svg?v=stacked-record-1") == 2
+        assert login.text.count(asset_url("favicon.svg")) == 2
         assert "Choose a preview identity" in login.text
         assert "Temporary evaluation access" in login.text
         assert "Choosing a synthetic identity is not authentication" in login.text
@@ -53,4 +54,4 @@ def test_recordbench_identity_is_consistent_across_health_login_and_mark(tmp_pat
             assert "product_name" in title, path.name
 
     workbench_base = (TEMPLATES / "workbench_base.html").read_text(encoding="utf-8")
-    assert workbench_base.count("favicon.svg').path }}?v=stacked-record-1") == 2
+    assert workbench_base.count("{{ asset_url('favicon.svg') }}") == 2

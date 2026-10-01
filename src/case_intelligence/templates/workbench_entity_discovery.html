@@ -42,5 +42,5 @@
     <nav aria-label="Unit coverage pages">{% if coverage.page > 1 %}<a href="{{ coverage_url(target_page=coverage.page-1) }}">Previous units</a>{% endif %} {% if coverage.page * 50 < coverage.unit_total %}<a href="{{ coverage_url(target_page=coverage.page+1) }}">Next units</a>{% endif %}</nav>
   </section>
 </main>
-<script src="{{ url_for('static', path='guided-discovery.js') }}" defer></script>
+<script src="{{ asset_url('guided-discovery.js') }}" defer></script>
 {% endblock %}

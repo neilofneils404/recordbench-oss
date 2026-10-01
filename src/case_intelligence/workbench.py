@@ -44,6 +44,7 @@ from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 
 from .derived_text import presentation_text
+from .static_assets import asset_url, static_cache_control
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
 from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, answer_limitation, answer_failure_notice, modality_coverage_notice, research_content, rejected_answer_content, rejected_answer_notice, review_rejection_notice, REJECTED_ANSWER_NOTICE
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
@@ -6229,6 +6230,7 @@ def create_workbench_app(
         entity_context_href=_entity_context_href,
         source_browse_href=_source_browse_href,
         source_review_return_href=_source_review_return_href,
+        asset_url=asset_url,
     )
     app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
 
@@ -6339,7 +6341,10 @@ def create_workbench_app(
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
-        if not request.url.path.startswith("/static/"):
+        if request.url.path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", static_cache_control(
+                request.url.path, request.query_params.get("v")))
+        else:
             response.headers.setdefault("Cache-Control", "no-store")
         return response
 

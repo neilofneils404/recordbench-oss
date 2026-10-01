@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .static_assets import asset_url
 from .contracts import Matter, MatterState
 from .inventory import InventoryService
 from .isolation import MatterAccess, MatterStateRegistry
@@ -812,6 +813,7 @@ def create_app(runtime_dir: Path | None = None) -> FastAPI:
     app.add_middleware(RawUploadLimitMiddleware)
     app.state.bench = bench
     templates = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
+    templates.env.globals["asset_url"] = asset_url
     app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
 
     @app.get("/health")
