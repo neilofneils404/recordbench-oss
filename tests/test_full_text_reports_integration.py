@@ -409,7 +409,7 @@ def test_failed_close_full_text_bundle_never_reopens_quarantined_sources(workspa
     before = bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, documents[0].document_id)
     assert bool(before.citations) is cited
     if corruption:
-        with bench.workspace.connection:
+        with bench.workspace._lock, bench.workspace.connection:
             if corruption == "basis":
                 bench.workspace.connection.execute(
                     "UPDATE workbench_review_decision SET source_basis_digest=? WHERE run_id=?",
@@ -421,6 +421,12 @@ def test_failed_close_full_text_bundle_never_reopens_quarantined_sources(workspa
                     "UPDATE workbench_review_decision SET citations_json=? WHERE run_id=?",
                     (json.dumps(citations), run.run_id))
         before = bench.workspace.review_decision(matter.matter_id, ACTOR, run.run_id, documents[0].document_id)
+        if corruption == "basis":
+            assert before.source_basis_digest == "f" * 64
+        else:
+            assert before.citations[0][corruption] == (
+                0 if corruption == "unit_ordinal" else "synthetic-wrong-identity"
+            )
     bench._postgres_projection_configured = True
     bench.postgres_connection = None
     bench.postgres_ready = False
