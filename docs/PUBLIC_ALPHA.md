@@ -157,13 +157,14 @@ untrusted input, secrets, publication, CI permissions and deployment boundaries)
 still need a focused security assessment in the PR: affected boundary, relevant
 abuse cases, mitigation and regression evidence. Fix actual findings or record
 a reasoned maintainer disposition before acceptance, including findings from
-optional security review. The gate requires every review thread to be resolved
-by someone with current write, maintain or admin permission; acceptance records
-inspection of findings in issue comments, inline comments/replies and review
-bodies. New or edited priority-tagged official bot findings on any of these
-surfaces require renewed acceptance. Every thread, reply and review page must
-be available; missing or incomplete evidence leaves the gate blocked. A resolved
-flag alone is not a substantive disposition. The maintainer checks disclosure and synthetic-data provenance too.
+optional security review. Every review thread must be resolved, and the existing
+full-head maintainer acceptance must postdate every inline comment/reply,
+including edits. That privileged acceptance records substantive reconciliation
+of all thread content; clicking Resolve is not reconciliation authorization.
+New or edited priority-tagged official bot findings in issue comments and review
+bodies also require renewed acceptance. Every thread, reply and review page must
+be available; missing or incomplete evidence leaves the gate blocked. The
+maintainer checks disclosure and synthetic-data provenance too.
 
 Request `@codex review` deliberately after implementation and validation. No
 repository workflow posts review commands on open or synchronize. Keep automatic
@@ -192,11 +193,28 @@ share per-PR serialization. No additional token permissions are granted.
 
 GitHub executes review-event workflows on the PR merge ref, while `workflow_run`
 uses the default branch; see the
-[official event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).
+[official Actions event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).
 Keep these workflows separate. Do not add review-event triggers directly to the
 privileged gate or consume relay artifacts. Revalidation remains asynchronous;
-Actions scheduling is not an atomic merge barrier. Preserve native protections
-and dispatch the gate after reconciliation if another evaluation is needed.
+Actions scheduling is not an atomic merge barrier.
+
+Thread resolution/unresolution is a
+[webhook event](https://docs.github.com/en/webhooks/webhook-events-and-payloads#pull_request_review_thread),
+not a supported Actions trigger. No workflow claims to receive it, and polling
+would not close the merge window. The gate therefore does not authorize
+reconciliation from the mutable `resolvedBy` actor. It uses the existing
+privileged full-head acceptance after all inline content instead. A contributor
+cannot authorize reconciliation by resolving a thread; toggling an already
+accepted thread does not erase its maintainer reconciliation. Native required
+conversation resolution blocks while the thread is unresolved. New or edited
+comments invalidate the acceptance cutoff through supported review/comment
+events, and acceptance edits/deletion use the existing issue-comment events.
+Inline freshness uses creation, publication and body-edit timestamps, not the
+generic metadata-update timestamp; review submission time is also included.
+If a gate run saw an unresolved thread, resolve it and dispatch the gate or post
+fresh acceptance to reevaluate. Keep native conversation protection enabled;
+this division of responsibility requires it. No webhook service, extra token
+permissions or additional acceptance ceremony is introduced.
 
 The gate reads trusted default-branch code and GitHub metadata only; it never executes the PR head
 with a write token. External contributor workflows require
@@ -215,10 +233,10 @@ the full 40-character commit ID:
 RecordBench maintainer acceptance: FULL_COMMIT_ID
 ```
 
-Acceptance must be strictly later than code completion and any subsequently
-posted or edited priority-tagged official bot findings across those surfaces,
-from an account with current write, maintain or admin permission. This binds the bot's abbreviated code SHA
-to the full head; a prefix match alone is insufficient. A changed head, newer
+Acceptance must be strictly later than code completion, every inline comment or
+reply (including edits), and priority-tagged official bot findings in issue
+comments and review bodies, from an account with current write, maintain or admin
+permission. This binds the bot's abbreviated code SHA to the full head; a prefix match alone is insufficient. A changed head, newer
 code completion or removed acceptance requires renewed acceptance. Missing
 acceptance leaves the gate pending. Current access is verified through GitHub,
 not the comment's displayed association. Security credit availability does not

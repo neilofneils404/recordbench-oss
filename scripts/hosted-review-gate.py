@@ -86,14 +86,19 @@ def evaluate(head: str, comments: list[dict], threads: list[dict],
         if re.search(r"@codex\s+review\b", c.get("body", ""), re.I):
             if comment_time(c) >= completed:
                 return "pending", "A newer code review request is still awaiting completion"
-    if any(not thread.get("isResolved", False) or not thread.get("resolverCanReconcile", False)
-           for thread in threads):
-        return "failure", "A maintainer must reconcile every review discussion"
+    if any(not thread.get("isResolved", False) for thread in threads):
+        return "failure", "Every review discussion must be resolved"
     # The bot abbreviates the code-review SHA. Independent privileged acceptance
     # binds the completed code review to the full head, including prefix collisions.
     # It also follows priority-tagged bot findings, including security findings.
-    findings = [*comments, *(review_findings or []),
-                *(comment for thread in threads for comment in thread.get("comments", []))]
+    inline_comments = [comment for thread in threads for comment in thread.get("comments", [])]
+    # GitHub Actions has no review-thread resolved/unresolved trigger. Last-
+    # resolver identity is therefore not durable authorization. The existing
+    # privileged full-head acceptance reconciles all inline content; toggling
+    # the UI cannot create, revoke or replace that authorization. Native branch
+    # protection independently blocks unresolved conversations at merge time.
+    reconciled_after = max((comment_time(c) for c in inline_comments), default=completed)
+    findings = [*comments, *(review_findings or []), *inline_comments]
     findings_at = max((comment_time(c) for c in findings
                        if c.get("user", {}).get("login") == BOT
                        and c.get("user", {}).get("type") == "Bot"
@@ -102,7 +107,7 @@ def evaluate(head: str, comments: list[dict], threads: list[dict],
         acceptance = ACCEPTANCE.fullmatch(c.get("body", "").strip())
         if not c.get("maintainerCanAccept") or not acceptance or acceptance.group(1) != head:
             continue
-        if comment_time(c) > max(completed, findings_at):
+        if comment_time(c) > max(completed, findings_at, reconciled_after):
             return "success", "Code reviewed; maintainer accepted full commit; hosted security review optional"
     return "pending", "Waiting for maintainer acceptance of the full reviewed commit"
 
@@ -150,26 +155,38 @@ def graphql_nodes(query: str, variables: dict, path: tuple[str, ...], *, initial
 def finding_comment(node: dict) -> dict:
     """Normalize GraphQL authors explicitly; a similarly named User is not Codex."""
     author = node["author"]
-    body, created, updated = node["body"], node["createdAt"], node["updatedAt"]
-    if not all(isinstance(value, str) for value in (body, created, updated)):
+    body, created = node["body"], node["createdAt"]
+    if not isinstance(body, str) or not isinstance(created, str):
         raise RuntimeError("Incomplete finding evidence")
+    # Use content/publication timestamps, not generic updatedAt: reaction or
+    # resolution metadata must not silently change reconciliation authority.
+    created_time = comment_time({"created_at": created})
+    times = [created_time]
+    values = [node["publishedAt"], node["lastEditedAt"]]
+    if "submittedAt" in node:
+        values.append(node["submittedAt"])
+    for value in values:
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise RuntimeError("Incomplete finding evidence")
+        timestamp = comment_time({"created_at": value})
+        if timestamp < created_time:
+            raise RuntimeError("Invalid finding timestamps")
+        times.append(timestamp)
     official = (author is not None and author["__typename"] == "Bot"
                 and author["login"] in {BOT, BOT.removesuffix("[bot]")})
-    comment = {"body": body, "created_at": created, "updated_at": updated,
-               "user": {"login": BOT if official else "", "type": "Bot" if official else "User"}}
-    # Missing, malformed, naive or inconsistent timestamps fail closed.
-    if comment_time(comment) < comment_time({"created_at": created}):
-        raise RuntimeError("Invalid finding timestamps")
-    return comment
+    return {"body": body, "created_at": created, "updated_at": max(times).isoformat(),
+            "user": {"login": BOT if official else "", "type": "Bot" if official else "User"}}
 
 
 def review_evidence(repo: str, number: int) -> tuple[list[dict], list[dict]]:
     owner, name = repo.split("/")
     variables = {"owner": owner, "name": name, "number": number}
-    fields = "body createdAt updatedAt author { login __typename }"
+    fields = "body createdAt publishedAt lastEditedAt author { login __typename }"
     query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
       repository(owner:$owner,name:$name) { pullRequest(number:$number) {
-        reviewThreads(first:100,after:$cursor) { nodes { id isResolved resolvedBy { login }
+        reviewThreads(first:100,after:$cursor) { nodes { id isResolved
           comments(first:100) { nodes { FIELDS } pageInfo { hasNextPage endCursor } } }
           pageInfo { hasNextPage endCursor } }
       } }
@@ -186,7 +203,7 @@ def review_evidence(repo: str, number: int) -> tuple[list[dict], list[dict]]:
         thread["comments"] = [finding_comment(comment) for comment in comments]
     review_query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
       repository(owner:$owner,name:$name) { pullRequest(number:$number) {
-        reviews(first:100,after:$cursor) { nodes { FIELDS } pageInfo { hasNextPage endCursor } }
+        reviews(first:100,after:$cursor) { nodes { FIELDS submittedAt } pageInfo { hasNextPage endCursor } }
       } }
     }""".replace("FIELDS", fields)
     reviews = graphql_nodes(review_query, variables, ("repository", "pullRequest", "reviews"))
@@ -239,25 +256,19 @@ def main() -> int:
     else:
         raise RuntimeError("Comment limit exceeded")
     threads, review_findings = review_evidence(repo, number)
-    resolver_permissions = {}
-    def can_reconcile(login):
+    maintainer_permissions = {}
+    def can_accept(login):
         if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
             return False
-        if login not in resolver_permissions:
+        if login not in maintainer_permissions:
             permission = request(f"{prefix}/collaborators/{login}/permission")
-            resolver_permissions[login] = permission.get("permission") in {"admin", "maintain", "write"}
-        return resolver_permissions[login]
+            maintainer_permissions[login] = permission.get("permission") in {"admin", "maintain", "write"}
+        return maintainer_permissions[login]
 
     for comment in comments:
         comment["maintainerCanAccept"] = False
         if ACCEPTANCE.fullmatch(comment.get("body", "").strip()):
-            comment["maintainerCanAccept"] = can_reconcile(comment.get("user", {}).get("login", ""))
-    for thread in threads:
-        resolver = (thread.get("resolvedBy") or {}).get("login", "")
-        thread["resolverCanReconcile"] = False
-        if not thread.get("isResolved") or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", resolver):
-            continue
-        thread["resolverCanReconcile"] = can_reconcile(resolver)
+            comment["maintainerCanAccept"] = can_accept(comment.get("user", {}).get("login", ""))
     state, description = evaluate(head, comments, threads, review_findings)
     def unchanged():
         current = request(f"{prefix}/pulls/{number}")

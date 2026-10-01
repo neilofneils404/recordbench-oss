@@ -148,3 +148,16 @@ def test_selector_output_is_numeric_json_not_executable_event_content(monkeypatc
         monkeypatch.setenv(key, value)
     SELECTOR.main()
     assert output.read_text() == "pr_numbers=[7, 8]\n"
+
+
+def test_resolution_webhook_is_not_claimed_as_an_actions_trigger():
+    for name in ("hosted-review-gate.yml", "hosted-review-events.yml"):
+        assert "pull_request_review_thread:" not in workflow(name)
+        assert "schedule:" not in workflow(name)
+    code = (ROOT / "scripts/hosted-review-gate.py").read_text()
+    assert "resolvedBy" not in code
+    assert "resolverCanReconcile" not in code
+    assert "publishedAt lastEditedAt" in code
+    docs = (ROOT / "docs/PUBLIC_ALPHA.md").read_text()
+    assert "not a supported Actions trigger" in docs
+    assert "Native required\nconversation resolution blocks" in docs

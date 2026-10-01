@@ -64,7 +64,7 @@ def test_requires_actual_code_review_on_current_head():
 
 def test_unresolved_discussion_blocks_until_reconciled():
     assert evaluate(HEAD, [summary()], [{"isResolved": False}])[0] == "failure"
-    assert evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
+    assert evaluate(HEAD, [summary()], [{"isResolved": True}])[0] == "success"
 
 
 def test_forged_summary_and_new_review_request_do_not_pass():
@@ -95,10 +95,11 @@ def test_single_review_rerun_is_compared_with_its_own_completion():
         assert evaluate(HEAD, [current, requested], [])[0] == "success"
 
 
-def test_contributor_cannot_self_reconcile_findings():
-    assert evaluate(HEAD, [summary()], [{"isResolved": True}])[0] == "failure"
-    assert evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": False}])[0] == "failure"
-    assert evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
+def test_contributor_resolution_cannot_replace_privileged_reconciliation():
+    thread = {"isResolved": True, "resolvedBy": {"login": "synthetic-contributor"}}
+    assert GATE.evaluate(HEAD, [summary()], [thread])[0] == "pending"
+    assert GATE.evaluate(HEAD, [summary(), approval(permitted=False)], [thread])[0] == "pending"
+    assert GATE.evaluate(HEAD, [summary(), approval()], [thread])[0] == "success"
 
 
 def test_short_hash_collision_requires_independent_full_head_acceptance():
@@ -482,7 +483,8 @@ def graphql_finding(*, body=None, updated="2026-01-01T14:00:00Z", kind="Bot",
     return {"body": body if body is not None else
             "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub> Synthetic security finding**",
             "author": {"login": login, "__typename": kind},
-            "createdAt": "2026-01-01T12:30:00Z", "updatedAt": updated}
+            "createdAt": "2026-01-01T12:30:00Z",
+            "publishedAt": "2026-01-01T12:30:00Z", "lastEditedAt": updated}
 
 
 def connection(nodes, cursor=None):
@@ -495,7 +497,8 @@ def finding_api(monkeypatch, accepted, surface, *, broken=None):
     monkeypatch.setenv("PR_NUMBER", "1")
     statuses, events, reads = [], [], []
     finding = graphql_finding()
-    benign = graphql_finding(body="Synthetic maintainer disposition", kind="User", login="fixture-reviewer")
+    benign = graphql_finding(body="Synthetic maintainer disposition", kind="User",
+                             login="fixture-reviewer", updated="2026-01-01T12:45:00Z")
     accepted["user"] = {"login": "fixture-reviewer"}
     def request(path, data=None, *, method=None):
         if path.endswith("/pulls/1"):
@@ -602,15 +605,14 @@ def test_finding_connection_failures_are_closed(monkeypatch, problem):
 ])
 def test_graphql_finding_identity_does_not_trust_display_login_alone(kind, login, expected):
     finding = GATE.finding_comment(graphql_finding(kind=kind, login=login))
-    thread = {"isResolved": True, "resolverCanReconcile": True, "comments": [finding]}
-    assert evaluate(HEAD, [summary()], [thread])[0] == expected
+    assert GATE.evaluate(HEAD, [summary(), approval()], [], [finding])[0] == expected
 
 
-@pytest.mark.parametrize("field,value", [("updatedAt", None), ("updatedAt", "invalid"),
-                                         ("updatedAt", "2026-01-01T14:00:00"),
+@pytest.mark.parametrize("field,value", [("lastEditedAt", "invalid"),
+                                         ("lastEditedAt", "2026-01-01T14:00:00"),
                                          ("body", None), ("createdAt", None),
                                          ("createdAt", "invalid"),
-                                         ("updatedAt", "2026-01-01T12:00:00Z")])
+                                         ("lastEditedAt", "2026-01-01T12:00:00Z")])
 def test_incomplete_finding_fields_fail_closed(field, value):
     node = graphql_finding()
     node[field] = value
@@ -620,6 +622,63 @@ def test_incomplete_finding_fields_fail_closed(field, value):
 
 def test_nonfinding_security_activity_does_not_require_new_acceptance():
     node = graphql_finding(body="Security review unavailable; try again later.")
-    thread = {"isResolved": True, "resolverCanReconcile": True,
+    assert GATE.evaluate(HEAD, [summary(), approval()], [], [GATE.finding_comment(node)])[0] == "success"
+
+
+def test_resolution_toggles_cannot_create_or_replace_durable_reconciliation():
+    inline = GATE.finding_comment(graphql_finding(updated="2026-01-01T12:45:00Z"))
+    thread = {"isResolved": True, "resolvedBy": {"login": "fixture-maintainer"}, "comments": [inline]}
+    comments = [summary(), approval()]
+    assert GATE.evaluate(HEAD, comments, [thread])[0] == "success"
+    # Without a workflow wake-up, native conversation protection blocks while
+    # unresolved. On reevaluation the gate independently rejects that state.
+    thread["isResolved"] = False
+    assert GATE.evaluate(HEAD, comments, [thread])[0] == "failure"
+    # The contributor's UI toggle does not overwrite the maintainer's full-head
+    # reconciliation. Its validity is deliberately independent of last resolver.
+    thread.update(isResolved=True, resolvedBy={"login": "synthetic-contributor"})
+    assert GATE.evaluate(HEAD, comments, [thread])[0] == "success"
+    assert GATE.evaluate(HEAD, [summary()], [thread])[0] == "pending"
+    assert GATE.evaluate(HEAD, [summary(), approval(permitted=False)], [thread])[0] == "pending"
+    assert GATE.evaluate(HEAD, [summary(), approval("b" * 40)], [thread])[0] == "pending"
+
+
+@pytest.mark.parametrize("kind", ["User", "Bot"])
+def test_any_new_or_edited_inline_content_requires_later_maintainer_acceptance(kind):
+    node = graphql_finding(body="Synthetic untagged finding or disposition", kind=kind,
+                           login="synthetic-reviewer", updated="2026-01-01T14:00:00Z")
+    thread = {"isResolved": True, "resolvedBy": {"login": "synthetic-contributor"},
               "comments": [GATE.finding_comment(node)]}
+    assert evaluate(HEAD, [summary()], [thread])[0] == "pending"
+    accepted = approval()
+    accepted["updated_at"] = "2026-01-01T14:00:00Z"
+    assert GATE.evaluate(HEAD, [summary(), accepted], [thread])[0] == "pending"
+    accepted["updated_at"] = "2026-01-01T14:01:00Z"
+    assert GATE.evaluate(HEAD, [summary(), accepted], [thread])[0] == "success"
+
+
+def test_generic_metadata_updates_do_not_silently_invalidate_content_acceptance():
+    node = graphql_finding(updated="2026-01-01T12:45:00Z")
+    node["updatedAt"] = "2026-01-01T14:00:00Z"  # Resolution/reaction metadata is not content.
+    thread = {"isResolved": True, "comments": [GATE.finding_comment(node)]}
     assert evaluate(HEAD, [summary()], [thread])[0] == "success"
+    node["lastEditedAt"] = "2026-01-01T14:00:00Z"
+    thread["comments"] = [GATE.finding_comment(node)]
+    assert evaluate(HEAD, [summary()], [thread])[0] == "pending"
+
+
+@pytest.mark.parametrize("field", ["publishedAt", "submittedAt"])
+def test_late_publication_or_submission_cannot_reuse_acceptance_of_older_draft(field):
+    node = graphql_finding(updated="2026-01-01T12:45:00Z")
+    node[field] = "2026-01-01T14:00:00Z"
+    assert GATE.evaluate(HEAD, [summary(), approval()], [], [GATE.finding_comment(node)])[0] == "pending"
+
+
+def test_no_edit_has_explicit_nullable_timestamp_but_missing_fields_fail_closed():
+    node = graphql_finding()
+    node["lastEditedAt"] = None
+    thread = {"isResolved": True, "comments": [GATE.finding_comment(node)]}
+    assert evaluate(HEAD, [summary()], [thread])[0] == "success"
+    del node["lastEditedAt"]
+    with pytest.raises(KeyError):
+        GATE.finding_comment(node)
