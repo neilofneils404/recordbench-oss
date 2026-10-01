@@ -3654,13 +3654,34 @@
     form?.toggleAttribute("aria-busy", working);
   };
 
-  const refreshAssistant = async (requestedFragmentUrl = "") => {
+  const ownsAssistantOperation = (operation) => operation.epoch === assistantEpoch
+    && operation.dock === assistantDock;
+
+  const assistantHistoryFailure = "The request finished, but its history could not refresh. Your draft is kept. Open Full conversation to inspect the saved result.";
+
+  const recoverAssistantRead = (message) => {
+    const status = assistantDock?.querySelector("[data-assistant-status]");
+    const copy = status?.querySelector("[data-assistant-status-copy]");
+    if (status) status.hidden = false;
+    if (copy) copy.textContent = message;
+    window.clearTimeout(assistantPollTimer);
+    // Resume reads only. An uncertain cancellation must never retry its POST,
+    // and terminal jobs must not be resurrected by a recovery timer.
+    if (status?.dataset.statusUrl && ["queued", "running"].includes(status.dataset.state)) {
+      assistantPollTimer = window.setTimeout(pollAssistant, 1000);
+    }
+  };
+
+  const refreshAssistant = async (requestedFragmentUrl, operation) => {
     window.clearTimeout(assistantPollTimer);
     if (!requestedFragmentUrl) releaseAssistantHistorySwitch();
     const fragmentUrl = requestedFragmentUrl || assistantDock?.dataset.fragmentUrl;
-    if (!fragmentUrl) return;
-    const epoch = ++assistantEpoch;
-    const originatingDock = assistantDock;
+    // Transfer ownership synchronously to the refresh, including its failure
+    // path. Callers never predict which epoch this function will allocate.
+    operation.epoch = ++assistantEpoch;
+    operation.dock = assistantDock;
+    if (!fragmentUrl) throw new Error("Assistant history is unavailable. Open Full conversation.");
+    const originatingDock = operation.dock;
     const originatingComposer = originatingDock.querySelector("[data-assistant-question-form]");
     const response = await fetch(fragmentUrl, {
       headers: { Accept: "text/html" },
@@ -3669,7 +3690,7 @@
     if (!response.ok) throw new Error("Assistant status is temporarily unavailable.");
     const holder = document.createElement("div");
     holder.innerHTML = await response.text();
-    if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
+    if (!ownsAssistantOperation(operation)) return;
     const replacement = holder.querySelector("[data-assistant-dock]");
     if (!replacement || !assistantDock) throw new Error("Assistant response was incomplete.");
     // A terminal job enables writing before its refreshed history arrives.
@@ -3714,30 +3735,25 @@
     // Terminal jobs have already restored the composer. Re-polling them can
     // replace a newer draft after a scope change or a bfcache restoration.
     if (!statusUrl || !["queued", "running"].includes(status?.dataset.state || "")) return;
-    let epoch = assistantEpoch;
-    const originatingDock = assistantDock;
+    const operation = { epoch: assistantEpoch, dock: assistantDock };
     try {
       const response = await fetch(statusUrl, {
         headers: { Accept: "application/json" },
         cache: "no-store",
       });
       const job = await assistantJson(response);
-      if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
+      if (!ownsAssistantOperation(operation)) return;
       renderAssistantJob(job);
       if (["succeeded", "failed", "cancelled"].includes(job.state)) {
-        // The refresh owns the next epoch. Its failure is still ours unless
-        // another action supersedes it; comparing the old poll epoch would
-        // silently suppress every terminal history-fetch error.
-        epoch = assistantEpoch + 1;
-        await refreshAssistant();
+        await refreshAssistant("", operation);
         return;
       }
       assistantPollTimer = window.setTimeout(pollAssistant, 1000);
     } catch (_error) {
-      if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
+      if (!ownsAssistantOperation(operation)) return;
       const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
       if (!["queued", "running"].includes(status.dataset.state || "")) {
-        if (copy) copy.textContent = "The request finished, but its history could not refresh. Your draft is kept. Open Full conversation to inspect the saved result.";
+        if (copy) copy.textContent = assistantHistoryFailure;
         return;
       }
       if (copy) copy.textContent = "Reconnecting to the saved request…";
@@ -3847,19 +3863,11 @@
       const historyOperation = { dock: assistantDock, picker: conversationPicker };
       assistantHistorySwitch = historyOperation;
       conversationPicker.disabled = true;
-      const switchEpoch = assistantEpoch + 1;
       try {
-        await refreshAssistant(assistantFragmentUrl(conversationId));
+        await refreshAssistant(assistantFragmentUrl(conversationId), historyOperation);
       } catch (_error) {
-        if (switchEpoch !== assistantEpoch) return;
-        conversationPicker.disabled = false;
-        const status = assistantDock?.querySelector("[data-assistant-status]");
-        const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
-        if (status) {
-          status.hidden = false;
-          status.classList.add("is-terminal", "is-failed");
-        }
-        if (copy) copy.textContent = "That saved chat could not be opened. Try again.";
+        if (!ownsAssistantOperation(historyOperation)) return;
+        recoverAssistantRead("That saved chat could not be opened. Try again. Any active request is still being checked.");
       } finally {
         releaseAssistantHistorySwitch(historyOperation);
       }
@@ -3956,26 +3964,32 @@
 
     assistantDock.addEventListener("click", async (event) => {
       const button = event.target.closest("[data-assistant-cancel]");
-      if (!button) return;
+      if (!button || button.disabled) return;
       const actionUrl = button.dataset.actionUrl;
       if (!actionUrl) return;
-      const epoch = assistantEpoch;
-      const originatingDock = assistantDock;
+      // A cancellation supersedes pending status reads as well as their timer.
+      const operation = { epoch: ++assistantEpoch, dock: assistantDock };
+      window.clearTimeout(assistantPollTimer);
+      releaseAssistantHistorySwitch();
       button.disabled = true;
+      let accepted = false;
       try {
         const response = await fetch(actionUrl, {
           method: "POST",
           headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
         });
         const job = await assistantJson(response);
-        if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
+        if (!ownsAssistantOperation(operation)) return;
+        accepted = true;
         renderAssistantJob(job);
-        await refreshAssistant();
-      } catch (error) {
-        if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
-        button.disabled = false;
-        const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
-        if (copy) copy.textContent = error.message;
+        await refreshAssistant("", operation);
+      } catch (_error) {
+        if (!ownsAssistantOperation(operation)) return;
+        if (button.isConnected) button.disabled = false;
+        const active = ["queued", "running"].includes(assistantDock.querySelector("[data-assistant-status]")?.dataset.state);
+        recoverAssistantRead(accepted
+          ? active ? "Cancellation was requested, but history could not refresh. Checking the saved request…" : assistantHistoryFailure
+          : "Cancellation could not be confirmed. Checking the saved request; open Full conversation to inspect its status.");
       }
     });
 
@@ -4054,11 +4068,11 @@
           .some((option) => option.value === preferredConversation)
       : false;
     if (preferredConversation && preferredConversation !== currentConversation && preferredOption) {
-      const preferenceEpoch = assistantEpoch + 1;
-      const preferenceDock = assistantDock;
-      refreshAssistant(assistantFragmentUrl(preferredConversation)).catch(() => {
-        if (preferenceEpoch !== assistantEpoch || preferenceDock !== assistantDock) return;
+      const preferenceOperation = {};
+      refreshAssistant(assistantFragmentUrl(preferredConversation), preferenceOperation).catch(() => {
+        if (!ownsAssistantOperation(preferenceOperation)) return;
         saveAssistantConversationPreference(currentConversation);
+        recoverAssistantRead("Your preferred chat could not be opened. The current chat is kept and any active request is still being checked.");
       });
     } else {
       saveAssistantConversationPreference(currentConversation);

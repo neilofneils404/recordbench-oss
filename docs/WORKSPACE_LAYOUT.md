@@ -103,6 +103,10 @@ and selection revision, including choices made while an answer was running.
 If a terminal request's history cannot refresh, the dock keeps the draft and
 directs the reviewer to Full conversation; stale failures cannot replace newer
 conversation or source state.
+Cancel, terminal polling, saved-chat selection and preferred-chat restoration
+share explicit refresh ownership. A failed read resumes status polling only for
+an active request; uncertain cancellation never automatically resends Cancel.
+Newer source, conversation or question actions invalidate earlier recovery work.
 
 **Write a note** saves human-authored prose with canonical source support into
 existing Case notes, with manual origin and Needs review status. Saving a note

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Synthetic manual-review acceptance with deterministic answers/transcription and a generated video.
 // Usage: node scripts/browser-accept-manual-review.cjs /path/to/chromium /tmp/fresh-output
-// Focused transport regressions: --refresh-only [--refresh-group=terminal|context]
+// Focused transport regressions: --refresh-only [--refresh-group=terminal|context|cancel|switch|ownership]
 // Reproduce an older frontend without changing files: --baseline-js=REV (focused mode).
 const { chromium } = require('playwright');
 const { spawn, execFileSync } = require('node:child_process');
@@ -98,6 +98,8 @@ async function refreshRegressions(browser, fixture) {
   const fresh = async () => {
     const ctx=await browser.newContext({viewport:{width:1440,height:1000}});
     if(oldScript)await ctx.route('**/static/case-intelligence.js*',route=>route.fulfill({status:200,contentType:'application/javascript',body:oldScript}));
+    // Accelerate only the assistant's retry/poll intervals in isolated fixtures.
+    await ctx.addInitScript(() => {const timer=window.setTimeout;window.setTimeout=(fn,delay,...args)=>timer(fn,[1000,3500].includes(delay)?80:delay,...args);});
     const p=await ctx.newPage();activePage=p;
     await p.goto(fixture.base+fixture.reader);
     const expand=p.locator('[data-assistant-expand]');if(await expand.isVisible())await expand.click();
@@ -130,7 +132,115 @@ async function refreshRegressions(browser, fixture) {
     // revision is preserved, instead of silently adopting the fetched value.
     await p.locator('[name=expected_selection_revision]').evaluate((e,value)=>e.value=value,revision);
   };
-  if(group!=='context') {
+  const failRoute = (route,failure) => failure==='network'?route.abort('failed'):route.fulfill({status:503,contentType:'text/plain',body:'Synthetic transport failure'});
+  const mountCancel = async (p,statusUrl,state='queued') => {
+    await p.locator('[data-assistant-status]').evaluate((e,{statusUrl,state})=>{
+      e.hidden=false;e.dataset.statusUrl=statusUrl;e.dataset.state=state;
+      const button=document.createElement('button');button.type='button';button.dataset.assistantCancel='';button.dataset.actionUrl=statusUrl+'/cancel';button.textContent='Cancel';e.append(button);
+    },{statusUrl,state});
+  };
+  if(!group || group==='cancel') {
+    // A successful Cancel POST can report still-running or already-terminal work.
+    // History failure must retain recovery ownership in either case.
+    for(const stage of ['fragment','post'])for(const failure of ['http','network'])for(const state of ['queued','running','cancelled']){
+      if(stage==='post' && state==='cancelled')continue;
+      const {ctx,p}=await fresh();let posts=0,polls=0,fragments=0;
+      const statusUrl=fixture.matter+'/answer-jobs/synthetic-cancel-'+(++sequence);
+      await p.route('**'+statusUrl,route=>{polls++;return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({state:'cancelled',status_url:statusUrl,can_cancel:false})});});
+      await p.route('**/assistant?**',route=>{fragments++;return failRoute(route,failure);});
+      await p.route('**'+statusUrl+'/cancel',route=>{posts++;return stage==='post'?failRoute(route,failure):route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({state,status_url:statusUrl,can_cancel:state!=='cancelled',cancel_url:statusUrl+'/cancel'})});});
+      await mountCancel(p,statusUrl,state==='cancelled'?'running':state);
+      const draft=`Retain draft after Cancel ${stage} ${failure} ${state}.`;
+      await p.locator('#assistant-question').fill(draft);
+      await p.locator('[data-assistant-cancel]').click();
+      if(state!=='cancelled')await p.waitForFunction(()=>document.querySelector('[data-assistant-status]').dataset.state==='cancelled',null,{timeout:4000});
+      await p.locator('[data-assistant-status-copy]').filter({hasText:/Full conversation/i}).waitFor({timeout:3000});
+      assert.equal(await p.locator('#assistant-question').inputValue(),draft);
+      assert.equal(await p.locator('#assistant-question').isEnabled(),true);
+      assert.equal(posts,1);assert.equal(polls,state==='cancelled'?0:1);assert.ok(fragments>=1);
+      await p.waitForTimeout(200);assert.equal(posts,1);assert.equal(polls,state==='cancelled'?0:1);
+      checks.push(`Cancel ${stage} ${failure} failure from ${state} retains draft and recovery, resumes only active polling, and never repeats the POST or terminal poll.`);
+      await ctx.close();
+    }
+    for(const stage of ['post','fragment'])for(const change of ['scope','new-chat','submission']){
+      const {ctx,p}=await fresh();let posts=0,arrived,release,finished;
+      const arrival=new Promise(r=>arrived=r),hold=new Promise(r=>release=r),done=new Promise(r=>finished=r);
+      const statusUrl=fixture.matter+'/answer-jobs/synthetic-stale-cancel-'+(++sequence);
+      await p.route('**'+statusUrl,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({state:'queued',status_url:statusUrl,can_cancel:true,cancel_url:statusUrl+'/cancel'})}));
+      await p.route('**/assistant?**',async route=>{arrived();await hold;await failRoute(route,'http');finished();});
+      await p.route('**'+statusUrl+'/cancel',async route=>{posts++;if(stage==='post'){arrived();await hold;}await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({state:'cancelled',status_url:statusUrl,can_cancel:false})});if(stage==='post')finished();});
+      await mountCancel(p,statusUrl);await p.locator('[data-assistant-cancel]').click();await arrival;
+      let releaseAdmission,admissionDone;
+      if(change==='scope'){
+        await p.locator('[data-review-ask-source] button').click();await p.locator('[data-review-ask-source] [role=status]').filter({hasText:'Source selected'}).waitFor();
+      }else if(change==='new-chat')await p.locator('[data-assistant-new-chat]').click();
+      // Active origin jobs may intentionally keep the composer disabled on scope change.
+      const draft='Keep current draft across stale Cancel response.';
+      await p.locator('#assistant-question').evaluate((e,value)=>e.value=value,draft);
+      if(change==='submission'){
+        let admitted,completed;const admission=new Promise(r=>admitted=r),held=new Promise(r=>releaseAdmission=r);admissionDone=new Promise(r=>completed=r);
+        const action=await p.locator('[data-assistant-question-form]').getAttribute('action');
+        await p.route('**'+action,async route=>{admitted();await held;await route.abort('failed');completed();});
+        await p.locator('[data-assistant-question-form] button[type=submit]').click();await admission;
+      }
+      await p.waitForTimeout(100);
+      const dock=await p.locator('[data-assistant-dock]').elementHandle();
+      const snapshot=()=>p.locator('[data-assistant-dock]').evaluate(e=>({conversation:e.dataset.conversationId,state:e.querySelector('[data-assistant-status]').dataset.state,copy:e.querySelector('[data-assistant-status-copy]').textContent,draft:e.querySelector('textarea').value,scope:e.querySelector('[name=source_set]').value,busy:e.querySelector('[data-assistant-question-form]').getAttribute('aria-busy')}));
+      const before=await snapshot();release();await done;await p.waitForTimeout(150);
+      assert.equal(await dock.evaluate(e=>e===document.querySelector('[data-assistant-dock]')),true);assert.deepEqual(await snapshot(),before);assert.equal(posts,1);
+      if(releaseAdmission){releaseAdmission();await admissionDone;}
+      checks.push(`Stale Cancel ${stage} response after ${change} cannot replace current dock, draft, scope or request ownership.`);
+      await ctx.close();
+    }
+  }
+  if(!group || group==='cancel' || group==='switch' || group==='ownership') {
+    for(const action of (group==='cancel'?['cancel']:group==='switch'?['picker','preference']:['cancel','picker','preference'])) {
+      const {ctx,p}=await fresh();let polls=0,fragments=0,posts=0,releasePoll,releaseResumedPoll,firstArrived;
+      const firstArrival=new Promise(r=>firstArrived=r),firstHold=new Promise(r=>releasePoll=r),resumedHold=new Promise(r=>releaseResumedPoll=r);
+      const statusUrl=fixture.matter+'/answer-jobs/synthetic-owner-'+(++sequence);
+      await p.route('**'+statusUrl,async route=>{
+        polls++;
+        if(polls===1){firstArrived();await firstHold;}else await resumedHold;
+        await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({state:'cancelled',status_url:statusUrl,can_cancel:false})}).catch(()=>{});
+      });
+      await p.route('**/assistant?**',async route=>{
+        fragments++;
+        if(fragments===1)return failRoute(route,'http');
+        return route.fulfill({response:await route.fetch()});
+      });
+      if(action==='preference'){
+        const matterId=await p.locator('[data-assistant-dock]').getAttribute('data-matter-id');
+        await p.evaluate(({key,value})=>localStorage.setItem(key,value),{key:'recordbench:assistant:conversation:'+matterId,value:fixture.alternate});
+        await p.route('**/sources/**',async route=>{
+          if(route.request().resourceType()!=='document')return route.continue();
+          const response=await route.fetch();const html=(await response.text()).replace(/data-assistant-status data-status-url="[^"]*" data-state="[^"]*"/,`data-assistant-status data-status-url="${statusUrl}" data-state="queued"`);
+          await route.fulfill({response,body:html});
+        });
+        await p.reload();await firstArrival;
+      }else{
+        await mountCancel(p,statusUrl);
+        await p.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));await firstArrival;
+        if(action==='cancel'){
+          await p.route('**'+statusUrl+'/cancel',route=>{posts++;return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({state:'running',status_url:statusUrl,can_cancel:true,cancel_url:statusUrl+'/cancel'})});});
+          await p.locator('[data-assistant-cancel]').click();
+        }else await p.locator('[data-assistant-conversation-picker]').selectOption(fixture.alternate);
+      }
+      await p.locator('[data-assistant-status-copy]').filter({hasText:action==='cancel'?/history could not refresh/i:/chat could not be opened/i}).waitFor({timeout:3000});
+      // Releasing the older terminal poll must not refresh over the newer action.
+      // Keep its response separate from the resumed GET scheduled by recovery.
+      releasePoll();await p.waitForTimeout(100);assert.equal(fragments,1);
+      releaseResumedPoll();
+      await p.waitForFunction(()=>document.querySelector('[data-assistant-status]').dataset.statusUrl==='',null,{timeout:4000});
+      assert.equal(polls,2);assert.equal(fragments,2);assert.equal(posts,action==='cancel'?1:0);
+      assert.equal(await p.locator('[data-assistant-dock]').getAttribute('data-conversation-id'),fixture.conversation);
+      assert.equal(await p.locator('[data-assistant-conversation-picker]').isEnabled(),true);
+      assert.equal(await p.locator('#assistant-question').isEnabled(),true);
+      await p.waitForTimeout(200);assert.equal(polls,2);assert.equal(fragments,2);
+      checks.push(`${action} refresh failure fences the older in-flight poll, resumes the origin active job once, and reaches terminal history without duplicate POST or terminal polling.`);
+      await ctx.close();
+    }
+  }
+  if(!group || group==='terminal') {
     for(const state of ['succeeded','failed','cancelled'])for(const failure of ['http','network']){
       const {ctx,p}=await fresh();
       const pending=await heldTerminal(p,state,failure);
@@ -180,7 +290,7 @@ async function refreshRegressions(browser, fixture) {
       await ctx.close();
     }
   }
-  if(group!=='terminal') {
+  if(!group || group==='context') {
     for(const timing of ['before','during-on','during-off']){
       const {ctx,p}=await fresh();
       const initialOn=timing!=='during-on';
