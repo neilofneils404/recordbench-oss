@@ -98,6 +98,11 @@ their own citations. Changing question scope does not change the evidence behind
 an earlier answer. Asynchronous assistant operations are fenced against newer
 conversation and scope choices. The full conversation and report/export routes
 remain available.
+Same-conversation history refreshes preserve the current saved-context checkbox
+and selection revision, including choices made while an answer was running.
+If a terminal request's history cannot refresh, the dock keeps the draft and
+directs the reviewer to Full conversation; stale failures cannot replace newer
+conversation or source state.
 
 **Write a note** saves human-authored prose with canonical source support into
 existing Case notes, with manual origin and Needs review status. Saving a note

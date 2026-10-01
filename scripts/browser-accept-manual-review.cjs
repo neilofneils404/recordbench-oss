@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Synthetic manual-review acceptance with deterministic answers/transcription and a generated video.
 // Usage: node scripts/browser-accept-manual-review.cjs /path/to/chromium /tmp/fresh-output
+// Focused transport regressions: --refresh-only [--refresh-group=terminal|context]
+// Reproduce an older frontend without changing files: --baseline-js=REV (focused mode).
 const { chromium } = require('playwright');
 const { spawn, execFileSync } = require('node:child_process');
 const { once } = require('node:events');
@@ -81,10 +83,142 @@ const deadline = setTimeout(() => {
   if (browser) browser.close();
   process.exitCode = 1;
 }, 90000);
+const baselineJsRevision=process.argv.find(value=>value.startsWith('--baseline-js='))?.split('=')[1] || null;
 const checks = [];
 const observations = {};
 const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim());
+// Isolated deterministic transport fixtures exercise browser ownership only;
+// normal request persistence and authorization remain covered by route tests.
+async function refreshRegressions(browser, fixture) {
+  const group = process.argv.find(value => value.startsWith('--refresh-group='))?.split('=')[1];
+  const baseline=baselineJsRevision;
+  const oldScript = baseline ? execFileSync('git', ['show', baseline + ':src/case_intelligence/static/case-intelligence.js'], {cwd:root,encoding:'utf8'}) : null;
+  let sequence=0;
+  const fresh = async () => {
+    const ctx=await browser.newContext({viewport:{width:1440,height:1000}});
+    if(oldScript)await ctx.route('**/static/case-intelligence.js*',route=>route.fulfill({status:200,contentType:'application/javascript',body:oldScript}));
+    const p=await ctx.newPage();activePage=p;
+    await p.goto(fixture.base+fixture.reader);
+    const expand=p.locator('[data-assistant-expand]');if(await expand.isVisible())await expand.click();
+    await p.locator('[data-assistant-dock][data-bound=true]').waitFor();
+    return {ctx,p};
+  };
+  const heldTerminal = async (p,state,outcome='html') => {
+    const statusUrl=fixture.matter+'/answer-jobs/synthetic-refresh-'+(++sequence);
+    let arrived,release,finished;
+    const arrival=new Promise(r=>arrived=r),hold=new Promise(r=>release=r),done=new Promise(r=>finished=r);
+    await p.route('**'+statusUrl,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({state,status_url:statusUrl,can_cancel:false})}));
+    await p.route('**/assistant?**',async route=>{
+      const response=outcome==='html'?await route.fetch():null;
+      arrived();await hold;
+      try {
+        if(outcome==='http')await route.fulfill({status:503,contentType:'text/plain',body:'Synthetic history unavailable'});
+        else if(outcome==='network')await route.abort('failed');
+        else await route.fulfill({response});
+      } finally {finished();}
+    });
+    await p.locator('[data-assistant-status]').evaluate((e,url)=>{e.dataset.state='queued';e.dataset.statusUrl=url;},statusUrl);
+    await p.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));
+    await arrival;
+    return {release,done,statusUrl};
+  };
+  const contextControls = async (p,checked,revision) => {
+    await p.locator('[data-assistant-question-form] details').evaluate(e=>e.open=true);
+    await p.locator('[name=use_saved_context]').setChecked(checked);
+    // A deliberately distinct synthetic revision proves the paired expected
+    // revision is preserved, instead of silently adopting the fetched value.
+    await p.locator('[name=expected_selection_revision]').evaluate((e,value)=>e.value=value,revision);
+  };
+  if(group!=='context') {
+    for(const state of ['succeeded','failed','cancelled'])for(const failure of ['http','network']){
+      const {ctx,p}=await fresh();
+      const pending=await heldTerminal(p,state,failure);
+      const draft=`Keep draft after ${state} history ${failure} failure.`;
+      await p.locator('#assistant-question').fill(draft);
+      pending.release();await pending.done;
+      await p.locator('[data-assistant-status-copy]').filter({hasText:/draft.*kept/i}).waitFor({timeout:3000});
+      assert.match(await p.locator('[data-assistant-status-copy]').innerText(),/Full conversation/i);
+      assert.equal(await p.locator('#assistant-question').inputValue(),draft);
+      assert.equal(await p.locator('#assistant-question').isEnabled(),true);
+      assert.equal(await p.locator('[data-assistant-question-form] button[type=submit]').isEnabled(),true);
+      assert.equal(await p.getByRole('link',{name:'Open case conversation and manage conversations',exact:true}).isVisible(),true);
+      checks.push(`${state} history ${failure} failure exposes kept-draft recovery and a usable composer.`);
+      await ctx.close();
+    }
+    for(const change of ['scope','new-chat','submission']){
+      const {ctx,p}=await fresh();
+      const pending=await heldTerminal(p,'cancelled','http');
+      const draft='Current draft after invalidating old history failure.';
+      await p.locator('#assistant-question').fill(draft);
+      let releaseAdmission,admissionDone;
+      if(change==='scope'){
+        await p.locator('[data-review-ask-source] button').click();
+        await p.locator('[data-review-ask-source] [role=status]').filter({hasText:'Source selected'}).waitFor();
+      }else if(change==='new-chat'){
+        await p.locator('[data-assistant-new-chat]').click();await p.locator('#assistant-question').fill(draft);
+      }else{
+        let arrived,finished;const arrival=new Promise(r=>arrived=r),hold=new Promise(r=>releaseAdmission=r);
+        admissionDone=new Promise(resolve=>finished=resolve);
+        const action=await p.locator('[data-assistant-question-form]').getAttribute('action');
+        await p.route('**'+action,async route=>{arrived();await hold;await route.abort('failed');finished();});
+        await p.locator('[data-assistant-question-form] button[type=submit]').click();await arrival;
+      }
+      const current=await p.locator('[data-assistant-dock]').elementHandle();
+      const stateBefore=await p.locator('[data-assistant-status]').evaluate(e=>({text:e.textContent,hidden:e.hidden,state:e.dataset.state}));
+      const scopeBefore=await p.locator('#assistant-source-set').inputValue();
+      pending.release();await pending.done;await p.waitForTimeout(100);
+      assert.equal(await current.evaluate(e=>e===document.querySelector('[data-assistant-dock]')),true);
+      assert.deepEqual(await p.locator('[data-assistant-status]').evaluate(e=>({text:e.textContent,hidden:e.hidden,state:e.dataset.state})),stateBefore);
+      assert.equal(await p.locator('#assistant-question').inputValue(),draft);
+      assert.equal(await p.locator('#assistant-source-set').inputValue(),scopeBefore);
+      if(change==='submission'){
+        assert.equal(await p.locator('[data-assistant-question-form]').getAttribute('aria-busy'),'true');
+        releaseAdmission();await admissionDone;
+      }
+      checks.push(`A stale history failure after ${change} cannot overwrite the current dock, draft, scope or status.`);
+      await ctx.close();
+    }
+  }
+  if(group!=='terminal') {
+    for(const timing of ['before','during-on','during-off']){
+      const {ctx,p}=await fresh();
+      const initialOn=timing!=='during-on';
+      await contextControls(p,initialOn,'314');
+      const pending=await heldTerminal(p,'cancelled');
+      if(timing!=='before')await contextControls(p,timing==='during-on','315');
+      const expectedChecked=timing!=='during-off',expectedRevision=timing==='before'?'314':'315';
+      const oldDock=await p.locator('[data-assistant-dock]').elementHandle();
+      pending.release();await pending.done;
+      await p.waitForFunction(e=>!e.isConnected,oldDock);
+      assert.equal(await p.locator('[name=use_saved_context]').isChecked(),expectedChecked);
+      assert.equal(await p.locator('[name=expected_selection_revision]').inputValue(),expectedRevision);
+      checks.push(`Same-conversation refresh preserves saved-context checkbox and its paired revision ${timing} fetch.`);
+      await ctx.close();
+    }
+    for(const change of ['conversation','scope']){
+      const {ctx,p}=await fresh();await contextControls(p,true,'314');
+      const pending=await heldTerminal(p,'cancelled');
+      if(change==='conversation'){
+        await p.unroute('**/assistant?**');
+        await p.locator('[data-assistant-conversation-picker]').selectOption(fixture.alternate);
+        await p.locator(`[data-assistant-dock][data-conversation-id="${fixture.alternate}"]`).waitFor();
+        assert.equal(await p.locator('[name=use_saved_context]').isChecked(),false);
+        assert.notEqual(await p.locator('[name=expected_selection_revision]').inputValue(),'314');
+      }else{
+        await p.locator('[data-review-ask-source] button').click();
+        await p.locator('[data-review-ask-source] [role=status]').filter({hasText:'Source selected'}).waitFor();
+        await contextControls(p,false,'316');
+      }
+      const expected=await p.locator('[data-assistant-dock]').evaluate(e=>({conversation:e.dataset.conversationId,checked:e.querySelector('[name=use_saved_context]').checked,revision:e.querySelector('[name=expected_selection_revision]').value,scope:e.querySelector('[name=source_set]').value}));
+      pending.release();await pending.done;await p.waitForTimeout(100);
+      assert.deepEqual(await p.locator('[data-assistant-dock]').evaluate(e=>({conversation:e.dataset.conversationId,checked:e.querySelector('[name=use_saved_context]').checked,revision:e.querySelector('[name=expected_selection_revision]').value,scope:e.querySelector('[name=source_set]').value})),expected);
+      checks.push(`Invalidated old history cannot leak saved-context checkbox or revision across ${change} change.`);
+      await ctx.close();
+    }
+  }
+}
+
 (async () => {
   const [data] = await Promise.race([once(server.stdout, 'data'), once(server,'exit').then(([code])=>{throw new Error('Synthetic server exited before ready: '+code);})]);
   const fixture = JSON.parse(data.toString().trim());
@@ -92,6 +226,7 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   activePage = page;
+  if(process.argv.includes('--refresh-only')){await refreshRegressions(browser,fixture);fs.writeFileSync(path.join(output,'receipt.json'),JSON.stringify({synthetic_only:true,passed:true,revision,dirty,javascript_baseline:baselineJsRevision,checks},null,2));console.log(checks);return;}
   await page.goto(fixture.base + fixture.reader);
   const go = async url => { const response = await page.goto(fixture.base+url); assert.equal(response.status(),200); };
   const expand = async () => { const button=page.locator('[data-assistant-expand]'); if(await button.isVisible()) await button.click(); };
@@ -464,7 +599,8 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   assert.equal(new URL(fallback.url()).pathname,new URL(fixture.base+fixture.reader).pathname);
   assert.match(new URL(fallback.url()).searchParams.get('notice'),/saved/);
   checks.push('JavaScript-disabled human note form saves and returns to the same source.');
-  fs.writeFileSync(path.join(output,'receipt.json'),JSON.stringify({synthetic_only:true,passed:true,revision,dirty,checks,observations,limitations:['No real model/GPU qualification','640x302 simulates the CSS viewport at200%; native browser zoom not tested','Transcript pagination and playback-history restoration not yet verified','Browser-native draft restoration varies; this run verifies Back retry in installed Chromium and a missing-text safe fallback, not cross-browser or browser-restart recovery']},null,2));
+  await refreshRegressions(browser,fixture);
+  fs.writeFileSync(path.join(output,'receipt.json'),JSON.stringify({synthetic_only:true,passed:true,revision,dirty,javascript_baseline:baselineJsRevision,checks,observations,limitations:['No real model/GPU qualification','640x302 simulates the CSS viewport at200%; native browser zoom not tested','Transcript pagination and playback-history restoration not yet verified','Browser-native draft restoration varies; this run verifies Back retry in installed Chromium and a missing-text safe fallback, not cross-browser or browser-restart recovery']},null,2));
   console.log(JSON.stringify(checks,null,2));
 })().catch(async error => {
   if (activePage && !activePage.isClosed()) {
@@ -473,7 +609,7 @@ const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root
   }
   console.error(error);
   fs.writeFileSync(path.join(output, 'receipt.json'), JSON.stringify({ synthetic_only: true,
-    passed: false, revision, dirty, checks, observations, error: String(error).slice(0, 2000) }, null, 2));
+    passed: false, revision, dirty, javascript_baseline:baselineJsRevision, checks, observations, error: String(error).slice(0, 2000) }, null, 2));
   process.exitCode = 1;
 }).finally(async () => {
   clearTimeout(deadline);

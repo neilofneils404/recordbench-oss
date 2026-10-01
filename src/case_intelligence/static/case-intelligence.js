@@ -3662,7 +3662,6 @@
     const epoch = ++assistantEpoch;
     const originatingDock = assistantDock;
     const originatingComposer = originatingDock.querySelector("[data-assistant-question-form]");
-    const savedContextAtStart = originatingComposer?.querySelector('[name="use_saved_context"]')?.checked;
     const response = await fetch(fragmentUrl, {
       headers: { Accept: "text/html" },
       cache: "no-store",
@@ -3674,8 +3673,9 @@
     const replacement = holder.querySelector("[data-assistant-dock]");
     if (!replacement || !assistantDock) throw new Error("Assistant response was incomplete.");
     // A terminal job enables writing before its refreshed history arrives.
-    // Preserve edits in that interval only within the same conversation and
-    // epoch (scope changes and New chat invalidate the refresh above).
+    // Preserve the current composer state, including choices made before the
+    // fetch, only within the same conversation and epoch (scope changes and
+    // New chat invalidate the refresh above).
     const sameConversation = replacement.dataset.conversationId === originatingDock.dataset.conversationId;
     const currentTextarea = originatingComposer?.querySelector("textarea");
     const replacementComposer = replacement.querySelector("[data-assistant-question-form]");
@@ -3686,7 +3686,7 @@
       replacementTextarea.value = currentTextarea.value;
       const currentContext = originatingComposer.querySelector('[name="use_saved_context"]');
       const replacementContext = replacementComposer.querySelector('[name="use_saved_context"]');
-      if (currentContext && replacementContext && currentContext.checked !== savedContextAtStart) {
+      if (currentContext && replacementContext) {
         replacementContext.checked = currentContext.checked;
         const revision = originatingComposer.querySelector('[name="expected_selection_revision"]');
         const replacementRevision = replacementComposer.querySelector('[name="expected_selection_revision"]');
@@ -3714,7 +3714,7 @@
     // Terminal jobs have already restored the composer. Re-polling them can
     // replace a newer draft after a scope change or a bfcache restoration.
     if (!statusUrl || !["queued", "running"].includes(status?.dataset.state || "")) return;
-    const epoch = assistantEpoch;
+    let epoch = assistantEpoch;
     const originatingDock = assistantDock;
     try {
       const response = await fetch(statusUrl, {
@@ -3724,11 +3724,11 @@
       const job = await assistantJson(response);
       if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
       renderAssistantJob(job);
-      if (job.state === "succeeded") {
-        await refreshAssistant();
-        return;
-      }
-      if (["failed", "cancelled"].includes(job.state)) {
+      if (["succeeded", "failed", "cancelled"].includes(job.state)) {
+        // The refresh owns the next epoch. Its failure is still ours unless
+        // another action supersedes it; comparing the old poll epoch would
+        // silently suppress every terminal history-fetch error.
+        epoch = assistantEpoch + 1;
         await refreshAssistant();
         return;
       }
