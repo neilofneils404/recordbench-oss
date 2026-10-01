@@ -43,6 +43,15 @@
     <a href="/matters/{{ matter.slug }}/notebook">Notes</a>
     <a href="/matters/{{ matter.slug }}/entities">People &amp; things</a>
     <a href="/matters/{{ matter.slug }}/entities#discovery-heading">Discover entities</a>
+    {% if source.document.state == 'ready' %}
+    <form class="review-find" role="search" method="get" action="{{ request.url.path }}" aria-label="Find in this file">
+      {% if request.query_params.get('browse') %}<input type="hidden" name="browse" value="{{ request.query_params.get('browse') }}">{% endif %}
+      {% if request.query_params.get('entity_return_to') %}<input type="hidden" name="entity_return_to" value="{{ request.query_params.get('entity_return_to') }}">{% endif %}
+      <input type="hidden" name="unit" value="{{ source.unit_index }}">
+      <label class="visually-hidden" for="review-find-words">Find in this file</label>
+      <input id="review-find-words" name="q" type="search" value="{{ find_query }}" maxlength="240" placeholder="Find in this file…" autocomplete="off">
+    </form>
+    {% endif %}
 
   </nav>
   <div class="source-browser-layout">
@@ -54,10 +63,25 @@
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
 
 
-<div class="review-page-navigation"><span>Selected searchable section {{ source.unit_index }}</span>      <nav class="reader-pagination" aria-label="Source section navigation">
+<div class="review-page-navigation"><span>Selected searchable section {{ source.unit_index }}</span>{% if source.embedded_content_href and source.row.kind != 'IMAGE' %}<div class="pdf-fit-toggle" role="group" aria-label="PDF zoom" data-pdf-fit-toggle hidden><button type="button" class="button button-secondary" data-pdf-fit="page" aria-pressed="true">Fit page</button><button type="button" class="button button-secondary" data-pdf-fit="width" aria-pressed="false">Fit width</button></div>{% endif %}      <nav class="reader-pagination" aria-label="Source section navigation">
         {% if source.previous_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.previous_href, request.query_params.get('entity_return_to', '')), source_sequence.context if request.query_params.get('browse') else '') }}">Previous</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Previous</span>{% endif %}
         {% if source.next_href %}<a class="button button-secondary" href="{{ source_browse_href(entity_context_href(source.next_href, request.query_params.get('entity_return_to', '')), source_sequence.context if request.query_params.get('browse') else '') }}">Next</a>{% else %}<span class="button button-secondary disabled" aria-disabled="true">Next</span>{% endif %}
       </nav></div>
+  {% if source_find %}
+  {% set find_base = request.url.path ~ '?q=' ~ (find_query|urlencode) ~ ('&browse=' ~ (request.query_params.get('browse')|urlencode) if request.query_params.get('browse') else '') ~ ('&entity_return_to=' ~ (request.query_params.get('entity_return_to')|urlencode) if request.query_params.get('entity_return_to') else '') %}
+  <section class="review-find-results" aria-labelledby="review-find-heading" data-review-find-results>
+    <h2 id="review-find-heading" role="status">{% if source_find.total_matches %}{{ source_find.total_matches }} match{{ '' if source_find.total_matches == 1 else 'es' }} for “{{ find_query }}” in {{ source_find.sections|length }} section{{ '' if source_find.sections|length == 1 else 's' }}{% else %}No matches for “{{ find_query }}” in this file’s searchable text{% endif %}</h2>
+    {% if source_find.sections %}
+    <ol>
+      {% for hit in source_find.sections %}
+      <li><a href="{{ find_base }}&amp;unit={{ hit.unit_index }}"{% if hit.unit_index == source.unit_index %} aria-current="true"{% endif %}><strong>{{ hit.label }}</strong></a> <small>({{ hit.count }})</small> <span>…{{ hit.before }} <mark>{{ hit.match }}</mark> {{ hit.after }}…</span></li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+    {% if source_find.truncated %}<p>Showing the first {{ source_find.sections|length }} sections with matches.</p>{% endif %}
+    <p><small>Searches this file’s extracted text only. A missing match does not prove the words are absent from the original.</small> <a href="{{ request.url.path }}?unit={{ source.unit_index }}{{ ('&browse=' ~ (request.query_params.get('browse')|urlencode)) if request.query_params.get('browse') else '' }}">Clear</a></p>
+  </section>
+  {% endif %}
   {% if source.embedded_content_href %}
   {% if source.row.kind == 'IMAGE' %}
   <figure class="document-reader image-reader" aria-label="Image source viewer">
@@ -65,7 +89,7 @@
   </figure>
   {% else %}
   <section class="document-reader" aria-label="PDF source viewer">
-    <iframe src="{{ source.embedded_content_href }}{{ '&' if '#' in source.embedded_content_href else '#' }}view=FitH&amp;navpanes=0" title="{{ source.row.name }} PDF viewer"></iframe>
+    <iframe src="{{ source.embedded_content_href }}{{ '&' if '#' in source.embedded_content_href else '#' }}view=Fit&amp;navpanes=0" data-pdf-viewer data-pdf-base="{{ source.embedded_content_href }}" title="{{ source.row.name }} PDF viewer"></iframe>
   </section>
   {% endif %}
   {% endif %}
@@ -80,7 +104,7 @@
     </header>
     {% if source.unit %}
     {% if entity_support_token %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/entities?support={{ entity_support_token }}&amp;return_to={{ (request.query_params.get('entity_return_to') or (request.url.path ~ '?' ~ request.url.query))|urlencode }}">Attach passage to entity</a> <a class="button button-secondary" href="/matters/{{ matter.slug }}/chronology?support={{ entity_support_token }}&amp;return_to={{ (request.query_params.get('entity_return_to') or (request.url.path ~ '?' ~ request.url.query))|urlencode }}">Use in event or assertion</a>{% endif %}
-    <pre>{{ source.unit.text }}</pre>
+    <pre>{% if find_query %}{{ highlight_find(source.unit.text, find_query) }}{% else %}{{ source.unit.text }}{% endif %}</pre>
     {% else %}
     <div class="reader-empty">
       <strong>{% if source.document.state == 'ready' %}No searchable text was recognized.{% else %}This source is not ready to review yet.{% endif %}</strong>

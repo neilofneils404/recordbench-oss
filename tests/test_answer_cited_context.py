@@ -176,7 +176,7 @@ def test_pdf_full_source_selects_cited_physical_page_after_unsearchable_pages(lo
     iframe = re.search(r'<iframe[^>]+src="([^"]+)"', source.text)
     assert iframe is not None
     fragment = parse_qs(urlsplit(html.unescape(iframe.group(1))).fragment)
-    assert fragment == {'page': ['2'], 'view': ['FitH'], 'navpanes': ['0']}
+    assert fragment == {'page': ['2'], 'view': ['Fit'], 'navpanes': ['0']}
     assert parse_qs(urlsplit(value["source_href"]).query)["unit"] == ["1"]
     assert bench.workspace.messages(matter.matter_id, conversation.conversation_id) == before
     assert message.payload["claims"][0]["citations"][0] == saved_reference(bench, citation)
