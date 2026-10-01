@@ -2975,31 +2975,47 @@
   const renderActions = (payload) => {
     const holder = readiness.querySelector(".matter-readiness-actions");
     if (!holder) return;
-    holder.replaceChildren();
-    if (payload.action_url) {
-      const link = document.createElement("a");
-      link.href = payload.action_url;
-      link.dataset.readinessAction = "true";
-      link.textContent = payload.action_label;
-      holder.append(link);
-    } else {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.processingToggle = "true";
-      button.setAttribute("aria-expanded", details?.hidden === false ? "true" : "false");
-      button.setAttribute("aria-controls", "matter-processing-center");
-      button.textContent = payload.action_label;
-      holder.append(button);
+    const focused = document.activeElement;
+    let primary = holder.querySelector(":scope > a, :scope > button:not(.readiness-details-action)");
+    const tag = payload.action_url ? "A" : "BUTTON";
+    let restorePrimaryFocus = false;
+    if (!primary || primary.tagName !== tag) {
+      const replacement = document.createElement(tag.toLowerCase());
+      restorePrimaryFocus = primary?.contains(focused) || false;
+      if (primary) primary.replaceWith(replacement);
+      else holder.prepend(replacement);
+      primary = replacement;
     }
+    if (payload.action_url) {
+      primary.href = payload.action_url;
+      primary.dataset.readinessAction = "true";
+    } else {
+      primary.type = "button";
+      primary.dataset.processingToggle = "true";
+      primary.setAttribute("aria-expanded", details?.hidden === false ? "true" : "false");
+      primary.setAttribute("aria-controls", "matter-processing-center");
+    }
+    // Keep the same focusable node across ordinary polls, even if its label
+    // or destination changes. WebDriver and keyboard focus retain that node.
+    if (primary.textContent !== payload.action_label) primary.textContent = payload.action_label;
+    // Configure the new action before focusing it (an anchor needs its href).
+    if (restorePrimaryFocus) primary.focus({ preventScroll: true });
+    let detailButton = holder.querySelector(".readiness-details-action");
     if (payload.state === "attention") {
-      const detailButton = document.createElement("button");
-      detailButton.type = "button";
-      detailButton.className = "readiness-details-action";
-      detailButton.dataset.processingToggle = "true";
+      if (!detailButton) {
+        detailButton = document.createElement("button");
+        detailButton.type = "button";
+        detailButton.className = "readiness-details-action";
+        detailButton.dataset.processingToggle = "true";
+        detailButton.setAttribute("aria-controls", "matter-processing-center");
+        detailButton.textContent = "Details";
+        holder.append(detailButton);
+      }
       detailButton.setAttribute("aria-expanded", details?.hidden === false ? "true" : "false");
-      detailButton.setAttribute("aria-controls", "matter-processing-center");
-      detailButton.textContent = "Details";
-      holder.append(detailButton);
+    } else if (detailButton) {
+      const restoreFocus = detailButton.contains(focused);
+      detailButton.remove();
+      if (restoreFocus) primary.focus({ preventScroll: true });
     }
   };
 

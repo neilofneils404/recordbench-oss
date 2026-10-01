@@ -24,6 +24,10 @@ Long right-hand content must not make left-hand controls unreachable:
   controls stay reachable without a nested sidebar scroll trap.
 - Independent navigation and conversation scroll regions remain keyboard
   reachable. Case note tools intentionally use ordinary document scrolling.
+- Readiness polling retains existing action controls and their keyboard focus.
+  If an action changes between a link and a button, focus follows its replacement;
+  if focused Details disappears, focus moves to the primary readiness action.
+  Updates never move focus from an unrelated control.
 
 Run the bounded synthetic browser acceptance with a matching Chrome and driver:
 

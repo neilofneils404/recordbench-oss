@@ -6,12 +6,14 @@ import argparse
 import json
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
+from starlette.responses import Response
 import uvicorn
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
@@ -91,6 +93,7 @@ def main():
     parser.add_argument('--chrome-binary', type=Path, required=True)
     parser.add_argument('--chromedriver', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--baseline-js', help='Serve an earlier committed frontend only in this synthetic app.')
     args = parser.parse_args()
     output = args.output.resolve()
     # The shared CI runner creates an empty output directory before dispatch.
@@ -108,6 +111,14 @@ def main():
         runtime = Path(temporary) / 'runtime'
         context = seed(runtime)
         app = app_at(runtime)
+        if args.baseline_js:
+            baseline_js = subprocess.check_output(['git', 'show',
+                args.baseline_js + ':src/case_intelligence/static/case-intelligence.js'], cwd=ROOT)
+            @app.middleware('http')
+            async def baseline_frontend(request, call_next):
+                if request.url.path == '/static/case-intelligence.js':
+                    return Response(baseline_js, media_type='application/javascript')
+                return await call_next(request)
         listener = socket.socket()
         listener.bind(('127.0.0.1', 0))
         base = f'http://127.0.0.1:{listener.getsockname()[1]}'
@@ -152,6 +163,94 @@ def main():
                         return True
                 wait.until(detached)
                 wait.until(lambda current: current.execute_script('return document.readyState') == 'complete')
+            # Hold actual readiness fetch responses before rendering. Native Tab
+            # establishes focus; no stale-element exceptions or JS clicks are
+            # swallowed when a polling render removes the focused action.
+            harness = driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {'source': r"""
+                (() => {
+                    const originalFetch = window.fetch;
+                    const fixture = window.__readinessFocusFixture = {pending:null, rendered:0};
+                    window.addEventListener('recordbench:readiness', () => fixture.rendered++);
+                    window.fetch = async (...args) => {
+                        const response = await originalFetch(...args);
+                        if (!new URL(typeof args[0] === 'string' ? args[0] : args[0].url,
+                            location.href).pathname.endsWith('/processing-status')) return response;
+                        const payload = await response.clone().json();
+                        return new Promise(resolve => {
+                            fixture.pending = overrides => {
+                                fixture.pending = null;
+                                resolve(new Response(JSON.stringify({...payload,...overrides,poll_after_ms:50}),
+                                    {status:response.status,headers:{'Content-Type':'application/json'}}));
+                            };
+                        });
+                    };
+                })();
+            """})['identifier']
+            driver.get(base + path)
+            wait.until(lambda current: current.execute_script('return !!window.__readinessFocusFixture.pending'))
+            actions = '.matter-readiness-actions'
+            def primary():
+                return driver.find_element(By.CSS_SELECTOR, actions + ' > :first-child')
+            def keyboard_focus(element):
+                for _ in range(240):
+                    if driver.switch_to.active_element == element:
+                        return
+                    ActionChains(driver).send_keys(Keys.TAB).perform()
+                raise AssertionError('Readiness regression target was not reachable using native Tab')
+            def release_readiness(overrides):
+                wait.until(lambda current: current.execute_script('return !!window.__readinessFocusFixture.pending'))
+                count = driver.execute_script('return window.__readinessFocusFixture.rendered')
+                driver.execute_script('window.__readinessFocusFixture.pending(arguments[0])', overrides)
+                wait.until(lambda current: current.execute_script('return window.__readinessFocusFixture.rendered') > count)
+            original = primary()
+            assert original.tag_name == 'a'
+            keyboard_focus(original)
+            release_readiness({})
+            assert primary() == original, 'Unchanged readiness action must keep its DOM identity'
+            assert driver.switch_to.active_element == original, 'Readiness poll must retain keyboard focus'
+            record('Unchanged real readiness poll preserves the keyboard-focused action node and focus')
+
+            changed_url = path + '?readiness_fixture=changed'
+            release_readiness(dict(action_url=changed_url, action_label='Review synthetic source status', state='attention'))
+            assert primary() == original and driver.switch_to.active_element == original
+            assert original.text == 'Review synthetic source status'
+            assert original.get_attribute('href') == base + changed_url
+            detail = driver.find_element(By.CSS_SELECTOR, actions + ' .readiness-details-action')
+            keyboard_focus(detail)
+            release_readiness(dict(action_url=changed_url, action_label='Updated synthetic source status', state='attention'))
+            assert primary() == original
+            assert driver.find_element(By.CSS_SELECTOR, actions + ' .readiness-details-action') == detail
+            assert driver.switch_to.active_element == detail
+            record('Changed readiness link text and href update in place; an unchanged Details button also keeps identity and focus')
+
+            keyboard_focus(original)
+            release_readiness(dict(action_url=None, action_label='Inspect processing', state='attention'))
+            button = primary()
+            assert button.tag_name == 'button' and driver.switch_to.active_element == button
+            assert button.get_attribute('aria-controls') == 'matter-processing-center'
+            expanded_before = button.get_attribute('aria-expanded')
+            button.send_keys(Keys.ENTER)
+            wait.until(lambda _: button.get_attribute('aria-expanded') != expanded_before)
+            release_readiness(dict(action_url=changed_url, action_label='Review updated sources', state='attention'))
+            link = primary()
+            assert link.tag_name == 'a' and link.get_attribute('href') == base + changed_url
+            assert driver.switch_to.active_element == link
+            record('Genuine link-to-button and button-to-link changes transfer focus; the replacement processing button remains keyboard operable')
+
+            detail = driver.find_element(By.CSS_SELECTOR, actions + ' .readiness-details-action')
+            keyboard_focus(detail)
+            release_readiness(dict(action_url=changed_url, action_label='Review updated sources', state='ready'))
+            assert not driver.find_elements(By.CSS_SELECTOR, actions + ' .readiness-details-action')
+            assert primary() == link and driver.switch_to.active_element == link
+            record('Removing focused Details moves focus to the retained primary readiness action')
+
+            unrelated = driver.find_element(By.CSS_SELECTOR, '.notebook-filter-form input[name=q]')
+            keyboard_focus(unrelated)
+            release_readiness(dict(action_url=None, action_label='Inspect processing', state='attention'))
+            assert driver.switch_to.active_element == unrelated
+            record('Readiness action replacement leaves unrelated keyboard focus untouched')
+            driver.execute_cdp_cmd('Page.removeScriptToEvaluateOnNewDocument', {'identifier':harness})
+
             driver.get(base + path)
             assert 'Working note about Alex' in body() and TITLE in body()
             assert driver.find_element(By.ID, 'knowledge-' + context['person'])
@@ -255,13 +354,13 @@ def main():
             no_overflow()
             record('390-pixel layout and real pointer source-return navigation work without horizontal page overflow')
             (output / 'receipt.json').write_text(json.dumps(dict(synthetic_only=True, passed=True,
-                checks=checks, browser=driver.capabilities.get('browserVersion'),
+                checks=checks, javascript_baseline=args.baseline_js, browser=driver.capabilities.get('browserVersion'),
                 screenshots=sorted(file.name for file in output.glob('*.png'))), indent=2))
         except Exception as exc:
             if driver:
                 driver.save_screenshot(str(output / 'failure.png'))
             (output / 'receipt.json').write_text(json.dumps(dict(synthetic_only=True, passed=False,
-                checks=checks, error=type(exc).__name__), indent=2))
+                checks=checks, javascript_baseline=args.baseline_js, error=type(exc).__name__, message=str(exc)), indent=2))
             raise
         finally:
             if driver:
