@@ -180,6 +180,24 @@ hosted code review. Existing native protections and Quality, publication and
 Gitleaks checks remain mandatory. The gate uses pull-request write permission,
 not repository-admin dismissal rights.
 
+Review submission/edit/dismissal and inline-comment creation/edit/deletion
+also trigger automatic revalidation. The `Hosted review events` relay has no
+token permissions, checkout, artifacts or PR-code execution. Its requested and
+completed runs wake the default-branch gate regardless of success; reruns are
+covered by completion. Only the trusted gate selects PR numbers, rereads live
+head/base and findings, and withdraws or renews its native approval. Run outcomes
+and event head/base snapshots never authorize approval. If GitHub omits PR
+associations, the gate reevaluates all open default-branch PRs. All event paths
+share per-PR serialization. No additional token permissions are granted.
+
+GitHub executes review-event workflows on the PR merge ref, while `workflow_run`
+uses the default branch; see the
+[official event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).
+Keep these workflows separate. Do not add review-event triggers directly to the
+privileged gate or consume relay artifacts. Revalidation remains asynchronous;
+Actions scheduling is not an atomic merge barrier. Preserve native protections
+and dispatch the gate after reconciliation if another evaluation is needed.
+
 The gate reads trusted default-branch code and GitHub metadata only; it never executes the PR head
 with a write token. External contributor workflows require
 maintainer approval. Use hosted runners with synthetic fixtures; do not attach

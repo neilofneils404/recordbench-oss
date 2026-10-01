@@ -1,0 +1,18 @@
+name: Hosted review events
+
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+
+# These events execute a PR-merge-ref workflow. It only wakes the trusted gate;
+# it receives no write token, checks out nothing and publishes no artifacts.
+permissions: {}
+
+jobs:
+  signal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: ':'
