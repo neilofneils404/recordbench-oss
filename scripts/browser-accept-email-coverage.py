@@ -16,7 +16,7 @@ import zipfile
 
 import uvicorn
 from selenium import webdriver
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -118,6 +118,28 @@ def main():
                         raise
                     return True
 
+            def page_text():
+                # Pages can swap in new content while a wait reads them.
+                try:
+                    return driver.find_element(By.TAG_NAME, "body").text
+                except StaleElementReferenceException:
+                    return ""
+                except WebDriverException as exc:
+                    if "Node with given id does not belong to the document" not in exc.msg:
+                        raise
+                    return ""
+
+            def rail_hidden():
+                # The narrow rail slides off-canvas over a short transition.
+                rail = "document.querySelector('[data-matter-rail]')"
+                try:
+                    wait.until(lambda d: d.execute_script(f"return {rail}.getBoundingClientRect().right <= 1"))
+                except TimeoutException:
+                    state = driver.execute_script(f"return {{width: innerWidth, body: document.body.className, "
+                        f"right: {rail}.getBoundingClientRect().right, transform: getComputedStyle({rail}).transform}}")
+                    raise AssertionError(f"Matter rail stayed on-screen at narrow width: {state}") from None
+                assert driver.execute_script(f"return {rail}.getAttribute('aria-hidden') === 'true' && {rail}.inert")
+
             def go(path):
                 old = driver.find_element(By.TAG_NAME, "html")
                 driver.get(base + path)
@@ -152,7 +174,10 @@ def main():
             text = driver.find_element(By.TAG_NAME, "body").text
             assert "forwarded.eml" in text and "notes.txt" in text
             assert "Attachment contents were not processed or searched" in text
-            assert EMAIL_COVERAGE_NOTICE in text
+            # The reader keeps source coverage in its collapsed details panel.
+            click("details.review-source-details > summary", False)
+            wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "details.review-source-details").get_attribute("open") is not None)
+            assert EMAIL_COVERAGE_NOTICE in driver.find_element(By.CSS_SELECTOR, "details.review-source-details").text
             store = bench.source_store(matter)
             document = next(iter(store.documents.values()))
             token = store.action_token(document)
@@ -162,8 +187,10 @@ def main():
             for width in (1440, 430):
                 driver.set_window_size(width, 1000)
                 if width < 901:
-                    wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
-                notice = driver.find_element(By.CSS_SELECTOR, '[aria-label="Email attachment coverage"]')
+                    rail_hidden()
+                notice = next((p for p in driver.find_elements(By.CSS_SELECTOR, "details.review-source-details p")
+                    if p.text == EMAIL_COVERAGE_NOTICE), None)
+                assert notice is not None
                 driver.execute_script('arguments[0].scrollIntoView({block:"start",behavior:"instant"});', notice)
                 assert notice.is_displayed()
                 assert driver.execute_script("return document.documentElement.scrollWidth <= innerWidth + 2")
@@ -193,7 +220,7 @@ def main():
             conversation = bench.workspace.get_conversation(matter.matter_id)
             click(".ask-button", False)
             wait.until(lambda _: len(bench.workspace.messages(matter.matter_id, conversation.conversation_id)) == 2)
-            wait.until(lambda d: "Source coverage when this answer was created" in d.find_element(By.TAG_NAME, "body").text)
+            wait.until(lambda _: "Source coverage when this answer was created" in page_text())
             answer = bench.workspace.messages(matter.matter_id, conversation.conversation_id)[-1]
             assert answer.payload["source_coverage"]["notice"] == EMAIL_COVERAGE_NOTICE
             go(prefix + "?" + urlencode({"conversation": conversation.conversation_id}))
@@ -211,12 +238,15 @@ def main():
             research_id = bench.workspace.research_jobs(matter.matter_id, ACTOR)[0].job_id
             wait.until(lambda _: bench.workspace.research_job(matter.matter_id, ACTOR, research_id).state == "succeeded")
             go(prefix + "/research?" + urlencode({"job": research_id}))
-            caution = driver.find_element(By.CSS_SELECTOR, ".research-result .workflow-caution")
-            assert EMAIL_COVERAGE_NOTICE in caution.text and "did not check every source" in caution.text
+            # The generated-text caution comes first; select the coverage caution itself.
+            caution = next((element for element in driver.find_elements(By.CSS_SELECTOR, ".research-result .workflow-caution")
+                if EMAIL_COVERAGE_NOTICE in element.text), None)
+            assert caution is not None
+            assert "did not check every source" in caution.text
             for width in (1440, 430):
                 driver.set_window_size(width, 1000)
                 if width < 901:
-                    wait.until(lambda d: d.execute_script("return document.querySelector('[data-matter-rail]').getBoundingClientRect().right <= 1"))
+                    rail_hidden()
                 driver.execute_script('arguments[0].scrollIntoView({block:"center",behavior:"instant"});', caution)
                 assert caution.is_displayed()
                 assert driver.execute_script("return document.documentElement.scrollWidth <= innerWidth + 2")
@@ -253,7 +283,7 @@ def main():
             click("[data-conversation-coverage-action]")
             library_text = driver.find_element(By.TAG_NAME, "body").text
             assert "generated.eml" in library_text and "damaged.pdf" in library_text
-            click(f'a[href="{prefix}/sources/{token}"]')
+            click(f'a[href^="{prefix}/sources/{token}?browse="]')
             assert "forwarded.eml" in driver.find_element(By.TAG_NAME, "body").text
             assistant_href = driver.find_element(By.CSS_SELECTOR, "[data-assistant-coverage-action]").get_attribute("href")
             assert "status=attention" not in assistant_href and "view=list" in assistant_href
