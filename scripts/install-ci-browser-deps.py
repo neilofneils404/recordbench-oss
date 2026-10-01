@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 
@@ -26,6 +27,53 @@ ACQUIRE_OPTIONS = (
     "-o", "Acquire::http::Timeout=15",
     "-o", "Acquire::https::Timeout=15",
 )
+
+
+def validate_sources(text: str) -> None:
+    """Require every active Ubuntu Deb822 stanza to use only our mirror list.
+
+    Parse stanza boundaries, folded values and Enabled instead of finding a URI
+    anywhere in the file. Reject ambiguous/malformed input without rewriting it.
+    """
+    stanzas = []
+    fields: dict[str, str] = {}
+    previous = ""
+    for line in [*text.splitlines(), ""]:
+        if not line.strip():
+            if fields:
+                stanzas.append(fields)
+            fields, previous = {}, ""
+        elif line.startswith("#"):
+            continue
+        elif line[0].isspace():
+            if not previous:
+                raise ValueError("Ubuntu sources contain an orphan continuation.")
+            fields[previous] += " " + line.strip()
+        else:
+            name, separator, value = line.partition(":")
+            if not separator or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", name):
+                raise ValueError("Ubuntu sources contain a malformed field.")
+            name = name.lower()
+            if name in fields:
+                raise ValueError("Ubuntu sources contain a duplicate field.")
+            fields[name], previous = value.strip(), name
+
+    active = 0
+    for stanza in stanzas:
+        enabled = stanza.get("enabled", "yes").lower()
+        if enabled not in {"yes", "no"}:
+            raise ValueError("Ubuntu sources contain an unsupported Enabled value.")
+        if enabled == "no":
+            continue
+        active += 1
+        if any(not stanza.get(field) for field in ("types", "uris", "suites", "components", "signed-by")):
+            raise ValueError("An active Ubuntu source is missing a required field.")
+        if not set(stanza["types"].split()).issubset({"deb", "deb-src"}):
+            raise ValueError("Ubuntu sources contain an unsupported source type.")
+        if stanza["uris"].split() != ["mirror+file:/etc/apt/apt-mirrors.txt"]:
+            raise ValueError("Every active Ubuntu source must use only the expected mirror list.")
+    if not active:
+        raise ValueError("Ubuntu sources contain no active mirror-list stanza.")
 
 
 def acquire() -> bool:
@@ -55,12 +103,7 @@ def official_mirrors(mirrors: Path, sources: Path):
     }
     if not set(OFFICIAL_MIRRORS).issubset(existing):
         raise ValueError("The runner's existing official HTTPS mirrors are unavailable.")
-    source_uris = {
-        uri for line in sources.read_text().splitlines()
-        if line.startswith("URIs:") for uri in line.split()[1:]
-    }
-    if "mirror+file:/etc/apt/apt-mirrors.txt" not in source_uris:
-        raise ValueError("The runner's Ubuntu sources do not use the expected mirror list.")
+    validate_sources(sources.read_text())
     replacement = "".join(
         f"{uri}\tpriority:{priority}\n"
         for priority, uri in enumerate(OFFICIAL_MIRRORS, start=1)

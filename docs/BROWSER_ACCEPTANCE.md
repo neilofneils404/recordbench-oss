@@ -39,7 +39,10 @@ up to 10 seconds to kill remaining acquisition processes. If either fails or
 times out, it retries acquisition once using only the official HTTPS Ubuntu
 mirrors already listed on the runner. It restores the original mirror list
 afterward; repository suites, components, signing keys and authentication are
-unchanged. Unexpected mirror/source configuration fails closed.
+unchanged. Before changing mirrors, it parses the Ubuntu Deb822 source stanzas
+and requires every active stanza to use only the expected mirror list. Disabled
+stanzas cannot authorize fallback; mixed URIs, missing required fields and
+ambiguous or malformed source configuration fail closed without a mirror write.
 
 Only after successful acquisition does it install the complete dependency list
 with `--no-download`. Package unpacking has no helper timeout or retry; missing

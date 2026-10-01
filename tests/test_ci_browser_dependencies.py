@@ -137,6 +137,70 @@ def test_fallback_refuses_unrecognized_runner_configuration(apt, invalid):
     assert len(commands(apt)) == 1
 
 
+@pytest.mark.parametrize("layout", [
+    SIGNED_SOURCES.replace("URIs: mirror+file:/etc/apt/apt-mirrors.txt",
+                           "URIs: mirror+file:/etc/apt/apt-mirrors.txt https://unexpected.example.test/ubuntu/"),
+    "Enabled: no\n" + SIGNED_SOURCES + "\n" + SIGNED_SOURCES.replace(
+        "mirror+file:/etc/apt/apt-mirrors.txt", "https://unexpected.example.test/ubuntu/"),
+], ids=["mixed-uris", "disabled-expected-active-unknown"])
+def test_fallback_rejects_mixed_uris_and_disabled_expected_stanza(apt, layout):
+    apt[3].append(124)
+    apt[1].write_text(layout)
+    with pytest.raises(ValueError):
+        deps.install_dependencies(*apt[:2])
+    assert len(commands(apt)) == 1  # No mirror write, second acquisition or install.
+    assert apt[0].read_text() == MIRROR_LIST
+    assert apt[1].read_text() == layout
+
+
+@pytest.mark.parametrize("layout", [
+    pytest.param(SIGNED_SOURCES.replace("URIs: mirror+file:/etc/apt/apt-mirrors.txt",
+        "URIs: mirror+file:/etc/apt/apt-mirrors.txt\n https://unexpected.example.test/ubuntu/"), id="folded-extra-uri"),
+    pytest.param(SIGNED_SOURCES + "\n" + SIGNED_SOURCES.replace(
+        "mirror+file:/etc/apt/apt-mirrors.txt", "https://unexpected.example.test/ubuntu/"), id="extra-active-stanza"),
+    pytest.param("Enabled: no\n" + SIGNED_SOURCES, id="all-disabled"),
+    pytest.param(SIGNED_SOURCES.replace("URIs: mirror+file:/etc/apt/apt-mirrors.txt\n", ""), id="missing-uris"),
+    pytest.param(SIGNED_SOURCES.replace("URIs: mirror+file:/etc/apt/apt-mirrors.txt", "URIs:"), id="empty-uris"),
+    pytest.param(SIGNED_SOURCES + "uris: https://unexpected.example.test/ubuntu/\n", id="duplicate-uris"),
+    pytest.param("Enabled: no\nenabled: yes\n" + SIGNED_SOURCES, id="duplicate-enabled"),
+    pytest.param(" mirror+file:/etc/apt/apt-mirrors.txt\n" + SIGNED_SOURCES, id="orphan-continuation"),
+    pytest.param(SIGNED_SOURCES + "Malformed line\n", id="missing-colon"),
+    pytest.param(SIGNED_SOURCES + "Invalid Field: value\n", id="invalid-field-name"),
+    pytest.param("Enabled:\n" + SIGNED_SOURCES, id="empty-enabled"),
+    pytest.param("Enabled: perhaps\n" + SIGNED_SOURCES, id="unknown-enabled"),
+    pytest.param(SIGNED_SOURCES.replace("Types: deb\n", ""), id="missing-types"),
+    pytest.param(SIGNED_SOURCES.replace("Types: deb", "Types: invalid"), id="unknown-type"),
+    pytest.param(SIGNED_SOURCES.replace("Suites: noble noble-updates noble-backports noble-security\n", ""), id="missing-suites"),
+    pytest.param(SIGNED_SOURCES.replace("Components: main restricted universe multiverse\n", ""), id="missing-components"),
+    pytest.param(SIGNED_SOURCES.replace("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n", ""), id="missing-signed-by"),
+    pytest.param("# URIs: mirror+file:/etc/apt/apt-mirrors.txt\n\n", id="comments-only"),
+])
+def test_fallback_rejects_ambiguous_or_malformed_sources_before_mutation(apt, layout):
+    apt[3].append(124)
+    apt[1].write_text(layout)
+    with pytest.raises(ValueError):
+        deps.install_dependencies(*apt[:2])
+    assert len(commands(apt)) == 1
+    assert apt[0].read_text() == MIRROR_LIST
+    assert apt[1].read_text() == layout
+
+
+def test_fallback_preserves_multiple_active_folded_stanzas_and_disabled_sources(apt):
+    primary = SIGNED_SOURCES.replace("URIs: mirror+file:/etc/apt/apt-mirrors.txt",
+                                    "URIs:\n mirror+file:/etc/apt/apt-mirrors.txt")
+    primary = primary.replace("Types: deb", "Types: deb\n deb-src")
+    security = SIGNED_SOURCES.replace("noble noble-updates noble-backports noble-security", "noble-security")
+    disabled = SIGNED_SOURCES.replace("mirror+file:/etc/apt/apt-mirrors.txt", "https://unused.example.test/ubuntu/")
+    layout = "# Synthetic Ubuntu source configuration\nEnabled: yes\n" + primary + "\n" + security + "\nEnabled: no\n" + disabled
+    apt[1].write_text(layout)
+    apt[3].append(124)
+    deps.install_dependencies(*apt[:2])
+    assert any(command[:3] == ["sudo", "apt-get", "install"] for command in commands(apt))
+    assert apt[0].read_text() == MIRROR_LIST
+    assert apt[1].read_text() == layout
+    assert all(call[3] == layout.encode() for call in apt[2])
+
+
 def test_partial_mirror_write_failure_restores_original_without_installing(apt, monkeypatch):
     apt[3].append(124)
     original_run = deps.subprocess.run
