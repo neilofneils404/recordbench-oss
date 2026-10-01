@@ -145,20 +145,30 @@ def main():
 
                 driver.get(base + prefix + '/setup?view=list')
                 no_overflow()
-                disclosure = find('.matter-section-disclosure')
-                summary = disclosure.find_element(By.CSS_SELECTOR, 'summary')
-                assert 'Document review' in summary.text
-                reachable(summary)
-                summary.send_keys(Keys.ENTER)
-                links = disclosure.find_elements(By.CSS_SELECTOR, 'a')
-                assert len(links) == 9
-                # Exercise native keyboard traversal within the compact section list.
+                # Six destinations appear as direct links when they fit, otherwise
+                # in the section navigator. Both must be keyboard reachable.
+                compact = driver.find_elements(By.CSS_SELECTOR, '.matter-section-disclosure')
+                if compact:
+                    disclosure = compact[0]
+                    summary = disclosure.find_element(By.CSS_SELECTOR, 'summary')
+                    assert 'Review' in summary.text
+                    reachable(summary)
+                    summary.send_keys(Keys.ENTER)
+                    links = disclosure.find_elements(By.CSS_SELECTOR, 'a')
+                else:
+                    links = find('main .matter-section-tabs').find_elements(By.CSS_SELECTOR, ':scope > a')
+                    js('arguments[0].focus()', links[0])
+                    links = links[1:]
+                    assert driver.switch_to.active_element.text.strip() == 'Home'
+                assert len(links) == (6 if compact else 5)
+                # Exercise native keyboard traversal within the section destinations.
                 for link in links:
                     driver.switch_to.active_element.send_keys(Keys.TAB)
                     assert driver.switch_to.active_element == link
                     reachable(link)
-                reachable(summary)
-                summary.click()
+                if compact:
+                    reachable(summary)
+                    summary.click()
                 row = find('.source-table-row')
                 name = row.find_element(By.CSS_SELECTOR, '.source-name-cell strong')
                 assert name.text == SOURCE_NAME
@@ -173,7 +183,7 @@ def main():
                 driver.save_screenshot(str(args.output / f'zoom-{percent}-sources.png'))
                 read.click()
                 wait.until(lambda _: SOURCE_TEXT in find('main').text)
-                report['checks'].append(f'{percent}% zoom: compact navigation exposes all nine keyboard destinations; full source identity and Read document remain usable')
+                report['checks'].append(f'{percent}% zoom: matter navigation exposes all six keyboard destinations; full source identity and Read document remain usable')
                 driver.quit()
                 driver = None
             assert report['measurements']['400']['inner_width'] == 320, report['measurements']['400']

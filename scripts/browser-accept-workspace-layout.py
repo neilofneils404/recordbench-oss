@@ -347,8 +347,8 @@ def main(argv=None):
                     reachable(summary)
                     summary.click()
                 links = disclosure.find_elements(By.CSS_SELECTOR, "a")
-                assert len(links) == 9
-                assert len({link.get_attribute("href") for link in links}) == 9
+                assert len(links) == 6
+                assert len({link.get_attribute("href") for link in links}) == 6
                 assert len([link for link in links if link.get_attribute("aria-current") == "page"]) == 1
                 for link in links:
                     assert link.is_displayed()
@@ -356,6 +356,19 @@ def main(argv=None):
                     # The label must wrap or fit, never be silently clipped.
                     assert js("const range=document.createRange();range.selectNodeContents(arguments[0]);const a=arguments[0].getBoundingClientRect();return [...range.getClientRects()].every(r=>r.left>=a.left-1&&r.right<=a.right+1)", link)
                 return disclosure, summary, links
+
+            def section_navigation():
+                """Six destinations: direct links when they fit, else the navigator."""
+                if driver.find_elements(By.CSS_SELECTOR, ".matter-section-disclosure"):
+                    return disclosure_links()[2]
+                links = find("main .matter-section-tabs").find_elements(By.CSS_SELECTOR, ":scope > a")
+                assert len(links) == 6
+                assert len([link for link in links if link.get_attribute("aria-current") == "page"]) == 1
+                for link in links:
+                    assert link.is_displayed()
+                    fits(link)
+                    assert js("const range=document.createRange();range.selectNodeContents(arguments[0]);const a=arguments[0].getBoundingClientRect();return [...range.getClientRects()].every(r=>r.left>=a.left-1&&r.right<=a.right+1)", link)
+                return links
 
             viewport(1024, 768)
             driver.get(base + prefix + paths["notes"])
@@ -366,7 +379,10 @@ def main(argv=None):
             for element in (library, find(".notebook-stats"), find(".notebook-filter-form")):
                 fits(element, find(".notebook-shell"))
             assert js("return arguments[0].clientHeight >= arguments[0].scrollHeight - 1", tools)
-            disclosure_links()[1].click()
+            if driver.find_elements(By.CSS_SELECTOR, ".matter-section-disclosure"):
+                disclosure_links()[1].click()
+            else:
+                section_navigation()
             no_page_overflow()
             measurements["constrained_notes"] = {"tools": rect(tools), "library": rect(library), "panels": find("body").get_attribute("class")}
             screenshot("notes-constrained-with-assistant")
@@ -377,7 +393,7 @@ def main(argv=None):
             find("[data-assistant-collapse]").click()
             wait.until(lambda _: js("return !document.querySelector('.matter-section-disclosure')"))
             assert all(link.is_displayed() for link in find("main .matter-section-tabs").find_elements(By.CSS_SELECTOR, "a"))
-            viewport(1024, 768)
+            viewport(940, 768)
             find("[data-assistant-expand]").click()
             wait.until(lambda _: find(".matter-section-disclosure").is_displayed())
             disclosure_links()[1].click()
@@ -426,7 +442,7 @@ def main(argv=None):
                 viewport(width, height)
                 driver.get(base + prefix + "/setup?view=list")
                 disclosure, summary, links = disclosure_links()
-                assert "Document review" in summary.text
+                assert "Review" in summary.text
                 destinations = [(link.text, link.get_attribute("href")) for link in links]
                 if width == 390:
                     for label, destination in destinations:
@@ -599,7 +615,7 @@ def main(argv=None):
                 button = find(".suggestion-tool button")
                 reachable(button)
                 assert button.is_enabled()
-                disclosure_links()
+                section_navigation()
                 screenshot(treatment)
             checks.append("At 1024px with panels open, independent 200% root-font and expanded text-spacing stress cases retain reachable suggestion controls and navigation without horizontal clipping")
 

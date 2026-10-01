@@ -28,12 +28,12 @@
       <small id="matter-readiness-guidance" data-readiness-guidance>{{ matter_readiness.guidance }}</small>
     </div>
     <div class="matter-readiness-actions">
-      <button class="readiness-limits-toggle" type="button" data-readiness-limits-toggle aria-expanded="false" aria-controls="matter-readiness-guidance" hidden>Extraction limits</button>
       {% if matter_readiness.action_url %}
       <a href="{{ matter_readiness.action_url }}" data-readiness-action>{{ matter_readiness.action_label }}</a>
       {% else %}
       <button type="button" data-processing-toggle aria-expanded="false" aria-controls="matter-processing-center">{{ matter_readiness.action_label }}</button>
       {% endif %}
+      <button class="readiness-limits-toggle" type="button" data-readiness-limits-toggle aria-expanded="false" aria-controls="matter-readiness-guidance" hidden>Extraction limits</button>
       {% if matter_readiness.state == 'attention' %}
       <button class="readiness-details-action" type="button" data-processing-toggle aria-expanded="false" aria-controls="matter-processing-center">Details</button>
       {% endif %}
