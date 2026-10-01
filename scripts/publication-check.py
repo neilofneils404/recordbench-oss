@@ -33,6 +33,9 @@ REVIEWED_COMMIT_EMAIL_IDENTITIES = {
     "f8ccae72b39704942c23caecb8195874a74e7699": {
         "33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b",
     },
+    "a8f4fbe36439a374746f9c2b2ca9660d89793044": {
+        "33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b",
+    },
 }
 IGNORED_DIRECTORIES = {".git", ".venv", ".pytest_cache", "__pycache__", "node_modules"}
 FORBIDDEN_SUFFIXES = {

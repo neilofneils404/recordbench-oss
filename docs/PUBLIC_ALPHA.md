@@ -42,6 +42,14 @@ history. New commits and merges must use the maintainer's validated GitHub
 no-reply attribution; this exception does not authorize later personal-address
 attribution.
 
+The maintainer explicitly accepted keeping merge commit
+`a8f4fbe36439a374746f9c2b2ca9660d89793044` in public history with its existing
+author attribution. Its disposition uses only that exact commit and identity
+digest, with the same metadata-only boundary above. It does not authorize any
+future use of that attribution or relax operator deny checks. Do not use a merge
+endpoint that cannot enforce the validated no-reply author; use the explicit
+CLI author option or protected fast-forward procedure below.
+
 Exact-commit public merge adjudications also recognize a complete
 `Co-authored-by` trailer for a configured, validated GitHub no-reply identity.
 Other message text, identities and commits retain the operator deny checks.

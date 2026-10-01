@@ -463,6 +463,40 @@ def test_reviewed_personal_baseline_does_not_cover_ancestors(tmp_path, monkeypat
         tmp_path, (name.encode(),), baseline_public_git_identities=exception)
 
 
+def test_reviewed_merge_attribution_has_one_exact_identity_digest():
+    assert publication.REVIEWED_COMMIT_EMAIL_IDENTITIES[
+        'a8f4fbe36439a374746f9c2b2ca9660d89793044'
+    ] == {'33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b'}
+    assert 'a8f4fbe36439a374746f9c2b2ca9660d89793045' not in publication.REVIEWED_COMMIT_EMAIL_IDENTITIES
+
+
+@pytest.mark.parametrize('unreviewed_field', ['author-name', 'author-email', 'committer', 'message'])
+def test_reviewed_attribution_does_not_cover_other_metadata(tmp_path, monkeypatch, unreviewed_field):
+    import hashlib
+    import os
+    name = 'Synthetic Reviewer'
+    email = 'reviewer@' + 'synthetic.invalid'
+    other_email = 'another@' + 'synthetic.invalid'
+    environment = dict(os.environ, GIT_AUTHOR_NAME=name, GIT_AUTHOR_EMAIL=email,
+                       GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=email)
+    message = 'Synthetic reviewed metadata boundary'
+    if unreviewed_field == 'author-name':
+        environment['GIT_AUTHOR_NAME'] = 'Different Synthetic Reviewer'
+    elif unreviewed_field == 'author-email':
+        environment['GIT_AUTHOR_EMAIL'] = other_email
+    elif unreviewed_field == 'committer':
+        environment['GIT_COMMITTER_EMAIL'] = other_email
+    else:
+        message += '\n\n' + email
+    subprocess.run(['git', 'init', '-q'], cwd=tmp_path, check=True)
+    subprocess.run(['git', 'commit', '--allow-empty', '-qm', message],
+                   cwd=tmp_path, env=environment, check=True)
+    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=tmp_path, text=True).strip()
+    digest = hashlib.sha256((name + '\0' + email).encode()).hexdigest()
+    monkeypatch.setattr(publication, 'REVIEWED_COMMIT_EMAIL_IDENTITIES', {commit: {digest}})
+    assert publication.Finding('git-metadata', 'non-example-email-address') in publication.scan_history(tmp_path, ())
+
+
 @pytest.mark.parametrize("location,tail", [
     ("services/transcription/requirements-nemotron.lock", (b"9", b"90")),
     ("services/transcription/requirements-nemotron.lock", (b"7", b"77")),
