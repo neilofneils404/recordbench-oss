@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from case_intelligence.generation import UnavailableGenerator
 from case_intelligence.workbench import create_workbench_app
+from tests.test_evidence_graph_workflow import _LinkParser
 from case_intelligence.workspace_store import WorkspaceStore
 
 
@@ -80,8 +81,11 @@ def test_home_work_product_and_review_continue_flow(tmp_path):
 
         home = client.get(f"/matters/{slug}/home")
         assert home.status_code == 200
-        for label in ("Home", "Case conversation", "Search", "Document review", "Sources", "Work product"):
+        for label in ("Home", "Case conversation", "Search", "Document review", "Automated screening", "Work product"):
             assert f">{label}<" in home.text
+        links = [(href, label.strip()) for href, label in _LinkParser(home.text).links]
+        assert (f"/matters/{slug}/setup?view=list&page_size=100#source-library", "Document review") in links
+        assert (f"/matters/{slug}/full-review", "Automated screening") in links
         assert "Pick up where you left off" in home.text
         assert "Review next" in home.text
         assert home.text.count('class="queue-row"') == 2

@@ -185,19 +185,40 @@ def main(argv=None):
                 wheel(1200, height // 2, 1900)
                 wait.until(lambda _: js("return scrollY") > 1000)
                 tools = find(".notebook-tools")
-                assert rect(tools)["top"] >= rect(find(".topbar"))["bottom"]
-                assert rect(tools)["bottom"] <= height - 8
+                assert js("return getComputedStyle(arguments[0]).position", tools) == "static"
+                assert js("return getComputedStyle(arguments[0]).overflowY", tools) == "visible"
+                assert js("return arguments[0].clientHeight >= arguments[0].scrollHeight - 1", tools)
+                # Tools move with the document, so a wheel over them must scroll
+                # the page rather than trap input inside a second viewport.
+                js("arguments[0].scrollIntoView({block:'start',behavior:'instant'})", tools)
                 previous_page = js("return scrollY")
                 bounds = rect(tools)
-                wheel(bounds["right"] - 8, (bounds["top"] + bounds["bottom"]) / 2, 1200)
-                wait.until(lambda _: scroll(tools) > 0)
-                assert abs(js("return scrollY") - previous_page) <= 1
-                tools.send_keys(Keys.END)
-                wait.until(lambda _: rect(find(".suggestion-tool button"))["bottom"] <= rect(tools)["bottom"])
-                assert rect(find(".suggestion-tool button"))["top"] >= rect(tools)["top"]
+                wheel(bounds["right"] - 8, min(height - 30, rect(find(".topbar"))["bottom"] + 80), 500)
+                wait.until(lambda _: js("return scrollY") > previous_page + 100)
+                assert scroll(tools) == 0
+                # Ordinary keyboard traversal must reveal the discovery action
+                # below the manual-note form at both normal and short heights.
+                find(".suggestion-tool select").send_keys(Keys.TAB)
+                suggestion = find(".suggestion-tool button")
+                def discovery_visible(_):
+                    # Native focus scrolling can land on a fractional CSS pixel.
+                    # Measure one frame, allowing the same 1px rounding tolerance
+                    # used elsewhere while also checking the center is unobscured.
+                    result = js("""const e=arguments[0],r=e.getBoundingClientRect();
+                        const top=document.querySelector('.topbar').getBoundingClientRect().bottom;
+                        const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+                        return {focused:document.activeElement===e,top:r.top,bottom:r.bottom,
+                            topbar_bottom:top,viewport_height:innerHeight,
+                            unobscured:e.contains(hit)};""", suggestion)
+                    measurements[f"notes_discovery_focus_{height}"] = result
+                    return (result["focused"] and result["unobscured"]
+                        and result["top"] >= result["topbar_bottom"] - 1
+                        and result["bottom"] <= result["viewport_height"] + 1)
+                wait.until(discovery_visible)
 
                 rail, matter_list = find(".matter-rail"), find(".matter-list")
                 rail_before = rect(rail)
+                previous_page = js("return scrollY")
                 bounds = rect(matter_list)
                 wheel(bounds["right"] - 8, (bounds["top"] + bounds["bottom"]) / 2, 1600)
                 wait.until(lambda _: scroll(matter_list) > 0)
@@ -210,7 +231,7 @@ def main(argv=None):
                 screenshot(f"notes-and-matter-rail-independent-{height}")
             checks.append("Native wheel scrolls long right-hand content while Review history remains above the composer")
             checks.append("Native wheel and End key reach the bottom of conversation history without moving the review pane")
-            checks.append("Native wheel and End key reach Case notes tools without moving the long notes page")
+            checks.append("Case notes tools scroll with the document; native Tab reaches discovery without a nested scroll viewport")
             checks.append("37-matter rail scrolls independently, remains fixed and keeps its bottom control reachable")
             for width in (761, 820, 900):
                 viewport(width, 900)
@@ -405,7 +426,7 @@ def main(argv=None):
                 viewport(width, height)
                 driver.get(base + prefix + "/setup?view=list")
                 disclosure, summary, links = disclosure_links()
-                assert "Sources" in summary.text
+                assert "Document review" in summary.text
                 destinations = [(link.text, link.get_attribute("href")) for link in links]
                 if width == 390:
                     for label, destination in destinations:
@@ -481,11 +502,33 @@ def main(argv=None):
             # follow the generated candidate all the way to its original support.
             viewport(1440, 480)
             go(paths["notes"])
-            tools = find(".notebook-tools")
-            js("arguments[0].scrollIntoView({block:'start',behavior:'instant'})", tools)
-            tools.send_keys(Keys.END)
+            # The tools now belong to the document. End would start a smooth
+            # scroll to the bottom of the entire notes collection, racing an
+            # immediate scrollIntoView. Traverse to the action as a keyboard
+            # reviewer does, then wait for its native focus scroll to settle.
+            find(".suggestion-tool select").send_keys(Keys.TAB)
             suggestion = find(".suggestion-tool button")
-            reachable(suggestion)
+            previous_suggestion_geometry = None
+
+            def suggestion_ready(_):
+                nonlocal previous_suggestion_geometry
+                result = js("""const e=arguments[0],r=e.getBoundingClientRect();
+                    const top=document.querySelector('.topbar').getBoundingClientRect().bottom;
+                    return {focused:document.activeElement===e,top:r.top,bottom:r.bottom,
+                        topbar_bottom:top,viewport_height:innerHeight,scroll_y:scrollY,
+                        unobscured:e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))};""", suggestion)
+                measurements["short_desktop_suggestion_click"] = result
+                geometry = (result["top"], result["bottom"], result["scroll_y"])
+                settled = (previous_suggestion_geometry is not None
+                    and all(abs(current - previous) <= .5
+                        for current, previous in zip(geometry, previous_suggestion_geometry)))
+                previous_suggestion_geometry = geometry
+                return (settled and result["focused"] and result["unobscured"]
+                    and result["top"] >= result["topbar_bottom"] - 1
+                    and result["bottom"] <= result["viewport_height"] + 1)
+
+            wait.until(suggestion_ready)
+            fits(suggestion)
             suggestion.click()
             wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, ".notebook-item.status-suggested .notebook-provenance a"))
             candidate = next(item for item in driver.find_elements(By.CSS_SELECTOR, ".notebook-item.status-suggested") if "North Annex" in item.text)
@@ -496,7 +539,7 @@ def main(argv=None):
             wait.until(lambda _: find(".support-pane").is_displayed())
             assert "North Annex" in find(".support-pane").text
             screenshot("notes-suggestion-original-support")
-            checks.append("At 1440x480, End reaches Find review suggestions; submitting produces a Suggested North Annex candidate and its source support opens")
+            checks.append("At 1440x480, native Tab reaches Find review suggestions and settles visibly; native click produces a Suggested North Annex candidate and its source support opens")
 
             def keyboard_focus(element):
                 reachable(element)

@@ -1,0 +1,8 @@
+{% if matter_readiness %}
+<div data-matter-readiness data-status-url="{{ matter_readiness.status_url }}" data-state="{{ matter_readiness.state }}" data-can-query="{{ 'true' if matter_readiness.can_query else 'false' }}" data-poll-after-ms="{{ matter_readiness.poll_after_ms }}">
+  <p><strong data-readiness-headline>{{ matter_readiness.headline }}</strong><br><span data-readiness-summary>{{ matter_readiness.summary }}</span></p>
+  <p data-readiness-guidance>{{ matter_readiness.guidance }}</p>
+  <a href="{{ matter_readiness.sources_url }}">Inspect source preparation and coverage</a>
+  <small data-readiness-updated></small>
+</div>
+{% endif %}

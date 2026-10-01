@@ -3398,6 +3398,17 @@
   let assistantPollTimer = 0;
   let assistantDraft = false;
   let assistantDraftBuffer = null;
+  let assistantEpoch = 0;
+  let assistantHistorySwitch = null;
+  let reviewQuestionScope = null;
+
+  const releaseAssistantHistorySwitch = (operation = assistantHistorySwitch) => {
+    if (!operation || assistantHistorySwitch !== operation) return;
+    assistantHistorySwitch = null;
+    if (operation.dock !== assistantDock || !operation.picker.isConnected) return;
+    operation.picker.disabled = false;
+    operation.picker.value = assistantDraft ? "__draft__" : assistantDock.dataset.conversationId || "";
+  };
 
   const assistantConversationPreferenceKey = () => {
     const matterId = assistantDock?.dataset.matterId || "";
@@ -3530,7 +3541,13 @@
 
   const beginAssistantDraft = () => {
     if (!assistantDock) return;
-    if (assistantDraft) {
+    assistantEpoch += 1;
+    window.clearTimeout(assistantPollTimer);
+    releaseAssistantHistorySwitch();
+    if (assistantDraft && assistantDock.querySelector("[data-assistant-question-form]")?.getAttribute("aria-busy") !== "true") {
+      const picker = assistantDock.querySelector("[data-assistant-conversation-picker]");
+      if (picker) { picker.value = "__draft__"; picker.disabled = false; }
+      assistantDraftBuffer = null;
       assistantDock.querySelector("textarea")?.focus({ preventScroll: true });
       return;
     }
@@ -3581,6 +3598,7 @@
     if (scope) {
       scope.value = buffered?.sourceSet || "";
       if (scope.selectedIndex < 0) scope.selectedIndex = 0;
+      reviewQuestionScope = { id: scope.value, name: scope.selectedOptions[0]?.textContent || "" };
     }
     const requestKey = form?.querySelector("[data-assistant-request-key]");
     if (requestKey && buffered?.requestKey) requestKey.value = buffered.requestKey;
@@ -3623,6 +3641,12 @@
       status.dataset.state = job.state || "";
       status.classList.toggle("is-terminal", !working);
       status.classList.toggle("is-failed", job.state === "failed");
+      let cancel = status.querySelector("[data-assistant-cancel]");
+      if (working && job.can_cancel && job.cancel_url) {
+        if (!cancel) { cancel = document.createElement("button"); cancel.type = "button"; cancel.dataset.assistantCancel = ""; cancel.textContent = "Cancel"; status.append(cancel); }
+        cancel.dataset.actionUrl = job.cancel_url;
+        cancel.disabled = false;
+      } else cancel?.remove();
     }
     if (copy) copy.textContent = assistantStatusMessage(job);
     if (textarea) textarea.disabled = working || form.dataset.sourcesReady !== "true";
@@ -3630,10 +3654,35 @@
     form?.toggleAttribute("aria-busy", working);
   };
 
-  const refreshAssistant = async (requestedFragmentUrl = "") => {
+  const ownsAssistantOperation = (operation) => operation.epoch === assistantEpoch
+    && operation.dock === assistantDock;
+
+  const assistantHistoryFailure = "The request finished, but its history could not refresh. Your draft is kept. Open Full conversation to inspect the saved result.";
+
+  const recoverAssistantRead = (message) => {
+    const status = assistantDock?.querySelector("[data-assistant-status]");
+    const copy = status?.querySelector("[data-assistant-status-copy]");
+    if (status) status.hidden = false;
+    if (copy) copy.textContent = message;
     window.clearTimeout(assistantPollTimer);
+    // Resume reads only. An uncertain cancellation must never retry its POST,
+    // and terminal jobs must not be resurrected by a recovery timer.
+    if (status?.dataset.statusUrl && ["queued", "running"].includes(status.dataset.state)) {
+      assistantPollTimer = window.setTimeout(pollAssistant, 1000);
+    }
+  };
+
+  const refreshAssistant = async (requestedFragmentUrl, operation) => {
+    window.clearTimeout(assistantPollTimer);
+    if (!requestedFragmentUrl) releaseAssistantHistorySwitch();
     const fragmentUrl = requestedFragmentUrl || assistantDock?.dataset.fragmentUrl;
-    if (!fragmentUrl) return;
+    // Transfer ownership synchronously to the refresh, including its failure
+    // path. Callers never predict which epoch this function will allocate.
+    operation.epoch = ++assistantEpoch;
+    operation.dock = assistantDock;
+    if (!fragmentUrl) throw new Error("Assistant history is unavailable. Open Full conversation.");
+    const originatingDock = operation.dock;
+    const originatingComposer = originatingDock.querySelector("[data-assistant-question-form]");
     const response = await fetch(fragmentUrl, {
       headers: { Accept: "text/html" },
       cache: "no-store",
@@ -3641,14 +3690,40 @@
     if (!response.ok) throw new Error("Assistant status is temporarily unavailable.");
     const holder = document.createElement("div");
     holder.innerHTML = await response.text();
+    if (!ownsAssistantOperation(operation)) return;
     const replacement = holder.querySelector("[data-assistant-dock]");
     if (!replacement || !assistantDock) throw new Error("Assistant response was incomplete.");
+    // A terminal job enables writing before its refreshed history arrives.
+    // Preserve the current composer state, including choices made before the
+    // fetch, only within the same conversation and epoch (scope changes and
+    // New chat invalidate the refresh above).
+    const sameConversation = replacement.dataset.conversationId === originatingDock.dataset.conversationId;
+    const currentTextarea = originatingComposer?.querySelector("textarea");
+    const replacementComposer = replacement.querySelector("[data-assistant-question-form]");
+    const replacementTextarea = replacementComposer?.querySelector("textarea");
+    const retainFocus = sameConversation && document.activeElement === currentTextarea;
+    const selection = retainFocus ? [currentTextarea.selectionStart, currentTextarea.selectionEnd] : null;
+    if (sameConversation && currentTextarea && replacementTextarea) {
+      replacementTextarea.value = currentTextarea.value;
+      const currentContext = originatingComposer.querySelector('[name="use_saved_context"]');
+      const replacementContext = replacementComposer.querySelector('[name="use_saved_context"]');
+      if (currentContext && replacementContext) {
+        replacementContext.checked = currentContext.checked;
+        const revision = originatingComposer.querySelector('[name="expected_selection_revision"]');
+        const replacementRevision = replacementComposer.querySelector('[name="expected_selection_revision"]');
+        if (revision && replacementRevision) replacementRevision.value = revision.value;
+      }
+    }
     assistantDock.replaceWith(replacement);
     assistantDock = replacement;
     assistantDraft = false;
     saveAssistantConversationPreference(assistantDock.dataset.conversationId || "");
     ensureAssistantDraftOption();
     bindAssistant();
+    if (retainFocus && replacementTextarea && !replacementTextarea.disabled) {
+      replacementTextarea.focus({ preventScroll: true });
+      replacementTextarea.setSelectionRange(...selection);
+    }
     const thread = assistantDock.querySelector("[data-assistant-thread]");
     if (thread?.dataset.hasMessages === "true") thread.scrollTop = thread.scrollHeight;
   };
@@ -3657,25 +3732,30 @@
     window.clearTimeout(assistantPollTimer);
     const status = assistantDock?.querySelector("[data-assistant-status]");
     const statusUrl = status?.dataset.statusUrl;
-    if (!statusUrl) return;
+    // Terminal jobs have already restored the composer. Re-polling them can
+    // replace a newer draft after a scope change or a bfcache restoration.
+    if (!statusUrl || !["queued", "running"].includes(status?.dataset.state || "")) return;
+    const operation = { epoch: assistantEpoch, dock: assistantDock };
     try {
       const response = await fetch(statusUrl, {
         headers: { Accept: "application/json" },
         cache: "no-store",
       });
       const job = await assistantJson(response);
+      if (!ownsAssistantOperation(operation)) return;
       renderAssistantJob(job);
-      if (job.state === "succeeded") {
-        await refreshAssistant();
-        return;
-      }
-      if (["failed", "cancelled"].includes(job.state)) {
-        await refreshAssistant();
+      if (["succeeded", "failed", "cancelled"].includes(job.state)) {
+        await refreshAssistant("", operation);
         return;
       }
       assistantPollTimer = window.setTimeout(pollAssistant, 1000);
     } catch (_error) {
+      if (!ownsAssistantOperation(operation)) return;
       const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
+      if (!["queued", "running"].includes(status.dataset.state || "")) {
+        if (copy) copy.textContent = assistantHistoryFailure;
+        return;
+      }
       if (copy) copy.textContent = "Reconnecting to the saved request…";
       assistantPollTimer = window.setTimeout(pollAssistant, 3500);
     }
@@ -3687,9 +3767,43 @@
     textarea.style.height = `${Math.min(textarea.scrollHeight, 102)}px`;
   };
 
+  const resumeAssistantAfterScopeChange = () => {
+    const status = assistantDock?.querySelector("[data-assistant-status]");
+    if (status?.dataset.statusUrl && ["queued", "running"].includes(status.dataset.state)) {
+      pollAssistant();
+      return;
+    }
+    const composer = assistantDock?.querySelector("[data-assistant-question-form]");
+    if (composer?.getAttribute("aria-busy") === "true") {
+      composer.removeAttribute("aria-busy");
+      composer.querySelectorAll("textarea, button[type=submit]").forEach((control) => { control.disabled = composer.dataset.sourcesReady !== "true"; });
+      newAssistantRequestKey();
+      const copy = status?.querySelector("[data-assistant-status-copy]");
+      if (copy) copy.textContent = "Scope changed. Any earlier submitted question remains in its original conversation.";
+    }
+  };
+
+  const applyReviewQuestionScope = () => {
+    if (!reviewQuestionScope || !assistantDock) return;
+    const select = assistantDock.querySelector('select[name="source_set"]');
+    if (!select) return;
+    if (!Array.from(select.options).some((option) => option.value === reviewQuestionScope.id)) {
+      select.add(new Option(reviewQuestionScope.name, reviewQuestionScope.id));
+    }
+    select.value = reviewQuestionScope.id;
+  };
+
   function bindAssistant() {
     if (!assistantDock || assistantDock.dataset.bound === "true") return;
     assistantDock.dataset.bound = "true";
+    applyReviewQuestionScope();
+    assistantDock.querySelector('select[name="source_set"]')?.addEventListener("change", (event) => {
+      assistantEpoch += 1;
+      window.clearTimeout(assistantPollTimer);
+      releaseAssistantHistorySwitch();
+      reviewQuestionScope = { id: event.target.value, name: event.target.selectedOptions[0]?.textContent || "" };
+      resumeAssistantAfterScopeChange();
+    });
     assistantDock.querySelector("[data-assistant-collapse]")?.addEventListener("click", () => {
       setAssistantCollapsed(true, { focus: true });
     });
@@ -3745,19 +3859,17 @@
           };
         }
       }
+      releaseAssistantHistorySwitch();
+      const historyOperation = { dock: assistantDock, picker: conversationPicker };
+      assistantHistorySwitch = historyOperation;
       conversationPicker.disabled = true;
       try {
-        saveAssistantConversationPreference(conversationId);
-        await refreshAssistant(assistantFragmentUrl(conversationId));
+        await refreshAssistant(assistantFragmentUrl(conversationId), historyOperation);
       } catch (_error) {
-        conversationPicker.disabled = false;
-        const status = assistantDock?.querySelector("[data-assistant-status]");
-        const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
-        if (status) {
-          status.hidden = false;
-          status.classList.add("is-terminal", "is-failed");
-        }
-        if (copy) copy.textContent = "That saved chat could not be opened. Try again.";
+        if (!ownsAssistantOperation(historyOperation)) return;
+        recoverAssistantRead("That saved chat could not be opened. Try again. Any active request is still being checked.");
+      } finally {
+        releaseAssistantHistorySwitch(historyOperation);
       }
     });
 
@@ -3784,6 +3896,14 @@
         textarea?.focus();
         return;
       }
+      if (form.getAttribute("aria-busy") === "true") return;
+      // A new submission supersedes history work even when that work began
+      // at the terminal transition of the previous question.
+      assistantEpoch += 1;
+      window.clearTimeout(assistantPollTimer);
+      releaseAssistantHistorySwitch();
+      const epoch = assistantEpoch;
+      const originatingDock = assistantDock;
       const submittedQuestion = textarea.value.trim();
       const submittedDraft = !form.querySelector('input[name="conversation"]')?.value;
       // Capture successful controls before the busy state disables the
@@ -3807,13 +3927,18 @@
           headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
         });
         const job = await assistantJson(response);
+        if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
         if (submittedDraft) saveAcceptedAssistantDraft(job);
+        // The accepted request keeps its captured key. The next intentional
+        // question needs a new key even before terminal history refreshes.
+        newAssistantRequestKey();
         textarea.value = "";
         resizeAssistantTextarea(textarea);
         appendAssistantUserMessage(submittedQuestion);
         renderAssistantJob(job);
         pollAssistant();
       } catch (error) {
+        if (epoch !== assistantEpoch || originatingDock !== assistantDock) return;
         form.removeAttribute("aria-busy");
         textarea.disabled = form.dataset.sourcesReady !== "true";
         if (submit) submit.disabled = form.dataset.sourcesReady !== "true";
@@ -3837,22 +3962,34 @@
       assistantDock?.querySelector("textarea")?.focus({ preventScroll: true });
     });
 
-    assistantDock.querySelector("[data-assistant-cancel]")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget;
+    assistantDock.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-assistant-cancel]");
+      if (!button || button.disabled) return;
       const actionUrl = button.dataset.actionUrl;
       if (!actionUrl) return;
+      // A cancellation supersedes pending status reads as well as their timer.
+      const operation = { epoch: ++assistantEpoch, dock: assistantDock };
+      window.clearTimeout(assistantPollTimer);
+      releaseAssistantHistorySwitch();
       button.disabled = true;
+      let accepted = false;
       try {
         const response = await fetch(actionUrl, {
           method: "POST",
           headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
         });
-        renderAssistantJob(await assistantJson(response));
-        await refreshAssistant();
-      } catch (error) {
-        button.disabled = false;
-        const copy = assistantDock?.querySelector("[data-assistant-status-copy]");
-        if (copy) copy.textContent = error.message;
+        const job = await assistantJson(response);
+        if (!ownsAssistantOperation(operation)) return;
+        accepted = true;
+        renderAssistantJob(job);
+        await refreshAssistant("", operation);
+      } catch (_error) {
+        if (!ownsAssistantOperation(operation)) return;
+        if (button.isConnected) button.disabled = false;
+        const active = ["queued", "running"].includes(assistantDock.querySelector("[data-assistant-status]")?.dataset.state);
+        recoverAssistantRead(accepted
+          ? active ? "Cancellation was requested, but history could not refresh. Checking the saved request…" : assistantHistoryFailure
+          : "Cancellation could not be confirmed. Checking the saved request; open Full conversation to inspect its status.");
       }
     });
 
@@ -3868,7 +4005,8 @@
     const form = assistantDock.querySelector("[data-assistant-question-form]");
     if (form) form.dataset.sourcesReady = ready ? "true" : "false";
     const status = assistantDock.querySelector("[data-assistant-status]");
-    const working = ["queued", "running"].includes(status?.dataset.state || "");
+    const working = form?.getAttribute("aria-busy") === "true"
+      || ["queued", "running"].includes(status?.dataset.state || "");
     const textarea = form?.querySelector("textarea");
     const submit = form?.querySelector('button[type="submit"]');
     if (textarea) textarea.disabled = !ready || working;
@@ -3876,7 +4014,7 @@
     const hint = assistantDock.querySelector("[data-assistant-readiness-hint]");
     if (hint) {
       hint.textContent = readiness.partial_query === true
-        ? readiness.coverage_notice || "Answers use the searchable sources; affected sources are excluded."
+        ? "Partial searchable text only. Inspect Search coverage & extraction limits above."
         : ready
           ? "Generated answers use selected passages; check claims against the original sources."
           : readiness.state === "preparing"
@@ -3930,12 +4068,208 @@
           .some((option) => option.value === preferredConversation)
       : false;
     if (preferredConversation && preferredConversation !== currentConversation && preferredOption) {
-      refreshAssistant(assistantFragmentUrl(preferredConversation)).catch(() => {
+      const preferenceOperation = {};
+      refreshAssistant(assistantFragmentUrl(preferredConversation), preferenceOperation).catch(() => {
+        if (!ownsAssistantOperation(preferenceOperation)) return;
         saveAssistantConversationPreference(currentConversation);
+        recoverAssistantRead("Your preferred chat could not be opened. The current chat is kept and any active request is still being checked.");
       });
     } else {
       saveAssistantConversationPreference(currentConversation);
     }
+  }
+
+  window.addEventListener("pagehide", () => { assistantEpoch += 1; window.clearTimeout(assistantPollTimer); releaseAssistantHistorySwitch(); });
+  window.addEventListener("pageshow", (event) => { if (event.persisted && assistantDock) pollAssistant(); });
+
+  const reviewWorkspace = document.querySelector("[data-review-workspace]");
+  if (reviewWorkspace) {
+    body.classList.add("review-enhanced");
+    const preference = `recordbench:review-layout:${reviewWorkspace.dataset.reviewMatter}`;
+    const queueToggle = reviewWorkspace.querySelector("[data-review-queue-toggle]");
+    const paneWidth = reviewWorkspace.querySelector("[data-review-pane-width]");
+    const notePanel = reviewWorkspace.querySelector("[data-source-note-panel]");
+    const noteForm = notePanel?.querySelector("form");
+    const noteBody = noteForm?.querySelector("textarea");
+    const noteTime = noteForm?.querySelector("[data-note-media-time]");
+    let noteSubmission = null;
+    let savedNote = false;
+    let noteRetryMetadata = null;
+    let noteRestoreProblem = "";
+    const restoreNoteAttempt = () => {
+      const metadata = window.history.state?.recordbenchSourceNote;
+      if (!metadata || !noteForm) return;
+      // Only retry identity and source coordinates enter browser history. The
+      // prose is never stored here; the server checks it against any saved key.
+      const sameSource = typeof metadata === "object" && metadata.action === noteForm.action
+        && ["source_version_id", "source_basis", "unit"].every((name) =>
+          (metadata[name] || "") === (noteForm.querySelector(`[name="${name}"]`)?.value || ""))
+        && /^[A-Za-z0-9_-]{16,80}$/.test(metadata.request_key || "")
+        && (!noteTime || /^\d+$/.test(metadata.start_ms || ""));
+      if (!sameSource) {
+        noteRestoreProblem = "The earlier note’s source context could not be restored safely. Inspect saved case notes, then explicitly start another note.";
+      } else {
+        noteRetryMetadata = metadata;
+        noteForm.querySelector('[name="request_key"]').value = metadata.request_key;
+        if (noteTime) noteTime.value = metadata.start_ms;
+      }
+      noteForm.querySelector("[data-source-note-new]").hidden = false;
+      noteForm.querySelector("[data-source-note-status]").textContent = noteRestoreProblem
+        || "Earlier save attempt restored. Saving retries that same note and position. If its text was not restored, open saved case notes or explicitly write another note.";
+    };
+    restoreNoteAttempt();
+    window.addEventListener("pageshow", () => window.setTimeout(() => {
+      // Chromium restores form values after pageshow. Making a new textarea
+      // readonly earlier can prevent that native restoration altogether.
+      restoreNoteAttempt();
+      if (noteRetryMetadata || noteRestoreProblem) {
+        noteBody.readOnly = true;
+        noteForm.querySelector('button[type="submit"]').disabled = savedNote || !noteBody.value.trim() || Boolean(noteRestoreProblem);
+        if (!noteBody.value.trim()) noteForm.querySelector("[data-source-note-status]").textContent = "An earlier save attempt exists, but this browser did not restore its text. Open saved case notes to inspect it, or explicitly write another note.";
+      }
+    }, 0));
+    const persistNoteAttempt = () => {
+      const metadata = { action: noteForm.action };
+      ["request_key", "source_version_id", "source_basis", "unit", "start_ms"].forEach((name) => { metadata[name] = noteSubmission.get(name) || ""; });
+      window.history.replaceState({ ...(window.history.state || {}), recordbenchSourceNote: metadata }, "");
+      noteRetryMetadata = metadata;
+    };
+    let layout = {};
+    try {
+      const savedLayout = JSON.parse(localStorage.getItem(preference) || "{}");
+      if (savedLayout && typeof savedLayout === "object" && !Array.isArray(savedLayout)) layout = savedLayout;
+    } catch (_error) { /* Optional preference. */ }
+    const saveLayout = () => { try { localStorage.setItem(preference, JSON.stringify(layout)); } catch (_error) { /* No persistence required. */ } };
+    const showQueue = (open) => {
+      body.classList.toggle("review-queue-open", open);
+      queueToggle?.setAttribute("aria-expanded", String(open));
+      layout.queue = open;
+    };
+    showQueue(layout.queue === true);
+    queueToggle?.addEventListener("click", () => { showQueue(!layout.queue); saveLayout(); });
+    const setWidth = (value) => {
+      const width = Math.max(300, Math.min(520, Number(value) || 380));
+      body.style.setProperty("--assistant-width", `${width}px`);
+      if (paneWidth) paneWidth.value = String(width);
+      layout.width = width;
+    };
+    setWidth(layout.width);
+    paneWidth?.addEventListener("input", () => { setWidth(paneWidth.value); saveLayout(); });
+    const snapshotPlayback = () => {
+      if (noteRetryMetadata || noteRestoreProblem) return;
+      const player = document.querySelector("[data-media-player]");
+      if (noteTime && player && Number.isFinite(player.currentTime)) noteTime.value = String(Math.floor(player.currentTime * 1000));
+    };
+    if (noteTime) noteTime.readOnly = true;
+    document.querySelector("[data-media-player]")?.addEventListener("timeupdate", () => {
+      if (!noteSubmission && !notePanel?.hidden) snapshotPlayback();
+    });
+    const showNote = (open, focus = true) => {
+      if (!notePanel) return;
+      notePanel.hidden = !open;
+      reviewWorkspace.querySelector("[data-review-note-open]")?.setAttribute("aria-expanded", String(open));
+      body.classList.toggle("review-notes-open", open);
+      layout.notes = open;
+      saveLayout();
+      if (open && !noteSubmission) snapshotPlayback();
+      if (focus) (open ? noteBody : reviewWorkspace.querySelector("[data-review-note-open]"))?.focus({ preventScroll: true });
+    };
+    showNote(Boolean(noteBody?.value) || layout.notes === true, false);
+    window.addEventListener("beforeunload", (event) => {
+      if (noteBody?.value.trim() && !savedNote) { event.preventDefault(); event.returnValue = ""; }
+    });
+    reviewWorkspace.querySelector("[data-review-note-open]")?.addEventListener("click", (event) => { event.preventDefault(); showNote(true); });
+    notePanel?.querySelector("[data-review-note-close]")?.addEventListener("click", () => showNote(false));
+    notePanel?.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); showNote(false); } });
+    reviewWorkspace.querySelector("[data-review-ask-source]")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector("button");
+      if (button.disabled) return;
+      button.disabled = true;
+      let feedback = form.querySelector("[role=status]");
+      if (!feedback) { feedback = document.createElement("span"); feedback.setAttribute("role", "status"); form.append(feedback); }
+      feedback.textContent = "Selecting source…";
+      const epoch = assistantEpoch;
+      const originatingDock = assistantDock;
+      try {
+        const response = await fetch(form.action, { method: "POST", body: new FormData(form), headers: { Accept: "application/json", "X-CSRF-Token": csrfToken } });
+        const result = await assistantJson(response);
+        if (!result.source_set_id || typeof result.name !== "string") throw new Error("The source selection could not be confirmed. Try again.");
+        if (epoch !== assistantEpoch || originatingDock !== assistantDock) {
+          feedback.textContent = "The conversation changed. Select this source again for the current question.";
+          return;
+        }
+        assistantEpoch += 1;
+        window.clearTimeout(assistantPollTimer);
+        releaseAssistantHistorySwitch();
+        reviewQuestionScope = { id: result.source_set_id, name: result.name };
+        applyReviewQuestionScope();
+        resumeAssistantAfterScopeChange();
+        showNote(false, false);
+        setAssistantCollapsed(false, { focus: true });
+        feedback.textContent = "Source selected for your next question.";
+      } catch (error) { feedback.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    noteForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (noteForm.getAttribute("aria-busy") === "true" || savedNote) return;
+      const button = noteForm.querySelector('button[type="submit"]');
+      const feedback = noteForm.querySelector("[data-source-note-status]");
+      if (!noteBody.value.trim()) {
+        feedback.textContent = "No note text is available to retry. Open saved case notes or explicitly write another note.";
+        return;
+      }
+      // Freeze body, version, section and timestamp across lost-response retries.
+      // An explicit new note is the only action that starts a fresh save identity.
+      restoreNoteAttempt();
+      if (!noteSubmission) { snapshotPlayback(); noteSubmission = new FormData(noteForm); }
+      noteBody.readOnly = true;
+      if (noteTime) noteTime.readOnly = true;
+      noteForm.setAttribute("aria-busy", "true");
+      button.disabled = true;
+      feedback.textContent = "Saving your source-linked note…";
+      try {
+        if (noteRestoreProblem) throw new Error(noteRestoreProblem);
+        // Persist the immutable retry identity before a request can commit.
+        // If this fails, no write is sent under an identity Back could lose.
+        persistNoteAttempt();
+        const response = await fetch(noteForm.action, { method: "POST", body: noteSubmission, headers: { Accept: "application/json", "X-CSRF-Token": csrfToken } });
+        const result = await assistantJson(response);
+        if (!result.item_id) throw new Error("The save could not be confirmed.");
+        if (!noteForm.isConnected) return;
+        savedNote = true;
+        feedback.textContent = result.message || "Human note saved as Needs review.";
+      } catch (error) { feedback.textContent = `${error.message} Your original note and position are kept. Retry the same save, or explicitly start another note.`; }
+      finally {
+        noteForm.removeAttribute("aria-busy");
+        button.disabled = savedNote;
+        noteForm.querySelector("[data-source-note-new]").hidden = false;
+      }
+    });
+    noteForm?.querySelector("[data-source-note-new]")?.addEventListener("click", () => {
+      if (noteForm.getAttribute("aria-busy") === "true") return;
+      try {
+        const state = { ...(window.history.state || {}) };
+        delete state.recordbenchSourceNote;
+        window.history.replaceState(state, "");
+      } catch (_error) {
+        noteForm.querySelector("[data-source-note-status]").textContent = "The earlier retry identity could not be cleared. Inspect saved case notes before starting another note.";
+        return;
+      }
+      noteSubmission = null; savedNote = false;
+      noteRetryMetadata = null; noteRestoreProblem = "";
+      const bytes = new Uint8Array(16); window.crypto.getRandomValues(bytes);
+      noteForm.querySelector('[name="request_key"]').value = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+      noteBody.readOnly = false; noteBody.value = "";
+      if (noteTime) noteTime.readOnly = true;
+      snapshotPlayback();
+      noteForm.querySelector('button[type="submit"]').disabled = false;
+      noteForm.querySelector("[data-source-note-new]").hidden = true;
+      noteForm.querySelector("[data-source-note-status]").textContent = "";
+      noteBody.focus({ preventScroll: true });
+    });
   }
 
   const workflowMonitors = Array.from(document.querySelectorAll("[data-workflow-monitor]"));

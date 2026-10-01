@@ -1,0 +1,26 @@
+{% set note_source = media if media is defined else source %}
+<aside id="source-note-panel" class="source-note-panel" aria-labelledby="source-note-heading" data-source-note-panel>
+  <header><h2 id="source-note-heading">Write a case note</h2><button type="button" data-review-note-close aria-label="Close case note">Close</button></header>
+  <p>Human-authored · saved as Needs review. Saving does not confirm the source or its claims.</p>
+  <form method="post" action="/matters/{{ matter.slug }}/sources/{{ note_source.row.action_token }}/notes" data-source-note-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="source_version_id" value="{{ note_source.document.version_id }}">
+    <input type="hidden" name="source_basis" value="{{ source_note_basis }}">
+    <input type="hidden" name="request_key" value="{{ source_note_request_key }}">
+    <input type="hidden" name="return_to" value="{{ request.url.path ~ ('?' ~ request.url.query if request.url.query else '') }}">
+    {% if media is defined %}
+    <label>Playback position (milliseconds)<input name="start_ms" type="number" min="0" step="1" value="{{ media.start_ms }}" data-note-media-time></label>
+    <small data-note-position-hint>With playback active, captures its position when saved and freezes it for retries. Choose a transcribed passage to attach source support.</small>
+    {% else %}
+    <input type="hidden" name="unit" value="{{ source.unit_index }}">
+    {% endif %}
+    <p class="source-note-provenance">Source: <strong>{{ note_source.row.name }}</strong>{% if source is defined %}<br>{{ source.position_label }}{% endif %}</p>
+    {% if source is defined and source.row.kind == 'PDF' and source.embedded_content_href %}<small>Notes attach to the selected searchable section shown above. The PDF’s own page toolbar does not change this selection; use Previous / Next section above the viewer.</small>{% endif %}
+    <label for="source-note-body">Your note</label>
+    <textarea id="source-note-body" name="body" rows="8" maxlength="20000" required>{{ source_note_draft }}</textarea>
+    <button class="button button-primary" type="submit">Save human note</button>
+    <p data-source-note-status role="status" aria-live="polite" aria-atomic="true"></p>
+    <button class="button button-secondary" type="button" data-source-note-new hidden>Write another note</button>
+  </form>
+  <a href="/matters/{{ matter.slug }}/notebook">Open saved case notes</a>
+</aside>

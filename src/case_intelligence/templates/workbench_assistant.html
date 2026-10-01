@@ -29,10 +29,10 @@
       </button>
     </div>
 
-    <div class="assistant-source-coverage" data-assistant-coverage {% if not assistant.readiness.partial_query %}hidden{% endif %} role="note">
+    <details class="assistant-source-coverage" data-assistant-coverage {% if not assistant.readiness.partial_query %}hidden{% endif %} role="note"><summary>Search coverage &amp; extraction limits</summary>
       <div><strong>Search coverage</strong><span data-assistant-coverage-copy>{{ assistant.readiness.coverage_notice }}</span></div>
       <a data-assistant-coverage-action href="{{ assistant.readiness.sources_url }}">Review sources</a>
-    </div>
+    </details>
 
     <div class="assistant-thread" data-assistant-thread data-has-messages="{{ 'true' if assistant.messages else 'false' }}" aria-live="polite">
       {% for message in assistant.messages %}
@@ -45,7 +45,7 @@
       <article class="assistant-message assistant-recordbench-message">
         <span class="assistant-message-avatar assistant-brand-mark" aria-hidden="true">RB</span>
         <div>
-          <strong>RecordBench</strong>
+          <strong>Saved answer · RecordBench</strong><small class="assistant-answer-provenance">Historical answer; the scope below applies only to your next question. Inspect this answer’s citations for its sources.</small>
           {% if message.payload.source_coverage and message.payload.source_coverage.mode == 'partial' %}
           <small class="assistant-answer-coverage">Source coverage when created · {{ message.payload.source_coverage.notice }}</small>
           {% endif %}
@@ -144,7 +144,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="conversation" value="{{ assistant.conversation.conversation_id }}">
       <input type="hidden" name="request_key" value="{{ assistant.request_key }}" data-assistant-request-key>
-      <label class="visually-hidden" for="assistant-source-set">Sources for this answer</label>
+      <label for="assistant-source-set">Next question scope</label>
       <select id="assistant-source-set" name="source_set" aria-label="Sources for this answer">
         <option value="">All searchable sources ({{ assistant.searchable_source_count }})</option>
         {% for set in assistant.source_sets %}<option value="{{ set.source_set_id }}">{{ set.name }} ({{ set.source_count }})</option>{% endfor %}
@@ -163,7 +163,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-3.2-7.3L3 10.5 21 3Zm-10.7 10.7L15 9"/></svg>
         </button>
       </div>
-      <small data-assistant-readiness-hint>{% if assistant.readiness.partial_query %}{{ assistant.readiness.coverage_notice }}{% elif assistant.matter_ready %}Generated answers use selected passages; check claims against the original sources.{% elif assistant.readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ assistant.readiness.guidance }}{% endif %}</small>
+      <small data-assistant-readiness-hint>{% if assistant.readiness.partial_query %}Partial searchable text only. Inspect Search coverage &amp; extraction limits above.{% elif assistant.matter_ready %}Generated answers use selected passages; check claims against the original sources.{% elif assistant.readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ assistant.readiness.guidance }}{% endif %}</small>
     </form>
   </div>
 </aside>
