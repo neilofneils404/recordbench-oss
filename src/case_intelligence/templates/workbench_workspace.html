@@ -1,5 +1,7 @@
 {% extends "workbench_base.html" %}
 {% from "workbench_cited_context_macros.html" import cited_context %}
+{# A cited passage's identity for answer numbering: its support link, else name and location. #}
+{% macro citation_ref_key(citation) %}{% set href = citation_href(citation, matter.slug) %}{{ href if 'support=' in href else (citation.source_name ~ '|' ~ citation.location) }}{% endmacro %}
 
 {% block title %}{{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}workspace-page {% if support %}support-is-open{% endif %} {% if support and support.evidence_kind == 'transcript' %}support-media-is-open{% endif %}{% endblock %}
@@ -308,11 +310,27 @@
                   <a href="{{ entity_context_href("/matters/" ~ matter.slug ~ "/research?job=" ~ message.payload.research_job_id, review_return) }}">Open coverage and search details</a>
                 </div>
                 {% endif %}
-                {% if message.payload.source_coverage and message.payload.source_coverage.mode == 'partial' %}
-                <div class="answer-source-coverage" role="note">
-                  <strong>Source coverage when this answer was created</strong>
-                  <p>{{ message.payload.source_coverage.notice }}</p>
-                </div>
+                {% set partial_coverage = message.payload.source_coverage and message.payload.source_coverage.mode == 'partial' %}
+                {% if partial_coverage or message.payload.kind == 'generated' %}
+                {# One collapsed line per answer holds every caveat; the full text stays in the page. #}
+                <details class="answer-about" data-answer-about>
+                  <summary>About this answer<small>{% if message.payload.kind == 'generated' %}Check each statement against its sources{% if partial_coverage %} · searchable text was partial{% endif %}{% else %}Searchable text was partial{% endif %}</small></summary>
+                  {% if partial_coverage %}
+                  <div class="answer-source-coverage" role="note">
+                    <strong>Source coverage when this answer was created</strong>
+                    <p>{{ message.payload.source_coverage.notice }}</p>
+                  </div>
+                  {% endif %}
+                  {% if message.payload.kind == 'generated' %}
+                  <p class="workflow-caution" role="note">{{ generated_review_notice }}</p>
+                  {% if message.payload.evidence_notice %}
+                  <div class="answer-evidence-notice" role="note">
+                    <strong>Machine transcript</strong>
+                    <p>{{ message.payload.evidence_notice }}</p>
+                  </div>
+                  {% endif %}
+                  {% endif %}
+                </details>
                 {% endif %}
                 {% if message.payload.review_scope %}
                 <details class="answer-scope-summary{% if message.payload.review_scope.collection_wide_request or message.payload.review_scope.broad_summary_request %} collection-wide{% endif %}"{% if message.payload.review_scope.collection_wide_request or message.payload.review_scope.broad_summary_request %} open{% endif %}>
@@ -340,13 +358,9 @@
                   {% endif %}
                 {% if message.payload.kind == 'generated' %}
                   <p class="answer-introduction">{{ answer_introduction(message.payload.introduction) }}</p>
-                  <p class="workflow-caution" role="note">{{ generated_review_notice }}</p>
-                  {% if message.payload.evidence_notice %}
-                  <div class="answer-evidence-notice" role="note">
-                    <strong>Machine transcript</strong>
-                    <p>{{ message.payload.evidence_notice }}</p>
-                  </div>
-                  {% endif %}
+                  {# Number each distinct cited passage once per answer, in reading order. #}
+                  {% set refs = namespace(keys=[]) %}
+                  {% for claim in message.payload.claims %}{% for citation in claim.citations or [] %}{% set key = (citation_ref_key(citation)|string) %}{% if key not in refs.keys %}{% set refs.keys = refs.keys + [key] %}{% endif %}{% endfor %}{% endfor %}
                   {% if message.payload.notebook_context %}
                   <details class="answer-context-summary">
                     <summary>Used {{ message.payload.notebook_context.count }} user-selected notebook item{% if message.payload.notebook_context.count != 1 %}s{% endif %} as orientation</summary>
@@ -358,7 +372,7 @@
                     {% for claim in message.payload.claims %}
                     {% set claim_index = loop.index0 %}
                     <li>
-                      <p>{{ claim.text }}</p>
+                      <p class="answer-claim-text">{{ claim.text }}{% for citation in claim.citations or [] %}{% set number = refs.keys.index((citation_ref_key(citation)|string)) + 1 %}<a class="citation-ref" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}" aria-label="Source {{ number }}: {{ citation.source_name }} · {{ citation.location }}">{{ number }}</a>{% endfor %}</p>
                       <form class="save-claim-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/notebook/claims/{{ claim_index }}" data-working-form data-working-label="Saving…">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit">Save passage to case notes</button>
@@ -369,7 +383,7 @@
                         <div class="cited-context-item">
                         <div class="citation-with-save">
                           <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">
-                            {% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}
+                            <span class="citation-number" aria-hidden="true">{{ refs.keys.index((citation_ref_key(citation)|string)) + 1 }}</span>{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg>
                           </a>
                           <form method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/notebook/claims/{{ claim_index }}/citations/{{ loop.index0 }}" data-working-form data-working-label="Saving…">

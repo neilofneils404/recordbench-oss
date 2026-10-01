@@ -617,3 +617,26 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
   .suggestion-actions .button { flex: 1 1 auto; }
   .suggestion-actions form { flex: 1 1 0; display: flex; }
 }
+
+/* Compact cited answers: the statement reads first, numbered sources follow. */
+.answer-claims .answer-claim-text { margin: 0 0 4px; }
+.citation-ref {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px;
+  margin-left: 3px; padding: 0 4px; border-radius: 9px; vertical-align: super;
+  background: var(--surface-strong); color: var(--blue-action); font-size: 10px; font-weight: 800; line-height: 1;
+  text-decoration: none;
+}
+.citation-ref:hover, .citation-ref:focus-visible { background: var(--blue-action); color: var(--surface); }
+.citation-number {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px;
+  margin-right: 6px; border-radius: 8px; background: var(--surface-strong); font-size: 10px; font-weight: 800;
+}
+.answer-claims .citation-list { gap: 4px; margin-top: 2px; }
+.answer-claims .citation { min-height: 0; padding: 3px 8px; font-size: 11px; }
+.answer-claims .save-claim-form button,
+.answer-claims .citation-with-save form button { min-height: 0; padding: 2px 6px; font-size: 10px; }
+.answer-about { margin-block: 6px; border-left: 3px solid var(--line-strong); padding: 2px 10px; font-size: 12px; }
+.answer-about > summary { cursor: pointer; font-weight: 700; color: var(--ink-soft); }
+.answer-about > summary small { margin-left: 8px; font-weight: 500; color: var(--ink-faint); }
+.answer-about[open] > summary { margin-bottom: 6px; }
+.media-citation .citation-number { align-self: flex-start; flex: 0 0 auto; width: 16px; }

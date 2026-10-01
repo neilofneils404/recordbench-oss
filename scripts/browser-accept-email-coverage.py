@@ -220,10 +220,14 @@ def main():
             conversation = bench.workspace.get_conversation(matter.matter_id)
             click(".ask-button", False)
             wait.until(lambda _: len(bench.workspace.messages(matter.matter_id, conversation.conversation_id)) == 2)
-            wait.until(lambda _: "Source coverage when this answer was created" in page_text())
+            # Each answer keeps its caveats in one collapsed "About this answer" panel.
+            open_about = "document.querySelectorAll('[data-answer-about]').forEach(e => { e.open = true; })"
+            wait.until(lambda d: d.execute_script(open_about + "; return true")
+                and "Source coverage when this answer was created" in page_text())
             answer = bench.workspace.messages(matter.matter_id, conversation.conversation_id)[-1]
             assert answer.payload["source_coverage"]["notice"] == EMAIL_COVERAGE_NOTICE
             go(prefix + "?" + urlencode({"conversation": conversation.conversation_id}))
+            driver.execute_script(open_about)
             assert EMAIL_COVERAGE_NOTICE in driver.find_element(By.TAG_NAME, "body").text
             click(".answer-completion-bar details summary", False)
             click('a[href*="/messages/"][href*="/export"][href*="markdown"]', False)

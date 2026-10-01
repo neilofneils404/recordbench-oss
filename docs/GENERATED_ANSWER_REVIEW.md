@@ -69,6 +69,19 @@ records and human-authored text remain historical content; only known generated
 leading introductions, coverage notices and surrounding review guidance receive
 current presentation.
 
+## Compact answer presentation
+
+On the Ask page each statement reads first, followed by small numbered citation
+links. Each distinct cited passage gets one number per answer, in reading order,
+and the number opens the same passage as its full citation. The full citations stay
+below each statement, numbered to match, with **Save passage to case notes**,
+per-citation **Save** and **Compare cited context** unchanged. Each answer's caveats
+(source coverage when the answer was created, the generated-text caution and the
+machine-transcript note) sit in one collapsed **About this answer** line whose
+summary says to check each statement against its sources; the full wording is
+kept in the page. Evidence selection, verification and saved citations are
+unchanged. `tests/test_compact_answers.py` holds the synthetic regressions.
+
 ## Synthetic regression
 
 `tests/test_generated_review_confidence.py` supplies four meaning-changing outputs
