@@ -2,6 +2,7 @@
 {% block title %}Context supplied · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block content %}
 <main id="main-content" tabindex="-1" class="notebook-shell">
+  {% with active='review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   <h1>Context supplied for this answer</h1>
   <p>{{ receipt.notice }}</p>
   <p><a href="/matters/{{ matter.slug }}?conversation={{ receipt.snapshot.conversation_id }}">Return to answer</a> · <a href="?format=json">Download complete JSON receipt</a> · <a href="/matters/{{ matter.slug }}/context">Review saved selection</a></p>

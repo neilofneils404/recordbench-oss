@@ -441,7 +441,7 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
   color: var(--ink-soft); background: var(--surface-lifted); font-size: 11px; font-weight: 700; white-space: nowrap;
 }
 .matter-bar-retention.tone-attention { border-color: var(--warning); }
-.matter-page main .work-product-tabs { margin-top: 0; }
+.matter-page main .work-product-tabs { margin-top: 0; max-width: 100%; flex-wrap: wrap; column-gap: 14px; }
 
 /* A ready matter needs one line; its extraction caveat stays one click away.
    Other states, and pages without scripts, keep the full guidance visible. */

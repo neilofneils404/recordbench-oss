@@ -3,6 +3,7 @@
 {% block body_class %}notebook-page{% endblock %}
 {% block content %}
 <main id="main-content" tabindex="-1" class="notebook-shell">
+  {% with active='notes' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   <h1>Selected context</h1>
   <p>Saved for future question context. <strong>Saved selections change answers only when you explicitly choose “Use my saved matter context” in a focused question.</strong> Selection does not confirm truth or provide independent evidence.</p>
   <p>One selection per reviewer in this matter. Shared knowledge remains shared; this is not private notes or a team default.</p>

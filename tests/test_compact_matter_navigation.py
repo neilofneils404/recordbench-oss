@@ -67,6 +67,10 @@ def test_every_matter_page_offers_the_same_six_destinations(cedar):  # noqa: F81
         f"{prefix}/chronology": "Case file",
         f"{prefix}/reports": "Case file",
         f"{prefix}/export-readiness": "Case file",
+        f"{prefix}/reports/new": "Case file",
+        f"{prefix}/context": "Case file",
+        f"{prefix}/close": "Settings",
+        f"{prefix}/conversations/{bench.workspace.get_conversation(matter.matter_id).conversation_id}/delete": "Ask",
         f"{prefix}/settings": "Settings",
     }
     for path, current in expected_current.items():

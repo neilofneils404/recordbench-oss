@@ -5,6 +5,7 @@
 
 {% block content %}
 <main id="main-content" tabindex="-1" class="single-page-main close-matter-main">
+  {% with active='review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   <section class="close-matter-card delete-conversation-card" aria-labelledby="delete-conversation-heading">
     <p class="eyebrow">Conversation lifecycle</p>
     <h1 id="delete-conversation-heading">Permanently delete this conversation?</h1>

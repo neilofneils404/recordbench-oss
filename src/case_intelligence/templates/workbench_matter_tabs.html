@@ -1,3 +1,4 @@
+{% if matter_navigation_available|default(true) %}
 {% set review_sections = ('sources', 'full_review') %}
 {% set case_file_sections = ('work_product', 'notes', 'analysis', 'reports', 'entities', 'chronology') %}
 <div class="matter-bar">
@@ -44,3 +45,4 @@
 {% if not hide_processing_status %}{% include "workbench_processing_status.html" %}{% endif %}
 {# The full notice belongs on Home; imminent deletion stays prominent on every matter page. #}
 {% with retention_prominent=(active == 'home') %}{% include "workbench_retention_notice.html" %}{% endwith %}
+{% endif %}

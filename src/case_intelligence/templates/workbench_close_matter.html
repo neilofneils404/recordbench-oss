@@ -5,6 +5,7 @@
 
 {% block content %}
 <main id="main-content" tabindex="-1" class="single-page-main close-matter-main">
+  {% with active='settings' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   <section class="close-matter-card" aria-labelledby="close-matter-heading">
     <p class="eyebrow">Temporary matter lifecycle</p>
     <h1 id="close-matter-heading">Close and delete this matter</h1>

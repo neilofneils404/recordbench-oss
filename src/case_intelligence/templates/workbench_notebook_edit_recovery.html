@@ -3,6 +3,7 @@
 {% block body_class %}notebook-page{% endblock %}
 {% block content %}
 <main id="main-content" tabindex="-1" class="notebook-shell notebook-recovery">
+  {% with active='notes' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   <header class="matter-heading notebook-heading">
     <div><p class="eyebrow">Case notes</p><h1>Review changes</h1><p>{{ matter.display_name }}</p></div>
     <a class="button button-secondary" href="/matters/{{ matter.slug }}/notebook">Return to case notes</a>

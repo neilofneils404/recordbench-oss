@@ -8,7 +8,8 @@ feature styles own the content inside it.
 
 ## Compact matter bar
 
-Every matter page, including the source and media readers, starts with one slim
+Every page of an active matter, including the source and media readers, Check
+export, closing and other confirmation or recovery pages, starts with one slim
 bar of six destinations: **Home**, **Review** (documents and recordings; rule-based
 screening is reached from here), **Ask** (questions and investigations),
 **Search**, **Case file** (overview, notes, people & things, timeline, review map
@@ -22,9 +23,11 @@ section navigator replaces them.
 The readiness status keeps its polling, actions and focus behavior. A ready matter
 shows one line; its extraction caveat stays in the document and opens with
 **Extraction limits**. Other states, and pages without scripts, show the full
-guidance. The full retention notice appears on Home and wherever deletion is due
-or in its grace period. Other pages show a small link back to it while a warning
-applies; the matter list keeps its days-remaining chip.
+guidance. The bar renders the retention notice itself: the full notice on Home,
+and on every page with the bar whenever deletion is due or in its grace period.
+Other pages show a small link back to it while a warning applies; the matter list
+keeps its days-remaining chip. A matter that is closing or recovering from a
+failed close keeps its own pages without the bar, so they offer no edit links.
 
 Stylesheets and scripts load through content-versioned URLs
 (`/static/<file>?v=<digest>`). A matching version is cacheable as immutable; an

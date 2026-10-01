@@ -7133,6 +7133,10 @@ def create_workbench_app(
             "matter_navigation": matter_navigation,
             "active_matter": active,
             "retention": active_retention,
+            # Closing or recovering matters keep their own pages without matter navigation.
+            "matter_navigation_available": (
+                active_lifecycle is not None and active_lifecycle.state == "active"
+            ),
             "assistant": assistant,
             "assistant_default": (
                 str(assistant["default_state"]) if assistant else "open"
@@ -15883,7 +15887,7 @@ def create_workbench_app(
                     "inspected_at_label": inspected_at.strftime("%b %d, %Y at %H:%M UTC"),
                     "recovering_close": recovering_close,
                     "return_url": f"/matters/{matter.slug}/" + ("close" if recovering_close else "work-product"),
-                    "return_label": "Return to close matter" if recovering_close else "Work product"},
+                    "return_label": "Return to close matter" if recovering_close else "Case file"},
                 headers={"Cache-Control": "no-store"})
         return transfer_matter_response_lease(request, response)
 
