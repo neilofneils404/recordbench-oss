@@ -1,0 +1,173 @@
+"""Exercise bounded APT setup without root access, network, or package changes."""
+import importlib.util
+from pathlib import Path
+import subprocess
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("ci_browser_deps", ROOT / "scripts/install-ci-browser-deps.py")
+deps = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(deps)
+
+PACKAGE_LIST = [
+    "libnss3", "libatk-bridge2.0-0", "libxkbcommon0", "libxcomposite1",
+    "libxdamage1", "libxrandr2", "libgbm1", "libasound2t64", "libgtk-3-0",
+    "fonts-liberation", "ffmpeg",
+]
+MIRROR_LIST = (
+    "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+    "https://archive.ubuntu.com/ubuntu/\tpriority:2\n"
+    "https://security.ubuntu.com/ubuntu/\tpriority:3\n"
+)
+SIGNED_SOURCES = (
+    "Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\n"
+    "Suites: noble noble-updates noble-backports noble-security\n"
+    "Components: main restricted universe multiverse\n"
+    "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+)
+
+
+@pytest.fixture
+def apt(tmp_path, monkeypatch):
+    mirrors, sources = tmp_path / "apt-mirrors.txt", tmp_path / "ubuntu.sources"
+    mirrors.write_text(MIRROR_LIST)
+    sources.write_text(SIGNED_SOURCES)
+    calls, acquisition_results, install_results = [], [], []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs, mirrors.read_text(), sources.read_bytes()))
+        if command[:2] == ["sudo", "tee"]:
+            assert command[2] == str(mirrors)
+            mirrors.write_bytes(kwargs["input"])
+            result = 0
+        elif command[:2] == ["sudo", "timeout"]:
+            result = acquisition_results.pop(0) if acquisition_results else 0
+        elif command[:3] == ["sudo", "apt-get", "install"]:
+            result = install_results.pop(0) if install_results else 0
+        else:
+            pytest.fail(f"Unexpected external command: {command}")
+        if result and kwargs.get("check"):
+            raise subprocess.CalledProcessError(result, command)
+        return subprocess.CompletedProcess(command, result)
+
+    monkeypatch.setattr(deps.subprocess, "run", run)
+    return mirrors, sources, calls, acquisition_results, install_results
+
+
+def commands(apt):
+    return [command for command, *_ in apt[2]]
+
+
+def assert_full_packages(command):
+    assert command[-len(PACKAGE_LIST):] == PACKAGE_LIST
+    assert "--no-install-recommends" in command
+
+
+def test_primary_success_installs_only_after_bounded_acquisition(apt):
+    deps.install_dependencies(*apt[:2])
+    update, download, install = commands(apt)
+    assert update[:7] == ["sudo", "timeout", "--signal=TERM", "--kill-after=10s", "60s", "apt-get", "-o"]
+    assert update[-2:] == ["update", "--error-on=any"]
+    assert download[:6] == ["sudo", "timeout", "--signal=TERM", "--kill-after=10s", "180s", "apt-get"]
+    assert "--download-only" in download
+    assert_full_packages(download)
+    assert install[:3] == ["sudo", "apt-get", "install"]
+    assert "--no-download" in install and "timeout" not in install
+    assert_full_packages(install)
+    assert apt[0].read_text() == MIRROR_LIST
+
+
+@pytest.mark.parametrize("results", [[100], [124], [0, 100], [0, 124], [0, 137]])
+def test_failed_or_timed_out_acquisition_gets_one_official_fallback(apt, results):
+    apt[3].extend(results)
+    deps.install_dependencies(*apt[:2])
+    writes = [call for call in apt[2] if call[0][:2] == ["sudo", "tee"]]
+    assert len(writes) == 2
+    replacement = writes[0][1]["input"].decode()
+    assert replacement == (
+        "https://archive.ubuntu.com/ubuntu/\tpriority:1\n"
+        "https://security.ubuntu.com/ubuntu/\tpriority:2\n"
+    )
+    install = next(call for call in apt[2] if call[0][:3] == ["sudo", "apt-get", "install"])
+    assert install[2] == replacement
+    assert_full_packages(install[0])
+    assert apt[0].read_text() == MIRROR_LIST
+    assert apt[1].read_text() == SIGNED_SOURCES
+    assert all(call[3] == SIGNED_SOURCES.encode() for call in apt[2])
+    for command in commands(apt):
+        assert not any(flag in command for flag in ("--ignore-missing", "--allow-unauthenticated", "--allow-insecure-repositories"))
+
+
+@pytest.mark.parametrize("results", [[100, 100], [0, 124, 100], [124, 0, 124], [0, 100, 0, 100]])
+def test_both_attempts_failing_never_installs_and_restores_mirrors(apt, results):
+    apt[3].extend(results)
+    with pytest.raises(RuntimeError, match="both attempts"):
+        deps.install_dependencies(*apt[:2])
+    assert not any(command[:3] == ["sudo", "apt-get", "install"] for command in commands(apt))
+    assert sum(command[:2] == ["sudo", "tee"] for command in commands(apt)) == 2
+    assert apt[0].read_text() == MIRROR_LIST
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_installation_failure_is_not_retried_or_timed_out(apt, fallback):
+    if fallback:
+        apt[3].append(124)
+    apt[4].append(100)
+    with pytest.raises(subprocess.CalledProcessError):
+        deps.install_dependencies(*apt[:2])
+    installs = [command for command in commands(apt) if command[:3] == ["sudo", "apt-get", "install"]]
+    assert len(installs) == 1 and "timeout" not in installs[0]
+    assert apt[0].read_text() == MIRROR_LIST
+
+
+@pytest.mark.parametrize("invalid", ["missing-official", "different-sources", "commented-source"])
+def test_fallback_refuses_unrecognized_runner_configuration(apt, invalid):
+    apt[3].append(124)
+    if invalid == "missing-official":
+        apt[0].write_text("http://azure.archive.ubuntu.com/ubuntu/\n")
+    else:
+        apt[1].write_text(SIGNED_SOURCES.replace("mirror+file:/etc/apt/apt-mirrors.txt", "https://archive.ubuntu.com/ubuntu/"))
+        if invalid == "commented-source":
+            with apt[1].open("a") as stream:
+                stream.write("# URIs: mirror+file:/etc/apt/apt-mirrors.txt\n")
+    with pytest.raises(ValueError):
+        deps.install_dependencies(*apt[:2])
+    assert len(commands(apt)) == 1
+
+
+def test_partial_mirror_write_failure_restores_original_without_installing(apt, monkeypatch):
+    apt[3].append(124)
+    original_run = deps.subprocess.run
+    failed = False
+
+    def fail_write(command, **kwargs):
+        nonlocal failed
+        if command[:2] == ["sudo", "tee"] and not failed:
+            failed = True
+            apt[0].write_bytes(kwargs["input"][:15])
+            raise subprocess.CalledProcessError(1, command)
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(deps.subprocess, "run", fail_write)
+    with pytest.raises(subprocess.CalledProcessError):
+        deps.install_dependencies(*apt[:2])
+    assert apt[0].read_text() == MIRROR_LIST
+    assert not any(command[:3] == ["sudo", "apt-get", "install"] for command in commands(apt))
+
+
+@pytest.mark.parametrize("system,machine,github,release", [
+    ("darwin", "arm64", "true", {"ID": "ubuntu", "VERSION_ID": "24.04"}),
+    ("linux", "aarch64", "true", {"ID": "ubuntu", "VERSION_ID": "24.04"}),
+    ("linux", "x86_64", "false", {"ID": "ubuntu", "VERSION_ID": "24.04"}),
+    ("linux", "x86_64", "true", {"ID": "debian", "VERSION_ID": "12"}),
+])
+def test_cli_refuses_other_hosts_before_running_commands(apt, monkeypatch, system, machine, github, release):
+    monkeypatch.setattr(deps.sys, "platform", system)
+    monkeypatch.setattr(deps.platform, "machine", lambda: machine)
+    monkeypatch.setattr(deps.platform, "freedesktop_os_release", lambda: release)
+    monkeypatch.setenv("GITHUB_ACTIONS", github)
+    with pytest.raises(RuntimeError):
+        deps.main()
+    assert not commands(apt)

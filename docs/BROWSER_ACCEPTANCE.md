@@ -17,7 +17,7 @@ small disposable test applications.
 ## Contributor commands
 
 Install the normal contributor Python dependencies first. On Ubuntu 24.04 install
-the browser libraries listed in `.github/workflows/quality-gates.yml`. Then run:
+the browser libraries listed in `scripts/install-ci-browser-deps.py`. Then run:
 
 ```console
 .venv/bin/python -m pytest -q tests/test_browser_acceptance_runner.py
@@ -30,6 +30,28 @@ Linux x86_64 and Apple Silicon macOS have pinned archives. Unsupported hosts fai
 before any journey starts. All temporary paths passed to the applications are
 resolved, including on macOS where the system temporary directory can traverse a
 symlink.
+
+### Hosted dependency setup
+
+The Ubuntu 24.04 x86_64 GitHub Actions job uses `install-ci-browser-deps.py` to
+bound APT index refresh to 60 seconds and package download to 180 seconds, with
+up to 10 seconds to kill remaining acquisition processes. If either fails or
+times out, it retries acquisition once using only the official HTTPS Ubuntu
+mirrors already listed on the runner. It restores the original mirror list
+afterward; repository suites, components, signing keys and authentication are
+unchanged. Unexpected mirror/source configuration fails closed.
+
+Only after successful acquisition does it install the complete dependency list
+with `--no-download`. Package unpacking has no helper timeout or retry; missing
+archives and install failures fail the job. The existing 20-minute job limit,
+FFmpeg executable checks, browser archive verification and all journeys remain
+required. Setup failure is not a browser acceptance result. The helper is for
+the disposable hosted runner, not a local machine or deployed node.
+
+`tests/test_ci_browser_dependencies.py` mocks package commands to cover success,
+bounded fallback and failure without network or root access. These tests do not
+prove live Ubuntu package acquisition; the hosted browser job supplies that
+evidence.
 
 The default timeout is 300 seconds **per journey**, configurable with
 `--timeout-seconds 1..600`. Each journey runs in its own process session. On
