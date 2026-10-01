@@ -79,6 +79,13 @@ proxy credentials and Python import overrides from the calling shell are not
 inherited. Browser and driver paths are explicit, so Selenium Manager is not
 used to resolve or install a different version.
 
+Matter-context navigation sends native Enter once, waits for the activated
+control to detach, then requires the replacement document to finish loading.
+Chrome's specific inspector error, `Node with given id does not belong to the
+document`, counts as detachment only during that wait, just like Selenium's
+stale-element response. Other driver errors and navigation timeouts still fail;
+workflow assertions remain unchanged and the action is never retried.
+
 ## Browser pins and deliberate updates
 
 `config/browser-testing.json` records one exact Chrome for Testing version,
