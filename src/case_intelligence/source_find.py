@@ -29,6 +29,7 @@ class FindSection:
     before: str
     match: str
     after: str
+    partial: bool = False  # Counting stopped early; count is a lower bound.
 
 
 @dataclass(frozen=True)
@@ -59,9 +60,10 @@ def section_label(document, unit, total: int) -> str:
 def find_in_source(document, query: str) -> FindResult | None:
     """Return per-section matches in reading order, bounded for display and work.
 
-    Only each section's first match is kept. Counting stops at
-    MAX_FIND_MATCHES; later sections are then only checked for a first match,
-    so the number of matching sections stays exact.
+    Only each section's first match is kept. Up to MAX_FIND_MATCHES matches
+    are counted; after that each section is checked only for its first match
+    and whether another exists. A count is marked partial (a lower bound) only
+    when a match was actually left uncounted, and matching sections are exact.
     """
     pattern = find_pattern(query)
     if pattern is None:
@@ -71,28 +73,29 @@ def find_in_source(document, query: str) -> FindResult | None:
     total = 0
     matching = 0
     capped = False
+    budget = MAX_FIND_MATCHES
     for ordinal, unit in enumerate(units, 1):
         found = pattern.finditer(unit.text)
         first = next(found, None)
         if first is None:
             continue
         matching += 1
-        count = 1
-        if total + count >= MAX_FIND_MATCHES:
-            capped = True
-        else:
-            for _ in found:
-                count += 1
-                if total + count >= MAX_FIND_MATCHES:
-                    capped = True
-                    break
+        count, partial = 1, False
+        budget -= 1
+        for _ in found:
+            if budget <= 0:
+                partial = True
+                break
+            count += 1
+            budget -= 1
         total += count
+        capped = capped or partial
         if len(sections) >= MAX_FIND_SECTIONS:
             continue
         before = " ".join(unit.text[max(first.start() - SNIPPET_CHARS, 0):first.start()].split())
         after = " ".join(unit.text[first.end():first.end() + SNIPPET_CHARS].split())
         sections.append(FindSection(ordinal, section_label(document, unit, len(units)), count,
-                                    before, " ".join(first.group(0).split()), after))
+                                    before, " ".join(first.group(0).split()), after, partial))
     return FindResult(" ".join(query.split())[:MAX_FIND_CHARS], tuple(sections), total,
                       matching > len(sections), matching, capped)
 

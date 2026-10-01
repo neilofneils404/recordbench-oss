@@ -133,7 +133,8 @@ PDFs open at whole-page fit; **Fit width** switches to page width and the choice
 a per-viewer browser preference (pages without scripts keep whole-page fit). The
 queue shows the current folder, its immediate child folders with source counts, and
 **Up one folder**. Folder steps keep the open source and re-scope only the queue,
-using the library's exact folder boundaries and preserving its other filters.
+using the library's exact folder boundaries and preserving its other filters. Folder
+steps keep the reader's current section, find and transcript state.
 
 **Find in this file** searches the open source's extracted sections: literal,
 case-insensitive words, tolerant of line breaks, not a regular expression. Results
@@ -141,7 +142,8 @@ list each matching section with its count and first snippet (up to 200 sections;
 the heading counts every matching section); choosing one selects that section, so
 a note written next cites it. Previous and Next keep the search, and Clear keeps
 the review origin. Work is bounded per request: matches are counted without being
-retained, counting stops at 10,000 (shown as "More than"), and at most 2,000
+retained, counting stops at 10,000 (a total or section count that left matches
+uncounted is shown as "At least" or "N+"), and at most 2,000
 matches are highlighted in one section. A missing match does not prove the words
 are absent from the original file. Recordings keep their transcript search beside the
 player. `tests/test_reader_v2.py` holds the synthetic regressions.

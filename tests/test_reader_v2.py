@@ -112,6 +112,18 @@ def test_reader_queue_steps_through_folders_without_leaving_the_source(tmp_path)
         assert parse_qs(parse_qs(urlsplit(parent).query)["browse"][0])["folder"] == ["Production"]
         assert "Northwest" not in folders
 
+        # Folder steps keep the reader's own section and find state.
+        kept = client.get(path, params={"browse": "view=list&kind=TXT&folder=Production/North",
+                                        "unit": 1, "q": "synthetic"})
+        folders = re.search(r'data-source-browser-folders>(.*?)</nav>', kept.text, re.S).group(1)
+        for pattern in (r'class="source-folder-parent" href="([^"]+)"', r'<a href="([^"]+)"><span>Interviews</span>'):
+            query = parse_qs(urlsplit(html.unescape(re.search(pattern, folders).group(1))).query)
+            assert query["unit"] == ["1"] and query["q"] == ["synthetic"]
+        # Nothing extra is added when the reader has no state of its own.
+        plain = re.search(r'data-source-browser-folders>(.*?)</nav>', nested.text, re.S).group(1)
+        query = parse_qs(urlsplit(html.unescape(re.search(r'<a href="([^"]+)"><span>Interviews</span>', plain).group(1))).query)
+        assert set(query) == {"browse"}
+
 
 def test_find_work_is_bounded_for_a_one_character_query_over_huge_sections():
     import tracemalloc
@@ -123,11 +135,20 @@ def test_find_work_is_bounded_for_a_one_character_query_over_huge_sections():
     _current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     assert peak < 5_000_000  # No per-match objects are retained.
-    # Counting stops at the budget; each later section still contributes its
-    # first match, so the total is a lower bound shown as "More than".
+    # Counting stops at the budget; later sections contribute their first
+    # match. Every count that left matches uncounted is a lower bound.
     assert result.counts_capped and result.total_matches == MAX_FIND_MATCHES + 2
     assert result.matching_sections == 3 and len(result.sections) == 3
-    assert [hit.count for hit in result.sections] == [MAX_FIND_MATCHES, 1, 1]
+    assert [(hit.count, hit.partial) for hit in result.sections] == [
+        (MAX_FIND_MATCHES, True), (1, True), (1, True)]
+    # Exactly the budget is exact, not "at least".
+    exact = find_in_source(_document("a" * MAX_FIND_MATCHES), "a")
+    assert exact.total_matches == MAX_FIND_MATCHES and not exact.counts_capped
+    assert not exact.sections[0].partial
+    # After the budget, a later section with a single match is still exact.
+    tail = find_in_source(_document("a" * (MAX_FIND_MATCHES + 1), "xyz", "one a"), "a")
+    assert [(hit.count, hit.partial) for hit in tail.sections] == [(MAX_FIND_MATCHES, True), (1, False)]
+    assert tail.counts_capped
     # Section totals stay exact beyond the display cap.
     many = find_in_source(_document(*(["one synthetic x"] * (MAX_FIND_SECTIONS + 50))), "x")
     assert many.matching_sections == MAX_FIND_SECTIONS + 50 and len(many.sections) == MAX_FIND_SECTIONS

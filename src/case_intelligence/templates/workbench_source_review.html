@@ -70,11 +70,11 @@
   {% if source_find %}
   {% set find_base = request.url.path ~ '?q=' ~ (find_query|urlencode) ~ ('&browse=' ~ (request.query_params.get('browse')|urlencode) if request.query_params.get('browse') else '') ~ ('&entity_return_to=' ~ (request.query_params.get('entity_return_to')|urlencode) if request.query_params.get('entity_return_to') else '') %}
   <section class="review-find-results" aria-labelledby="review-find-heading" data-review-find-results>
-    <h2 id="review-find-heading" role="status">{% if source_find.total_matches %}{{ 'More than ' if source_find.counts_capped else '' }}{{ source_find.total_matches }} match{{ '' if source_find.total_matches == 1 else 'es' }} for “{{ find_query }}” in {{ source_find.matching_sections }} section{{ '' if source_find.matching_sections == 1 else 's' }}{% else %}No matches for “{{ find_query }}” in this file’s searchable text{% endif %}</h2>
+    <h2 id="review-find-heading" role="status">{% if source_find.total_matches %}{{ 'At least ' if source_find.counts_capped else '' }}{{ source_find.total_matches }} match{{ '' if source_find.total_matches == 1 else 'es' }} for “{{ find_query }}” in {{ source_find.matching_sections }} section{{ '' if source_find.matching_sections == 1 else 's' }}{% else %}No matches for “{{ find_query }}” in this file’s searchable text{% endif %}</h2>
     {% if source_find.sections %}
     <ol>
       {% for hit in source_find.sections %}
-      <li><a href="{{ find_base }}&amp;unit={{ hit.unit_index }}"{% if hit.unit_index == source.unit_index %} aria-current="true"{% endif %}><strong>{{ hit.label }}</strong></a> <small>({{ hit.count }})</small> <span>…{{ hit.before }} <mark>{{ hit.match }}</mark> {{ hit.after }}…</span></li>
+      <li><a href="{{ find_base }}&amp;unit={{ hit.unit_index }}"{% if hit.unit_index == source.unit_index %} aria-current="true"{% endif %}><strong>{{ hit.label }}</strong></a> <small>({{ hit.count }}{{ '+' if hit.partial else '' }})</small> <span>…{{ hit.before }} <mark>{{ hit.match }}</mark> {{ hit.after }}…</span></li>
       {% endfor %}
     </ol>
     {% endif %}

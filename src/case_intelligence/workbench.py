@@ -6034,6 +6034,10 @@ class CaseIntelligenceWorkbench:
         }
 
 
+_READER_STATE_KEYS = frozenset(
+    {"unit", "start_ms", "segment", "q", "speaker", "speaker_review", "flag", "page"})
+
+
 def _query_url(path: str, **values: str) -> str:
     filtered = {key: value for key, value in values.items() if value}
     return path + (("?" + urlencode(filtered)) if filtered else "")
@@ -7659,7 +7663,8 @@ def create_workbench_app(
             "action_token": row.action_token,
         }
 
-    def source_browser_projection(matter, document_id: str, browse: str, origin: str = ""):
+    def source_browser_projection(matter, document_id: str, browse: str, origin: str = "",
+                                  reader_state: Mapping[str, object] | None = None):
         origin = _source_review_return_href(matter.slug, origin)
         # Context is data, never a redirect URL; only library filters are accepted.
         try:
@@ -7721,11 +7726,14 @@ def create_workbench_app(
         # Folder steps keep the open source and re-scope only the queue, with the
         # library's own exact folder boundaries and filters.
         current_token = bench.source_store(matter).action_token(bench.source_store(matter).get(document_id))
+        # The reader's own position, find and transcript state are kept as-is.
+        kept = {key: str(value) for key, value in (reader_state or {}).items()
+                if key in _READER_STATE_KEYS and value not in (None, "", 0)}
         def folder_href(folder):
             scoped = {key: value for key, value in {**values, "folder": folder}.items()
                       if value and key not in {"page", "folder_page"}}
             return _query_url(f"/matters/{matter.slug}/sources/{current_token}",
-                browse=urlencode(scoped), entity_return_to=origin)
+                **kept, browse=urlencode(scoped), entity_return_to=origin)
         child_folders = bench.workspace.source_catalog_folders(matter.matter_id,
             folder=library.folder, query_key=library.query.casefold(), tone=library.status,
             kind=library.kind, review_state=library.review, collection_id=library.collection_id,
@@ -12359,7 +12367,10 @@ def create_workbench_app(
             document = bench.source_store(matter).get_by_action_token(token)
             source_sequence = source_browser_projection(
                 matter, document.document_id, browse,
-                _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
+                _source_review_return_href(slug, request.query_params.get("entity_return_to", "")),
+                reader_state=dict(unit=unit, start_ms=start_ms, segment=segment, q=q, speaker=speaker,
+                                  speaker_review=speaker_review, flag=flag,
+                                  page=page if page > 1 else None),
             )
             if is_media_type(document.media_type):
                 with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
