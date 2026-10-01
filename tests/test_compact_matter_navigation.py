@@ -5,6 +5,9 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 import re
 
+import pytest
+
+from tests.test_answer_cited_context import context_path, long_answer  # noqa: F401
 from tests.test_saved_answer_report_support import ACTOR, cedar  # noqa: F401
 
 DESTINATIONS = ["Home", "Review", "Ask", "Search", "Case file", "Settings"]
@@ -157,3 +160,13 @@ def test_imminent_deletion_stays_prominent_everywhere(cedar, monkeypatch):  # no
         assert page.status_code == 200, path
         assert page.text.count('class="retention-notice tone-danger"') == 1, path
         assert 'class="matter-bar-retention' not in page.text, path
+
+
+@pytest.mark.parametrize("long_answer", ["document"], indirect=True)
+def test_full_cited_context_page_keeps_matter_navigation(long_answer):  # noqa: F811
+    client = long_answer[0]
+    page = client.get(context_path(long_answer))
+    assert page.status_code == 200
+    links = navigation(page.text, "Matter workspace sections")
+    assert [link["text"] for link in links] == DESTINATIONS
+    assert [link["text"] for link in links if link["current"] == "page"] == ["Ask"]

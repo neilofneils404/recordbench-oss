@@ -2,6 +2,7 @@
 {% block title %}Compare cited context · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block content %}
 <main id="main-content" tabindex="-1" class="notebook-shell cited-context-page">
+  {% with active='review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   <h1>Compare cited context</h1>
   <p><a href="{{ answer_href }}">Return to answer</a></p>
   <h2>Generated passage</h2>
