@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .static_assets import asset_url
+from .static_assets import asset_url, static_cache_control
 from .contracts import Matter, MatterState
 from .inventory import InventoryService
 from .isolation import MatterAccess, MatterStateRegistry
@@ -815,6 +815,14 @@ def create_app(runtime_dir: Path | None = None) -> FastAPI:
     templates = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
     templates.env.globals["asset_url"] = asset_url
     app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
+
+    @app.middleware("http")
+    async def static_cache_policy(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", static_cache_control(
+                request.url.path, request.query_params.get("v")))
+        return response
 
     @app.get("/health")
     def health() -> dict[str, object]:

@@ -6,7 +6,6 @@
 <main id="main-content" tabindex="-1" class="notebook-main evidence-graph-main">
   <header class="notebook-heading"><div><p class="eyebrow">{{ matter.display_name }}</p><h1>Evidence connections</h1><p>Follow saved roles and inspect the original accounts behind them.</p></div></header>
   {% with active='entities' %}{% include 'workbench_matter_tabs.html' %}{% endwith %}
-  {% include 'workbench_retention_notice.html' %}
   <p><a href="{{ return_to }}">Return to previous review</a> · <a href="{{ entity_url(graph.center.entity_id) }}">Open identity</a> · <a href="#connection-evidence">Skip to evidence list</a></p>
   <section class="notebook-tool-card graph-focus" aria-labelledby="focus-heading">
     <div><p class="eyebrow">Selected identity</p><h2 id="focus-heading">{{ graph.center.display_name }}</h2>

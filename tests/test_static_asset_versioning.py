@@ -12,6 +12,7 @@ from case_intelligence.static_assets import (
     asset_url,
     asset_version,
 )
+from case_intelligence.review_bench import create_app
 from tests.test_browser_local_accounts import configured_app, login
 
 TEMPLATES = Path(__file__).parents[1] / "src/case_intelligence/templates"
@@ -78,4 +79,19 @@ def test_rendered_pages_use_versioned_assets_and_matching_cache_policy(tmp_path)
         bare = client.get("/static/workspace-layout.css")
         assert bare.headers["cache-control"] == UNVERSIONED_CACHE_CONTROL
         stale = client.get("/static/workspace-layout.css?v=000000000000")
+        assert stale.headers["cache-control"] == UNVERSIONED_CACHE_CONTROL
+
+
+def test_review_bench_app_applies_the_same_static_cache_policy(tmp_path):
+    with TestClient(create_app(tmp_path / "runtime")) as client:
+        page = client.get("/matters/alpha")
+        assert page.status_code == 200
+        assets = Assets()
+        assets.feed(page.text)
+        assert any("review-bench.css" in url for url in assets.urls)
+        for url in assets.urls:
+            assert "?v=" in url, url
+            assert client.get(url).headers["cache-control"] == VERSIONED_CACHE_CONTROL
+        assert client.get("/static/review-bench.css").headers["cache-control"] == UNVERSIONED_CACHE_CONTROL
+        stale = client.get("/static/review-bench.css?v=000000000000")
         assert stale.headers["cache-control"] == UNVERSIONED_CACHE_CONTROL

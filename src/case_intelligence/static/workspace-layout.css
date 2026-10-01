@@ -489,7 +489,8 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
 .matter-page .setup-heading h1 { font-size: clamp(22px, 1.8vw, 28px); }
 
 /* When the bar must use the section navigator, keep it one slim line. */
-.matter-bar .matter-section-tabs.sections-compact { flex: 0 1 auto; }
+/* Grow into the free space so leaving compact mode measures what is available. */
+.matter-page main .matter-bar .matter-section-tabs.sections-compact { flex: 1 1 auto; }
 .matter-bar .matter-section-disclosure { border: 0; background: transparent; }
 .matter-bar .matter-section-disclosure > summary { min-height: 36px; padding: 4px 6px; }
 .matter-bar .matter-section-disclosure .section-current small { display: none; }

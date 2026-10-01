@@ -66,6 +66,7 @@ def test_every_matter_page_offers_the_same_six_destinations(cedar):  # noqa: F81
         f"{prefix}/entities": "Case file",
         f"{prefix}/chronology": "Case file",
         f"{prefix}/reports": "Case file",
+        f"{prefix}/export-readiness": "Case file",
         f"{prefix}/settings": "Settings",
     }
     for path, current in expected_current.items():
@@ -144,6 +145,11 @@ def test_imminent_deletion_stays_prominent_everywhere(cedar, monkeypatch):  # no
     bench.workspace.set_matter_retention(matter.matter_id, ACTOR, now + timedelta(days=2))
     # The review period has ended; the matter is in its deletion grace period.
     monkeypatch.setattr(bench.workspace, "current_time", lambda: now + timedelta(days=3))
-    page = client.get(f"/matters/{matter.slug}/notebook").text
-    assert 'class="retention-notice tone-danger"' in page
-    assert 'class="matter-bar-retention' not in page
+    prefix = f"/matters/{matter.slug}"
+    # Every page with the matter bar, including pages that never embedded the
+    # notice themselves, shows the imminent-deletion notice exactly once.
+    for path in ("/home", "/notebook", "/exact-search", "/settings", "/setup?view=list", "/export-readiness", ""):
+        page = client.get(prefix + path)
+        assert page.status_code == 200, path
+        assert page.text.count('class="retention-notice tone-danger"') == 1, path
+        assert 'class="matter-bar-retention' not in page.text, path

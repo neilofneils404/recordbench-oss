@@ -4,7 +4,6 @@
 <main id="main-content" tabindex="-1" class="notebook-main">
   <header class="notebook-heading"><div><p class="eyebrow">{{ matter.display_name }}</p><h1>Suggested findings</h1></div></header>
   {% with active='entities' %}{% include 'workbench_matter_tabs.html' %}{% endwith %}
-  {% include 'workbench_retention_notice.html' %}
   <p><a href="{{ entities_url }}">People & things</a> · <a href="{{ return_to }}">Return to source review</a></p>
   {% if error %}<div class="notice notice-error" role="alert">{{ error }} Saved progress is retained. Check the outcomes below before retrying; repeated capacity failures need operator attention.</div>{% endif %}
   <section class="notebook-tool-card" aria-labelledby="readiness-heading">

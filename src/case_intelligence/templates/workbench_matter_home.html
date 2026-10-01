@@ -24,7 +24,6 @@
     </div>
   </header>
   {% with active='home' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
-  {% with retention_prominent=true %}{% include "workbench_retention_notice.html" %}{% endwith %}
 
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
