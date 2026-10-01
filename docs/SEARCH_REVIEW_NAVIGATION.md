@@ -20,9 +20,9 @@ are validated against the current matter; authorization is still checked at the
 destination. The link restores the search request, not a cached result snapshot.
 Changed populations continue to require the existing search refresh.
 
-**Case conversation** names the question/investigation workspace. **Document
-review** opens saved criteria and source screening. Sources offers Review all
-extracted text before its long source table. In Document review, launch controls
+**Ask** names the question/investigation workspace. **Find records matching a
+rule** (reached from Review or Home) opens saved criteria and source screening.
+In that screening view, launch controls
 stay ahead of the decision ledger even when a saved run is selected. Progress,
 safe cancellation/resume and a coverage notice link to the complete text ledger.
 The text-ledger page also places saved-run controls before extraction/source
@@ -49,6 +49,9 @@ the two affected test-file digests and the resulting content fingerprint.
 Only navigation label assertions changed, to Case conversation and Document
 review. The question,
 workflow behavior, fixtures, case membership and acceptance criteria are retained.
+The compact matter bar later renamed those labels to Ask and Review; the pack
+again refreshed only that node digest, the two test-file digests and the content
+fingerprint, with no change to cases, fixtures or criteria.
 
 Search returns also survive completed-answer citations, investigation details,
 and source review-state changes. Read-only administrators see inspection links

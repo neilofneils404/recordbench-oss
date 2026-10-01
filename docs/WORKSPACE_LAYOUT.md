@@ -1,10 +1,40 @@
 # Matter workspace layout
 
 Matter pages share a full-width outer shell and the same content gutter.
-Review, Work product, Case notes, and the other matter tools keep their header
+Review, Case file, Notes, and the other matter tools keep their header
 and navigation aligned when moving between pages. Reading cards may still use
 an inner reading width. `static/workspace-layout.css` owns this shared geometry;
 feature styles own the content inside it.
+
+## Compact matter bar
+
+Every matter page, including the source and media readers, starts with one slim
+bar of six destinations: **Home**, **Review** (documents and recordings; rule-based
+screening is reached from here), **Ask** (questions and investigations),
+**Search**, **Case file** (overview, notes, people & things, timeline, review map
+and reports) and **Settings**. The current destination carries
+`aria-current="page"`. Case file sections share one sub-navigation instead of
+per-page copies. A matter search box beside the destinations submits an ordinary
+exact search (`/exact-search?search=1&words=…`); the Search page itself uses its
+full form instead. When the bar is too narrow for direct links, the existing
+section navigator replaces them.
+
+The readiness status keeps its polling, actions and focus behavior. A ready matter
+shows one line; its extraction caveat stays in the document and opens with
+**Extraction limits**. Other states, and pages without scripts, show the full
+guidance. The full retention notice appears on Home and wherever deletion is due
+or in its grace period. Other pages show a small link back to it while a warning
+applies; the matter list keeps its days-remaining chip.
+
+Stylesheets and scripts load through content-versioned URLs
+(`/static/<file>?v=<digest>`). A matching version is cacheable as immutable; an
+unversioned or stale request must revalidate. A deployment therefore never pairs
+new page markup with an older cached stylesheet or script.
+
+`tests/test_compact_matter_navigation.py` and
+`tests/test_static_asset_versioning.py` hold the synthetic regressions.
+
+## Scroll regions
 
 Long right-hand content must not make left-hand controls unreachable:
 
@@ -89,7 +119,7 @@ replace the pinned browser or other hosted Quality gates.
 
 ## Manual source review workspace
 
-**Document review** opens the source library. **Automated screening** retains
+**Review** opens the source library. **Find records matching a rule** retains
 criterion-based extracted-text review. The source reader offers a compact header,
 optional filtered queue, previous/next source navigation, and an adjustable
 questions/notes pane. Queue visibility and pane width are optional local browser

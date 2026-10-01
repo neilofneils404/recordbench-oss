@@ -8,9 +8,9 @@
   <section class="setup-workspace">
     <header class="setup-heading source-library-heading">
       <div>
-        <p class="eyebrow">Matter workspace</p>
-        <h1>{{ matter.display_name }}</h1>
-        <p>Play recordings, open documents, organize large productions, or add more records without losing your place in the matter.</p>
+        <p class="eyebrow">{{ matter.display_name }}</p>
+        <h1>Review</h1>
+        <p>Open documents, watch recordings, and add records without losing your place.</p>
       </div>
     </header>
     {% with active='sources' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
@@ -138,8 +138,7 @@
     <section class="source-library" id="source-library" aria-labelledby="setup-source-title" {% if source_library.stats.processing %}data-ingestion-active{% endif %}>
       <div class="source-library-title-row">
         <div>
-          <p class="eyebrow">Organize and review</p>
-          <h2 id="setup-source-title">Review sources</h2>
+          <h2 id="setup-source-title">Sources</h2>
         </div>
         <div class="source-library-heading-actions"><span>{{ source_library.stats.total }} total</span>{% if source_library.view == 'list' %}<a class="button button-secondary" href="/matters/{{ matter.slug }}/setup#source-intake">Upload sources</a>{% endif %}</div>
       </div>
@@ -227,7 +226,10 @@
       {% if source_library.same_content %}
       <p data-source-byte-comparison>{% if source_library.comparison_available %}Files with identical bytes to the selected source. Each source keeps its own collection and source references.{% else %}This comparison is unavailable. The source may have been removed or changed.{% endif %} <a href="{{ library_url(1, same_content='') }}">Leave comparison</a></p>
       {% endif %}
-      <section class="notice" aria-label="Search and document review"><p><a href="/matters/{{ matter.slug }}/exact-search?collection={{ source_library.collection_id|urlencode }}&amp;source_set={{ source_library.source_set_id|urlencode }}">Search document contents</a> across this selection. The filter below matches filenames and folders.</p><p><a class="button button-secondary" href="/matters/{{ matter.slug }}/full-review#review-controls">Review all extracted text</a> Save a criterion, review a frozen population, and inspect progress, missing extraction and safe resume controls in Automated screening.</p></section>
+      <nav class="source-library-tools" aria-label="Search and screening">
+        <p><a href="/matters/{{ matter.slug }}/exact-search?collection={{ source_library.collection_id|urlencode }}&amp;source_set={{ source_library.source_set_id|urlencode }}">Search document contents</a> across this selection. The filter below matches filenames and folders.</p>
+        <a class="button button-secondary" href="/matters/{{ matter.slug }}/full-review#review-controls" title="Apply one saved rule to every searchable source, with progress and resume controls">Find records matching a rule</a>
+      </nav>
       <form class="source-library-filters" method="get" action="/matters/{{ matter.slug }}/setup">
         <input type="hidden" name="view" value="list">
         <input type="hidden" name="page_size" value="100">

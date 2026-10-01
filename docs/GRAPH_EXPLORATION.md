@@ -5,7 +5,7 @@ review, merge and supported-release acceptance remain outstanding.
 
 ## Reviewer workflow
 
-Open **People, places & things**, select a saved identity and choose
+Open **Case file → People & things**, select a saved identity and choose
 **Explore connections**. The graph shows the identity's explicit roles in saved
 events/assertions and other identities recorded in those records. Select a
 current neighboring identity to explore its neighborhood. Select a record or

@@ -55,6 +55,19 @@ publication is selected; merge, deployment and production-server acceptance
 remain paused. The [workspace contract](WORKSPACE_LAYOUT.md) records behavior
 and acceptance commands as implementation is validated.
 
+**Usability follow-up (approved; local implementation, not landed):** a synthetic
+walkthrough of the landed workspace found that pages lead with oversized headers,
+nine tabs and repeated notices, and that a stale cached stylesheet could pair new
+reader markup with old styles. Approved order: (0) content-versioned static assets;
+(1) one compact matter bar — Home, Review, Ask, Search, Case file, Settings — with
+matter search, one-line readiness and Home-only retention detail; (2) reader
+refinements; (3) automatic deterministic people/things/date suggestions after
+processing, with a bulk review inbox (approved in principle; suggestions stay
+Suggested until a reviewer decides); (4) compact cited answers; (5) assistant
+actions under a separate brief. Increments 0 and 1 are in progress; each PR
+requests hosted code review before merge. See the
+[workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar).
+
 Model/runtime changes, unrelated visual work/slice 21, Mac work/PR #34,
 PR #87, wider onboarding, later slice-19 work, deployment and supported-release
 claims remain unselected or held. Parallel release-readiness evidence continues;
@@ -77,7 +90,7 @@ matter memory, production imports and larger capacity remain separately scoped
 work. Slice 20 is landed as recorded below. The bounded Linux CPU contributor
 node path (B-lite) and Continuity A/B/C are Done. The manual review workspace increment above is selected.
 
-**Last updated:** 2026-09-30
+**Last updated:** 2026-10-01
 
 ## Continuity C landing receipt
 

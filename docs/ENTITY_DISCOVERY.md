@@ -1,6 +1,6 @@
 # Entity discovery and reviewer reconciliation
 
-Open **People, places & things → Suggested findings: guided discovery** and
+Open **Case file → People & things → Suggested findings: guided discovery** and
 choose **Check readiness and discover suggestions** for a frozen text review.
 The selected-file receipt links to readiness while preserving its return path;
 the reviewer must check the frozen matter population because discovery is not

@@ -179,10 +179,11 @@ def test_full_matter_upload_search_generated_answer_support_and_restart(tmp_path
         assert 'role="status"' in workspace.text
         assert 'class="matter-section-tabs"' in workspace.text
         links = [(href, label.strip()) for href, label in _LinkParser(workspace.text).links]
-        assert (f"/matters/{slug}/setup?view=list&page_size=100#source-library", "Document review") in links
-        assert (f"/matters/{slug}/full-review", "Automated screening") in links
+        assert (f"/matters/{slug}/setup?view=list&page_size=100#source-library", "Review") in links
+        assert any(href == f"/matters/{slug}/full-review" for href, _ in links)
+        assert "Find records matching a rule" in workspace.text
         assert "Case notes" in workspace.text
-        assert "Case conversation" in workspace.text
+        assert 'id="conversation-heading">Ask</h2>' in workspace.text
         assert "Request sent" in workspace.text
         assert "Find relevant support" in workspace.text
         assert "Order it for relevance" in workspace.text

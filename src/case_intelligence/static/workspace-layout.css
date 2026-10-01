@@ -294,8 +294,8 @@ main { scroll-margin-top: calc(var(--topbar-height) + 12px); }
 .review-source-details summary, .review-coverage summary { cursor: pointer; color: var(--ink-soft); }
 .source-review-actions { flex: 0 1 auto; align-items: center; gap: 6px; }
 .source-review-actions .button { min-height: 34px; padding: 7px 10px; font-size: 11px; }
-.review-actions-menu, .review-workspace-menu { position: relative; }
-.review-actions-menu > div, .review-workspace-menu > nav {
+.review-actions-menu { position: relative; }
+.review-actions-menu > div {
   position: absolute; z-index: 75; top: 100%; right: 0; width: min(360px, 80vw);
   max-height: 65dvh; overflow: auto; padding: 12px; border: 1px solid var(--line);
   background: var(--surface-lifted); box-shadow: var(--shadow-float); border-radius: 8px;
@@ -303,8 +303,6 @@ main { scroll-margin-top: calc(var(--topbar-height) + 12px); }
 .review-actions-menu > div { display: grid; gap: 8px; }
 .review-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-block: 8px; font-size: 12px; }
 .review-toolbar .button { min-height: 32px; padding: 5px 8px; font-size: 11px; }
-.review-workspace-menu > summary { cursor: pointer; }
-.review-workspace-menu > nav { left: 0; right: auto; margin: 0; }
 .review-pane-width { display: flex; gap: 6px; align-items: center; margin-left: auto; font-size: 10px; }
 .review-pane-width input { width: 70px; }
 .source-review-main .source-browser-layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
@@ -408,3 +406,95 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
 .source-review-main .playback-compatibility form { grid-column: 1 / -1; }
 .source-review-main .playback-compatibility .quiet-action { width: 100%; white-space: normal; }
 .source-review-main .media-tool-nav { position: static; }
+
+/* Compact matter bar: one slim row of destinations, matter search and status.
+   It appears on every matter page, including the source reader. */
+.matter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.matter-page main .matter-bar .matter-section-tabs {
+  flex: 1 1 auto;
+  width: auto;
+  margin-top: 0;
+  border-bottom: 0;
+}
+.matter-page main .matter-bar .matter-section-tabs > a { min-height: 40px; padding-inline: 10px; }
+.matter-bar .matter-section-tabs svg { display: none; }
+.matter-bar-search { position: relative; flex: 1 1 160px; max-width: 280px; min-width: 150px; margin-left: auto; }
+.matter-bar-search svg {
+  position: absolute; top: 50%; left: 10px; width: 15px; height: 15px;
+  transform: translateY(-50%); fill: none; stroke: var(--ink-faint); stroke-width: 2; pointer-events: none;
+}
+.matter-bar-search input {
+  width: 100%; min-height: 32px; padding: 4px 12px 4px 31px;
+  color: var(--ink); background: var(--surface-lifted);
+  border: 1px solid var(--line-strong); border-radius: 999px; font-size: 13px;
+}
+.matter-bar-search input:focus { border-color: var(--blue-action); }
+.matter-bar-retention {
+  flex: 0 0 auto; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--ink-soft); background: var(--surface-lifted); font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.matter-bar-retention.tone-attention { border-color: var(--warning); }
+.matter-page main .work-product-tabs { margin-top: 0; }
+
+/* A ready matter needs one line; its extraction caveat stays one click away.
+   Other states, and pages without scripts, keep the full guidance visible. */
+.matter-readiness { margin-top: 8px; }
+.matter-readiness.state-ready .matter-readiness-summary { min-height: 0; padding: 5px 10px; gap: 8px; grid-template-columns: 22px minmax(0, 1fr) auto; }
+.matter-readiness.state-ready .matter-readiness-mark { width: 22px; height: 22px; }
+.matter-readiness.state-ready .matter-readiness-mark svg { width: 13px; height: 13px; }
+.matter-readiness.state-ready .matter-readiness-copy { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; }
+.matter-readiness.state-ready .matter-readiness-copy > strong { font-size: 13px; }
+.matter-readiness.state-ready .matter-readiness-copy > small { flex-basis: 100%; }
+.matter-readiness.readiness-enhanced.state-ready:not(.show-guidance) [data-readiness-guidance] { display: none; }
+.matter-readiness.state-ready .matter-readiness-track { display: none; }
+.matter-readiness.state-ready .matter-readiness-actions a,
+.matter-readiness.state-ready .matter-readiness-actions button { min-height: 28px; padding-block: 3px; }
+.readiness-limits-toggle[hidden], .matter-readiness:not(.state-ready) .readiness-limits-toggle { display: none; }
+
+/* Page titles inform; they do not take over the screen. */
+.matter-page .matter-heading h1,
+.matter-page .notebook-heading h1 { font-size: clamp(22px, 1.8vw, 28px); line-height: 1.15; }
+.matter-page .notebook-heading { padding-block: 4px; }
+.matter-page .notebook-heading > div:first-child > p:last-child { margin-top: 4px; font-size: 13px; }
+
+@media (max-width: 760px) {
+  .matter-bar { flex-wrap: wrap; }
+  .matter-bar-search { flex: 1 1 100%; order: 3; margin-bottom: 8px; }
+  .matter-readiness.state-ready .matter-readiness-summary { grid-template-columns: 22px minmax(0, 1fr); }
+  .matter-readiness.state-ready .matter-readiness-actions { grid-column: 2; }
+}
+
+/* Review: counts are a compact filter row, not a dashboard. */
+.matter-page .source-status-overview { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 8px; }
+.matter-page .source-status-overview .source-stat-card {
+  display: inline-flex; align-items: baseline; gap: 6px; min-height: 0; padding: 5px 12px;
+  border-radius: 999px;
+}
+.matter-page .source-status-overview .source-stat-card strong { font-size: 14px; line-height: 1.2; }
+.matter-page .source-status-overview .source-stat-card span { margin: 0; font-size: 12px; }
+.source-library-tools {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
+  margin-block: 8px; font-size: 12px; color: var(--ink-soft);
+}
+.source-library-tools p { margin: 0; }
+.source-library-tools .button { min-height: 32px; padding: 5px 12px; font-size: 12px; }
+.matter-page .source-library-title-row { margin-top: 8px; }
+.matter-page .setup-heading h1 { font-size: clamp(22px, 1.8vw, 28px); }
+
+/* When the bar must use the section navigator, keep it one slim line. */
+.matter-bar .matter-section-tabs.sections-compact { flex: 0 1 auto; }
+.matter-bar .matter-section-disclosure { border: 0; background: transparent; }
+.matter-bar .matter-section-disclosure > summary { min-height: 36px; padding: 4px 6px; }
+.matter-bar .matter-section-disclosure .section-current small { display: none; }
+
+/* The reader spends its height on the record, not on chrome. */
+.source-review-main .matter-bar { margin-top: 0; }
+.source-review-main .source-review-heading { padding-top: 4px; padding-bottom: 4px; }
+.source-review-main .review-toolbar { margin-block: 4px; }

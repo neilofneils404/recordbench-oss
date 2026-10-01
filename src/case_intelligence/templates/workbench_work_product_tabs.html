@@ -1,5 +1,5 @@
-<nav class="work-product-tabs" aria-label="Work product sections">
-  <a class="{% if work_product_active == 'notes' %}selected{% endif %}" href="/matters/{{ matter.slug }}/notebook"{% if work_product_active == 'notes' %} aria-current="page"{% endif %}>Case notes</a>
-  <a class="{% if work_product_active == 'analysis' %}selected{% endif %}" href="/matters/{{ matter.slug }}/analysis"{% if work_product_active == 'analysis' %} aria-current="page"{% endif %}>Review map</a>
-  <a class="{% if work_product_active == 'reports' %}selected{% endif %}" href="/matters/{{ matter.slug }}/reports"{% if work_product_active == 'reports' %} aria-current="page"{% endif %}>Reports</a>
+<nav class="work-product-tabs" aria-label="Case file sections">
+  {% for key, label, href in (('work_product', 'Overview', '/work-product'), ('notes', 'Notes', '/notebook'), ('entities', 'People & things', '/entities'), ('chronology', 'Timeline', '/chronology'), ('analysis', 'Review map', '/analysis'), ('reports', 'Reports', '/reports')) %}
+  <a class="{% if active == key %}selected{% endif %}" href="/matters/{{ matter.slug }}{{ href }}"{% if active == key %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
 </nav>

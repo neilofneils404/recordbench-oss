@@ -387,11 +387,11 @@ async function refreshRegressions(browser, fixture) {
   assert.equal(await page.evaluate(value=>JSON.stringify(history.state).includes(value),navigationBody),false);
 
   const stayDialog=new Promise(resolve=>page.once('dialog',async dialog=>{assert.equal(dialog.type(),'beforeunload');await dialog.dismiss();resolve();}));
-  await page.getByRole('link',{name:'Case notes',exact:true}).click({noWaitAfter:true});await stayDialog;
+  await page.getByRole('link',{name:'Notes',exact:true}).click({noWaitAfter:true});await stayDialog;
   assert.equal(page.url(),reader);
   assert.equal(await note.locator('textarea').inputValue(),navigationBody);
   const leaveDialog=new Promise(resolve=>page.once('dialog',async dialog=>{assert.equal(dialog.type(),'beforeunload');await dialog.accept();resolve();}));
-  await page.getByRole('link',{name:'Case notes',exact:true}).click({noWaitAfter:true});await leaveDialog;
+  await page.getByRole('link',{name:'Notes',exact:true}).click({noWaitAfter:true});await leaveDialog;
   await page.waitForURL('**/notebook');releaseNoteNavigation();
   await page.unroute('**'+noteAction);
   await page.goBack();await note.waitFor();
@@ -688,7 +688,7 @@ async function refreshRegressions(browser, fixture) {
   checks.push('Media review has no page overflow at390px and640x302 (200% viewport-equivalent; not native zoom).');
   await page.setViewportSize({width:1280,height:604});
   await go(fixture.reader);
-  await page.getByRole('link',{name:'Case notes',exact:true}).click();
+  await page.getByRole('link',{name:'Notes',exact:true}).click();
   const toolsPane=page.locator('.notebook-tools');
   const toolsStyle=await toolsPane.evaluate(e=>({overflow:getComputedStyle(e).overflowY,position:getComputedStyle(e).position,height:e.clientHeight,scroll:e.scrollHeight}));
   assert.equal(toolsStyle.overflow,'visible');assert.equal(toolsStyle.position,'static');assert.ok(toolsStyle.height>=toolsStyle.scroll-1);

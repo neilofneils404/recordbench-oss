@@ -5,6 +5,7 @@
 
 {% block content %}
 <main data-review-workspace data-review-matter="{{ matter.matter_id }}" id="main-content" tabindex="-1" class="source-review-main media-review-main" data-media-review data-start-ms="{{ media.start_ms }}" data-transcript-page="{{ segment_page }}" data-transcript-pages="{{ segment_pages }}" data-transcript-filtered="{{ 'true' if transcript_query or transcript_speaker or transcript_flag else 'false' }}" data-media-status-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/media-status" data-media-resume-url="/matters/{{ matter.slug }}/sources/{{ media.row.action_token }}/resume" data-media-job-state="{{ media.job.display_state if media.job else 'unavailable' }}" data-playback-state="{{ media.document.playback_state or 'unknown' }}" data-summary-state="{{ media.summary.state if media.summary else 'not_created' }}">
+  {% with active='sources', hide_processing_status=true %}{% include "workbench_matter_tabs.html" %}{% endwith %}
   <header class="source-review-heading media-review-heading">
     <div>
       <a class="back-link" href="{{ source_sequence.library_href }}">← Review sources</a>
@@ -37,9 +38,8 @@
   </header>
   <nav class="review-toolbar" aria-label="Review workspace tools">
     <button type="button" class="button button-secondary" data-review-queue-toggle aria-expanded="true" aria-controls="review-source-queue">Sources in this view</button>
-    <details class="review-workspace-menu"><summary>Workspace</summary>{% with active='sources', hide_processing_status=true %}{% include "workbench_matter_tabs.html" %}{% endwith %}</details>
-    <a href="/matters/{{ matter.slug }}/notebook">Case notes</a>
-    <a href="/matters/{{ matter.slug }}/entities">People &amp; places</a>
+    <a href="/matters/{{ matter.slug }}/notebook">Notes</a>
+    <a href="/matters/{{ matter.slug }}/entities">People &amp; things</a>
     <a href="/matters/{{ matter.slug }}/entities#discovery-heading">Discover entities</a>
 
   </nav>

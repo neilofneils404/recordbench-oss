@@ -25,9 +25,10 @@
     <div class="matter-readiness-copy" aria-live="polite" aria-atomic="true">
       <strong id="matter-readiness-heading" data-readiness-headline>{{ matter_readiness.headline }}</strong>
       <span data-readiness-summary>{{ matter_readiness.summary }}</span>
-      <small data-readiness-guidance>{{ matter_readiness.guidance }}</small>
+      <small id="matter-readiness-guidance" data-readiness-guidance>{{ matter_readiness.guidance }}</small>
     </div>
     <div class="matter-readiness-actions">
+      <button class="readiness-limits-toggle" type="button" data-readiness-limits-toggle aria-expanded="false" aria-controls="matter-readiness-guidance" hidden>Extraction limits</button>
       {% if matter_readiness.action_url %}
       <a href="{{ matter_readiness.action_url }}" data-readiness-action>{{ matter_readiness.action_label }}</a>
       {% else %}

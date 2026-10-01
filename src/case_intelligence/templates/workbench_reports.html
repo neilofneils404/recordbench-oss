@@ -6,12 +6,11 @@
 {% block content %}
 <main id="main-content" tabindex="-1" class="reports-shell">
   <header class="matter-heading reports-heading">
-    <div><p class="eyebrow">Work product</p><h1>Reports</h1>{% if not report %}<p>Turn saved AI work and team review into something you can read, refine, and share.</p>{% endif %}</div>
+    <div><p class="eyebrow">Case file</p><h1>Reports</h1>{% if not report %}<p>Turn saved AI work and team review into something you can read, refine, and share.</p>{% endif %}</div>
     {% if report %}<div class="report-export-actions"><a class="button button-secondary" href="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/export?format=docx" data-download>Export Word</a><a class="button button-secondary" href="/matters/{{ matter.slug }}/reports/{{ report.report_id }}/export?format=markdown" data-download>Export Markdown</a></div>{% endif %}
   </header>
   {% with active='reports', hide_processing_status=true %}{% include "workbench_matter_tabs.html" %}{% endwith %}
-  {% with work_product_active='reports' %}{% include "workbench_work_product_tabs.html" %}{% endwith %}
-  {% if report and retention and retention.status == 'unscheduled' %}<details class="report-retention-detail"><summary>Matter retention: set a review end date</summary>{% include "workbench_retention_notice.html" %}</details>{% else %}{% include "workbench_retention_notice.html" %}{% endif %}
+  {% if report and retention and retention.status == 'unscheduled' %}<details class="report-retention-detail"><summary>Matter retention: set a review end date</summary>{% with retention_prominent=true %}{% include "workbench_retention_notice.html" %}{% endwith %}</details>{% else %}{% include "workbench_retention_notice.html" %}{% endif %}
 
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}

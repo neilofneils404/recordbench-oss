@@ -21,7 +21,7 @@
         {% for item in assistant.conversation_choices %}
         <option value="{{ item.conversation_id }}" {% if item.conversation_id == assistant.conversation.conversation_id %}selected{% endif %}>{{ 'Pinned · ' if item.is_pinned else '' }}{{ item.title }} · {{ item.message_count }} {{ 'message' if item.message_count == 1 else 'messages' }}</option>
         {% endfor %}
-        {% if assistant.conversation_total > assistant.conversation_choices|length %}<option value="" disabled>More conversations are available in Case conversation</option>{% endif %}
+        {% if assistant.conversation_total > assistant.conversation_choices|length %}<option value="" disabled>More conversations are available in Ask</option>{% endif %}
       </select>
       <button type="button" data-assistant-new-chat aria-label="Start a new chat">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>

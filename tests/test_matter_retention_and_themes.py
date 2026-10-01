@@ -296,7 +296,7 @@ def test_temporary_matter_theme_lifecycle_and_persistent_assistant_routes(tmp_pa
 
         full_review = client.get(f"/matters/{slug}")
         assert full_review.status_code == 200
-        assert "Case conversation" in full_review.text
+        assert 'id="conversation-heading">Ask</h2>' in full_review.text
         assert "data-assistant-dock" not in full_review.text
 
         themed = client.post(

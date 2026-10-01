@@ -81,11 +81,12 @@ def test_home_work_product_and_review_continue_flow(tmp_path):
 
         home = client.get(f"/matters/{slug}/home")
         assert home.status_code == 200
-        for label in ("Home", "Case conversation", "Search", "Document review", "Automated screening", "Work product"):
+        for label in ("Home", "Review", "Ask", "Search", "Case file", "Settings"):
             assert f">{label}<" in home.text
         links = [(href, label.strip()) for href, label in _LinkParser(home.text).links]
-        assert (f"/matters/{slug}/setup?view=list&page_size=100#source-library", "Document review") in links
-        assert (f"/matters/{slug}/full-review", "Automated screening") in links
+        assert (f"/matters/{slug}/setup?view=list&page_size=100#source-library", "Review") in links
+        assert any(href.startswith(f"/matters/{slug}/full-review") for href, _ in links)
+        assert "Find records matching a rule" in home.text
         assert "Pick up where you left off" in home.text
         assert "Review next" in home.text
         assert home.text.count('class="queue-row"') == 2

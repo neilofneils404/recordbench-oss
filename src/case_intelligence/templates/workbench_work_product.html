@@ -1,6 +1,6 @@
 {% extends "workbench_base.html" %}
 
-{% block title %}Work product · {{ matter.display_name }} · {{ product_name }}{% endblock %}
+{% block title %}Case file · {{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}work-product-page{% endblock %}
 
 {% block content %}
@@ -20,7 +20,7 @@
     <p>These are working materials, not permanent storage. Each tool keeps citations close and provides its own portable exports.</p>
   </section>
 
-  <nav class="work-product-list" aria-label="Work product tools">
+  <nav class="work-product-list" aria-label="Case file tools">
     <a href="/matters/{{ matter.slug }}/notebook">
       <span class="work-product-index">01</span>
       <span class="work-product-copy"><strong>Case notes</strong><small>Working observations, questions, names, places, dates, and cited passages.</small></span>

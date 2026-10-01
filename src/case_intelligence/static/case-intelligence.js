@@ -2948,6 +2948,17 @@
 (() => {
   const readiness = document.querySelector("[data-matter-readiness]");
   if (!readiness) return;
+  // Ready matters show one line; the extraction caveat stays one click away.
+  const limitsToggle = readiness.querySelector("[data-readiness-limits-toggle]");
+  if (limitsToggle) {
+    readiness.classList.add("readiness-enhanced");
+    limitsToggle.hidden = false;
+    limitsToggle.addEventListener("click", () => {
+      const open = limitsToggle.getAttribute("aria-expanded") !== "true";
+      limitsToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      readiness.classList.toggle("show-guidance", open);
+    });
+  }
   let readinessTimer = 0;
   const details = readiness.querySelector("[data-processing-details]");
 
@@ -2976,7 +2987,7 @@
     const holder = readiness.querySelector(".matter-readiness-actions");
     if (!holder) return;
     const focused = document.activeElement;
-    let primary = holder.querySelector(":scope > a, :scope > button:not(.readiness-details-action)");
+    let primary = holder.querySelector(":scope > a, :scope > button:not(.readiness-details-action):not(.readiness-limits-toggle)");
     const tag = payload.action_url ? "A" : "BUTTON";
     let restorePrimaryFocus = false;
     if (!primary || primary.tagName !== tag) {
@@ -3164,7 +3175,7 @@
   const place = () => {
     // A content breakpoint, scaled with the user's root font size. Direct links
     // also wrap as a fallback, so a long label can never become unreachable.
-    const narrow = tabs.clientWidth < 70 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const narrow = tabs.clientWidth < 26 * parseFloat(getComputedStyle(document.documentElement).fontSize);
     const focused = document.activeElement;
     if (narrow && !disclosure.isConnected) {
       tabs.classList.add("sections-compact");

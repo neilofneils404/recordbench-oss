@@ -1,5 +1,5 @@
-{% if retention and (retention.show_warning or retention.status == 'unscheduled') %}
-<section class="retention-notice tone-{{ retention.tone }}" aria-label="Temporary matter lifecycle">
+{% if retention and (retention.show_warning or retention.status == 'unscheduled') and (retention_prominent or retention.tone == 'danger') %}
+<section class="retention-notice tone-{{ retention.tone }}" id="matter-retention" aria-label="Temporary matter lifecycle">
   <div class="retention-notice-copy">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2M5.6 5.6a9 9 0 1 1-1.9 9.7M3 4v5h5"/></svg>
     <span><strong>{{ retention.label }}</strong><small>{{ retention.detail }}</small></span>

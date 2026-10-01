@@ -1,29 +1,44 @@
+{% set review_sections = ('sources', 'full_review') %}
+{% set case_file_sections = ('work_product', 'notes', 'analysis', 'reports', 'entities', 'chronology') %}
+<div class="matter-bar">
 <nav class="matter-section-tabs" aria-label="Matter workspace sections">
-  <a class="{% if active == 'home' %}selected{% endif %}" href="/matters/{{ matter.slug }}/home" data-section-description="Case overview and recent work"{% if active == 'home' %} aria-current="page"{% endif %}>
+  <a class="{% if active == 'home' %}selected{% endif %}" href="/matters/{{ matter.slug }}/home" data-section-description="Case overview and where you left off"{% if active == 'home' %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 10 8-6 8 6v10h-6v-6h-4v6H4V10Z"/></svg>
     <span>Home</span>
   </a>
-  <a class="{% if active == 'review' %}selected{% endif %}" href="/matters/{{ matter.slug }}" data-section-description="Ask questions with cited source support"{% if active == 'review' %} aria-current="page"{% endif %}>
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5Z"/></svg>
-    <span>Case conversation</span>
-  </a>
-  <a class="{% if active == 'search' %}selected{% endif %}" href="/matters/{{ matter.slug }}/exact-search" data-section-description="Find exact words and phrases"{% if active == 'search' %} aria-current="page"{% endif %}><span>Search</span></a>
-  <a class="{% if active == 'full_review' %}selected{% endif %}" href="/matters/{{ matter.slug }}/full-review" data-section-description="Apply a saved criterion to extracted source text"{% if active == 'full_review' %} aria-current="page"{% endif %}><span>Automated screening</span></a>
-  <a class="{% if active == 'sources' %}selected{% endif %}" href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100#source-library" data-section-description="Open, read and annotate original sources"{% if active == 'sources' %} aria-current="page"{% endif %}>
+  <a class="{% if active in review_sections %}selected{% endif %}" href="/matters/{{ matter.slug }}/setup?view=list&amp;page_size=100#source-library" data-section-description="Open, read, watch and annotate documents and recordings"{% if active in review_sections %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v13H4zM8 3h8v3M8 10h8M8 14h6"/></svg>
-    <span>Document review</span>
+    <span>Review</span>
   </a>
-  <a class="{% if active in ('work_product', 'notes', 'analysis', 'reports') %}selected{% endif %}" href="/matters/{{ matter.slug }}/work-product" data-section-description="Case notes, review maps, and reports"{% if active in ('work_product', 'notes', 'analysis', 'reports') %} aria-current="page"{% endif %}>
+  <a class="{% if active == 'review' %}selected{% endif %}" href="/matters/{{ matter.slug }}" data-section-description="Ask questions and get answers with cited sources"{% if active == 'review' %} aria-current="page"{% endif %}>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5Z"/></svg>
+    <span>Ask</span>
+  </a>
+  <a class="{% if active == 'search' %}selected{% endif %}" href="/matters/{{ matter.slug }}/exact-search" data-section-description="Find exact words and phrases"{% if active == 'search' %} aria-current="page"{% endif %}>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+    <span>Search</span>
+  </a>
+  <a class="{% if active in case_file_sections %}selected{% endif %}" href="/matters/{{ matter.slug }}/work-product" data-section-description="Notes, people and things, timeline and reports"{% if active in case_file_sections %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6M9 18h4"/></svg>
-    <span>Work product</span>
+    <span>Case file</span>
   </a>
-  <a class="{% if active == 'entities' %}selected{% endif %}" href="/matters/{{ matter.slug }}/entities" data-section-description="Follow people, places, and things"{% if active == 'entities' %} aria-current="page"{% endif %}>
-    <span>People, places &amp; things</span>
-  </a>
-  <a class="{% if active == 'chronology' %}selected{% endif %}" href="/matters/{{ matter.slug }}/chronology" data-section-description="Trace events and their source support"{% if active == 'chronology' %} aria-current="page"{% endif %}><span>Chronology</span></a>
   <a class="{% if active == 'settings' %}selected{% endif %}" href="/matters/{{ matter.slug }}/settings" data-section-description="Manage access and case settings"{% if active == 'settings' %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8 4 2-1-2-3-2 .5-1.5-1L16 5h-4l-.5 2.5-1.5 1L8 8 6 11l2 1v2l-2 1 2 3 2-.5 1.5 1L12 21h4l.5-2.5 1.5-1 2 .5 2-3-2-1v-2Z"/></svg>
     <span>Settings</span>
   </a>
 </nav>
+{% if retention and retention.show_warning and retention.tone != 'danger' and active != 'home' %}
+<a class="matter-bar-retention tone-{{ retention.tone }}" href="/matters/{{ matter.slug }}/home#matter-retention" title="{{ retention.detail }}">{{ retention.label }}</a>
+{% endif %}
+{% if active != 'search' %}
+<form class="matter-bar-search" role="search" method="get" action="/matters/{{ matter.slug }}/exact-search" aria-label="Search this matter">
+  <input type="hidden" name="search" value="1">
+  <input type="hidden" name="advanced" value="0">
+  <label class="visually-hidden" for="matter-bar-search-words">Search this matter</label>
+  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+  <input id="matter-bar-search-words" name="words" type="search" maxlength="512" placeholder="Search this matter…" autocomplete="off" required>
+</form>
+{% endif %}
+</div>
+{% if active in case_file_sections %}{% include "workbench_work_product_tabs.html" %}{% endif %}
 {% if not hide_processing_status %}{% include "workbench_processing_status.html" %}{% endif %}

@@ -17,7 +17,6 @@
     </form>
   </header>
   {% with active='analysis' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
-  {% with work_product_active='analysis' %}{% include "workbench_work_product_tabs.html" %}{% endwith %}
   {% include "workbench_retention_notice.html" %}
 
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}

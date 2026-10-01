@@ -87,7 +87,7 @@ pending uploads for that selection. See
 New confirmed uploads retain separate [source occurrences](docs/UPLOAD_OCCURRENCES.md)
 when another selection uses the same path or bytes; retries keep the original source.
 
-The [People, places & things workspace](docs/ENTITY_WORKSPACE.md) keeps distinct
+The [People & things workspace](docs/ENTITY_WORKSPACE.md) keeps distinct
 matter identities, aliases, original supported mentions and reviewer history.
 [Entity discovery](docs/ENTITY_DISCOVERY.md) incrementally visits inventoried
 text-review units and proposes occurrences for reviewer reconciliation. Its

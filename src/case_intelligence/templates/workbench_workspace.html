@@ -15,7 +15,7 @@
       <div class="matter-actions">
         <a class="button button-secondary export-matter-button" href="/matters/{{ matter.slug }}/export" data-download>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>
-          Export work product
+          Export case file
         </a>
         <a class="button button-secondary" href="/matters/{{ matter.slug }}/setup">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -139,7 +139,7 @@
     <section class="conversation-region" id="evidence-conversation" aria-labelledby="conversation-heading">
       <div class="conversation-heading-row">
         <div>
-          <h2 id="conversation-heading">Case conversation</h2>
+          <h2 id="conversation-heading">Ask</h2>
           <p>Ask a focused question or investigate more deeply here. Results and cited passages return to this conversation so you can refine them without starting over.</p>
         </div>
         <form method="post" action="/matters/{{ matter.slug }}/conversations">

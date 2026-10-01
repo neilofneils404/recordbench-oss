@@ -67,7 +67,7 @@ def test_search_inspection_and_question_return_is_matter_local(tmp_path, origin)
         assert 'source_set' in query
         assert query.get('entity_return_to', []) == ([search] if origin == 'search' else [])
         conversation = client.get(response.headers['location'])
-        assert 'Case conversation' in conversation.text
+        assert 'id="conversation-heading">Ask</h2>' in conversation.text
         assert 'Only · Synthetic neutral.txt' in conversation.text
         form_action = html.unescape(re.search(r'<form class="question-composer" method="post" action="([^"]+)"', conversation.text)[1])
         expected = [search] if origin == 'search' else []
