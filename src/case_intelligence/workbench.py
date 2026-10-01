@@ -6048,6 +6048,16 @@ def _source_browse_href(href: str, browse: str) -> str:
     return parsed._replace(query=urlencode(query, doseq=True)).geturl()
 
 
+def _source_find_href(href: str, find_query: str = "") -> str:
+    """Keep find-in-this-file active across section navigation."""
+    if not href or not find_query:
+        return href
+    parsed = urlparse(href)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query["q"] = [find_query]
+    return parsed._replace(query=urlencode(query, doseq=True)).geturl()
+
+
 def _entity_context_href(href: str, origin: str = "") -> str:
     """Carry source-review origin through existing document/section links."""
     if not origin:
@@ -6230,6 +6240,7 @@ def create_workbench_app(
         citation_href=_workspace_citation_href,
         entity_context_href=_entity_context_href,
         source_browse_href=_source_browse_href,
+        source_find_href=_source_find_href,
         source_review_return_href=_source_review_return_href,
         asset_url=asset_url,
         highlight_find=highlight_find,

@@ -14,6 +14,10 @@ from markupsafe import Markup, escape
 
 MAX_FIND_CHARS = 240
 MAX_FIND_SECTIONS = 200
+# Per request: matches are counted one at a time and never retained, so a
+# one-character query over a maximum-size section stays bounded.
+MAX_FIND_MATCHES = 10_000
+MAX_HIGHLIGHTS = 2_000
 SNIPPET_CHARS = 60
 
 
@@ -33,6 +37,8 @@ class FindResult:
     sections: tuple[FindSection, ...]
     total_matches: int
     truncated: bool
+    matching_sections: int = 0
+    counts_capped: bool = False
 
 
 def find_pattern(query: str) -> re.Pattern[str] | None:
@@ -51,38 +57,56 @@ def section_label(document, unit, total: int) -> str:
 
 
 def find_in_source(document, query: str) -> FindResult | None:
-    """Return per-section matches in reading order, bounded for display."""
+    """Return per-section matches in reading order, bounded for display and work.
+
+    Only each section's first match is kept. Counting stops at
+    MAX_FIND_MATCHES; later sections are then only checked for a first match,
+    so the number of matching sections stays exact.
+    """
     pattern = find_pattern(query)
     if pattern is None:
         return None
     units = document.parsed_units() if document.state == "ready" else ()
     sections: list[FindSection] = []
     total = 0
-    truncated = False
+    matching = 0
+    capped = False
     for ordinal, unit in enumerate(units, 1):
-        matches = list(pattern.finditer(unit.text))
-        if not matches:
+        found = pattern.finditer(unit.text)
+        first = next(found, None)
+        if first is None:
             continue
-        total += len(matches)
+        matching += 1
+        count = 1
+        if total + count >= MAX_FIND_MATCHES:
+            capped = True
+        else:
+            for _ in found:
+                count += 1
+                if total + count >= MAX_FIND_MATCHES:
+                    capped = True
+                    break
+        total += count
         if len(sections) >= MAX_FIND_SECTIONS:
-            truncated = True
             continue
-        first = matches[0]
         before = " ".join(unit.text[max(first.start() - SNIPPET_CHARS, 0):first.start()].split())
         after = " ".join(unit.text[first.end():first.end() + SNIPPET_CHARS].split())
-        sections.append(FindSection(ordinal, section_label(document, unit, len(units)), len(matches),
+        sections.append(FindSection(ordinal, section_label(document, unit, len(units)), count,
                                     before, " ".join(first.group(0).split()), after))
-    return FindResult(" ".join(query.split())[:MAX_FIND_CHARS], tuple(sections), total, truncated)
+    return FindResult(" ".join(query.split())[:MAX_FIND_CHARS], tuple(sections), total,
+                      matching > len(sections), matching, capped)
 
 
 def highlight_find(text: str, query: str) -> Markup:
-    """Escape text and wrap each literal match of the query in <mark>."""
+    """Escape text and wrap literal matches of the query in <mark>, at most MAX_HIGHLIGHTS."""
     pattern = find_pattern(query)
     if pattern is None:
         return escape(text)
     pieces: list[str] = []
     cursor = 0
-    for match in pattern.finditer(text):
+    for marked, match in enumerate(pattern.finditer(text)):
+        if marked >= MAX_HIGHLIGHTS:
+            break
         pieces.append(str(escape(text[cursor:match.start()])))
         pieces.append(f"<mark>{escape(match.group(0))}</mark>")
         cursor = match.end()

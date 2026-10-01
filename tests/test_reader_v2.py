@@ -111,3 +111,72 @@ def test_reader_queue_steps_through_folders_without_leaving_the_source(tmp_path)
         parent = html.unescape(re.search(r'class="source-folder-parent" href="([^"]+)"', folders).group(1))
         assert parse_qs(parse_qs(urlsplit(parent).query)["browse"][0])["folder"] == ["Production"]
         assert "Northwest" not in folders
+
+
+def test_find_work_is_bounded_for_a_one_character_query_over_huge_sections():
+    import tracemalloc
+    from case_intelligence.source_find import MAX_FIND_MATCHES, MAX_FIND_SECTIONS
+    # Maximum-size synthetic sections: every character matches.
+    document = _document(*(["a" * 5_000_000] * 3))
+    tracemalloc.start()
+    result = find_in_source(document, "a")
+    _current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < 5_000_000  # No per-match objects are retained.
+    # Counting stops at the budget; each later section still contributes its
+    # first match, so the total is a lower bound shown as "More than".
+    assert result.counts_capped and result.total_matches == MAX_FIND_MATCHES + 2
+    assert result.matching_sections == 3 and len(result.sections) == 3
+    assert [hit.count for hit in result.sections] == [MAX_FIND_MATCHES, 1, 1]
+    # Section totals stay exact beyond the display cap.
+    many = find_in_source(_document(*(["one synthetic x"] * (MAX_FIND_SECTIONS + 50))), "x")
+    assert many.matching_sections == MAX_FIND_SECTIONS + 50 and len(many.sections) == MAX_FIND_SECTIONS
+    assert many.truncated and many.total_matches == MAX_FIND_SECTIONS + 50 and not many.counts_capped
+
+
+def test_highlighting_is_bounded():
+    from case_intelligence.source_find import MAX_HIGHLIGHTS
+    marked = str(highlight_find("<" + "a" * (MAX_HIGHLIGHTS + 500), "a"))
+    assert marked.count("<mark>") == MAX_HIGHLIGHTS
+    assert marked.startswith("&lt;") and marked.endswith("a" * 500)
+
+
+def test_find_survives_section_navigation_and_clear_keeps_review_origin(tmp_path):
+    lines = "\n".join(f"Synthetic line {index} mentions the gauge." for index in range(1, 46))
+    app = create_workbench_app(tmp_path / "runtime", generator=UnavailableGenerator(),
+                               auth_mode="test", background_ingestion=False)
+    with TestClient(app) as client:
+        slug = _matter(client)
+        client.post(f"/matters/{slug}/uploads",
+                    files=[("files", ("Synthetic long log.txt", lines.encode(), "text/plain"))])
+        bench = app.state.workbench
+        matter = bench.matter(slug, ACTOR)
+        store = bench.source_store(matter)
+        document = next(iter(store.documents.values()))
+        path = f"/matters/{slug}/sources/{store.action_token(document)}"
+        origin = f"/matters/{slug}/exact-search?words=gauge"
+        page = client.get(path, params={"unit": 1, "q": "gauge", "entity_return_to": origin})
+        assert "45 matches for “gauge” in 3 sections" in page.text
+        nxt = re.search(r'<a class="button button-secondary" href="([^"]+)">Next</a>', page.text)
+        query = parse_qs(urlsplit(html.unescape(nxt.group(1))).query)
+        assert query["q"] == ["gauge"] and query["unit"] == ["2"] and query["entity_return_to"] == [origin]
+        following = client.get(html.unescape(nxt.group(1)))
+        assert following.status_code == 200 and "data-review-find-results" in following.text
+        assert "<mark>gauge</mark>" in following.text
+        previous = re.search(r'<a class="button button-secondary" href="([^"]+)">Previous</a>', following.text)
+        assert parse_qs(urlsplit(html.unescape(previous.group(1))).query)["q"] == ["gauge"]
+        clear = re.search(r'<a href="([^"]+)" data-review-find-clear>Clear</a>', page.text)
+        cleared = parse_qs(urlsplit(html.unescape(clear.group(1))).query)
+        assert cleared["entity_return_to"] == [origin] and "q" not in cleared
+        assert "Return to review context" in client.get(html.unescape(clear.group(1))).text
+        # Without a query, section links carry none.
+        plain = client.get(path, params={"unit": 1})
+        nxt_plain = re.search(r'<a class="button button-secondary" href="([^"]+)">Next</a>', plain.text)
+        assert "q" not in parse_qs(urlsplit(html.unescape(nxt_plain.group(1))).query)
+
+
+def test_find_heading_counts_every_matching_section(cedar):  # noqa: F811
+    client, bench, matter, documents = cedar
+    token = bench.source_store(matter).action_token(documents["pdf"])
+    page = client.get(f"/matters/{matter.slug}/sources/{token}", params={"unit": 1, "q": "gauge"})
+    assert "1 match for “gauge” in 1 section" in page.text
