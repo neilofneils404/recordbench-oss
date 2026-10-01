@@ -67,9 +67,15 @@ Suggested until a reviewer decides); (4) compact cited answers; (5) assistant
 actions under a separate brief. Increments 0 and 1 landed in
 [PR #126](https://github.com/neilofneils404/recordbench-oss/pull/126) at `d991411`
 after hosted code review; hosted security review was unavailable and was waived for
-that PR. Increment 2 (whole-page PDF fit, folders in the reader queue, find in this
-file) is in progress locally. Each PR requests hosted code review before merge. See
-the [workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar).
+that PR. Increment 2 (whole-page PDF fit, folders in the reader queue, bounded find
+in this file) landed in [PR #127](https://github.com/neilofneils404/recordbench-oss/pull/127)
+at `29f94e9` after clean final-head hosted code review and passing Quality; it also
+raised the application gate timeout to 45 minutes. Increment 3a (automatic
+discovery after processing, migration `0037`, behind
+`CASE_INTELLIGENCE_AUTOMATIC_DISCOVERY`) is proposed in its own PR; its suggestions
+inbox (3b) follows separately. Each PR requests hosted code review before merge. See
+the [workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar) and
+[entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing).
 
 Model/runtime changes, unrelated visual work/slice 21, Mac work/PR #34,
 PR #87, wider onboarding, later slice-19 work, deployment and supported-release

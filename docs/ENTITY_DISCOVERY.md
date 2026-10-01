@@ -47,6 +47,33 @@ Coverage uses aggregate counts on the entity index, with up to 20 review runs
 per page. A separate coverage view shows up to 50 sources and 50 unit outcomes
 per page. Counts describe the whole run, independently of the displayed page.
 
+## Automatic discovery after processing
+
+When `CASE_INTELLIGENCE_AUTOMATIC_DISCOVERY=1` (the installer default), every
+source that finishes processing is visited by the same local deterministic
+extractor without a criterion review, a model or a reviewer action. Home shows
+one quiet line under readiness: **Finding people and dates · N of M sources**
+while work remains, then **N suggested people, things and dates to review**,
+linking to **Case file → People & things**. Every result is **Suggested** and
+attributed to the inactive **Automatic discovery** system principal, which
+cannot sign in, hold membership or act outside an active matter.
+
+Coverage is recorded per current source version in
+`workbench_entity_auto_discovery_unit`. The first visit seals the version's unit
+inventory (ordinals and text digests; ordinal 0 is the seal). Units are then
+processed in bounded batches of up to 25 units per step, under the same source
+guard, digest check, byte budget and occurrence receipts as guided discovery, so
+the same passage is never suggested twice by either path. A new source version
+seals afresh; unfinished work for older versions stops. Earlier suggestions,
+identity decisions, merges and mention statuses are never changed. Sources whose
+text is unavailable are sealed as failed and do not loop. When the byte budget is
+reached, saved work remains and remaining units stay pending.
+
+A background thread runs when a source becomes ready and sweeps active matters
+at startup and every 15 minutes, so restarts converge without a queue. It never
+starts transcription, OCR or a model. With the setting off, nothing runs and
+guided discovery behaves exactly as before.
+
 ## What the initial extractor recognizes
 
 `deterministic-entities-v1` is a replaceable local rule implementation. It finds
@@ -181,9 +208,20 @@ history. Rollback uses the verified pre-upgrade backup and matching pre-upgrade
 code; never point slice-16 code at slice-17 state. Export later work first because
 the old backup cannot contain it. Release tags remain immutable.
 
+Migration `0037_automatic_entity_discovery.sql` adds the automatic coverage
+ledger and the inactive system principal. Final bundles include it as
+`automatic_coverage` in `entities/discovery.json`; matter purge and retention
+expiry remove it with the other discovery records. The
+[automatic discovery drill](../scripts/automatic-discovery-restore-drill.py)
+upgrades a store created by the preceding revision, discovers a synthetic
+source, restores the upgraded backup cleanly, and opens the untouched
+pre-upgrade backup with the preceding reader.
+
 Validation commands:
 
 ```console
+python -m pytest -q tests/test_automatic_discovery.py
+python scripts/automatic-discovery-restore-drill.py
 python -m pytest -q tests/test_entity_discovery.py tests/test_entity_workspace.py tests/test_matter_notebook.py tests/test_notebook_conflicts.py
 python scripts/entity-discovery-restore-drill.py
 python scripts/entity-storage-restore-drill.py

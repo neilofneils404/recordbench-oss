@@ -3073,6 +3073,14 @@
       if (count) count.textContent = stage.count_label || "";
       if (state) state.textContent = stage.state_label || "";
     });
+    const discovery = readiness.querySelector("[data-readiness-discovery]");
+    if (discovery) {
+      const found = payload.discovery || {};
+      discovery.textContent = found.label || "";
+      if (found.href) discovery.setAttribute("href", found.href);
+      discovery.classList.toggle("is-working", found.working === true);
+      discovery.hidden = !found.label;
+    }
     const overview = readiness.querySelector("[data-processing-overview-note]");
     if (overview) {
       overview.textContent = payload.overview_note || "";

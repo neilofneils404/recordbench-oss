@@ -72,7 +72,8 @@ and deliberately reconcile any non-default settings. The reference procedure
 uses generated local-account/service endpoints, with restored account/session
 and service secrets; inspect any custom endpoint before enabling it.
 
-Set `CASE_INTELLIGENCE_MAINTENANCE_ENABLED=0` in the replacement's effective
+Set `CASE_INTELLIGENCE_MAINTENANCE_ENABLED=0` and
+`CASE_INTELLIGENCE_AUTOMATIC_DISCOVERY=0` in the replacement's effective
 `config/recordbench.env` before the first app process starts. Follow
 [expired-matter recovery](EXPIRED_MATTER_RECOVERY.md); a five-minute maintenance
 interval is not a safety hold. Do not edit stored deadlines or SQLite data.

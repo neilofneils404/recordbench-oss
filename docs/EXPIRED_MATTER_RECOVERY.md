@@ -48,7 +48,8 @@ the interval does not provide an inspection window.
    saved work and original source units. Do not open an upgraded store with an
    older application to test rollback.
 3. Before any inspection application starts, set
-   `CASE_INTELLIGENCE_MAINTENANCE_ENABLED=0` in the **isolated target's effective
+   `CASE_INTELLIGENCE_MAINTENANCE_ENABLED=0` and
+   `CASE_INTELLIGENCE_AUTOMATIC_DISCOVERY=0` in the **isolated target's effective
    app environment**. For Compose this is the target's `config/recordbench.env`
    loaded by the app service; a shell export alone does not override `env_file`.
    Recreate any already-created isolated app container to apply the hold;

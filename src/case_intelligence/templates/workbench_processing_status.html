@@ -43,6 +43,8 @@
   <div class="matter-readiness-activity" data-readiness-activity {% if not matter_readiness.active_work %}hidden{% endif %}>
     {% for item in matter_readiness.active_work %}<span data-work-key="{{ item.key }}"><strong>{{ item.count }}</strong> {{ item.label }}</span>{% endfor %}
   </div>
+  {% set discovery = matter_readiness.discovery|default({}) %}
+  <a class="matter-readiness-discovery{% if discovery.working %} is-working{% endif %}" data-readiness-discovery href="{{ discovery.href or '#' }}"{% if not discovery.label %} hidden{% endif %}>{{ discovery.label }}</a>
   <div class="matter-processing-center" id="matter-processing-center" data-processing-details hidden>
     <div class="processing-stage-list" data-processing-stages>
       {% for stage in matter_readiness.stages %}

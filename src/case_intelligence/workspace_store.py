@@ -32,6 +32,7 @@ _UPLOAD_SESSION = re.compile(r"^upload-session-[0-9a-f]{32}$")
 _UPLOAD_ITEM = re.compile(r"^upload-item-[0-9a-f]{32}$")
 _SOURCE_DOCUMENT = re.compile(r"^(?:[0-9a-f]{32}|[a-z][a-z0-9-]{15,80})$")
 _MEDIA_JOB = re.compile(r"^media-job-[0-9a-f]{32}$")
+AUTOMATIC_DISCOVERY_PRINCIPAL = "system-automatic-discovery"
 _TRANSCRIPT = re.compile(r"^transcript-[0-9a-f]{32}$")
 _TRANSCRIPT_SEGMENT = re.compile(r"^media-segment-[0-9a-f]{32}$")
 _MEDIA_CLIP = re.compile(r"^media-clip-[0-9a-f]{32}$")
@@ -1084,6 +1085,8 @@ class WorkspaceStore:
         self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
         migration = resources.files("case_intelligence").joinpath("migrations/sqlite/0036_answer_context.sql").read_text(encoding="utf-8")
         self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
+        migration = resources.files("case_intelligence").joinpath("migrations/sqlite/0037_automatic_entity_discovery.sql").read_text(encoding="utf-8")
+        self.connection.executescript('BEGIN IMMEDIATE;\n' + migration + '\nCOMMIT;')
         from .full_text_review_budget import backfill_legacy_ledgers
         backfill_legacy_ledgers(self)
         session_columns = {
@@ -1586,7 +1589,8 @@ class WorkspaceStore:
         preferred_principal_id: str | None = None,
     ) -> PrincipalRecord:
         provider_value = self._safe_text(provider, label="Identity provider", maximum=64)
-        if not _PRINCIPAL_PROVIDER.fullmatch(provider_value):
+        if not _PRINCIPAL_PROVIDER.fullmatch(provider_value) or provider_value == "system":
+            # "system" is reserved for internal, never-signed-in principals.
             raise WorkspaceProblem("Identity provider is invalid.")
         subject = self._safe_text(
             provider_subject, label="Provider subject", maximum=512
@@ -1633,7 +1637,8 @@ class WorkspaceStore:
     ) -> None:
         """Refresh an existing identity without recording a sign-in or enabling it."""
         provider_value = self._safe_text(provider, label="Identity provider", maximum=64)
-        if not _PRINCIPAL_PROVIDER.fullmatch(provider_value):
+        if not _PRINCIPAL_PROVIDER.fullmatch(provider_value) or provider_value == "system":
+            # "system" is reserved for internal, never-signed-in principals.
             raise WorkspaceProblem("Identity provider is invalid.")
         subject = self._safe_text(provider_subject, label="Provider subject", maximum=512)
         name = self._safe_text(display_name, label="Display name", maximum=160)
@@ -2644,6 +2649,12 @@ class WorkspaceStore:
             raise KeyError(slug)
         return self._matter(row)
 
+    def active_matter_ids(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(row[0] for row in self.connection.execute(
+                "SELECT matter_id FROM workbench_matter_lifecycle WHERE state='active' ORDER BY matter_id"
+            ))
+
     def get_matter_by_id(self, matter_id: str, principal_id: str | None = None) -> MatterRecord:
         if not _IDENTIFIER.fullmatch(matter_id):
             raise KeyError(matter_id)
@@ -3141,12 +3152,33 @@ class WorkspaceStore:
             raise KeyError(purge_id)
         return self.matter_lifecycle(matter_id)
 
-    def entity_repository(self, *, export_read=False, administrator_override=False):
+    def entity_repository(self, *, export_read=False, administrator_override=False, automatic=False):
         from .entity_repository import EntityRepository
         authority = (lambda matter_id, actor_id: self._authorize_export_read(
             matter_id, actor_id, administrator_override=administrator_override)) if export_read else self.membership
+        if automatic:
+            authority = self._authorize_automatic_discovery
         return EntityRepository(connection=self.connection, lock=self._lock,
                                 authorize=authority, now=self._now)
+
+    def _authorize_automatic_discovery(self, matter_id: str, actor_id: str) -> None:
+        """Allow only the inactive system principal, and only on an active matter."""
+
+        if actor_id != AUTOMATIC_DISCOVERY_PRINCIPAL:
+            raise KeyError(matter_id)
+        row = self.connection.execute(
+            "SELECT 1 FROM workbench_matter_lifecycle WHERE matter_id=? AND state='active'",
+            (matter_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(matter_id)
+        # Created on first use; inactive, so it can never sign in or hold membership.
+        self.connection.execute(
+            "INSERT OR IGNORE INTO workbench_principal(principal_id,provider,provider_subject,"
+            "display_name,login_name,active,created_at,last_seen_at) VALUES (?,?,?,?,?,0,?,?)",
+            (AUTOMATIC_DISCOVERY_PRINCIPAL, "system", "automatic-discovery", "Automatic discovery",
+             "automatic-discovery", "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z"),
+        )
 
     def assertion_repository(self, *, export_read=False, administrator_override=False):
         from .assertion_repository import AssertionRepository
@@ -3195,7 +3227,8 @@ class WorkspaceStore:
             self.connection.execute(
                 "DELETE FROM workbench_analysis_run WHERE matter_id=?", (matter_id,)
             )
-            for table in ('workbench_entity_discovery_seen', 'workbench_entity_discovery_unit', 'workbench_entity_reconciliation'):
+            for table in ('workbench_entity_discovery_seen', 'workbench_entity_discovery_unit',
+                          'workbench_entity_auto_discovery_unit', 'workbench_entity_reconciliation'):
                 self.connection.execute(f"DELETE FROM {table} WHERE matter_id=?", (matter_id,))
             self.connection.execute('DELETE FROM workbench_context_selection WHERE matter_id=?', (matter_id,))
             self.connection.execute('DELETE FROM workbench_assertion WHERE matter_id=?', (matter_id,))

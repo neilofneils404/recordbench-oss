@@ -4,6 +4,7 @@ No independent connection, implicit transaction, or name-based identity lookup.
 The service owns the source guard; this repository owns the workspace transaction.
 """
 from contextlib import contextmanager
+import hashlib
 import json
 import uuid
 
@@ -204,7 +205,7 @@ class EntityRepository:
         total = 0
         for table in ('workbench_entity', 'workbench_entity_mention', 'workbench_entity_history',
                       'workbench_entity_discovery_seen', 'workbench_entity_discovery_unit',
-                      'workbench_entity_reconciliation'):
+                      'workbench_entity_auto_discovery_unit', 'workbench_entity_reconciliation'):
             columns = [row[1] for row in self.connection.execute(f'PRAGMA table_info({table})')]
             sizes = '+'.join(f'COALESCE(length(CAST("{column}" AS BLOB)),0)' for column in columns)
             total += self.connection.execute(f'SELECT COALESCE(SUM(256+{sizes}),0) FROM {table} WHERE matter_id=?',
@@ -234,6 +235,103 @@ class EntityRepository:
         self.connection.execute('UPDATE workbench_entity_discovery_unit SET state=?,note=? WHERE matter_id=? '
             'AND run_id=? AND document_id=? AND unit_ordinal=? AND extractor_version=?',
             (state, note, unit['matter_id'], unit['run_id'], unit['document_id'], unit['unit_ordinal'], unit['extractor_version']))
+
+    # Automatic discovery: one ledger per current source version, no review run.
+    _AUTO_KEY = ('matter_id', 'document_id', 'source_version_id', 'unit_ordinal', 'extractor_version')
+
+    def auto_discovery_documents(self, matter_id, version, limit):
+        """Ready sources whose current version is unsealed or still has pending units."""
+        return [dict(row) for row in self.connection.execute(
+            "SELECT c.document_id,c.version_id AS source_version_id FROM workbench_source_catalog c "
+            "WHERE c.matter_id=? AND c.source_state='ready' AND (NOT EXISTS (SELECT 1 FROM "
+            "workbench_entity_auto_discovery_unit a WHERE a.matter_id=c.matter_id AND a.document_id=c.document_id "
+            "AND a.source_version_id=c.version_id AND a.extractor_version=? AND a.unit_ordinal=0) OR EXISTS ("
+            "SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE a.matter_id=c.matter_id "
+            "AND a.document_id=c.document_id AND a.source_version_id=c.version_id AND a.extractor_version=? "
+            "AND a.state='pending')) ORDER BY c.document_id LIMIT ?",
+            (matter_id, version, version, limit))]
+
+    def auto_discovery_pending(self, matter_id, document_id, source_version_id, version):
+        return [dict(row) for row in self.connection.execute(
+            'SELECT * FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND document_id=? '
+            "AND source_version_id=? AND extractor_version=? AND unit_ordinal>0 AND state='pending' "
+            'ORDER BY unit_ordinal', (matter_id, document_id, source_version_id, version))]
+
+    def seal_auto_discovery(self, matter_id, document_id, source_version_id, version, units, state='processed'):
+        """Record the unit inventory of one version once; supersede older versions."""
+        if self.connection.execute(
+                'SELECT 1 FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND document_id=? '
+                'AND source_version_id=? AND extractor_version=? AND unit_ordinal=0',
+                (matter_id, document_id, source_version_id, version)).fetchone():
+            return False
+        rows = [(matter_id, document_id, source_version_id, ordinal, digest, version) for ordinal, digest in units]
+        self.connection.executemany(
+            "INSERT OR IGNORE INTO workbench_entity_auto_discovery_unit (matter_id,document_id,source_version_id,"
+            "unit_ordinal,unit_digest,extractor_version,state) VALUES (?,?,?,?,?,?,'pending')", rows)
+        self.connection.execute(
+            "INSERT INTO workbench_entity_auto_discovery_unit (matter_id,document_id,source_version_id,"
+            "unit_ordinal,unit_digest,extractor_version,state,note) VALUES (?,?,?,0,?,?,?,?)",
+            (matter_id, document_id, source_version_id,
+             hashlib.sha256(str(len(rows)).encode()).hexdigest(), version, state,
+             '' if state == 'processed' else 'Searchable text was unavailable for automatic discovery.'))
+        # Earlier versions stop; their saved suggestions and every human
+        # decision stay exactly as they are.
+        self.connection.execute(
+            "UPDATE workbench_entity_auto_discovery_unit SET state='invalidated',"
+            "note='Superseded by a newer source version.' WHERE matter_id=? AND document_id=? "
+            "AND source_version_id!=? AND state IN ('pending','failed')",
+            (matter_id, document_id, source_version_id))
+        return True
+
+    def auto_discovery_claimable(self, unit):
+        row = self.connection.execute(
+            'SELECT state FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND document_id=? '
+            'AND source_version_id=? AND unit_ordinal=? AND extractor_version=?',
+            tuple(unit[key] for key in self._AUTO_KEY)).fetchone()
+        return row is not None and row[0] == 'pending'
+
+    def auto_discovery_source_current(self, matter_id, unit):
+        return self.connection.execute(
+            "SELECT 1 FROM workbench_source_catalog WHERE matter_id=? AND document_id=? "
+            "AND source_state='ready' AND version_id=?",
+            (matter_id, unit['document_id'], unit['source_version_id'])).fetchone() is not None
+
+    def auto_discovery_state(self, unit, state, note):
+        self.connection.execute(
+            'UPDATE workbench_entity_auto_discovery_unit SET state=?,note=? WHERE matter_id=? AND document_id=? '
+            'AND source_version_id=? AND unit_ordinal=? AND extractor_version=?',
+            (state, note, *(unit[key] for key in self._AUTO_KEY)))
+
+    def auto_discovery_progress(self, matter_id, version):
+        """Unit counts for current source versions only."""
+        counts = {row[0]: row[1] for row in self.connection.execute(
+            "SELECT a.state,COUNT(*) FROM workbench_entity_auto_discovery_unit a JOIN workbench_source_catalog c "
+            "ON c.matter_id=a.matter_id AND c.document_id=a.document_id AND c.version_id=a.source_version_id "
+            "WHERE a.matter_id=? AND a.extractor_version=? AND a.unit_ordinal>0 AND c.source_state='ready' "
+            "GROUP BY a.state", (matter_id, version))}
+        unsealed = self.connection.execute(
+            "SELECT COUNT(*) FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' "
+            "AND NOT EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE a.matter_id=c.matter_id "
+            "AND a.document_id=c.document_id AND a.source_version_id=c.version_id AND a.extractor_version=? "
+            "AND a.unit_ordinal=0)", (matter_id, version)).fetchone()[0]
+        complete = self.connection.execute(
+            "SELECT COUNT(*) FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' "
+            "AND EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE a.matter_id=c.matter_id "
+            "AND a.document_id=c.document_id AND a.source_version_id=c.version_id AND a.extractor_version=? "
+            "AND a.unit_ordinal=0) AND NOT EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a "
+            "WHERE a.matter_id=c.matter_id AND a.document_id=c.document_id AND a.source_version_id=c.version_id "
+            "AND a.extractor_version=? AND a.state='pending')", (matter_id, version, version)).fetchone()[0]
+        suggested = self.connection.execute(
+            "SELECT COUNT(*) FROM workbench_entity WHERE matter_id=? AND status='suggested'",
+            (matter_id,)).fetchone()[0]
+        return dict(pending=counts.get('pending', 0), processed=counts.get('processed', 0),
+                    failed=counts.get('failed', 0), unsealed_sources=unsealed,
+                    sources_complete=complete, sources_ready=complete + unsealed + self.connection.execute(
+                        "SELECT COUNT(DISTINCT a.document_id) FROM workbench_entity_auto_discovery_unit a "
+                        "JOIN workbench_source_catalog c ON c.matter_id=a.matter_id AND c.document_id=a.document_id "
+                        "AND c.version_id=a.source_version_id WHERE a.matter_id=? AND a.extractor_version=? "
+                        "AND a.state='pending' AND c.source_state='ready'", (matter_id, version)).fetchone()[0],
+                    suggested=suggested)
 
     def discovery_coverage(self, matter_id, run_id, version, *, page=1, source_page=1, limit=50):
         self.require_discovery_run(matter_id, run_id)
@@ -355,6 +453,9 @@ class EntityRepository:
             sources=[dict(row) for row in self.connection.execute(
                 'SELECT s.* FROM workbench_text_review_source s JOIN workbench_review_run r ON r.run_id=s.run_id WHERE r.matter_id=?', (matter_id,))],
             coverage=[dict(row) for row in self.connection.execute('SELECT * FROM workbench_entity_discovery_unit WHERE matter_id=?', (matter_id,))],
+            automatic_coverage=[dict(row) for row in self.connection.execute(
+                'SELECT * FROM workbench_entity_auto_discovery_unit WHERE matter_id=? '
+                'ORDER BY document_id,source_version_id,extractor_version,unit_ordinal', (matter_id,))],
             occurrence_tombstones=[row[0] for row in self.connection.execute('SELECT occurrence_key FROM workbench_entity_discovery_seen WHERE matter_id=?', (matter_id,))],
             reconciliations=[dict(row) for row in self.connection.execute('SELECT * FROM workbench_entity_reconciliation WHERE matter_id=?', (matter_id,))])
 

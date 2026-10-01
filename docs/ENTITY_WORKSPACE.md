@@ -96,7 +96,9 @@ schema is introduced. Tables are additive: entities, mentions and history.
 Entity deletion cascades to mentions/history while leaving originals and case
 notes intact. Matter purge explicitly deletes entities, including all retained
 snapshots; the existing content-free audit/closure receipt remains. Retention
-expiry uses the same purge. No background entity job is introduced.
+expiry uses the same purge. Automatic discovery after processing (see
+[entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing))
+only adds **Suggested** records; it never edits a reviewed identity.
 
 Before updating, stop writers and retain a verified consistent backup of the
 control database, session key and managed source storage under the existing

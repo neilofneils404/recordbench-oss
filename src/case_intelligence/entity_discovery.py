@@ -10,20 +10,57 @@ import hashlib
 import json
 
 from .entity_extractor import DeterministicEntityExtractor
-from .workspace_store import WorkspaceProblem
+from .workspace_store import AUTOMATIC_DISCOVERY_PRINCIPAL, WorkspaceProblem
 
 
 DISCOVERY_BYTE_LIMIT = 16 * 1024 * 1024
+LOAD_ERRORS = (KeyError, OSError, ValueError, RuntimeError, TypeError)
+
+
+class RunLedger:
+    """Coverage recorded against one sealed criterion review run."""
+
+    @staticmethod
+    def seed(repo, unit):
+        repo.seed_discovery_unit(unit)
+
+    @staticmethod
+    def current(repo, matter_id, unit):
+        return repo.discovery_source_current(matter_id, unit)
+
+    @staticmethod
+    def state(repo, unit, state, note):
+        repo.discovery_state(unit, state, note)
+
+
+class AutomaticLedger:
+    """Coverage recorded per current source version; units are sealed up front."""
+
+    @staticmethod
+    def seed(repo, unit):
+        pass
+
+    @staticmethod
+    def current(repo, matter_id, unit):
+        return repo.auto_discovery_source_current(matter_id, unit)
+
+    @staticmethod
+    def state(repo, unit, state, note):
+        repo.auto_discovery_state(unit, state, note)
 
 
 class EntityDiscovery:
-    def __init__(self, service, *, load_unit=None, load_units=None, extractor=None, byte_limit=DISCOVERY_BYTE_LIMIT):
+    def __init__(self, service, *, load_unit=None, load_units=None, load_document=None, extractor=None,
+                 byte_limit=DISCOVERY_BYTE_LIMIT):
         if type(byte_limit) is not int or not 4096 <= byte_limit <= DISCOVERY_BYTE_LIMIT:
             raise ValueError('Use a discovery byte limit between 4096 and 16777216.')
         self.byte_limit = byte_limit
         self.service = service
         self.load_unit = load_unit
         self.load_units = load_units or self._load_singles
+        # load_document(document_id, source_version_id, ordinals=None) yields
+        # (ordinal, text, reference) for the current version, in order.
+        self.load_document = load_document
         self.extractor = extractor or DeterministicEntityExtractor()
         if (not isinstance(self.extractor.version, str) or not 1 <= len(self.extractor.version) <= 80
                 or any(ord(character) < 32 for character in self.extractor.version)):
@@ -61,20 +98,80 @@ class EntityDiscovery:
                 with service.repository.transaction(matter_id, actor_id) as repo:
                     if not repo.discovery_claimable(matter_id, unit, retry):
                         continue
-                    state, count = self._process_unit(repo, matter_id, actor_id, unit, loaded)
+                    state, count = self._process_unit(repo, matter_id, actor_id, unit, loaded, RunLedger)
                 if on_committed is not None:
                     on_committed(dict(run_id=run_id, document_id=unit['document_id'],
                         unit_ordinal=unit['unit_ordinal'], state=state, count=count))
         return self.coverage(matter_id, actor_id, run_id, limit=0)
 
-    def _process_unit(self, repo, matter_id, actor_id, unit, loaded):
+    def automatic_step(self, matter_id, *, unit_limit=25, document_limit=5):
+        """Discover suggestions in newly ready sources without a person or a model.
+
+        Each source version is inventoried once (unit ordinals and digests),
+        then processed in bounded batches. Returns the number of units handled.
+        The repository must authorize the automatic-discovery principal.
+        """
+        if self.load_document is None:
+            raise ValueError('Automatic discovery needs a whole-document loader.')
+        service = self.service
+        actor_id = AUTOMATIC_DISCOVERY_PRINCIPAL
+        version = self.extractor.version
+        handled = 0
+        with service.repository.transaction(matter_id, actor_id) as repo:
+            documents = repo.auto_discovery_documents(matter_id, version, document_limit)
+        with service.source_guard():
+            for document in documents:
+                if handled >= unit_limit:
+                    break
+                document_id, source_version_id = document['document_id'], document['source_version_id']
+                inventory, state = [], 'processed'
+                try:
+                    for ordinal, text, reference in self.load_document(document_id, source_version_id):
+                        if reference['source_version_id'] != source_version_id:
+                            raise KeyError('changed source')
+                        inventory.append((ordinal, hashlib.sha256(text.encode()).hexdigest()))
+                except LOAD_ERRORS:
+                    inventory, state = [], 'failed'
+                with service.repository.transaction(matter_id, actor_id) as repo:
+                    if not repo.auto_discovery_source_current(matter_id, document | dict(matter_id=matter_id)):
+                        continue
+                    repo.seal_auto_discovery(matter_id, document_id, source_version_id, version, inventory, state)
+                    pending = {row['unit_ordinal']: row for row in
+                               repo.auto_discovery_pending(matter_id, document_id, source_version_id, version)}
+                wanted = dict(islice(pending.items(), unit_limit - handled))
+                if not wanted:
+                    continue
+                try:
+                    stream = self.load_document(document_id, source_version_id, sorted(wanted))
+                    loaded_units = {ordinal: (text, reference) for ordinal, text, reference in stream
+                                    if ordinal in wanted}
+                except LOAD_ERRORS:
+                    loaded_units = {}
+                for ordinal, unit in wanted.items():
+                    with service.repository.transaction(matter_id, actor_id) as repo:
+                        if not repo.auto_discovery_claimable(unit):
+                            continue
+                        try:
+                            self._process_unit(repo, matter_id, actor_id, unit,
+                                               loaded_units.get(ordinal), AutomaticLedger)
+                        except WorkspaceProblem:
+                            # Budget reached: saved work stays; remaining units stay pending.
+                            return handled
+                    handled += 1
+        return handled
+
+    def automatic_progress(self, matter_id):
+        with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
+            return repo.auto_discovery_progress(matter_id, self.extractor.version)
+
+    def _process_unit(self, repo, matter_id, actor_id, unit, loaded, ledger):
         service = self.service
         used_bytes = repo.discovery_storage_bytes(matter_id)
         if used_bytes + 4096 > self.byte_limit:
             raise WorkspaceProblem('Entity discovery byte budget reached. Saved work is retained; this unit remains unprocessed.')
-        repo.seed_discovery_unit(unit)
+        ledger.seed(repo, unit)
         try:
-            if not repo.discovery_source_current(matter_id, unit):
+            if not ledger.current(repo, matter_id, unit):
                 raise KeyError('changed frozen source')
             if loaded is None:
                 raise KeyError('unavailable unit')
@@ -84,7 +181,7 @@ class EntityDiscovery:
                     or hashlib.sha256(text.encode()).hexdigest() != unit['unit_digest']):
                 raise KeyError('changed unit')
         except (KeyError, OSError, ValueError, RuntimeError):
-            repo.discovery_state(unit, 'invalidated', 'Original unit changed or is unavailable; start current-source coverage.')
+            ledger.state(repo, unit, 'invalidated', 'Original unit changed or is unavailable; start current-source coverage.')
             return 'invalidated', 0
         try:
             occurrences = list(islice(self.extractor.extract(text), 1001))
@@ -119,7 +216,7 @@ class EntityDiscovery:
         except Exception:
             # Do not persist extractor exception text, which may include
             # source content or provider internals.
-            repo.discovery_state(unit, 'failed', 'Extractor failed or returned unsupported output. Retry this unit.')
+            ledger.state(repo, unit, 'failed', 'Extractor failed or returned unsupported output. Retry this unit.')
             return 'failed', 0
         prepared = []
         keys = set()
@@ -146,5 +243,5 @@ class EntityDiscovery:
             added = repo.add_mention(matter_id, actor_id, entity['entity_id'], reference, 'extraction')
             added = repo.annotate_occurrence(matter_id, added['mention_id'], key, self.extractor.version, occurrence)
             repo.record_history(matter_id, actor_id, entity['entity_id'], 'extracted', added_mentions=[added])
-        repo.discovery_state(unit, 'processed', '')
+        ledger.state(repo, unit, 'processed', '')
         return 'processed', len(prepared)

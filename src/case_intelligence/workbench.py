@@ -832,6 +832,80 @@ class MatterMaintenanceCoordinator:
         self._thread.join(timeout=5)
 
 
+MAX_AUTOMATIC_DISCOVERY_UNITS = 20000
+
+
+class AutomaticDiscoveryCoordinator:
+    """Find suggested people, things and dates after sources finish processing.
+
+    Woken when a source becomes ready, and sweeps every active matter on start
+    and at a slow interval so restarts and missed wake-ups converge. Work is
+    bounded per pass; failures stay in the ledger and never reach a page.
+    """
+
+    def __init__(
+        self,
+        run_once: Callable[[tuple[str, ...] | None], int],
+        *,
+        sweep_seconds: float = 900.0,
+    ) -> None:
+        self._run_once = run_once
+        self._sweep = max(float(sweep_seconds), 30.0)
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._lock = threading.Lock()
+        self._pending: set[str] = set()
+        self._sweep_due = True
+        self._last_error = ""
+        self._thread = threading.Thread(
+            target=self._loop, name="recordbench-discovery", daemon=True
+        )
+        self._thread.start()
+
+    def wake(self, matter_id: str) -> None:
+        with self._lock:
+            self._pending.add(matter_id)
+        self._wake.set()
+
+    def _loop(self) -> None:
+        last_sweep = 0.0
+        while not self._stop.is_set():
+            self._wake.clear()
+            with self._lock:
+                matter_ids = tuple(sorted(self._pending))
+                self._pending.clear()
+            sweep = monotonic() - last_sweep >= self._sweep
+            try:
+                if sweep:
+                    last_sweep = monotonic()
+                    handled = self._run_once(None)
+                else:
+                    handled = self._run_once(matter_ids) if matter_ids else 0
+                with self._lock:
+                    self._last_error = ""
+                    if handled:
+                        # More work may remain; continue without waiting.
+                        if sweep:
+                            last_sweep = 0.0
+                        self._pending.update(matter_ids)
+                        self._wake.set()
+            except Exception:
+                with self._lock:
+                    self._last_error = "Automatic discovery needs administrator attention."
+            if self._stop.is_set():
+                return
+            self._wake.wait(self._sweep)
+
+    def status(self) -> dict[str, object]:
+        with self._lock:
+            return {"enabled": True, "last_error": self._last_error}
+
+    def close(self) -> None:
+        self._stop.set()
+        self._wake.set()
+        self._thread.join(timeout=5)
+
+
 class CaseIntelligenceWorkbench:
     """Matter-isolated Milestone A runtime behind an explicit actor boundary."""
 
@@ -915,6 +989,7 @@ class CaseIntelligenceWorkbench:
         self.research: ResearchCoordinator | None = None
         self.full_review: ReviewCoordinator | None = None
         self.maintenance: MatterMaintenanceCoordinator | None = None
+        self.automatic_discovery: AutomaticDiscoveryCoordinator | None = None
         try:
             generation_concurrency = int(
                 os.getenv("CASE_INTELLIGENCE_GENERATION_CONCURRENCY", "2")
@@ -1048,6 +1123,15 @@ class CaseIntelligenceWorkbench:
                 self.run_maintenance_once,
                 interval_seconds=maintenance_interval,
             )
+        if os.getenv("CASE_INTELLIGENCE_AUTOMATIC_DISCOVERY", "").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            self.automatic_discovery = AutomaticDiscoveryCoordinator(
+                self.run_automatic_discovery_once
+            )
 
     def _prepare_runtime(self) -> None:
         if self.runtime_dir.exists() and (
@@ -1123,6 +1207,8 @@ class CaseIntelligenceWorkbench:
             return False
 
     def close(self) -> None:
+        if self.automatic_discovery is not None:
+            self.automatic_discovery.close()
         if self.maintenance is not None:
             self.maintenance.close()
         if getattr(self, "report_compilation", None) is not None:
@@ -2094,6 +2180,10 @@ class CaseIntelligenceWorkbench:
                     for document in change.upserted
                 ),
             )
+            if self.automatic_discovery is not None and any(
+                document.state == "ready" for document in change.upserted
+            ):
+                self.automatic_discovery.wake(matter.matter_id)
         if change.removed_document_ids:
             self.workspace.delete_source_catalog(
                 matter.matter_id, change.removed_document_ids
@@ -3045,10 +3135,10 @@ class CaseIntelligenceWorkbench:
             bool(autoplay),
         )
 
-    def entity_service(self, matter):
+    def entity_service(self, matter, *, automatic=False):
         from .entity_service import EntityService, current_reference_indexes
         return EntityService(
-            self.workspace.entity_repository(),
+            self.workspace.entity_repository(automatic=automatic),
             source_guard=self.source_store(matter).mutation_guard,
             resolve_support=lambda token: self.notebook_reference_from_support(matter, token),
             load_note=self.workspace.notebook_item,
@@ -3076,12 +3166,7 @@ class CaseIntelligenceWorkbench:
                     for ordinal, unit in self.entity_unit_reader.iter_selected(self.source_store(matter), document, requested):
                         coverage = requested.get(ordinal)
                         if coverage is not None:
-                            candidate = self._candidate(matter, document, unit, ordinal)
-                            token = sorted(self._support_tokens(candidate))[0]
-                            loaded = (unit.text, dict(document_id=candidate.document_id,
-                                source_version_id=candidate.source_version_id, source_name=candidate.source_name,
-                                location=candidate.citation, unit_number=unit.number, chunk_id=candidate.chunk_id,
-                                excerpt_digest=candidate.excerpt_digest, excerpt=candidate.text[:6000], support_token=token))
+                            loaded = (unit.text, self._discovery_reference(matter, document, unit, ordinal))
                             requested.pop(ordinal)
                             yield coverage, loaded
                         if not requested:
@@ -3091,6 +3176,53 @@ class CaseIntelligenceWorkbench:
                 for coverage in requested.values():
                     yield coverage, None
         return EntityDiscovery(self.entity_service(matter), load_units=load_units)
+
+    def _discovery_reference(self, matter, document, unit, ordinal):
+        candidate = self._candidate(matter, document, unit, ordinal)
+        token = sorted(self._support_tokens(candidate))[0]
+        return dict(document_id=candidate.document_id,
+            source_version_id=candidate.source_version_id, source_name=candidate.source_name,
+            location=candidate.citation, unit_number=unit.number, chunk_id=candidate.chunk_id,
+            excerpt_digest=candidate.excerpt_digest, excerpt=candidate.text[:6000], support_token=token)
+
+    def automatic_entity_discovery(self, matter):
+        """Discovery that runs as the inactive system principal after processing."""
+        from .entity_discovery import EntityDiscovery
+        def load_document(document_id, source_version_id, ordinals=None):
+            store = self.source_store(matter)
+            document = store.get(document_id)
+            if document.state != 'ready' or document.version_id != source_version_id:
+                raise KeyError(document_id)
+            if ordinals is None:
+                units = enumerate(document.iter_parsed_units(), 1)
+            else:
+                units = self.entity_unit_reader.iter_selected(store, document, ordinals)
+            for ordinal, unit in units:
+                if ordinal > MAX_AUTOMATIC_DISCOVERY_UNITS:
+                    raise ValueError('Source exceeds the automatic discovery unit ceiling.')
+                yield ordinal, unit.text, self._discovery_reference(matter, document, unit, ordinal)
+        return EntityDiscovery(self.entity_service(matter, automatic=True), load_document=load_document)
+
+    def run_automatic_discovery_once(self, matter_ids=None, *, unit_limit=200):
+        """Process newly ready sources for active matters; returns units handled."""
+        handled = 0
+        if matter_ids is None:
+            matter_ids = self.workspace.active_matter_ids()
+        for matter_id in matter_ids:
+            try:
+                matter = self.workspace.get_matter_by_id(matter_id)
+            except KeyError:
+                continue
+            discovery = self.automatic_entity_discovery(matter)
+            while handled < unit_limit:
+                try:
+                    step = discovery.automatic_step(matter.matter_id, unit_limit=min(25, unit_limit - handled))
+                except KeyError:
+                    break
+                if not step:
+                    break
+                handled += step
+        return handled
 
     def notebook_reference_from_support(
         self, matter: MatterRecord, token: str
@@ -6746,7 +6878,33 @@ def create_workbench_app(
                 "this does not remove searchable transcripts."
             )
         coverage = _source_coverage(readiness)
+        discovery = {"label": "", "href": "", "working": False}
+        if bench.automatic_discovery is not None and readiness.total_count:
+            try:
+                progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
+            except KeyError:
+                progress = None
+            if progress and progress["sources_complete"] < progress["sources_ready"]:
+                discovery = {
+                    "label": (
+                        f"Finding people and dates · {progress['sources_complete']:,} of "
+                        f"{progress['sources_ready']:,} sources"
+                    ),
+                    "href": f"/matters/{matter.slug}/entities",
+                    "working": True,
+                }
+            elif progress and progress["suggested"]:
+                discovery = {
+                    "label": (
+                        f"{progress['suggested']:,} suggested "
+                        f"{'person, thing or date' if progress['suggested'] == 1 else 'people, things and dates'}"
+                        " to review"
+                    ),
+                    "href": f"/matters/{matter.slug}/entities",
+                    "working": False,
+                }
         return {
+            "discovery": discovery,
             "state": "review" if recording_hold_only else readiness.state,
             "recording_review_count": readiness.recording_review_count,
             "playback_only_count": readiness.playback_only_count,

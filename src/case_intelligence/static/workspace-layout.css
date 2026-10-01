@@ -524,3 +524,28 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
 .review-find-results a[aria-current="true"] strong { text-decoration: underline; }
 .review-find-results mark, .extracted-reader mark { padding: 1px 2px; border-radius: 2px; background: var(--highlight); color: inherit; }
 .review-find-results p { margin: 6px 0 0; }
+
+/* Automatic discovery: one quiet line under readiness, linking to suggestions. */
+.matter-readiness-discovery {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--blue-action);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.matter-readiness-discovery[hidden] { display: none; }
+.matter-readiness-discovery:hover,
+.matter-readiness-discovery:focus-visible { text-decoration: underline; }
+.matter-readiness-discovery.is-working { color: var(--ink-soft); font-weight: 500; }
+.matter-readiness-discovery.is-working::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
