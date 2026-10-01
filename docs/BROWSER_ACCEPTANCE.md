@@ -43,6 +43,13 @@ unchanged. Before changing mirrors, it parses the Ubuntu Deb822 source stanzas
 and requires every active stanza to use only the expected mirror list. Disabled
 stanzas cannot authorize fallback; mixed URIs, missing required fields and
 ambiguous or malformed source configuration fail closed without a mirror write.
+The primary attempt uses the runner's normal APT sources. For every fallback
+APT command (index refresh, download-only acquisition and offline installation),
+the helper sets `Dir::Etc::sourcelist` to the validated `ubuntu.sources` file and
+`Dir::Etc::sourceparts` to `/dev/null`. Additional `sources.list` or
+`sources.list.d` entries therefore cannot delay fallback refresh or supply its
+package candidates; those files are not modified. Refresh errors still fail the
+attempt via `--error-on=any`.
 
 Only after successful acquisition does it install the complete dependency list
 with `--no-download`. Package unpacking has no helper timeout or retry; missing

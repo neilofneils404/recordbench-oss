@@ -77,6 +77,61 @@ def test_primary_success_installs_only_after_bounded_acquisition(apt):
     assert "--no-download" in install and "timeout" not in install
     assert_full_packages(install)
     assert apt[0].read_text() == MIRROR_LIST
+    assert not any("Dir::Etc::" in argument for command in commands(apt) for argument in command)
+
+
+@pytest.mark.parametrize("extra_location", ["sources.list", "third-party.list", "third-party.sources"])
+@pytest.mark.parametrize("phase", ["update", "download", "install"])
+def test_fallback_excludes_extra_sources_from_each_apt_phase(apt, monkeypatch, extra_location, phase):
+    # Model APT's main source file plus *.list/*.sources source-parts selection.
+    # A third-party outage triggers the primary retry; its package candidates
+    # must also stay out of both fallback install invocations.
+    apt_root = apt[1].parent
+    parts = apt_root / "sources.list.d"
+    parts.mkdir()
+    ubuntu = parts / "ubuntu.sources"
+    ubuntu.write_text(SIGNED_SOURCES)
+    extra = apt_root / extra_location if extra_location == "sources.list" else parts / extra_location
+    extra.write_text(
+        SIGNED_SOURCES.replace("mirror+file:/etc/apt/apt-mirrors.txt", "https://third-party.example.test/ubuntu/")
+        if extra.suffix == ".sources" else "deb https://third-party.example.test/ubuntu/ noble main\n"
+    )
+    original_extra = extra.read_bytes()
+    original_run = deps.subprocess.run
+    observed = []
+
+    def run(command, **kwargs):
+        if "apt-get" not in command:
+            return original_run(command, **kwargs)
+        options = dict(command[index + 1].split("=", 1)
+                       for index, argument in enumerate(command) if argument == "-o")
+        main = Path(options.get("Dir::Etc::sourcelist", str(apt_root / "sources.list")))
+        source_parts = Path(options.get("Dir::Etc::sourceparts", str(parts)))
+        selected = [main] if main.is_file() else []
+        if source_parts.is_dir():
+            selected.extend(path for path in source_parts.iterdir() if path.suffix in {".list", ".sources"})
+        current_phase = "update" if "update" in command else "download" if "--download-only" in command else "install"
+        fallback = apt[0].read_text() != MIRROR_LIST
+        observed.append((fallback, current_phase))
+        if not fallback:
+            assert extra in selected  # Normal runner source selection remains intact.
+            assert not any(key.startswith("Dir::Etc::") for key in options)
+            return subprocess.CompletedProcess(command, 100)
+        if current_phase == phase:
+            assert selected == [ubuntu.resolve()]
+            assert extra not in selected  # No third-party index or package candidate.
+            assert ubuntu.read_text() == SIGNED_SOURCES
+            if current_phase == "update":
+                assert "--error-on=any" in command
+            else:
+                assert_full_packages(command)
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(deps.subprocess, "run", run)
+    deps.install_dependencies(apt[0], ubuntu)
+    assert observed == [(False, "update"), (True, "update"), (True, "download"), (True, "install")]
+    assert extra.read_bytes() == original_extra
+    assert apt[0].read_text() == MIRROR_LIST
 
 
 @pytest.mark.parametrize("results", [[100], [124], [0, 100], [0, 124], [0, 137]])

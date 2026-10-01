@@ -76,7 +76,7 @@ def validate_sources(text: str) -> None:
         raise ValueError("Ubuntu sources contain no active mirror-list stanza.")
 
 
-def acquire() -> bool:
+def acquire(source_options: tuple[str, ...] = ()) -> bool:
     # Only acquisition is terminated by these deadlines, never dpkg unpacking.
     # Connection/data timeouts alone do not bound a continuously slow download.
     for seconds, arguments in (
@@ -85,7 +85,7 @@ def acquire() -> bool:
     ):
         result = subprocess.run([
             "sudo", "timeout", "--signal=TERM", "--kill-after=10s", f"{seconds}s",
-            "apt-get", *ACQUIRE_OPTIONS, *arguments,
+            "apt-get", *ACQUIRE_OPTIONS, *source_options, *arguments,
         ], check=False)
         if result.returncode:
             print(f"APT acquisition stopped with status {result.returncode}.", flush=True)
@@ -119,10 +119,10 @@ def official_mirrors(mirrors: Path, sources: Path):
                        stdout=subprocess.DEVNULL, check=True)
 
 
-def install() -> None:
+def install(source_options: tuple[str, ...] = ()) -> None:
     # No timeout/fallback around unpacking. Missing archives remain a hard error.
     subprocess.run([
-        "sudo", "apt-get", "install", "--yes", "--no-install-recommends",
+        "sudo", "apt-get", "install", *source_options, "--yes", "--no-install-recommends",
         "--no-download", *PACKAGES,
     ], check=True)
 
@@ -134,9 +134,16 @@ def install_dependencies(mirrors: Path = MIRRORS, sources: Path = SOURCES) -> No
         return
     print("Retrying acquisition once with the existing official HTTPS mirrors.", flush=True)
     with official_mirrors(mirrors, sources):
-        if not acquire():
+        # APT parses the .sources main file as Deb822. /dev/null disables the
+        # source-parts directory, excluding unrelated sources during refresh,
+        # package selection/download and offline installation alike.
+        source_options = (
+            "-o", f"Dir::Etc::sourcelist={sources.resolve()}",
+            "-o", "Dir::Etc::sourceparts=/dev/null",
+        )
+        if not acquire(source_options):
             raise RuntimeError("Browser CI dependency acquisition failed on both attempts; nothing installed.")
-        install()
+        install(source_options)
 
 
 def main() -> int:
