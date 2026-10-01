@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish an opt-in hosted-review status without running PR code."""
+"""Require hosted code review without running PR code."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -13,14 +13,8 @@ import urllib.request
 BOT = "chatgpt-codex-connector[bot]"
 SUMMARY = "<!-- codex-pull-request-review-summary -->"
 CONTEXT = "hosted-review-gate"
-REQUIRED_LABEL = "require-hosted-review"
-OPTIONAL_DESCRIPTION = "Hosted review not required; maintainer review and Quality gates still apply"
 APPROVAL_PREFIX = "RecordBench hosted review gate:"
 ACCEPTANCE = re.compile(r"RecordBench maintainer acceptance: ([0-9a-f]{40})")
-QUOTA_REQUEST = re.compile(r"@codex security review\n\nRecordBench security review head: ([0-9a-f]{40})")
-QUOTA_EXCEPTION = re.compile(
-    r"RecordBench security quota exception: ([0-9a-f]{40}); request: ([1-9][0-9]*); response: ([1-9][0-9]*)")
-QUOTA_RESPONSE = "You have reached your Codex usage limits for security reviews. Please try again later."
 SECURITY_HELP_LINE = '- Comment "@codex review" or "@codex security review".'
 CODE_ONLY_PREFIX = (
     SUMMARY,
@@ -47,50 +41,6 @@ CODE_ONLY_ROW = re.compile(
     r'\| `(?P<head_prefix>[0-9a-f]{7,40})` \| [^|\r\n]+ \|')
 
 
-def requires_hosted_review(pr: dict) -> bool:
-    """The current label can always request stricter review."""
-    return any(label["name"] == REQUIRED_LABEL for label in pr.get("labels", []))
-
-
-def effective_hosted_review(prefix: str, number: int, pr: dict) -> bool:
-    """An opt-in persists until a write/maintain/admin actor removes the label.
-
-    Triage may manage labels, so current absence alone cannot authorize opt-out.
-    Read the complete public issue event history on every policy inspection.
-    """
-    transitions = []
-    for page in range(1, 101):
-        events = request(f"{prefix}/issues/{number}/events?per_page=100&page={page}")
-        transitions.extend(event for event in events
-            if event.get("event") in {"labeled", "unlabeled"}
-            and (event.get("label") or {}).get("name") == REQUIRED_LABEL)
-        if len(events) < 100:
-            break
-    else:
-        raise RuntimeError("Label event limit exceeded")
-    required = False
-    permissions = {}
-    for event in sorted(transitions, key=lambda event: event["id"]):
-        if event["event"] == "labeled":
-            required = True
-            continue
-        login = (event.get("actor") or {}).get("login", "")
-        if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
-            continue
-        if login not in permissions:
-            try:
-                permissions[login] = request(f"{prefix}/collaborators/{login}/permission").get("permission")
-            except urllib.error.HTTPError as error:
-                if error.code != 404:
-                    raise
-                # A former collaborator cannot authorize opt-out. Continue so a
-                # later removal by a current maintainer can recover the policy.
-                permissions[login] = None
-        if permissions[login] in {"write", "maintain", "admin"}:
-            required = False
-    return requires_hosted_review(pr) or required
-
-
 def comment_time(comment: dict) -> datetime:
     value = datetime.fromisoformat((comment.get("updated_at") or comment["created_at"]).replace("Z", "+00:00"))
     if value.tzinfo is None:
@@ -98,118 +48,60 @@ def comment_time(comment: dict) -> datetime:
     return value
 
 
-def quota_exception(head: str, comments: list[dict]) -> tuple[datetime, datetime, int] | None:
-    """Verify an explicit, privileged full-head exception against the bot receipt."""
-    by_id = {c.get("id"): c for c in comments if c.get("id") is not None}
-    valid = []
-    for c in comments:
-        match = QUOTA_EXCEPTION.fullmatch(c.get("body", "").strip())
-        if not match or match.group(1) != head or not c.get("maintainerCanAccept"):
-            continue
-        requested = by_id.get(int(match.group(2)), {})
-        response = by_id.get(int(match.group(3)), {})
-        request_match = QUOTA_REQUEST.fullmatch(requested.get("body", "").strip())
-        if (not request_match or request_match.group(1) != head
-                or not requested.get("maintainerCanAccept")
-                or response.get("user", {}).get("login") != BOT
-                or response.get("user", {}).get("type") != "Bot"
-                or response.get("body", "").strip() != QUOTA_RESPONSE):
-            continue
-        # The request must already bind this full head when the bot responds.
-        # Editing an old request cannot recycle an earlier quota receipt.
-        if comment_time(requested) < comment_time(response) < comment_time(c):
-            valid.append((comment_time(c), comment_time(requested), requested["id"]))
-    return max(valid, default=None)
-
-
 def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str, str]:
     summaries = [c for c in comments if c.get("user", {}).get("login") == BOT
                  and c.get("user", {}).get("type") == "Bot" and SUMMARY in c.get("body", "")]
     if not summaries:
-        return "pending", "Waiting for GitHub Codex code and security reviews"
-    body = max(summaries, key=lambda c: c.get("updated_at", ""))["body"]
-    marker = re.search(r"<!-- codex-security-review:v1 (\{[^\n]*\}) -->", body)
-    # A quota exception is deliberately limited to an absent security review.
-    # Recorded running, failed, stale or malformed security state still blocks.
-    exception = None
-    code_match = None
-    # The bot's exact help sentence is not a review outcome. Any other mention
-    # of security anywhere in the summary is recorded/unknown security state,
-    # including prose, headings and HTML outside the table.
-    security_state = any("security" in line.casefold() for line in body.splitlines()
-                         if line.strip() != SECURITY_HELP_LINE)
-    if security_state:
-        if not marker:
-            return "pending", "Review summary has no verifiable commit binding"
-        try:
-            metadata = json.loads(marker.group(1))
-        except ValueError:
-            return "pending", "Review metadata is invalid"
-        if metadata.get("headSha") != head or metadata.get("status") != "completed":
-            return "pending", "Waiting for security review of the current commit"
-    else:
-        # Require the entire known code-only structure, in order. A subset of
-        # familiar lines could be a truncated summary that lost security state.
-        lines = [line.strip() for line in body.splitlines() if line.strip()]
-        if (len(lines) != len(CODE_ONLY_PREFIX) + 1 + len(CODE_ONLY_SUFFIX)
-                or tuple(lines[:len(CODE_ONLY_PREFIX)]) != CODE_ONLY_PREFIX
-                or tuple(lines[-len(CODE_ONLY_SUFFIX):]) != CODE_ONLY_SUFFIX
-                or (code_match := CODE_ONLY_ROW.fullmatch(lines[len(CODE_ONLY_PREFIX)])) is None):
-            return "pending", "Unrecognized review summary; quota exception cannot apply"
-        exception = quota_exception(head, comments)
-        if exception is None:
-            return "pending", "Waiting for security review or a verified maintainer quota exception"
-    waived_at, requested_at, request_id = exception if exception else (None, None, None)
-    completed = {}
-    for label in (("Code Review",) if waived_at else ("Code Review", "Security Review")):
-        if waived_at:
-            time_text = code_match.group("completed_at")
-            sha_text = code_match.group("head_prefix")
-        else:
-            row = next((line for line in body.splitlines() if f"**{label}**" in line), "")
-            time = re.search(r'datetime="([^\"]+)"', row)
-            sha = re.search(r"`([0-9a-f]{7,40})`", row)
-            if "**Completed**" not in row or not time or not sha:
-                return "pending", "Waiting for both reviews on the current commit"
-            time_text, sha_text = time.group(1), sha.group(1)
-        if not head.startswith(sha_text):
-            return "pending", "Waiting for both reviews on the current commit"
-        try:
-            completed[label] = datetime.fromisoformat(time_text.replace("Z", "+00:00"))
-            if completed[label].tzinfo is None:
-                raise ValueError("Review timestamp requires a timezone")
-        except ValueError:
-            return "pending", "Review completion time is invalid"
-    if waived_at:
-        completed["Security Review"] = waived_at
+        return "pending", "Waiting for GitHub Codex code review of the current commit"
+    body = max(summaries, key=comment_time)["body"]
+    # Security is advisory. Recognize its separate row/metadata without using
+    # availability, status, quota or commit binding to waive or block code review.
+    # Everything else must match the complete known summary, including exactly
+    # one completed code row. Unknown/truncated code evidence fails closed.
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    security_rows = [line for line in lines if re.fullmatch(
+        r"\| (?:🛡️ )?\*\*Security Review\*\* \| [^|]+ \| [^|]+ \| [^|]+ \|", line)]
+    security_metadata = [line for line in lines if re.fullmatch(
+        r"<!-- codex-security-review:v1 [^\r\n]* -->", line)]
+    if len(security_rows) > 1 or len(security_metadata) > 1:
+        return "pending", "Unrecognized review summary"
+    lines = [line for line in lines if line not in security_rows + security_metadata]
+    if (len(lines) != len(CODE_ONLY_PREFIX) + 1 + len(CODE_ONLY_SUFFIX)
+            or tuple(lines[:len(CODE_ONLY_PREFIX)]) != CODE_ONLY_PREFIX
+            or tuple(lines[-len(CODE_ONLY_SUFFIX):]) != CODE_ONLY_SUFFIX
+            or (code_match := CODE_ONLY_ROW.fullmatch(lines[len(CODE_ONLY_PREFIX)])) is None):
+        return "pending", "Unrecognized or incomplete code review summary"
+    if not head.startswith(code_match.group("head_prefix")):
+        return "pending", "Waiting for code review of the current commit"
+    try:
+        completed = datetime.fromisoformat(code_match.group("completed_at").replace("Z", "+00:00"))
+        if completed.tzinfo is None:
+            raise ValueError("Review timestamp requires a timezone")
+    except ValueError:
+        return "pending", "Review completion time is invalid"
     for c in comments:
         if c.get("author_association") not in {"OWNER", "MEMBER", "COLLABORATOR"}:
             continue
-        for command in re.finditer(r"@codex\s+(security\s+)?review\b", c.get("body", ""), re.I):
-            requested = comment_time(c)
-            label = "Security Review" if command.group(1) else "Code Review"
-            if waived_at and label == "Security Review":
-                # Only the bound request may be covered by its quota receipt.
-                # Any later request (including before that receipt), or another
-                # request with an ambiguous same-second time, needs new evidence.
-                if c.get("id") != request_id and requested >= requested_at:
-                    return "pending", "A newer security request needs a new quota receipt or completed review"
-            if requested > completed[label]:
-                return "pending", "A newer review request is still awaiting completion"
+        if re.search(r"@codex\s+review\b", c.get("body", ""), re.I):
+            if comment_time(c) >= completed:
+                return "pending", "A newer code review request is still awaiting completion"
     if any(not thread.get("isResolved", False) or not thread.get("resolverCanReconcile", False)
            for thread in threads):
         return "failure", "A maintainer must reconcile every review discussion"
-    # The bot abbreviates the code-review SHA. A separate privileged acceptance
-    # binds both completed reviews to the full head, including prefix collisions.
+    # The bot abbreviates the code-review SHA. Independent privileged acceptance
+    # binds the completed code review to the full head, including prefix collisions.
+    # It also follows priority-tagged bot findings, including security findings.
+    findings_at = max((comment_time(c) for c in comments
+                       if c.get("user", {}).get("login") == BOT
+                       and c.get("user", {}).get("type") == "Bot"
+                       and SUMMARY not in c.get("body", "")
+                       and re.search(r"\bP[0-3]\b", c.get("body", ""))), default=completed)
     for c in comments:
         acceptance = ACCEPTANCE.fullmatch(c.get("body", "").strip())
         if not c.get("maintainerCanAccept") or not acceptance or acceptance.group(1) != head:
             continue
-        accepted = comment_time(c)
-        if accepted > max(completed.values()):
-            if waived_at:
-                return "success", "Code reviewed; maintainer accepted full commit with verified security quota exception"
-            return "success", "Both reviews completed; maintainer accepted the full commit"
+        if comment_time(c) > max(completed, findings_at):
+            return "success", "Code reviewed; maintainer accepted full commit; hosted security review optional"
     return "pending", "Waiting for maintainer acceptance of the full reviewed commit"
 
 
@@ -260,67 +152,62 @@ def main() -> int:
             "body": f"{APPROVAL_PREFIX} PR #{number} requires gate revalidation before approval."})
     if not default_base:
         return 0
-    required = effective_hosted_review(prefix, number, pr)
-    state, description = "success", OPTIONAL_DESCRIPTION
-    if required:
-        comments = []
-        for page in range(1, 101):
-            items = request(f"{prefix}/issues/{number}/comments?per_page=100&page={page}")
-            comments.extend(items)
-            if len(items) < 100:
-                break
-        else:
-            raise RuntimeError("Comment limit exceeded")
-        owner, name = repo.split("/")
-        threads = []
-        cursor = None
-        query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
-          repository(owner:$owner,name:$name) { pullRequest(number:$number) {
-            reviewThreads(first:100,after:$cursor) { nodes { isResolved resolvedBy { login } }
-              pageInfo { hasNextPage endCursor } }
-          } }
-        }"""
-        for _ in range(100):
-            result = request("graphql", {"query": query, "variables": {
-                "owner": owner, "name": name, "number": number, "cursor": cursor}})
-            if result.get("errors"):
-                raise RuntimeError("Review discussions unavailable")
-            connection = result["data"]["repository"]["pullRequest"]["reviewThreads"]
-            threads.extend(connection["nodes"])
-            if not connection["pageInfo"]["hasNextPage"]:
-                break
-            cursor = connection["pageInfo"]["endCursor"]
-        else:
-            raise RuntimeError("Discussion limit exceeded")
-        resolver_permissions = {}
-        def can_reconcile(login):
-            if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
-                return False
-            if login not in resolver_permissions:
-                permission = request(f"{prefix}/collaborators/{login}/permission")
-                resolver_permissions[login] = permission.get("permission") in {"admin", "maintain", "write"}
-            return resolver_permissions[login]
+    comments = []
+    for page in range(1, 101):
+        items = request(f"{prefix}/issues/{number}/comments?per_page=100&page={page}")
+        comments.extend(items)
+        if len(items) < 100:
+            break
+    else:
+        raise RuntimeError("Comment limit exceeded")
+    owner, name = repo.split("/")
+    threads = []
+    cursor = None
+    query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
+      repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+        reviewThreads(first:100,after:$cursor) { nodes { isResolved resolvedBy { login } }
+          pageInfo { hasNextPage endCursor } }
+      } }
+    }"""
+    for _ in range(100):
+        result = request("graphql", {"query": query, "variables": {
+            "owner": owner, "name": name, "number": number, "cursor": cursor}})
+        if result.get("errors"):
+            raise RuntimeError("Review discussions unavailable")
+        connection = result["data"]["repository"]["pullRequest"]["reviewThreads"]
+        threads.extend(connection["nodes"])
+        if not connection["pageInfo"]["hasNextPage"]:
+            break
+        cursor = connection["pageInfo"]["endCursor"]
+    else:
+        raise RuntimeError("Discussion limit exceeded")
+    resolver_permissions = {}
+    def can_reconcile(login):
+        if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
+            return False
+        if login not in resolver_permissions:
+            permission = request(f"{prefix}/collaborators/{login}/permission")
+            resolver_permissions[login] = permission.get("permission") in {"admin", "maintain", "write"}
+        return resolver_permissions[login]
 
-        for comment in comments:
-            comment["maintainerCanAccept"] = False
-            if any(pattern.fullmatch(comment.get("body", "").strip())
-                   for pattern in (ACCEPTANCE, QUOTA_REQUEST, QUOTA_EXCEPTION)):
-                comment["maintainerCanAccept"] = can_reconcile(comment.get("user", {}).get("login", ""))
-        for thread in threads:
-            resolver = (thread.get("resolvedBy") or {}).get("login", "")
-            thread["resolverCanReconcile"] = False
-            if not thread.get("isResolved") or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", resolver):
-                continue
-            thread["resolverCanReconcile"] = can_reconcile(resolver)
-        state, description = evaluate(head, comments, threads)
+    for comment in comments:
+        comment["maintainerCanAccept"] = False
+        if ACCEPTANCE.fullmatch(comment.get("body", "").strip()):
+            comment["maintainerCanAccept"] = can_reconcile(comment.get("user", {}).get("login", ""))
+    for thread in threads:
+        resolver = (thread.get("resolvedBy") or {}).get("login", "")
+        thread["resolverCanReconcile"] = False
+        if not thread.get("isResolved") or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", resolver):
+            continue
+        thread["resolverCanReconcile"] = can_reconcile(resolver)
+    state, description = evaluate(head, comments, threads)
     def unchanged():
         current = request(f"{prefix}/pulls/{number}")
         return (current["state"] == "open" and current["head"]["sha"] == head
-                and current["base"]["sha"] == base and current["base"]["ref"] == pr["base"]["ref"]
-                and effective_hosted_review(prefix, number, current) == required)
+                and current["base"]["sha"] == base and current["base"]["ref"] == pr["base"]["ref"])
 
     if not unchanged():
-        raise RuntimeError("PR, base or hosted-review opt-in changed during inspection; rerun the gate")
+        raise RuntimeError("PR or base changed during inspection; rerun the gate")
     if state == "success":
         request(review_path, {"commit_id": head, "event": "APPROVE",
             "body": f"{APPROVAL_PREFIX} PR #{number}, head {head}, base {base}. {description}."})

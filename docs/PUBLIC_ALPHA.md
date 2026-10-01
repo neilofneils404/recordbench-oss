@@ -134,55 +134,49 @@ classification and exact-head publication scanning. Secret scanning and native
 review protections always remain required. Unknown scope runs the full gates;
 failed classification or publication scanning blocks the required check.
 
-Hosted Codex review is an optional maintainer tool. Local/maintainer review is
-sufficient when Quality is green and protections allow merge. By default,
-`hosted-review-gate` publishes success with “Hosted review not required” without
-reading or waiting for Codex results. It still submits a native policy approval
-bound to the individual PR, full head and base so the existing required status
-and approval do not become dangling requirements. This approval records policy
-eligibility only, not a completed code or security review. Branch conversation
-resolution and other native protections still apply independently.
+Actual hosted Codex **code review is mandatory on the final implemented head**
+for every PR targeting the default branch, including documentation-only PRs.
+Local review, review of a plan, a request without completion, an earlier head,
+labels and quota messages cannot replace it. `hosted-review-gate` waits for the
+official Codex bot's completed current-head code-review summary, reconciled
+review discussions and later full-head maintainer acceptance. Unknown or
+incomplete code-review summary formats fail closed. Changed heads and newer or
+edited code-review requests require renewed review. A withdrawn request no
+longer counts; it does not waive the required completion.
 
-A maintainer opts a PR into strict hosted review by adding the exact label
-`require-hosted-review`. Review commands (`@codex review` and
-`@codex security review`) alone request advisory review and do not opt in.
-Adding the label does not launch reviews; request them deliberately. Removing
-the label restores the default optional policy only when the removal actor has
-current write, maintain or admin permission. The gate reconstructs label history
-and fails closed if history is unavailable. A triage-level removal cannot disable
-strict review; a maintainer can add and remove the label again to authorize
-opt-out. Both label events rerun the workflow. Keep automatic code review disabled in the Codex GitHub integration's
-repository settings; Actions policy does not control that separate setting.
-No repository workflow posts review commands on open or synchronize.
+Hosted security review is optional. Its absence, quota exhaustion, pending
+request, running/failed state or stale security result does not prevent code
+review from satisfying the gate. Recognized security rows and metadata are
+advisory, never evidence that code review completed. Do not describe an absent
+or unsuccessful security review as passed. The former `require-hosted-review`
+label and security-quota exception comments have no policy effect; adding or
+removing labels cannot waive code review. No quota receipt is necessary.
 
-Policy changes on an already-open PR require the
-[draft-first procedure](../CONTRIBUTING.md#pull-requests): disable auto-merge,
-convert the PR to draft and confirm that state before changing the label. Keep
-it draft until the resulting gate run finishes and publishes the new policy's
-status and native review. A failed run leaves the PR draft until corrected.
-Label events alone are not an atomic merge barrier; the synchronous draft
-transition prevents the old approval from authorizing a merge while Actions
-queues. Only return the PR to ready after that revalidation.
+Security-sensitive changes (including authentication, authorization, isolation,
+untrusted input, secrets, publication, CI permissions and deployment boundaries)
+still need a focused security assessment in the PR: affected boundary, relevant
+abuse cases, mitigation and regression evidence. Fix actual findings or record
+a reasoned maintainer disposition before acceptance, including findings from
+optional security review. The gate requires every review thread to be resolved
+by someone with current write, maintain or admin permission; acceptance records
+inspection of top-level findings as well. New priority-tagged official bot
+findings require renewed acceptance. A resolved flag alone is not a substantive
+disposition. The maintainer checks disclosure and synthetic-data provenance too.
 
-For opted-in PRs, the gate requires completed GitHub Codex code and security
-reviews on the current head (or the narrow security-quota exception below),
-review discussions reconciled by someone with write, maintain or admin access,
-and later full-head maintainer acceptance. Local review does not substitute for
-those explicitly required hosted reviews. Changed heads and newer requests
-require renewed review; edited requests invalidate earlier completions. A
-withdrawn request no longer counts, but already-recorded running security state
-still blocks until reconciled. Unknown review-summary formats fail closed.
-After resolving discussions, dispatch the Hosted review gate workflow with the
-PR number if a new evaluation is needed.
+Request `@codex review` deliberately after implementation and validation. No
+repository workflow posts review commands on open or synchronize. Keep automatic
+code review disabled in the Codex integration's repository settings; this policy
+does not change that separate setting. After reconciling discussions, dispatch
+the Hosted review gate with the PR number if another evaluation is needed.
 
-In both modes, the status and native approval are required by existing branch
-protection and apply to PRs targeting the default branch. Shared commit status
-cannot grant another PR native approval. The gate withdraws its prior approval
-before reevaluation, then checks head, base and opt-in state around approval.
-Changes during approval withdraw the new approval and require reevaluation.
-Keep strict up-to-date status checks enabled. A default-branch advance requires
-an updated head and fresh CI, plus fresh hosted review when opted in. The gate
-uses pull-request write permission, not repository-admin dismissal rights.
+The required status and native approval remain PR-specific in effect: a shared
+commit status cannot grant another PR native approval. The gate withdraws its
+prior approval before reevaluation, checks head and base before and after
+approval, and withdraws approval if either changes. Keep strict up-to-date
+protection: a default-branch advance requires an updated head, fresh CI and fresh
+hosted code review. Existing native protections and Quality, publication and
+Gitleaks checks remain mandatory. The gate uses pull-request write permission,
+not repository-admin dismissal rights.
 
 The gate reads trusted default-branch code and GitHub metadata only; it never executes the PR head
 with a write token. External contributor workflows require
@@ -192,76 +186,35 @@ workflow permissions are read-only and actions are pinned to full commits.
 Enable GitHub Actions PR-review approval capability for this trusted workflow;
 only this gate requests pull-request write permission.
 
-For an opted-in PR, after both hosted reviews finish, or after code review and the verified
-security-quota exception below, a maintainer independently checks the full
-current head and review results, then posts this exact one-line PR comment,
-replacing the placeholder with the complete 40-character commit ID:
+After hosted code review completes, a maintainer independently inspects the
+full current head, the focused security assessment where applicable, and all
+findings/dispositions, then posts the existing exact one-line PR comment with
+the full 40-character commit ID:
 
 ```text
 RecordBench maintainer acceptance: FULL_COMMIT_ID
 ```
 
-The acceptance timestamp must be strictly later than both review completions
-(or the code completion and quota-exception comment) and come from an account
-with current write, maintain or admin permission. This additional full-commit
-acceptance is required because the code-review summary abbreviates its commit
-ID; a matching short prefix alone is not sufficient. A changed head, a newer
-review completion, or removal of the acceptance requires renewed acceptance.
-Missing acceptance leaves the gate pending. The gate verifies current access
-through GitHub, rather than trusting the comment's displayed association.
+Acceptance must be strictly later than code completion and any subsequently
+posted priority-tagged official bot findings, from an account with current
+write, maintain or admin permission. This binds the bot's abbreviated code SHA
+to the full head; a prefix match alone is insufficient. A changed head, newer
+code completion or removed acceptance requires renewed acceptance. Missing
+acceptance leaves the gate pending. Current access is verified through GitHub,
+not the comment's displayed association. Security credit availability does not
+add a separate acceptance or exception step.
 
-The maintainer still reviews disclosure, provenance, and reconciled findings.
-Outside contributors do not need or receive access to a private deployment.
+### Historical security-quota policy
 
-### Security-review quota exception
-
-This exception applies only to PRs labeled `require-hosted-review`.
-
-A maintainer may proceed when GitHub Codex explicitly cannot start security
-review because its security-review quota is exhausted. This is a recorded
-exception, never a claim that security review passed. Completed current-head
-code review, required CI, reconciled discussions, native gate approval, strict
-up-to-date protection and no-reply publication checks remain required.
-
-On the PR, request security review with these exact two paragraphs, replacing
-the placeholder with the full current head:
-
-```text
-@codex security review
-
-RecordBench security review head: FULL_COMMIT_ID
-```
-
-After the official Codex bot replies with its explicit security-review usage
-limit message, inspect the full head and all review findings. Record this exact
-one-line exception using the numeric issue-comment IDs of that request and bot
-response on this PR:
-
-```text
-RecordBench security quota exception: FULL_COMMIT_ID; request: REQUEST_COMMENT_ID; response: RESPONSE_COMMENT_ID
-```
-
-Then post the ordinary full-head maintainer acceptance above, strictly after
-both the code-review completion and exception. The gate verifies live write,
-maintain or admin permission for the request, exception and acceptance authors.
-It requires the official bot identity, exact quota message, matching full head,
-and request-before-response-before-exception timestamps. Editing an old request
-cannot reuse a previous response. Removed evidence or a changed head invalidates
-the exception. Any other security request at or after the bound request time needs its own completion or quota receipt, including requests before the referenced response and ambiguous same-second requests.
-
-This path applies only when the latest official review summary has no security
-review row or security metadata. Recorded running, failed, malformed or stale
-security-review state must be reconciled through hosted review; quota cannot
-override it. Quota handling requires the complete known code-only summary in order: its header, exact table shape, completed code row and fixed help footer. Missing, reordered or additional content requires diagnosis. The code timestamp and commit prefix are read from their specific fields. The native approval and status explicitly identify the exception.
-No local review substitutes for required hosted code review. Branch protections
-are not disabled to apply an exception.
-
-The policy landed in [#71](https://github.com/neilofneils404/recordbench-oss/pull/71)
-at `17eafce965062e9fbdf8884738e277573abc8f7f` after a one-time installation
-from the immutable protected tag `recordbench-quota-policy-bootstrap-20260912-v1`.
-The scoped bootstrap dispatch has been removed from the current workflow.
-Retain that historical tag and its update/deletion protection without bypass
-actors. All later quota exceptions use the ordinary default-branch gate.
+The former security-quota exception landed in
+[#71](https://github.com/neilofneils404/recordbench-oss/pull/71) at
+`17eafce965062e9fbdf8884738e277573abc8f7f` using the immutable protected tag
+`recordbench-quota-policy-bootstrap-20260912-v1`. Historical receipts retain
+that meaning; new PRs use mandatory code review and optional hosted security
+review. Retain the historical tag and its update/deletion protection without
+bypass actors. The scoped bootstrap dispatch remains removed. This policy is
+executed only after normal review and landing on the trusted default branch;
+a PR's candidate workflow cannot self-activate it.
 
 The gate withdraws its prior native approval when a PR moves away from the
 default branch. Publication identity dispositions support SHA-1 and SHA-256

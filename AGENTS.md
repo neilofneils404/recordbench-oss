@@ -12,12 +12,13 @@ content and metadata for private information. Hosted CI runs after upload and
 cannot prevent the initial disclosure. Private deployment facts belong outside
 this repository, including in plans and agent handoffs. Read docs/PUBLIC_ALPHA.md.
 
-Hosted Codex code/security review is optional unless a maintainer adds the
-`require-hosted-review` PR label. By default, local/maintainer review is enough
-when all Quality gates pass and branch protections allow merge. Do not request
-hosted reviews automatically on PR open or synchronize. For opted-in PRs, follow
-the final-head review, findings reconciliation and maintainer acceptance rules
-in `docs/PUBLIC_ALPHA.md`. Publication safeguards and Quality gates always apply.
+Actual hosted Codex code review is mandatory on the final implemented PR head,
+with reconciled findings and full-head maintainer acceptance under
+`docs/PUBLIC_ALPHA.md`. Local review, labels and quota messages cannot replace
+it. Hosted security review is optional; security-sensitive changes still need a
+focused security assessment and disposition of real findings. Do not request
+hosted reviews automatically on PR open or synchronize. Publication safeguards,
+Quality gates, Gitleaks and native protections always apply.
 
 Before changing deployment behavior, read `docs/ARCHITECTURE.md`,
 `docs/SECURITY_MODEL.md`, and the relevant runbook. Keep services private by

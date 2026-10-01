@@ -13,7 +13,8 @@ acceptance performed. Do not include private deployment output.
 
 ## Impact
 
-- Security, authorization, or matter isolation:
+- Security, authorization, or matter isolation (for sensitive changes, include
+  the focused assessment, abuse cases, regression evidence and findings disposition):
 - Storage, deletion, backup, or migration:
 - Models, licensing, or offline operation:
 - Operator documentation or recovery:
@@ -30,8 +31,9 @@ acceptance performed. Do not include private deployment output.
 - [ ] The publication sanitizer passes.
 - [ ] The complete outgoing history passed the local pre-push check; PR text
       and attachments were separately inspected before upload.
-- [ ] Before merge: local/maintainer review completed, all Quality gates passed,
-      and branch protections allow merge. Hosted reviews are optional unless
-      `require-hosted-review` is applied; opted-in PRs meet the final-head review
-      and acceptance rules in `docs/PUBLIC_ALPHA.md`.
+- [ ] Before merge: actual hosted Codex code review completed on the final
+      implemented head, findings were reconciled and a maintainer accepted the
+      full head under `docs/PUBLIC_ALPHA.md`. Hosted security review is optional;
+      labels and quotas cannot waive code review. All Quality, publication,
+      Gitleaks and native branch protections remain required.
 - [ ] No existing release tag was moved or rewritten.
