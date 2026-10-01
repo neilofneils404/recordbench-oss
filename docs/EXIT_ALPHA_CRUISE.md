@@ -72,8 +72,12 @@ in this file) landed in [PR #127](https://github.com/neilofneils404/recordbench-
 at `29f94e9` after clean final-head hosted code review and passing Quality; it also
 raised the application gate timeout to 45 minutes. Increment 3a (automatic
 discovery after processing, migration `0037`, behind
-`CASE_INTELLIGENCE_AUTOMATIC_DISCOVERY`) is proposed in its own PR; its suggestions
-inbox (3b) follows separately. Each PR requests hosted code review before merge. See
+`CASE_INTELLIGENCE_AUTOMATIC_DISCOVERY`) landed in
+[PR #131](https://github.com/neilofneils404/recordbench-oss/pull/131) at `a53a6fa`
+after clean final-head hosted code review, passing Quality and maintainer
+acceptance; its restore drill is `scripts/automatic-discovery-restore-drill.py`.
+Increment 3b (one grouped suggestions inbox on People & things, no schema change)
+is proposed in its own PR. Each PR requests hosted code review before merge. See
 the [workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar) and
 [entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing).
 

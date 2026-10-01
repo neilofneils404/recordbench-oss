@@ -79,6 +79,27 @@ class EntityService:
             repo.record_history(matter_id, actor_id, entity_id, 'edited')
             return repo.get(matter_id, entity_id)
 
+    def decide(self, matter_id, actor_id, targets, *, status):
+        """Record one review decision on each listed identity, all or nothing.
+
+        targets is a sequence of (entity_id, expected_revision). Nothing else
+        about an identity changes; identities are never merged.
+        """
+        if status not in ('confirmed', 'dismissed', 'needs_review'):
+            raise WorkspaceProblem('Choose confirm, not relevant, or needs review.')
+        if not 1 <= len(targets) <= 200 or len({entity_id for entity_id, _ in targets}) != len(targets):
+            raise WorkspaceProblem('Choose between 1 and 200 distinct suggestions.')
+        with self.repository.transaction(matter_id, actor_id) as repo:
+            for entity_id, expected_revision in targets:
+                current = repo.check_revision(matter_id, entity_id, expected_revision)
+                repo.save(matter_id, actor_id, entity_id, dict(current, status=status))
+                repo.record_history(matter_id, actor_id, entity_id, 'edited')
+        return len(targets)
+
+    def inbox(self, matter_id, actor_id, *, kind='', page=1):
+        with self.repository.transaction(matter_id, actor_id) as repo:
+            return repo.suggestion_inbox(matter_id, kind, page)
+
     def attach(self, matter_id, actor_id, entity_id, *, expected_revision, support):
         with self.source_guard(), self.repository.transaction(matter_id, actor_id) as repo:
             current = repo.check_revision(matter_id, entity_id, expected_revision)

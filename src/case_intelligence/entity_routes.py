@@ -19,7 +19,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
         return matter_return_path(slug, value, fallback=f'/matters/{slug}')
 
     def render(request, slug, *, entity_id='', q='', page=1, review_page=1, candidate_page=1, support='', return_to='',
-               error='', draft=None, status_code=200):
+               error='', draft=None, status_code=200, kind='', inbox_page=1):
         matter = authorized_matter(request, slug)
         actor = auth_context(request).principal_id
         service = service_for(matter)
@@ -32,7 +32,12 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
         runs = discovery.runs(matter.matter_id, actor, page=review_page) if not entity_id else []
         has_more_reviews = len(runs) > 20
         coverage = [discovery.coverage(matter.matter_id, actor, row['run_id'], limit=0) for row in runs[:20]]
+        inbox, inbox_total, inbox_kinds = [], 0, {}
+        if kind not in ('', 'people', 'organizations', 'things', 'dates'):
+            kind = ''
         try:
+            if not entity_id and not q:
+                inbox, inbox_total, inbox_kinds = service.inbox(matter.matter_id, actor, kind=kind, page=inbox_page)
             entities, total = service.list(matter.matter_id, actor, query=q, page=page)
             if entity_id:
                 entity, mentions, history, note = service.detail(matter.matter_id, actor, entity_id)
@@ -68,6 +73,10 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
             'error': error, 'draft': draft, 'show_assistant_dock': False,
             'automatic_attention': (automatic or {}).get('sources_attention', 0),
             'automatic_paused': bool((automatic or {}).get('budget_reached')),
+            'inbox': inbox, 'inbox_total': inbox_total, 'inbox_kinds': inbox_kinds, 'inbox_kind': kind,
+            'inbox_page': inbox_page,
+            'inbox_url': lambda target_kind=kind, target_page=1: f'/matters/{slug}/entities?' + urlencode(dict(
+                kind=target_kind, inbox_page=target_page, return_to=return_to)) + '#suggestions',
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
         try:
             with service.repository.transaction(matter.matter_id, actor):
@@ -82,8 +91,10 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                  q: str = Query('', max_length=200), page: int = Query(1, ge=1, le=100_000),
                  review_page: int = Query(1, ge=1, le=100_000),
                  candidate_page: int = Query(1, ge=1, le=100_000),
-                 support: str = Query('', max_length=40), return_to: str = Query('', max_length=4000)):
-        return render(request, slug, entity_id=entity_id, q=q, page=page, review_page=review_page, candidate_page=candidate_page, support=support, return_to=return_to)
+                 support: str = Query('', max_length=40), return_to: str = Query('', max_length=4000),
+                 kind: str = Query('', max_length=24), inbox_page: int = Query(1, ge=1, le=100_000)):
+        return render(request, slug, entity_id=entity_id, q=q, page=page, review_page=review_page, candidate_page=candidate_page, support=support, return_to=return_to,
+                      kind=kind, inbox_page=inbox_page)
 
     def render_discovery(request, slug, run_id, *, page=1, source_page=1, q='', return_to='', error=''):
         matter = authorized_matter(request, slug)
@@ -119,7 +130,9 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                       target_id: str = Form('', max_length=80), target_revision: int = Form(0, ge=0),
                       operation_id: str = Form('', max_length=80), run_id: str = Form('', max_length=80),
                       mention_id: str = Form('', max_length=80), q: str = Form('', max_length=200),
-                      return_to: str = Form('', max_length=4000)):
+                      return_to: str = Form('', max_length=4000), kind: str = Form('', max_length=24),
+                      targets: str = Form('', max_length=20_000),
+                      inbox_page: int = Form(1, ge=1, le=100_000)):
         matter = authorized_matter(request, slug)
         actor = auth_context(request).principal_id
         service = service_for(matter)
@@ -146,6 +159,14 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
             elif action == 'create':
                 entity = service.create(matter.matter_id, actor, support=support, **fields)
                 entity_id = entity['entity_id']
+            elif action == 'decide':
+                pairs = []
+                for part in (targets.split(',') if targets else [f'{entity_id}:{expected_revision}']):
+                    identifier, _, revision = part.partition(':')
+                    if not identifier or not revision.isdigit():
+                        raise WorkspaceProblem('Choose between 1 and 200 distinct suggestions.')
+                    pairs.append((identifier, int(revision)))
+                service.decide(matter.matter_id, actor, pairs, status=status)
             elif action == 'update':
                 service.update(matter.matter_id, actor, entity_id, expected_revision=expected_revision, **fields)
             elif action == 'attach':
@@ -174,6 +195,11 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                 return render_discovery(request, slug, run_id, q=q, return_to=return_to,
                     error=str(exc) if isinstance(exc, WorkspaceProblem) else 'The frozen review is unavailable. Open full-text coverage to choose a current run.')
             error = str(exc) if isinstance(exc, WorkspaceProblem) else 'The entity, note, or original passage changed or is unavailable. Your submitted text is preserved below.'
+            if action == 'decide':
+                # A stale or removed suggestion: show the refreshed inbox, not an edit draft.
+                return render(request, slug, return_to=return_to, kind=kind, inbox_page=inbox_page,
+                              error='That suggestion changed since this page loaded. The list below is current.',
+                              status_code=409)
             try:
                 return render(request, slug, entity_id=entity_id, q=q, support=support, return_to=return_to,
                               error=error, draft=dict(fields, action=action, entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id),
@@ -185,6 +211,9 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                               error=error, draft=dict(fields, action=action if action in ('merge','split','alias','reject') else 'create', entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id), status_code=409)
         audit(request, 'entity.' + action, 'success', context=auth_context(request), matter=matter,
               object_type='entity', object_id=entity_id or deleted_entity_id or matter.matter_id)
+        if action == 'decide':
+            return RedirectResponse(f'/matters/{slug}/entities?' + urlencode(dict(
+                kind=kind, inbox_page=inbox_page, return_to=return_path(slug, return_to))) + '#suggestions', status_code=303)
         path = (f'/matters/{slug}/entity-discovery/{run_id}' if action in ('discover', 'retry_discovery')
                 else f'/matters/{slug}/entities' + ('/' + entity_id if entity_id else ''))
         return RedirectResponse(path + '?' + urlencode(dict(q=q, return_to=return_path(slug, return_to))), status_code=303)

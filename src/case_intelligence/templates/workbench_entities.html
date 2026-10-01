@@ -32,16 +32,45 @@
     <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('retry_automatic') }}<button type="submit">Retry automatic discovery</button></form>
   </section>
   {% endif %}
+  {% if not entity and not q and inbox_kinds and inbox_kinds.values()|sum %}
+  {% set type_labels = {'person': 'Person', 'organization': 'Organization', 'thing': 'Thing', 'identifier': 'Identifier', 'date': 'Date'} %}
+  <section class="suggestion-inbox" id="suggestions" aria-labelledby="suggestions-heading" data-suggestion-inbox>
+    <header>
+      <h2 id="suggestions-heading">Suggestions to review <span class="suggestion-total">{{ inbox_kinds.values()|sum }}</span></h2>
+      <p>Found automatically in your sources. Nothing is confirmed until you decide. Matching names are grouped; a decision applies to each and never merges them. Dates are shown exactly as written.</p>
+    </header>
+    <nav class="suggestion-kinds" aria-label="Suggestion types">
+      <a href="{{ inbox_url('') }}"{% if not inbox_kind %} aria-current="page"{% endif %}>All <span>{{ inbox_kinds.values()|sum }}</span></a>
+      {% for key, label in [('people','People'),('organizations','Organizations'),('things','Things & IDs'),('dates','Dates')] %}{% if inbox_kinds[key] %}<a href="{{ inbox_url(key) }}"{% if inbox_kind == key %} aria-current="page"{% endif %}>{{ label }} <span>{{ inbox_kinds[key] }}</span></a>{% endif %}{% endfor %}
+    </nav>
+    <ol class="suggestion-list">
+      {% for row in inbox %}
+      <li class="suggestion" data-suggestion>
+        <div class="suggestion-main">
+          <p class="suggestion-title"><a href="{{ entity_url(row.entity_id) }}">{{ row.display_name }}</a> <span class="suggestion-type">{{ type_labels.get(row.entity_type, row.entity_type|title) }}</span> <span class="suggestion-count">{{ row.mention_count }} mention{{ '' if row.mention_count == 1 else 's' }}{% if row.source_count > 1 %} · {{ row.source_count }} sources{% endif %}</span></p>
+          {% if row.first_mention %}<p class="suggestion-passage">{% set part = row.first_mention.snippet %}<span>{{ part[0] }}{% if part[1] %}<mark>{{ part[1] }}</mark>{% endif %}{{ part[2] }}</span><a class="suggestion-source" href="/matters/{{ matter.slug }}?support={{ row.first_mention.support_token }}#support-pane">{{ row.first_mention.source_name }} · {{ row.first_mention.location }}</a></p>{% endif %}
+        </div>
+        <div class="suggestion-actions">
+          {% for value, label, style in [('confirmed', 'Confirm', 'button-primary'), ('dismissed', 'Not relevant', 'button-secondary')] %}
+          <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('decide') }}<input type="hidden" name="targets" value="{{ row.targets }}"><input type="hidden" name="status" value="{{ value }}"><input type="hidden" name="kind" value="{{ inbox_kind }}"><input type="hidden" name="inbox_page" value="{{ inbox_page }}"><button class="button {{ style }}" aria-label="{{ label }}: {{ row.display_name }}">{{ label }}</button></form>
+          {% endfor %}
+        </div>
+      </li>
+      {% else %}<li class="suggestion-empty">No suggestions of this type.</li>{% endfor %}
+    </ol>
+    {% if inbox_page > 1 or inbox_page * 25 < inbox_total %}<nav class="suggestion-pages" aria-label="Suggestion pages">{% if inbox_page > 1 %}<a href="{{ inbox_url(inbox_kind, inbox_page - 1) }}">Previous</a>{% endif %} {% if inbox_page * 25 < inbox_total %}<a href="{{ inbox_url(inbox_kind, inbox_page + 1) }}">More suggestions</a>{% endif %}</nav>{% endif %}
+  </section>
+  {% endif %}
   {% if not entity %}
-  <section class="notebook-tool-card" aria-labelledby="discovery-heading"><h2 id="discovery-heading">Suggested findings: guided discovery</h2>
-    <p>Uses the frozen unit inventory from Review all extracted text. Each action processes up to 10 pending units and saves progress. Recognition is a bounded deterministic suggestion, not proof of completeness or identity. No model is required.</p>
+  <details class="notebook-tool-card guided-discovery" aria-labelledby="discovery-heading"{% if not inbox_kinds or not inbox_kinds.values()|sum %} open{% endif %}><summary><h2 id="discovery-heading">Guided discovery from a full-text review</h2></summary>
+    <p>New sources are checked automatically when this deployment enables it. Guided discovery uses the frozen unit inventory from Review all extracted text. Each action processes up to 10 pending units and saves progress. Recognition is a bounded deterministic suggestion, not proof of completeness or identity. No model is required.</p>
     {% for run in coverage %}<details><summary>Text review {{ run.run_id }} · {{ run.counts.processed }} units processed · {{ run.counts.pending }} pending · {{ run.counts.failed }} failed · {{ run.counts.invalidated }} changed</summary>
       <p>Extractor: {{ run.extractor_version }}. Units not yet inventoried by text review remain unprocessed; resume that review to make them available.</p>
       <p>{{ run.source_total }} frozen sources · {{ run.uninventoried }} not yet inventoried · {{ run.source_counts.get('unavailable', 0) }} unavailable. <a href="{{ coverage_url(run.run_id) }}">View source and unit outcomes</a></p>
       <p><a class="button button-secondary" href="{{ coverage_url(run.run_id) }}">Check readiness and discover suggestions</a></p>
     </details>{% else %}<p>No frozen text-review population yet. <a href="/matters/{{ matter.slug }}/full-review">Open full-text review</a> to explicitly start Review all extracted text. Check intake and processing first; discovery cannot supply missing extraction. Text review may require the configured model; opening this page starts no analysis. Manual entity work is available below.</p>{% endfor %}
     <nav aria-label="Text review run pages">{% if review_page > 1 %}<a href="{{ review_page_url(review_page-1) }}">Previous review runs</a>{% endif %} {% if has_more_reviews %}<a href="{{ review_page_url(review_page+1) }}">Next review runs</a>{% endif %}</nav>
-  </section>
+  </details>
   {% endif %}
   {% if entity %}
     <p>{{ entity.entity_type|title }} · {{ entity.status|replace('_',' ')|title }} · Revision {{ entity.revision }}<br><small>Identity {{ entity.entity_id }} · {{ ('Machine discovery: ' + entity.extractor_version) if entity.extractor_version else 'Imported from case notes; original provenance retained' if entity.origin == 'notebook' else 'Created by a reviewer' }}</small></p>

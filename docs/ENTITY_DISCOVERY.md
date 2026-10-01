@@ -133,6 +133,19 @@ at startup and every 15 minutes, so restarts converge without a queue. It never
 starts transcription, OCR or a model. With the setting off, nothing runs and
 guided discovery behaves exactly as before.
 
+## Review suggestions
+
+**Case file → People & things** opens with **Suggestions to review** whenever
+suggested identities exist. Rows group suggestions with the same name and type,
+most-mentioned first, and show the first passage with the name highlighted and a
+link to the original. Filter by People, Organizations, Things & IDs or Dates.
+**Confirm** or **Not relevant** records that status on every suggestion in the
+row, up to 200 at a time, in one all-or-nothing save under each identity's
+revision. Nothing is merged, renamed or detached; open the name to reconcile,
+edit or attach passages. If another reviewer changed one of them first, nothing
+is saved and the refreshed list is shown. Guided discovery from a full-text
+review remains below, collapsed while suggestions wait.
+
 ## What the initial extractor recognizes
 
 `deterministic-entities-v1` is a replaceable local rule implementation. It finds
@@ -279,7 +292,7 @@ pre-upgrade backup with the preceding reader.
 Validation commands:
 
 ```console
-python -m pytest -q tests/test_automatic_discovery.py
+python -m pytest -q tests/test_automatic_discovery.py tests/test_suggestion_inbox.py
 python scripts/automatic-discovery-restore-drill.py
 python -m pytest -q tests/test_entity_discovery.py tests/test_entity_workspace.py tests/test_matter_notebook.py tests/test_notebook_conflicts.py
 python scripts/entity-discovery-restore-drill.py

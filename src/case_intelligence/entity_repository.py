@@ -114,6 +114,70 @@ class EntityRepository:
              actor_id, self.now(), matter_id, entity_id),
         )
 
+    INBOX_KINDS = {'people': ('person',), 'organizations': ('organization',),
+                   'things': ('thing', 'identifier'), 'dates': ('date',)}
+
+    @staticmethod
+    def snippet(excerpt, name, radius=90):
+        """A short window around the first occurrence, as (before, match, after)."""
+        text = ' '.join(excerpt.split())
+        at = text.casefold().find(' '.join(name.split()).casefold())
+        if at < 0:
+            return (text[:2 * radius] + ('…' if len(text) > 2 * radius else ''), '', '')
+        end_match = at + len(' '.join(name.split()))
+        start, end = max(0, at - radius), min(len(text), end_match + radius)
+        return (('…' if start else '') + text[start:at], text[at:end_match],
+                text[end_match:end] + ('…' if end < len(text) else ''))
+
+    INBOX_GROUP_LIMIT = 200
+
+    def suggestion_inbox(self, matter_id, kind='', page=1, page_size=25):
+        """Suggested identities grouped by name and type, most-mentioned first.
+
+        Grouping is presentation only: each identity stays separate and is
+        decided individually under its own revision.
+        """
+        types = self.INBOX_KINDS.get(kind, ())
+        where = "e.matter_id=? AND e.status='suggested'"
+        params = [matter_id]
+        if types:
+            where += ' AND e.entity_type IN (' + ','.join('?' * len(types)) + ')'
+            params.extend(types)
+        counts = {row[0]: row[1] for row in self.connection.execute(
+            "SELECT entity_type,COUNT(DISTINCT display_name) FROM workbench_entity WHERE matter_id=? "
+            "AND status='suggested' GROUP BY entity_type", (matter_id,))}
+        total = self.connection.execute(
+            'SELECT COUNT(*) FROM (SELECT 1 FROM workbench_entity e WHERE ' + where +
+            ' GROUP BY e.entity_type,e.display_name)', params).fetchone()[0]
+        groups = self.connection.execute(
+            'SELECT e.display_name,e.entity_type,COUNT(*) AS identity_count,'
+            '(SELECT COUNT(*) FROM workbench_entity_mention m JOIN workbench_entity x ON x.matter_id=m.matter_id '
+            'AND x.entity_id=m.entity_id WHERE m.matter_id=e.matter_id AND x.status=\'suggested\' '
+            'AND x.display_name=e.display_name AND x.entity_type=e.entity_type) AS mention_count,'
+            'COUNT(DISTINCT (SELECT m.document_id FROM workbench_entity_mention m WHERE m.matter_id=e.matter_id '
+            'AND m.entity_id=e.entity_id LIMIT 1)) AS source_count '
+            'FROM workbench_entity e WHERE ' + where + ' GROUP BY e.entity_type,e.display_name '
+            'ORDER BY mention_count DESC,e.display_name,e.entity_type LIMIT ? OFFSET ?',
+            (*params, page_size, (page - 1) * page_size)).fetchall()
+        items = []
+        for group in groups:
+            members = [dict(row) for row in self.connection.execute(
+                "SELECT entity_id,revision FROM workbench_entity WHERE matter_id=? AND status='suggested' "
+                'AND display_name=? AND entity_type=? ORDER BY created_at,entity_id LIMIT ?',
+                (matter_id, group['display_name'], group['entity_type'], self.INBOX_GROUP_LIMIT))]
+            first = self.connection.execute(
+                'SELECT source_name,location,excerpt,support_token FROM workbench_entity_mention '
+                'WHERE matter_id=? AND entity_id=? ORDER BY created_at,mention_id LIMIT 1',
+                (matter_id, members[0]['entity_id'])).fetchone() if members else None
+            mention = dict(first) if first else None
+            if mention:
+                mention['snippet'] = self.snippet(mention.pop('excerpt'), group['display_name'])
+            items.append(dict(group, members=members, first_mention=mention,
+                              entity_id=members[0]['entity_id'] if members else '',
+                              targets=','.join(f"{row['entity_id']}:{row['revision']}" for row in members)))
+        kinds = {name: sum(counts.get(value, 0) for value in values) for name, values in self.INBOX_KINDS.items()}
+        return items, total, kinds
+
     def has_mention(self, matter_id, entity_id, support_token):
         return self.connection.execute(
             'SELECT 1 FROM workbench_entity_mention WHERE matter_id=? AND entity_id=? AND support_token=?',
