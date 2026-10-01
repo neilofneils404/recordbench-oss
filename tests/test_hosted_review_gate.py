@@ -143,6 +143,9 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch, la
             if "/comments?" in path:
                 return [summary(), accepted]
             if path == "graphql":
+                if "reviews(first:" in data["query"]:
+                    return {"data": {"repository": {"pullRequest": {"reviews": {
+                        "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
                 return {"data": {"repository": {"pullRequest": {"reviewThreads": {
                     "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
             if path.endswith("/collaborators/fixture-reviewer/permission"):
@@ -187,6 +190,9 @@ def test_shared_head_does_not_share_native_approval_or_approve_another_base(monk
             if "/comments?" in path:
                 return [summary()] + ([accepted] if number != 2 else [])
             if path == "graphql":
+                if "reviews(first:" in data["query"]:
+                    return {"data": {"repository": {"pullRequest": {"reviews": {
+                        "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
                 return {"data": {"repository": {"pullRequest": {"reviewThreads": {
                     "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
             if path.endswith("/collaborators/fixture-reviewer/permission"):
@@ -232,6 +238,9 @@ def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):
         if "/comments?" in path:
             return [summary(), accepted]
         if path == "graphql":
+            if "reviews(first:" in data["query"]:
+                return {"data": {"repository": {"pullRequest": {"reviews": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
             return {"data": {"repository": {"pullRequest": {"reviewThreads": {
                 "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
         if path.endswith("/collaborators/fixture-reviewer/permission"):
@@ -368,6 +377,9 @@ def test_no_label_policy_can_approve_without_code(monkeypatch, labels):
             statuses.append(data["state"])
             return {}
         if path == "graphql":
+            if "reviews(first:" in data["query"]:
+                return {"data": {"repository": {"pullRequest": {"reviews": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
             return {"data": {"repository": {"pullRequest": {"reviewThreads": {
                 "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
         raise AssertionError(path)
@@ -432,6 +444,9 @@ def test_changed_pr_never_publishes_success(monkeypatch, change_at, field):
         if path.endswith("/permission"):
             return {"permission": "write"}
         if path == "graphql":
+            if "reviews(first:" in data["query"]:
+                return {"data": {"repository": {"pullRequest": {"reviews": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
             return {"data": {"repository": {"pullRequest": {"reviewThreads": {
                 "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
         raise AssertionError(path)
@@ -458,3 +473,153 @@ def test_unknown_summary_extensions_fail_closed(extra):
     current = summary()
     current["body"] += "\n" + extra
     assert evaluate(HEAD, [current], [])[0] == "pending"
+
+
+def graphql_finding(*, body=None, updated="2026-01-01T14:00:00Z", kind="Bot",
+                    login="chatgpt-codex-connector"):
+    # The badge shape and GraphQL login match observed official inline findings;
+    # the finding itself and all timestamps are synthetic.
+    return {"body": body if body is not None else
+            "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub> Synthetic security finding**",
+            "author": {"login": login, "__typename": kind},
+            "createdAt": "2026-01-01T12:30:00Z", "updatedAt": updated}
+
+
+def connection(nodes, cursor=None):
+    return {"nodes": nodes, "pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor}}
+
+
+def finding_api(monkeypatch, accepted, surface, *, broken=None):
+    """Exercise the live gate through later thread, reply and review pages."""
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
+    monkeypatch.setenv("PR_NUMBER", "1")
+    statuses, events, reads = [], [], []
+    finding = graphql_finding()
+    benign = graphql_finding(body="Synthetic maintainer disposition", kind="User", login="fixture-reviewer")
+    accepted["user"] = {"login": "fixture-reviewer"}
+    def request(path, data=None, *, method=None):
+        if path.endswith("/pulls/1"):
+            return {"state": "open", "labels": [], "head": {"sha": HEAD},
+                    "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}},
+                    "html_url": "https://example.test/pr/1"}
+        if path.split("?")[0].endswith("/reviews"):
+            if data is None:
+                return []
+            events.append(data["event"])
+            return {}
+        if "/comments?" in path:
+            return [summary(), accepted] + ([GATE.finding_comment(finding)] if surface == "issue" else [])
+        if "/statuses/" in path:
+            statuses.append(data["state"])
+            return {}
+        if path.endswith("/permission"):
+            return {"permission": "write"}
+        if path == "graphql":
+            query, cursor = data["query"], data["variables"]["cursor"]
+            kind = "threads" if "reviewThreads(first:" in query else "replies" if "node(id:" in query else "reviews"
+            reads.append((kind, cursor))
+            if broken == (kind, cursor):
+                return {"data": {}, "errors": [{"message": "Synthetic evidence failure"}]}
+            if kind == "threads":
+                if cursor is None:
+                    nodes = [{"id": "thread-one", "isResolved": True,
+                              "resolvedBy": {"login": "fixture-reviewer"},
+                              "comments": connection([benign])}]
+                    conn = connection(nodes, "next-thread")
+                else:
+                    node = {"id": "thread-two", "isResolved": True,
+                            "resolvedBy": {"login": "fixture-reviewer"},
+                            "comments": connection([finding if surface == "inline" else benign], "next-reply")}
+                    conn = connection([node])
+                return {"data": {"repository": {"pullRequest": {"reviewThreads": conn}}}}
+            if kind == "replies":
+                assert data["variables"]["id"] == "thread-two"
+                assert cursor == "next-reply"
+                return {"data": {"node": {"comments": connection([finding if surface == "reply" else benign])}}}
+            conn = connection([benign], "next-review") if cursor is None else connection([finding if surface == "review" else benign])
+            return {"data": {"repository": {"pullRequest": {"reviews": conn}}}}
+        raise AssertionError(path)
+    monkeypatch.setattr(GATE, "request", request)
+    return statuses, events, reads
+
+
+@pytest.mark.parametrize("surface", ["issue", "inline", "reply", "review"])
+def test_later_resolved_security_finding_requires_new_full_head_acceptance(monkeypatch, surface):
+    # Code completed at 12; accepted at 13; a priority finding posted/edited at
+    # 14 was resolved by a maintainer. Resolution must not reuse acceptance at 13.
+    accepted = approval()
+    statuses, events, reads = finding_api(monkeypatch, accepted, surface)
+    assert GATE.main() == 0
+    assert statuses == ["pending", "pending"]
+    assert events == ["REQUEST_CHANGES"]
+    assert ("threads", "next-thread") in reads
+    assert ("replies", "next-reply") in reads
+    assert ("reviews", "next-review") in reads
+    accepted["updated_at"] = "2026-01-01T14:00:00Z"
+    assert GATE.main() == 0
+    assert statuses[-1] == "pending"  # Ties remain ambiguous.
+    accepted["updated_at"] = "2026-01-01T14:01:00Z"
+    assert GATE.main() == 0
+    assert statuses[-1] == "success"
+    assert events[-1] == "APPROVE"
+
+
+@pytest.mark.parametrize("page", [("threads", None), ("threads", "next-thread"),
+                                  ("replies", "next-reply"), ("reviews", None),
+                                  ("reviews", "next-review")])
+def test_incomplete_finding_pages_never_issue_approval(monkeypatch, page):
+    statuses, events, _ = finding_api(monkeypatch, approval(), "reply", broken=page)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        GATE.main()
+    assert statuses == ["pending"]
+    assert events == ["REQUEST_CHANGES"]
+
+
+@pytest.mark.parametrize("problem", ["missing", "repeated", "null_node", "null_data", "limit"])
+def test_finding_connection_failures_are_closed(monkeypatch, problem):
+    calls = 0
+    def request(path, data=None, *, method=None):
+        nonlocal calls
+        calls += 1
+        if problem == "null_data":
+            return {"data": None}
+        if problem == "null_node":
+            return {"data": {"items": connection([None])}}
+        cursor = None if problem == "missing" else str(calls) if problem == "limit" else "same"
+        return {"data": {"items": {"nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": cursor}}}}
+    monkeypatch.setattr(GATE, "request", request)
+    with pytest.raises((RuntimeError, TypeError)):
+        GATE.graphql_nodes("synthetic query", {}, ("items",))
+    assert calls <= 100
+
+
+@pytest.mark.parametrize("kind,login,expected", [
+    ("Bot", "chatgpt-codex-connector", "pending"),
+    ("Bot", GATE.BOT, "pending"),
+    ("User", "chatgpt-codex-connector", "success"),
+    ("User", GATE.BOT, "success"),
+    ("Bot", "other-synthetic-bot", "success"),
+])
+def test_graphql_finding_identity_does_not_trust_display_login_alone(kind, login, expected):
+    finding = GATE.finding_comment(graphql_finding(kind=kind, login=login))
+    thread = {"isResolved": True, "resolverCanReconcile": True, "comments": [finding]}
+    assert evaluate(HEAD, [summary()], [thread])[0] == expected
+
+
+@pytest.mark.parametrize("field,value", [("updatedAt", None), ("updatedAt", "invalid"),
+                                         ("updatedAt", "2026-01-01T14:00:00"),
+                                         ("body", None), ("createdAt", None),
+                                         ("createdAt", "invalid"),
+                                         ("updatedAt", "2026-01-01T12:00:00Z")])
+def test_incomplete_finding_fields_fail_closed(field, value):
+    node = graphql_finding()
+    node[field] = value
+    with pytest.raises((RuntimeError, ValueError)):
+        GATE.finding_comment(node)
+
+
+def test_nonfinding_security_activity_does_not_require_new_acceptance():
+    node = graphql_finding(body="Security review unavailable; try again later.")
+    thread = {"isResolved": True, "resolverCanReconcile": True,
+              "comments": [GATE.finding_comment(node)]}
+    assert evaluate(HEAD, [summary()], [thread])[0] == "success"

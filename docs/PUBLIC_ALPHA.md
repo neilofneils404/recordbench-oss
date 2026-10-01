@@ -159,9 +159,11 @@ abuse cases, mitigation and regression evidence. Fix actual findings or record
 a reasoned maintainer disposition before acceptance, including findings from
 optional security review. The gate requires every review thread to be resolved
 by someone with current write, maintain or admin permission; acceptance records
-inspection of top-level findings as well. New priority-tagged official bot
-findings require renewed acceptance. A resolved flag alone is not a substantive
-disposition. The maintainer checks disclosure and synthetic-data provenance too.
+inspection of findings in issue comments, inline comments/replies and review
+bodies. New or edited priority-tagged official bot findings on any of these
+surfaces require renewed acceptance. Every thread, reply and review page must
+be available; missing or incomplete evidence leaves the gate blocked. A resolved
+flag alone is not a substantive disposition. The maintainer checks disclosure and synthetic-data provenance too.
 
 Request `@codex review` deliberately after implementation and validation. No
 repository workflow posts review commands on open or synchronize. Keep automatic
@@ -196,8 +198,8 @@ RecordBench maintainer acceptance: FULL_COMMIT_ID
 ```
 
 Acceptance must be strictly later than code completion and any subsequently
-posted priority-tagged official bot findings, from an account with current
-write, maintain or admin permission. This binds the bot's abbreviated code SHA
+posted or edited priority-tagged official bot findings across those surfaces,
+from an account with current write, maintain or admin permission. This binds the bot's abbreviated code SHA
 to the full head; a prefix match alone is insufficient. A changed head, newer
 code completion or removed acceptance requires renewed acceptance. Missing
 acceptance leaves the gate pending. Current access is verified through GitHub,

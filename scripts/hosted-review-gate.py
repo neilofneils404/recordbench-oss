@@ -48,7 +48,8 @@ def comment_time(comment: dict) -> datetime:
     return value
 
 
-def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str, str]:
+def evaluate(head: str, comments: list[dict], threads: list[dict],
+             review_findings: list[dict] | None = None) -> tuple[str, str]:
     summaries = [c for c in comments if c.get("user", {}).get("login") == BOT
                  and c.get("user", {}).get("type") == "Bot" and SUMMARY in c.get("body", "")]
     if not summaries:
@@ -91,10 +92,11 @@ def evaluate(head: str, comments: list[dict], threads: list[dict]) -> tuple[str,
     # The bot abbreviates the code-review SHA. Independent privileged acceptance
     # binds the completed code review to the full head, including prefix collisions.
     # It also follows priority-tagged bot findings, including security findings.
-    findings_at = max((comment_time(c) for c in comments
+    findings = [*comments, *(review_findings or []),
+                *(comment for thread in threads for comment in thread.get("comments", []))]
+    findings_at = max((comment_time(c) for c in findings
                        if c.get("user", {}).get("login") == BOT
                        and c.get("user", {}).get("type") == "Bot"
-                       and SUMMARY not in c.get("body", "")
                        and re.search(r"\bP[0-3]\b", c.get("body", ""))), default=completed)
     for c in comments:
         acceptance = ACCEPTANCE.fullmatch(c.get("body", "").strip())
@@ -113,6 +115,82 @@ def request(path: str, data=None, *, method=None):
                  "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as response:
         return json.load(response)
+
+
+def graphql_nodes(query: str, variables: dict, path: tuple[str, ...], *, initial=None) -> list[dict]:
+    """Read a complete bounded connection; never accept partial GraphQL evidence."""
+    nodes = []
+    cursor = None
+    seen = set()
+    for page in range(100):
+        if page == 0 and initial is not None:
+            connection = initial
+        else:
+            result = request("graphql", {"query": query, "variables": {**variables, "cursor": cursor}})
+            if result.get("errors"):
+                raise RuntimeError("Review evidence unavailable")
+            connection = result["data"]
+            for key in path:
+                connection = connection[key]
+        items = connection["nodes"]
+        info = connection["pageInfo"]
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise RuntimeError("Incomplete review evidence")
+        nodes.extend(items)
+        if info["hasNextPage"] is False:
+            return nodes
+        cursor = info["endCursor"]
+        if (info["hasNextPage"] is not True or not isinstance(cursor, str)
+                or not cursor or cursor in seen):
+            raise RuntimeError("Invalid review evidence cursor")
+        seen.add(cursor)
+    raise RuntimeError("Review evidence page limit exceeded")
+
+
+def finding_comment(node: dict) -> dict:
+    """Normalize GraphQL authors explicitly; a similarly named User is not Codex."""
+    author = node["author"]
+    body, created, updated = node["body"], node["createdAt"], node["updatedAt"]
+    if not all(isinstance(value, str) for value in (body, created, updated)):
+        raise RuntimeError("Incomplete finding evidence")
+    official = (author is not None and author["__typename"] == "Bot"
+                and author["login"] in {BOT, BOT.removesuffix("[bot]")})
+    comment = {"body": body, "created_at": created, "updated_at": updated,
+               "user": {"login": BOT if official else "", "type": "Bot" if official else "User"}}
+    # Missing, malformed, naive or inconsistent timestamps fail closed.
+    if comment_time(comment) < comment_time({"created_at": created}):
+        raise RuntimeError("Invalid finding timestamps")
+    return comment
+
+
+def review_evidence(repo: str, number: int) -> tuple[list[dict], list[dict]]:
+    owner, name = repo.split("/")
+    variables = {"owner": owner, "name": name, "number": number}
+    fields = "body createdAt updatedAt author { login __typename }"
+    query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
+      repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+        reviewThreads(first:100,after:$cursor) { nodes { id isResolved resolvedBy { login }
+          comments(first:100) { nodes { FIELDS } pageInfo { hasNextPage endCursor } } }
+          pageInfo { hasNextPage endCursor } }
+      } }
+    }""".replace("FIELDS", fields)
+    threads = graphql_nodes(query, variables, ("repository", "pullRequest", "reviewThreads"))
+    comment_query = """query($id:ID!,$cursor:String) {
+      node(id:$id) { ... on PullRequestReviewThread {
+        comments(first:100,after:$cursor) { nodes { FIELDS } pageInfo { hasNextPage endCursor } }
+      } }
+    }""".replace("FIELDS", fields)
+    for thread in threads:
+        comments = graphql_nodes(comment_query, {"id": thread["id"]}, ("node", "comments"),
+                                 initial=thread["comments"])
+        thread["comments"] = [finding_comment(comment) for comment in comments]
+    review_query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
+      repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+        reviews(first:100,after:$cursor) { nodes { FIELDS } pageInfo { hasNextPage endCursor } }
+      } }
+    }""".replace("FIELDS", fields)
+    reviews = graphql_nodes(review_query, variables, ("repository", "pullRequest", "reviews"))
+    return threads, [finding_comment(review) for review in reviews]
 
 
 def main() -> int:
@@ -160,27 +238,7 @@ def main() -> int:
             break
     else:
         raise RuntimeError("Comment limit exceeded")
-    owner, name = repo.split("/")
-    threads = []
-    cursor = None
-    query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
-      repository(owner:$owner,name:$name) { pullRequest(number:$number) {
-        reviewThreads(first:100,after:$cursor) { nodes { isResolved resolvedBy { login } }
-          pageInfo { hasNextPage endCursor } }
-      } }
-    }"""
-    for _ in range(100):
-        result = request("graphql", {"query": query, "variables": {
-            "owner": owner, "name": name, "number": number, "cursor": cursor}})
-        if result.get("errors"):
-            raise RuntimeError("Review discussions unavailable")
-        connection = result["data"]["repository"]["pullRequest"]["reviewThreads"]
-        threads.extend(connection["nodes"])
-        if not connection["pageInfo"]["hasNextPage"]:
-            break
-        cursor = connection["pageInfo"]["endCursor"]
-    else:
-        raise RuntimeError("Discussion limit exceeded")
+    threads, review_findings = review_evidence(repo, number)
     resolver_permissions = {}
     def can_reconcile(login):
         if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
@@ -200,7 +258,7 @@ def main() -> int:
         if not thread.get("isResolved") or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", resolver):
             continue
         thread["resolverCanReconcile"] = can_reconcile(resolver)
-    state, description = evaluate(head, comments, threads)
+    state, description = evaluate(head, comments, threads, review_findings)
     def unchanged():
         current = request(f"{prefix}/pulls/{number}")
         return (current["state"] == "open" and current["head"]["sha"] == head
