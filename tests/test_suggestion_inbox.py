@@ -600,3 +600,36 @@ def test_a_malformed_batch_revision_is_refused_not_an_error(workbench, revision)
     assert response.status_code == 409
     after = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)[0]
     assert next(row for row in after if row["entity_id"] == alex["entity_id"])["status"] == "suggested"
+
+
+def test_a_large_group_decides_the_identity_whose_passage_it_shows(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    connection = bench.workspace.connection
+    with bench.workspace._lock, connection:
+        for index in range(201):
+            connection.execute(
+                "INSERT INTO workbench_entity(entity_id,matter_id,entity_type,display_name,status,origin,"
+                "created_by,created_at,updated_by,updated_at) VALUES (?,?,'person','Riley Placeholder','suggested',"
+                "'extraction',?,'2026-01-01T00:00:00Z',?,'2026-01-01T00:00:00Z')",
+                (f"synthetic-riley-{index:03d}", matter.matter_id, WEB_ACTOR, WEB_ACTOR))
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    alex = next(row for row in rows if row["display_name"] == "Alex Example")
+    passage = service.detail(matter.matter_id, WEB_ACTOR, alex["entity_id"])[1][0]
+    # The only passage belongs to the last identity by creation order, outside the first 200.
+    last = service.detail(matter.matter_id, WEB_ACTOR, "synthetic-riley-200")[0]
+    service.attach(matter.matter_id, WEB_ACTOR, last["entity_id"], expected_revision=last["revision"],
+                   support=passage["support_token"])
+    page = client.get(f"/matters/{matter.slug}/entities").text
+    riley = _row(page, "Riley Placeholder")
+    assert "/entities/synthetic-riley-200" in re.search(r'<p class="suggestion-title"><a href="([^"]+)"', riley)[1]
+    targets = re.search(r'name="targets" value="([^"]+)"', riley)[1].split(",")
+    assert len(targets) == 200 and targets[0].startswith("synthetic-riley-200:")
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
+    response = client.post(f"/matters/{matter.slug}/entities/actions", follow_redirects=False, data=dict(
+        csrf_token=csrf, action="decide", status="confirmed", targets=",".join(targets)))
+    assert response.status_code == 303
+    decided = service.detail(matter.matter_id, WEB_ACTOR, "synthetic-riley-200")[0]
+    assert decided["status"] == "confirmed"

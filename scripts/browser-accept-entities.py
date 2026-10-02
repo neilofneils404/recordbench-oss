@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import uvicorn
 from selenium import webdriver
-from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -27,6 +27,27 @@ from case_intelligence.generation import UnavailableGenerator
 from case_intelligence.workbench import create_workbench_app
 
 ACTOR = 'development-taylor-morgan'
+
+
+DETACHED_NODE = 'Node with given id does not belong to the document'
+
+
+def page_text(driver, attempts=5):
+    """The body text, re-read if the page is replaced between locating and reading it.
+
+    Chrome reports a replaced document either as a stale reference or as the
+    detached-node inspector error; any other driver failure is real.
+    """
+    for attempt in range(attempts):
+        try:
+            return driver.find_element(By.TAG_NAME, 'body').text
+        except StaleElementReferenceException:
+            pass
+        except WebDriverException as exc:
+            if DETACHED_NODE not in (exc.msg or ''):
+                raise
+        if attempt == attempts - 1:
+            raise TimeoutException('The page kept changing while its text was read.')
 
 
 def main():
@@ -92,13 +113,7 @@ def main():
                 wait.until(detached(element))
                 wait.until(lambda d: d.execute_script('return document.readyState') == 'complete')
             def body():
-                # The page may be replaced between locating and reading the body.
-                for _attempt in range(5):
-                    try:
-                        return driver.find_element(By.TAG_NAME, 'body').text
-                    except StaleElementReferenceException:
-                        continue
-                return driver.find_element(By.TAG_NAME, 'body').text
+                return page_text(driver)
             go('/matters/new')
             fill('#matter-name', 'Generated entity review')
             click('.matter-form button[type=submit]')

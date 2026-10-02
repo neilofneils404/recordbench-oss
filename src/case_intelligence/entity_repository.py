@@ -216,6 +216,13 @@ class EntityRepository:
                         mention['snippet'] = self.snippet(mention['excerpt'], name)
                         if mention['snippet'][1]:
                             break
+            if mention and mention['entity_id'] not in {row['entity_id'] for row in members}:
+                # The row opens the passage's owner, so a bounded decision must include it.
+                owner = self.connection.execute(
+                    'SELECT entity_id,revision FROM workbench_entity WHERE matter_id=? AND entity_id=?',
+                    (matter_id, mention['entity_id'])).fetchone()
+                if owner is not None:
+                    members = [dict(owner), *members[:self.INBOX_GROUP_LIMIT - 1]]
             group = {key: group[key] for key in group.keys() if key != 'first_key'}
             items.append(dict(group, members=members, first_mention=mention,
                               # Open the identity that owns the passage shown.

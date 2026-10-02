@@ -155,7 +155,8 @@ way back, and leaves guided discovery collapsed. Guided discovery runs opened fr
 the inbox also keep the filter and page through their batches and return link. Counting is
 one pass over the matter's passages, so the list stays quick at the discovery limit.
 **Confirm** or **Not relevant** records that status on every suggestion in the
-row, up to 200 at a time (a larger row says so, and the rest stay listed), in one
+row, up to 200 at a time (a larger row says so, and the rest stay listed; the identity
+the row opens is always among them), in one
 all-or-nothing save under each identity's revision, with one `entity.decide` audit
 event per identity. Only automatic suggestions still marked Suggested can be
 decided this way; any other target refuses the whole batch. Nothing is merged,

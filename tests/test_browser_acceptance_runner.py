@@ -565,3 +565,42 @@ def test_zoom_preserves_unexpected_driver_failures(zoom_script):
     element.is_enabled.side_effect = None
     element.is_enabled.return_value = True
     assert zoom_script.replaced(element)(Mock()) is False
+
+
+@pytest.fixture
+def entities_script():
+    spec = importlib.util.spec_from_file_location('browser_entities', ROOT / 'scripts/browser-accept-entities.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize('detachment', ['stale', 'inspector'])
+def test_entities_rereads_text_when_the_page_is_replaced(entities_script, detachment):
+    from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
+
+    driver = Mock()
+    replaced = Mock()
+    type(replaced).text = property(lambda _self: (_ for _ in ()).throw(
+        StaleElementReferenceException() if detachment == 'stale' else
+        WebDriverException('Node with given id does not belong to the document')))
+    current = Mock(text='Original-source mentions (0)')
+    driver.find_element.side_effect = [replaced, current]
+    assert entities_script.page_text(driver) == 'Original-source mentions (0)'
+    assert driver.find_element.call_count == 2
+
+
+def test_entities_text_preserves_unexpected_driver_failures(entities_script):
+    from selenium.common.exceptions import TimeoutException, WebDriverException
+
+    driver = Mock()
+    driver.find_element.side_effect = WebDriverException('invalid session id')
+    with pytest.raises(WebDriverException, match='invalid session id'):
+        entities_script.page_text(driver)
+    assert driver.find_element.call_count == 1
+    from selenium.common.exceptions import StaleElementReferenceException
+    driver = Mock()
+    driver.find_element.side_effect = StaleElementReferenceException()
+    with pytest.raises(TimeoutException):
+        entities_script.page_text(driver, attempts=3)
+    assert driver.find_element.call_count == 3
