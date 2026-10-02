@@ -211,7 +211,11 @@ def main():
             FullTextReviewLedger(bench.workspace).inventory(run, decision, document.parsed_units(), current_source=lambda: True)
             bench.workspace.fail_review_run(run.run_id, 'Synthetic inventory fixture finished; no generation requested.')
             go(prefix + '/entities')
-            driver.find_element(By.CSS_SELECTOR, '#discovery-heading + p + details summary').click()
+            # Guided discovery is collapsed while automatic suggestions wait for review.
+            guided = driver.find_element(By.CSS_SELECTOR, 'details.guided-discovery')
+            if guided.get_attribute('open') is None:
+                guided.find_element(By.CSS_SELECTOR, ':scope > summary').click()
+            guided.find_element(By.CSS_SELECTOR, ':scope > details > summary').click()
             click('a.button[href*="/entity-discovery/"]')
             assert '1 not yet inventoried' in body()
             click('form:has(input[value="discover"]) button')

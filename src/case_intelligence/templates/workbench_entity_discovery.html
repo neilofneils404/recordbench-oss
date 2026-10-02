@@ -23,7 +23,7 @@
   {% if coverage.counts.failed %}<p>Retry processes up to 10 failed units only. Pending units use the normal discovery button. If failure repeats, inspect unit outcomes and ask the operator to resolve the extractor or capacity problem.</p>{% endif %}
   {% for action, label in [('discover','Discover next 10 units'),('retry_discovery','Retry failed discovery')] %}
     {% if (action == 'discover' and coverage.counts.pending) or (action == 'retry_discovery' and coverage.counts.failed) %}<form data-discovery-batch method="post" action="/matters/{{ matter.slug }}/entities/actions">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="run_id" value="{{ coverage.run_id }}"><input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="return_to" value="{{ return_to }}"><button class="button button-secondary">{{ label }}</button>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="run_id" value="{{ coverage.run_id }}"><input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="return_to" value="{{ return_to }}">{% if inbox_kind %}<input type="hidden" name="kind" value="{{ inbox_kind }}">{% endif %}{% if inbox_page > 1 %}<input type="hidden" name="inbox_page" value="{{ inbox_page }}">{% endif %}<button class="button button-secondary">{{ label }}</button>
     </form>{% endif %}
   {% endfor %}
   <p data-discovery-progress role="status" hidden>Processing up to 10 units… Wait for the saved outcomes before starting another batch.</p>

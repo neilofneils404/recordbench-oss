@@ -535,3 +535,33 @@ def test_standalone_workspace_layout_clears_deployment_settings_before_app(works
     with pytest.raises(AppBoundary):
         workspace_layout_script.main(['--chrome-binary', '/synthetic/chrome', '--chromedriver', '/synthetic/driver',
             '--output', str(tmp_path / 'screens')])
+
+
+@pytest.fixture
+def zoom_script():
+    spec = importlib.util.spec_from_file_location('browser_zoom', ROOT / 'scripts/browser-accept-zoom.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize('detachment', ['stale', 'inspector'])
+def test_zoom_treats_a_detached_handle_as_a_replaced_page(zoom_script, detachment):
+    from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
+
+    element = Mock()
+    element.is_enabled.side_effect = (StaleElementReferenceException() if detachment == 'stale' else
+                                      WebDriverException('Node with given id does not belong to the document'))
+    assert zoom_script.replaced(element)(Mock()) is True
+
+
+def test_zoom_preserves_unexpected_driver_failures(zoom_script):
+    from selenium.common.exceptions import WebDriverException
+
+    element = Mock()
+    element.is_enabled.side_effect = WebDriverException('invalid session id')
+    with pytest.raises(WebDriverException, match='invalid session id'):
+        zoom_script.replaced(element)(Mock())
+    element.is_enabled.side_effect = None
+    element.is_enabled.return_value = True
+    assert zoom_script.replaced(element)(Mock()) is False

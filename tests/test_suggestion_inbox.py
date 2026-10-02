@@ -530,3 +530,42 @@ def test_a_row_opens_the_identity_whose_passage_it_shows(workbench):  # noqa: F8
     page = client.get(f"/matters/{matter.slug}/entities").text
     link = re.search(r'<p class="suggestion-title"><a href="([^"]+)">Alex Example</a>', page)[1]
     assert f"/entities/{later['entity_id']}" in link
+
+
+def test_guided_discovery_keeps_the_inbox_position(workbench):  # noqa: F811
+    from case_intelligence.full_text_review import FullTextReviewLedger
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    upload(client, matter.slug, "Synthetic call.txt", SECOND)
+    bench.run_automatic_discovery_once()
+    bench.full_review.close()
+    store = bench.workspace
+    _, version = store.create_review_criterion(matter.matter_id, WEB_ACTOR,
+        title="Synthetic guided review", instructions="Review synthetic people and dates.")
+    store.queue_review_run(matter.matter_id, WEB_ACTOR, version.criterion_version_id,
+                           run_kind="full", review_mode="full_text")
+    run = store.claim_review_run("synthetic-guided-inventory")
+    decision = store.next_review_decision(run.run_id)
+    document = bench.source_store(matter).get(decision.document_id)
+    FullTextReviewLedger(store).inventory(run, decision, document.parsed_units(), current_source=lambda: True)
+    store.fail_review_run(run.run_id, "Synthetic partial inventory; no generation requested.")
+    page = client.get(f"/matters/{matter.slug}/entities", params={"kind": "people", "inbox_page": 2}).text
+    coverage = html.unescape(re.search(r'href="([^"]+)">Check readiness and discover suggestions', page)[1])
+    assert "kind=people" in coverage and "inbox_page=2" in coverage
+    discovery = client.get(coverage).text
+    back = html.unescape(re.search(r'<a href="([^"]+)">People (?:&amp;|&) things</a>', discovery)[1])
+    assert "kind=people" in back and "inbox_page=2" in back
+    form = re.search(r'<form data-discovery-batch.*?</form>', discovery, re.S)[0]
+    assert '<input type="hidden" name="kind" value="people">' in form
+    assert '<input type="hidden" name="inbox_page" value="2">' in form
+    # An unknown filter is never carried forward.
+    other = client.get(coverage.replace("kind=people", "kind=unknown")).text
+    back = html.unescape(re.search(r'<a href="([^"]+)">People (?:&amp;|&) things</a>', other)[1])
+    assert "kind=unknown" not in back and "inbox_page=2" in back
+    assert 'name="kind"' not in re.search(r'<form data-discovery-batch.*?</form>', other, re.S)[0]
+    # The return after a batch keeps it too.
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', discovery)[1]
+    done = client.post(f"/matters/{matter.slug}/entities/actions", follow_redirects=False, data=dict(
+        csrf_token=csrf, action="discover", run_id=run.run_id, kind="people", inbox_page=2))
+    assert done.status_code == 303 and "kind=people" in done.headers["location"]
+    assert "inbox_page=2" in done.headers["location"]

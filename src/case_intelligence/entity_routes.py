@@ -11,12 +11,21 @@ from .workspace_store import WorkspaceProblem
 from .review_navigation import matter_return_path
 
 
+INBOX_FILTERS = ('', 'people', 'organizations', 'places', 'things', 'dates')
+
+
 def install_entity_routes(app, *, service_for, discovery_for, assertions_for, authorized_matter, auth_context,
                           require_csrf, templates, base_context, audit,
                           require_response_lease, transfer_response_lease,
                           automatic_progress=None, wake_automatic=None):
     def return_path(slug, value):
         return matter_return_path(slug, value, fallback=f'/matters/{slug}')
+
+    def inbox_place(kind, inbox_page):
+        """The reviewer's place in the suggestions inbox, kept by every link and form."""
+        if kind not in INBOX_FILTERS:
+            kind = ''
+        return dict(kind=kind, inbox_page=inbox_page) if kind or inbox_page > 1 else {}
 
     def render(request, slug, *, entity_id='', q='', page=1, review_page=1, candidate_page=1, support='', return_to='',
                error='', draft=None, status_code=200, kind='', inbox_page=1):
@@ -33,7 +42,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
         has_more_reviews = len(runs) > 20
         coverage = [discovery.coverage(matter.matter_id, actor, row['run_id'], limit=0) for row in runs[:20]]
         inbox, inbox_total, inbox_kinds = [], 0, {}
-        if kind not in ('', 'people', 'organizations', 'places', 'things', 'dates'):
+        if kind not in INBOX_FILTERS:
             kind = ''
         try:
             if not entity_id:
@@ -56,8 +65,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                 error = error or 'This passage changed or is unavailable. Return to source review and select a current passage.'
         automatic = automatic_progress(matter) if automatic_progress is not None and not entity_id else None
         return_to = return_path(slug, return_to)
-        # The reviewer's place in the suggestions inbox, kept by every link on these pages.
-        place = dict(kind=kind, inbox_page=inbox_page) if kind or inbox_page > 1 else {}
+        place = inbox_place(kind, inbox_page)
         def entity_url(identifier='', target_page=1):
             path = f'/matters/{slug}/entities' + ('/' + identifier if identifier else '')
             return path + '?' + urlencode(dict(q=q, page=target_page, support=support, return_to=return_to, **place))
@@ -70,7 +78,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
             'entity_url': entity_url, 'entity_types': ENTITY_TYPES, 'entity_statuses': ENTITY_STATUSES,
             'coverage': coverage, 'review_page': review_page, 'has_more_reviews': has_more_reviews,
             'review_page_url': lambda value: f'/matters/{slug}/entities?' + urlencode(dict(q=q, support=support, return_to=return_to, review_page=value, **place)),
-            'coverage_url': lambda value: f'/matters/{slug}/entity-discovery/{value}?' + urlencode(dict(q=q, return_to=return_to)),
+            'coverage_url': lambda value: f'/matters/{slug}/entity-discovery/{value}?' + urlencode(dict(q=q, return_to=return_to, **place)),
             'candidate_page': candidate_page, 'has_more_candidates': has_more_candidates,
             'candidate_page_url': lambda value: f'/matters/{slug}/entities/{entity_id}?' + urlencode(dict(q=q, support=support, return_to=return_to, candidate_page=value, **place)),
             'candidates': candidates, 'reconciliations': [dict(row, before=json.loads(row['before_json'])) for row in reconciliations],
@@ -100,7 +108,8 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
         return render(request, slug, entity_id=entity_id, q=q, page=page, review_page=review_page, candidate_page=candidate_page, support=support, return_to=return_to,
                       kind=kind, inbox_page=inbox_page)
 
-    def render_discovery(request, slug, run_id, *, page=1, source_page=1, q='', return_to='', error=''):
+    def render_discovery(request, slug, run_id, *, page=1, source_page=1, q='', return_to='', error='',
+                         kind='', inbox_page=1):
         matter = authorized_matter(request, slug)
         actor = auth_context(request).principal_id
         try:
@@ -108,13 +117,15 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
         except KeyError as exc:
             raise HTTPException(404, 'Review run is no longer available') from exc
         return_to = return_path(slug, return_to)
+        place = inbox_place(kind, inbox_page)
         def coverage_url(target_page=page, target_source_page=source_page):
             return f'/matters/{slug}/entity-discovery/{run_id}?' + urlencode(dict(
-                page=target_page, source_page=target_source_page, q=q, return_to=return_to))
+                page=target_page, source_page=target_source_page, q=q, return_to=return_to, **place))
         return templates.TemplateResponse(request=request, name='workbench_entity_discovery.html', context={
             **base_context(request, matter), 'matter': matter, 'coverage': coverage,
             'q': q, 'return_to': return_to, 'coverage_url': coverage_url, 'error': error,
-            'entities_url': f'/matters/{slug}/entities?' + urlencode(dict(q=q, return_to=return_to)),
+            'inbox_kind': place.get('kind', ''), 'inbox_page': place.get('inbox_page', 1),
+            'entities_url': f'/matters/{slug}/entities?' + urlencode(dict(q=q, return_to=return_to, **place)),
             'show_assistant_dock': False,
         }, status_code=400 if error else 200, headers={'Cache-Control': 'no-store'})
 
@@ -122,8 +133,10 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
     def discovery_coverage(request: Request, slug: str, run_id: str,
                            page: int = Query(1, ge=1, le=100_000),
                            source_page: int = Query(1, ge=1, le=100_000),
-                           q: str = Query('', max_length=200), return_to: str = Query('', max_length=4000)):
-        return render_discovery(request, slug, run_id, page=page, source_page=source_page, q=q, return_to=return_to)
+                           q: str = Query('', max_length=200), return_to: str = Query('', max_length=4000),
+                           kind: str = Query('', max_length=24), inbox_page: int = Query(1, ge=1, le=100_000)):
+        return render_discovery(request, slug, run_id, page=page, source_page=source_page, q=q, return_to=return_to,
+                                kind=kind, inbox_page=inbox_page)
 
     @app.post('/matters/{slug}/entities/actions', dependencies=[Depends(require_csrf)])
     def entity_action(request: Request, slug: str, action: str = Form(..., max_length=24),
@@ -196,7 +209,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
             except KeyError as denied:
                 raise HTTPException(404, 'Entity or matter is no longer available') from denied
             if action in ('discover', 'retry_discovery'):
-                return render_discovery(request, slug, run_id, q=q, return_to=return_to,
+                return render_discovery(request, slug, run_id, q=q, return_to=return_to, kind=kind, inbox_page=inbox_page,
                     error=str(exc) if isinstance(exc, WorkspaceProblem) else 'The frozen review is unavailable. Open full-text coverage to choose a current run.')
             error = str(exc) if isinstance(exc, WorkspaceProblem) else 'The entity, note, or original passage changed or is unavailable. Your submitted text is preserved below.'
             if action == 'decide':
@@ -227,7 +240,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                 return_to=return_path(slug, return_to))) + '#suggestions', status_code=303)
         path = (f'/matters/{slug}/entity-discovery/{run_id}' if action in ('discover', 'retry_discovery')
                 else f'/matters/{slug}/entities' + ('/' + entity_id if entity_id else ''))
-        place = dict(kind=kind, inbox_page=inbox_page) if kind or inbox_page > 1 else {}
+        place = inbox_place(kind, inbox_page)
         return RedirectResponse(path + '?' + urlencode(dict(q=q, return_to=return_path(slug, return_to), **place)),
                                 status_code=303)
 

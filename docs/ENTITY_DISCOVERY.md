@@ -149,7 +149,8 @@ when it changed or cannot be read; a source whose derived text is damaged makes
 only its own passages unavailable. The name opens the identity that owns the
 passage shown, even after a reviewer moved passages between same-named suggestions. Filter by People, Organizations, Places, Things &
 IDs or Dates; searching hides the list, keeps the selected filter and page for the
-way back, and leaves guided discovery collapsed. Counting is
+way back, and leaves guided discovery collapsed. Guided discovery runs opened from
+the inbox also keep the filter and page through their batches and return link. Counting is
 one pass over the matter's passages, so the list stays quick at the discovery limit.
 **Confirm** or **Not relevant** records that status on every suggestion in the
 row, up to 200 at a time (a larger row says so, and the rest stay listed), in one

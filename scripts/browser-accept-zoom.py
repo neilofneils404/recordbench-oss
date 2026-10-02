@@ -46,6 +46,22 @@ SOURCE_TEXT = 'The blue crate arrived at the North Annex at 09:15.'
 ZOOMS = (1, 1.25, 1.5, 2, 4)
 
 
+def replaced(element):
+    """Wait condition: the element's document was replaced.
+
+    Chrome can report a handle from a replaced document as a generic inspector
+    error rather than a stale reference; any other driver failure is real.
+    """
+    def condition(driver):
+        try:
+            return EC.staleness_of(element)(driver)
+        except WebDriverException as exc:
+            if 'Node with given id does not belong to the document' not in (exc.msg or ''):
+                raise
+            return True
+    return condition
+
+
 def main():
     isolate_environment()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -133,18 +149,7 @@ def main():
                 assert suggestion.is_enabled()
                 driver.save_screenshot(str(args.output / f'zoom-{percent}-notes.png'))
                 suggestion.click()
-
-                def replaced():
-                    # Chrome can report a handle from the replaced document as a
-                    # generic inspector error rather than a stale reference.
-                    try:
-                        return EC.staleness_of(suggestion)(driver)
-                    except TimeoutException:
-                        raise
-                    except WebDriverException:
-                        return True
-
-                wait.until(lambda _: replaced())
+                wait.until(replaced(suggestion))
                 wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, '.notebook-item.status-suggested .notebook-provenance a'))
 
                 def open_support():
