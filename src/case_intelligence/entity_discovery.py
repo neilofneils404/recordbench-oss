@@ -17,6 +17,10 @@ DISCOVERY_BYTE_LIMIT = 16 * 1024 * 1024
 LOAD_ERRORS = (KeyError, OSError, ValueError, RuntimeError, TypeError)
 
 
+class DiscoveryStopped(Exception):
+    """A source read abandoned for shutdown; deliberately not a load error."""
+
+
 class RunLedger:
     """Coverage recorded against one sealed criterion review run."""
 
@@ -115,8 +119,10 @@ class EntityDiscovery:
         so its content-free record commits atomically with the unit. The
         suggestion byte budget is recounted inside each unit's transaction.
         should_stop() is checked before each source and for every unit read
-        or processed, so shutdown never waits on a whole large source and
-        never races the source stores this step reads.
+        or processed, so shutdown never races the source stores this step
+        reads. A loader may also raise DiscoveryStopped mid-read (for example
+        while indexing a large derived-text file); the step then returns
+        without sealing anything partial.
         """
         if self.load_document is None:
             raise ValueError('Automatic discovery needs a whole-document loader.')
@@ -143,6 +149,8 @@ class EntityDiscovery:
                             if reference['source_version_id'] != document['source_version_id']:
                                 raise KeyError('changed source')
                             inventory.append((ordinal, hashlib.sha256(text.encode()).hexdigest()))
+                    except DiscoveryStopped:
+                        return handled, sealed
                     except LOAD_ERRORS:
                         inventory, state = [], 'failed'
                         note = 'Searchable text was unavailable for automatic discovery.'
@@ -164,6 +172,8 @@ class EntityDiscovery:
                             return handled, sealed
                         if ordinal in wanted:
                             loaded_units[ordinal] = (text, reference)
+                except DiscoveryStopped:
+                    return handled, sealed
                 except LOAD_ERRORS:
                     loaded_units = {}
                 for ordinal, unit in wanted.items():

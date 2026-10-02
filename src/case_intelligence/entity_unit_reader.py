@@ -22,7 +22,7 @@ class EntityUnitReader:
     def identity(metadata):
         return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
 
-    def iter_selected(self, store, document, ordinals):
+    def iter_selected(self, store, document, ordinals, *, read_check=None):
         requested = sorted(set(ordinals))
         if not requested:
             return
@@ -34,7 +34,9 @@ class EntityUnitReader:
         name = getattr(document, 'units_file', '')
         if not name:
             wanted = set(requested)
-            for ordinal, unit in enumerate(document.iter_parsed_units(), 1):
+            parsed = (document.iter_parsed_units(read_check=read_check) if read_check is not None
+                      else document.iter_parsed_units())
+            for ordinal, unit in enumerate(parsed, 1):
                 if ordinal in wanted:
                     yield ordinal, unit
                 if ordinal >= requested[-1]:
@@ -63,7 +65,8 @@ class EntityUnitReader:
                     spans.append((start, end))
                 # newline='' retains serialized CRLF bytes for exact offsets.
                 with io.TextIOWrapper(os.fdopen(os.dup(raw.fileno()), 'rb'), encoding='utf-8', newline='') as stream:
-                    for record in iter_unit_records(stream, record_span=record_span):
+                    # read_check runs for every bounded read, so a caller can abandon a long index build.
+                    for record in iter_unit_records(stream, record_span=record_span, read_check=read_check):
                         PilotUnit(**record)
                 if self.identity(os.fstat(raw.fileno())) != identity:
                     raise RuntimeError('Derived searchable text changed during indexing.')

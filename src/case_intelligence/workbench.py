@@ -3203,18 +3203,28 @@ class CaseIntelligenceWorkbench:
             location=candidate.citation, unit_number=unit.number, chunk_id=candidate.chunk_id,
             excerpt_digest=candidate.excerpt_digest, excerpt=candidate.text[:6000], support_token=token)
 
-    def automatic_entity_discovery(self, matter):
-        """Discovery that runs as the inactive system principal after processing."""
-        from .entity_discovery import EntityDiscovery
+    def automatic_entity_discovery(self, matter, should_stop=None):
+        """Discovery that runs as the inactive system principal after processing.
+
+        should_stop() is also polled for every bounded read inside the source
+        readers, so shutdown can interrupt a long scan or index build.
+        """
+        from .entity_discovery import DiscoveryStopped, EntityDiscovery
+        def read_check(_chars):
+            if should_stop():
+                raise DiscoveryStopped()
+        check = read_check if should_stop is not None else None
         def load_document(document_id, source_version_id, ordinals=None):
             store = self.source_store(matter)
             document = store.get(document_id)
             if document.state != 'ready' or document.version_id != source_version_id:
                 raise KeyError(document_id)
             if ordinals is None:
-                units = enumerate(document.iter_parsed_units(), 1)
+                parsed = (document.iter_parsed_units(read_check=check) if check is not None
+                          else document.iter_parsed_units())
+                units = enumerate(parsed, 1)
             else:
-                units = self.entity_unit_reader.iter_selected(store, document, ordinals)
+                units = self.entity_unit_reader.iter_selected(store, document, ordinals, read_check=check)
             for ordinal, unit in units:
                 if ordinal > MAX_AUTOMATIC_DISCOVERY_UNITS:
                     raise ValueError('Source exceeds the automatic discovery unit ceiling.')
@@ -3261,7 +3271,7 @@ class CaseIntelligenceWorkbench:
                                        "invalidated": "attention"}[event["state"]]})
             matter_units = 0
             try:
-                discovery = self.automatic_entity_discovery(matter)
+                discovery = self.automatic_entity_discovery(matter, should_stop=stopping)
                 discovery.prune_automatic(matter.matter_id)
                 for _ in range(MAX_AUTOMATIC_DISCOVERY_STEPS):
                     if matter_units >= unit_limit or stopping():

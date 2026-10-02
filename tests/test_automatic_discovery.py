@@ -225,8 +225,8 @@ def test_sealed_sources_load_only_pending_units(workbench, monkeypatch):
     upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
     calls = []
     original = bench.automatic_entity_discovery
-    def counting(target):
-        discovery = original(target)
+    def counting(target, should_stop=None):
+        discovery = original(target, should_stop)
         loader = discovery.load_document
         def load_document(document_id, source_version_id, ordinals=None):
             calls.append(None if ordinals is None else len(ordinals))
@@ -248,8 +248,8 @@ def test_unavailable_sources_do_not_stall_a_run(workbench, monkeypatch):
     documents = sorted(bench.source_store(matter).documents)
     readable = documents[-1]
     original = bench.automatic_entity_discovery
-    def mostly_unavailable(target):
-        discovery = original(target)
+    def mostly_unavailable(target, should_stop=None):
+        discovery = original(target, should_stop)
         loader = discovery.load_document
         def load_document(document_id, source_version_id, ordinals=None):
             if document_id != readable:
@@ -326,10 +326,10 @@ def test_one_failing_matter_does_not_stop_the_others(workbench, monkeypatch):
     upload(client, matter.slug, "Synthetic memo.txt", FIRST)
     upload(client, other.slug, "Synthetic memo.txt", SECOND)
     original = bench.automatic_entity_discovery
-    def broken_first(target):
+    def broken_first(target, should_stop=None):
         if target.matter_id == min(matter.matter_id, other.matter_id):
             raise RuntimeError("synthetic unreadable source registry")
-        return original(target)
+        return original(target, should_stop)
     monkeypatch.setattr(bench, "automatic_entity_discovery", broken_first)
     result = bench.automatic_discovery_pass()
     assert result.failed_matters == (min(matter.matter_id, other.matter_id),)
@@ -342,8 +342,8 @@ def test_sealing_is_reported_as_progress_when_the_step_cap_is_reached(workbench,
     for index in range(7):
         upload(client, matter.slug, f"Synthetic memo {index}.txt", f"Riley Placeholder{index} arrived.".encode())
     original = bench.automatic_entity_discovery
-    def unavailable(target):
-        discovery = original(target)
+    def unavailable(target, should_stop=None):
+        discovery = original(target, should_stop)
         def load_document(document_id, source_version_id, ordinals=None):
             raise KeyError(document_id)
         discovery.load_document = load_document
@@ -395,7 +395,7 @@ def test_first_coordinator_pass_always_sweeps(tmp_path, monkeypatch):
 def test_a_skipped_matter_is_recorded_once_for_administrators(workbench, monkeypatch):
     client, bench, matter, _runtime = workbench
     upload(client, matter.slug, "Synthetic memo.txt", FIRST)
-    def broken(target):
+    def broken(target, should_stop=None):
         raise RuntimeError("synthetic unreadable source registry")
     monkeypatch.setattr(bench, "automatic_entity_discovery", broken)
     bench.automatic_discovery_pass()
@@ -412,8 +412,8 @@ def test_ledger_tracks_only_current_sources_and_stays_outside_the_budget(workben
     used = bench.workspace.entity_repository().discovery_storage_bytes
     before = used(matter.matter_id)
     original = bench.automatic_entity_discovery
-    def tight(target):
-        discovery = original(target)
+    def tight(target, should_stop=None):
+        discovery = original(target, should_stop)
         discovery.byte_limit = max(4096, used(target.matter_id) + 4096)
         return discovery
     monkeypatch.setattr(bench, "automatic_entity_discovery", tight)
@@ -532,6 +532,40 @@ def test_a_stop_request_while_loading_pending_units_ends_the_pass(workbench):
     # The source was inventoried, then the pass stopped instead of reading every unit.
     assert result.units == 0 and not result.failed_matters
     assert set(ledger_states(bench, matter)) == {"pending"}
+    assert bench.run_automatic_discovery_once() == 30
+
+
+def test_source_readers_observe_a_stop_mid_read(workbench):
+    import threading
+    from case_intelligence.entity_discovery import DiscoveryStopped
+    from case_intelligence.entity_unit_reader import EntityUnitReader
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    stop = threading.Event()
+    stop.set()
+    discovery = bench.automatic_entity_discovery(matter, should_stop=stop.is_set)
+    # Only the reader polls here: the inventory read is abandoned before its first
+    # unit, and the source stays unsealed instead of being marked failed.
+    assert discovery.automatic_step(matter.matter_id) == (0, 0)
+    assert ledger_states(bench, matter) == []
+    assert bench.workspace.connection.execute(
+        "SELECT COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=?",
+        (matter.matter_id,)).fetchone()[0] == 0
+    # The transient index build for pending units is interruptible too and caches nothing.
+    store = bench.source_store(matter)
+    document = store.get(bench.workspace.connection.execute(
+        "SELECT document_id FROM workbench_source_catalog WHERE matter_id=?",
+        (matter.matter_id,)).fetchone()[0])
+    assert document.units_file
+    reader = EntityUnitReader()
+    def read_check(_chars):
+        raise DiscoveryStopped()
+    with pytest.raises(DiscoveryStopped):
+        list(reader.iter_selected(store, document, [1], read_check=read_check))
+    assert not reader._indexes
+    assert len(list(reader.iter_selected(store, document, [1, 30]))) == 2
+    # Once the stop clears, the next pass discovers everything.
+    stop.clear()
     assert bench.run_automatic_discovery_once() == 30
 
 
