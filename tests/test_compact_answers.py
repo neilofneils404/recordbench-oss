@@ -47,6 +47,9 @@ def test_each_answer_states_its_caveats_once_inside_about(cedar, monkeypatch):  
     assert answer.count(html.escape(GENERATED_REVIEW_NOTICE, quote=False)) == 1
     assert html.escape(GENERATED_REVIEW_NOTICE, quote=False) in about.group(1)
     assert "Machine transcript" in about.group(1) and answer.count("Machine transcript") == 1
+    # The collapsed line announces every caveat inside it.
+    summary = re.search(r"<summary>About this answer<small>([^<]*)</small></summary>", about.group(1))[1]
+    assert summary == "Check each statement against its sources · includes machine transcript · searchable text was partial"
     assert answer.count("data-answer-about") == 1
 
 
@@ -70,3 +73,21 @@ def test_same_named_passages_from_different_sources_keep_separate_numbers(cedar,
     assert [number for _, number in refs] == ["1", "2"]
     assert html.unescape(refs[0][0]) != html.unescape(refs[1][0])
     assert re.findall(r'<span class="citation-number" aria-hidden="true">(\d+)</span>', answer) == ["1", "2"]
+
+
+def test_a_passage_cited_twice_in_one_statement_is_numbered_once(cedar, monkeypatch):  # noqa: F811
+    import json
+    client, bench, matter, _documents = cedar
+    conversation, message, _citations = save_answer(cedar, monkeypatch, ("pdf", "transcript"))
+    payload = dict(message.payload)
+    claims = [dict(claim, citations=[dict(citation) for citation in claim["citations"]]) for claim in payload["claims"]]
+    claims[0]["citations"].append(dict(claims[0]["citations"][0]))
+    connection = bench.workspace.connection
+    with bench.workspace._lock, connection:  # Background work shares this connection.
+        connection.execute("UPDATE workbench_message SET payload_json=? WHERE message_id=?",
+                           (json.dumps(dict(payload, claims=claims)), message.message_id))
+    page = client.get(f"/matters/{matter.slug}", params={"conversation": conversation.conversation_id})
+    answer = _answer_html(page.text, message.message_id)
+    assert re.findall(r'<a class="citation-ref" [^>]*>(\d+)</a>', answer) == ["1", "2"]
+    # Both full citations stay listed, sharing the passage's number.
+    assert re.findall(r'<span class="citation-number" aria-hidden="true">(\d+)</span>', answer) == ["1", "1", "2"]

@@ -314,7 +314,9 @@
                 {% if partial_coverage or message.payload.kind == 'generated' %}
                 {# One collapsed line per answer holds every caveat; the full text stays in the page. #}
                 <details class="answer-about" data-answer-about>
-                  <summary>About this answer<small>{% if message.payload.kind == 'generated' %}Check each statement against its sources{% if partial_coverage %} · searchable text was partial{% endif %}{% else %}Searchable text was partial{% endif %}</small></summary>
+                  {# The summary names every caveat inside, so none is hidden unannounced. #}
+                  {% set about = [] %}{% if message.payload.kind == 'generated' %}{% set about = about + ['Check each statement against its sources'] %}{% if message.payload.evidence_notice %}{% set about = about + ['includes machine transcript'] %}{% endif %}{% endif %}{% if partial_coverage %}{% set about = about + ['searchable text was partial'] %}{% endif %}
+                  <summary>About this answer<small>{{ (about|join(' · '))[:1]|upper }}{{ (about|join(' · '))[1:] }}</small></summary>
                   {% if partial_coverage %}
                   <div class="answer-source-coverage" role="note">
                     <strong>Source coverage when this answer was created</strong>
@@ -372,7 +374,7 @@
                     {% for claim in message.payload.claims %}
                     {% set claim_index = loop.index0 %}
                     <li>
-                      <p class="answer-claim-text">{{ claim.text }}{% for citation in claim.citations or [] %}{% set number = refs.keys.index((citation_ref_key(citation)|string)) + 1 %}<a class="citation-ref" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}" aria-label="Source {{ number }}: {{ citation.source_name }} · {{ citation.location }}">{{ number }}</a>{% endfor %}</p>
+                      <p class="answer-claim-text">{{ claim.text }}{% set shown = namespace(keys=[]) %}{% for citation in claim.citations or [] %}{% set key = (citation_ref_key(citation)|string) %}{% if key not in shown.keys %}{% set shown.keys = shown.keys + [key] %}{% set number = refs.keys.index(key) + 1 %}<a class="citation-ref" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}" aria-label="Source {{ number }}: {{ citation.source_name }} · {{ citation.location }}">{{ number }}</a>{% endif %}{% endfor %}</p>
                       <form class="save-claim-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/notebook/claims/{{ claim_index }}" data-working-form data-working-label="Saving…">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit">Save passage to case notes</button>
