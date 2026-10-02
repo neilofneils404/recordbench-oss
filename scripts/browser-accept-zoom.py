@@ -133,7 +133,18 @@ def main():
                 assert suggestion.is_enabled()
                 driver.save_screenshot(str(args.output / f'zoom-{percent}-notes.png'))
                 suggestion.click()
-                wait.until(EC.staleness_of(suggestion))
+
+                def replaced():
+                    # Chrome can report a handle from the replaced document as a
+                    # generic inspector error rather than a stale reference.
+                    try:
+                        return EC.staleness_of(suggestion)(driver)
+                    except TimeoutException:
+                        raise
+                    except WebDriverException:
+                        return True
+
+                wait.until(lambda _: replaced())
                 wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, '.notebook-item.status-suggested .notebook-provenance a'))
 
                 def open_support():
