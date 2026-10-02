@@ -143,7 +143,7 @@ passages and distinct sources across every passage attached to them, and show th
 earliest passage with the name highlighted and a link to the original; when that
 original changed, is unavailable or cannot be read, the row says the excerpt is
 retained history instead of linking. That check reads only the cited units through
-the bounded unit index, after the repository transaction has ended. Filter by People, Organizations, Things & IDs or Dates; while
+the bounded unit index, after the repository transaction has ended. Filter by People, Organizations, Places, Things & IDs or Dates; while
 searching, the list is hidden and guided discovery stays collapsed. Counting is
 one pass over the matter's passages, so the list stays quick at the discovery limit.
 **Confirm** or **Not relevant** records that status on every suggestion in the

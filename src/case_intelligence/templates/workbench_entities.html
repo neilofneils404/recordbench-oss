@@ -16,6 +16,7 @@
     <input type="hidden" name="action" value="{{ action }}">
     <input type="hidden" name="return_to" value="{{ return_to }}">
     <input type="hidden" name="q" value="{{ q }}">
+    {% if inbox_kind %}<input type="hidden" name="kind" value="{{ inbox_kind }}">{% endif %}{% if inbox_page > 1 %}<input type="hidden" name="inbox_page" value="{{ inbox_page }}">{% endif %}
     {% if row %}<input type="hidden" name="entity_id" value="{{ row.entity_id }}"><input type="hidden" name="expected_revision" value="{{ row.revision }}">{% endif %}
   {% endmacro %}
   {% if not entity and automatic_paused %}
@@ -41,7 +42,7 @@
     </header>
     <nav class="suggestion-kinds" aria-label="Suggestion types">
       <a href="{{ inbox_url('') }}"{% if not inbox_kind %} aria-current="page"{% endif %}>All <span>{{ inbox_kinds.values()|sum }}</span></a>
-      {% for key, label in [('people','People'),('organizations','Organizations'),('things','Things & IDs'),('dates','Dates')] %}{% if inbox_kinds[key] %}<a href="{{ inbox_url(key) }}"{% if inbox_kind == key %} aria-current="page"{% endif %}>{{ label }} <span>{{ inbox_kinds[key] }}</span></a>{% endif %}{% endfor %}
+      {% for key, label in [('people','People'),('organizations','Organizations'),('places','Places'),('things','Things & IDs'),('dates','Dates')] %}{% if inbox_kinds[key] %}<a href="{{ inbox_url(key) }}"{% if inbox_kind == key %} aria-current="page"{% endif %}>{{ label }} <span>{{ inbox_kinds[key] }}</span></a>{% endif %}{% endfor %}
     </nav>
     <ol class="suggestion-list">
       {% for row in inbox %}
@@ -53,7 +54,7 @@
         </div>
         <div class="suggestion-actions">
           {% for value, label, style in [('confirmed', 'Confirm', 'button-primary'), ('dismissed', 'Not relevant', 'button-secondary')] %}
-          <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('decide') }}<input type="hidden" name="targets" value="{{ row.targets }}"><input type="hidden" name="status" value="{{ value }}"><input type="hidden" name="kind" value="{{ inbox_kind }}"><input type="hidden" name="inbox_page" value="{{ inbox_page }}"><input type="hidden" name="support" value="{{ support }}"><button class="button {{ style }}" aria-label="{{ label }}: {{ row.display_name }}">{{ label }}</button></form>
+          <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('decide') }}<input type="hidden" name="targets" value="{{ row.targets }}"><input type="hidden" name="status" value="{{ value }}"><input type="hidden" name="support" value="{{ support }}"><button class="button {{ style }}" aria-label="{{ label }}: {{ row.display_name }}">{{ label }}</button></form>
           {% endfor %}
         </div>
       </li>

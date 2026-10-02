@@ -1,6 +1,7 @@
 """Synthetic regression: automatic suggestions are reviewed from one inbox."""
 from __future__ import annotations
 
+import html
 import re
 
 from tests.test_automatic_discovery import FIRST, upload, workbench  # noqa: F401
@@ -386,3 +387,46 @@ def test_a_search_does_not_wait_for_source_work(workbench):  # noqa: F811
     service.source_guard = busy
     _items, _total, kinds = service.inbox(matter.matter_id, WEB_ACTOR, rows=False)
     assert sum(kinds.values()) == 4
+
+
+def test_the_recorded_occurrence_is_highlighted_when_a_name_repeats():
+    from case_intelligence.entity_repository import EntityRepository
+    excerpt = "Alex Example arrived. Later, Alex Example left."
+    second = excerpt.rindex("Alex Example")
+    before, match, after = EntityRepository.snippet_at(excerpt, second, second + len("Alex Example"))
+    assert match == "Alex Example" and before.endswith("Later, ") and after == " left."
+    assert "arrived" in before  # The first occurrence is context, not the highlight.
+
+
+def test_a_retyped_place_suggestion_stays_counted_and_filterable(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
+    service.update(matter.matter_id, WEB_ACTOR, amber["entity_id"], expected_revision=amber["revision"],
+                   display_name="Amber Cooperative", entity_type="place", status="suggested")
+    page = client.get(f"/matters/{matter.slug}/entities").text
+    assert re.search(r'>Places <span>1</span>', page)
+    places = client.get(f"/matters/{matter.slug}/entities", params={"kind": "places"}).text
+    assert inbox_names(places) == ["Amber Cooperative"]
+
+
+def test_opening_a_suggestion_keeps_the_inbox_position(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    page = client.get(f"/matters/{matter.slug}/entities", params={"kind": "people"}).text
+    link = re.search(r'<p class="suggestion-title"><a href="([^"]+)">Alex Example</a>', page)[1]
+    assert "kind=people" in link
+    detail = client.get(html.unescape(link)).text
+    back = re.search(r'<a href="([^"]+)">All entities</a>', detail)[1]
+    assert "kind=people" in back
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    alex = next(row for row in rows if row["display_name"] == "Alex Example")
+    response = client.post(f"/matters/{matter.slug}/entities/actions", follow_redirects=False, data=dict(
+        action="update", entity_id=alex["entity_id"], expected_revision=alex["revision"], display_name="Alex Example",
+        entity_type="person", status="suggested", kind="people"))
+    assert response.status_code == 303 and "kind=people" in response.headers["location"]

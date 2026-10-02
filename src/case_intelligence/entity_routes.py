@@ -33,7 +33,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
         has_more_reviews = len(runs) > 20
         coverage = [discovery.coverage(matter.matter_id, actor, row['run_id'], limit=0) for row in runs[:20]]
         inbox, inbox_total, inbox_kinds = [], 0, {}
-        if kind not in ('', 'people', 'organizations', 'things', 'dates'):
+        if kind not in ('', 'people', 'organizations', 'places', 'things', 'dates'):
             kind = ''
         try:
             if not entity_id:
@@ -58,7 +58,9 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
         return_to = return_path(slug, return_to)
         def entity_url(identifier='', target_page=1):
             path = f'/matters/{slug}/entities' + ('/' + identifier if identifier else '')
-            return path + '?' + urlencode(dict(q=q, page=target_page, support=support, return_to=return_to))
+            # Keep the reviewer's place in the suggestions inbox across detail pages.
+            place = dict(kind=kind, inbox_page=inbox_page) if kind or inbox_page > 1 else {}
+            return path + '?' + urlencode(dict(q=q, page=target_page, support=support, return_to=return_to, **place))
         response = templates.TemplateResponse(request=request, name='workbench_entities.html', context={
             **base_context(request, matter), 'matter': matter, 'entity': entity,
             'entities': entities, 'total': total, 'page': page, 'q': q,
@@ -225,7 +227,9 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                 return_to=return_path(slug, return_to))) + '#suggestions', status_code=303)
         path = (f'/matters/{slug}/entity-discovery/{run_id}' if action in ('discover', 'retry_discovery')
                 else f'/matters/{slug}/entities' + ('/' + entity_id if entity_id else ''))
-        return RedirectResponse(path + '?' + urlencode(dict(q=q, return_to=return_path(slug, return_to))), status_code=303)
+        place = dict(kind=kind, inbox_page=inbox_page) if kind or inbox_page > 1 else {}
+        return RedirectResponse(path + '?' + urlencode(dict(q=q, return_to=return_path(slug, return_to), **place)),
+                                status_code=303)
 
     @app.get('/matters/{slug}/entities/{entity_id}/export', dependencies=[Depends(require_response_lease)])
     def entity_export(request: Request, slug: str, entity_id: str):

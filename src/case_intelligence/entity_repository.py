@@ -6,6 +6,7 @@ The service owns the source guard; this repository owns the workspace transactio
 from contextlib import contextmanager
 import hashlib
 import json
+import re
 import uuid
 
 from .workspace_store import WorkspaceProblem
@@ -114,7 +115,9 @@ class EntityRepository:
              actor_id, self.now(), matter_id, entity_id),
         )
 
-    INBOX_KINDS = {'people': ('person',), 'organizations': ('organization',),
+    # Every entity type has a filter, so a suggestion a reviewer re-typed (for
+    # example to a place) stays counted and reachable.
+    INBOX_KINDS = {'people': ('person',), 'organizations': ('organization',), 'places': ('place',),
                    'things': ('thing', 'identifier'), 'dates': ('date',)}
 
     @staticmethod
@@ -136,6 +139,15 @@ class EntityRepository:
         start, end = max(0, at - radius), min(len(text), end_match + radius)
         return (('…' if start else '') + text[start:at], text[at:end_match],
                 text[end_match:end] + ('…' if end < len(text) else ''))
+
+    @classmethod
+    def snippet_at(cls, excerpt, start, end, radius=90):
+        """Like snippet(), around the recorded occurrence at [start, end)."""
+        squash = lambda text: re.sub(r'\s+', ' ', text)
+        before = excerpt[max(0, start - radius):start]
+        after = excerpt[end:end + radius]
+        return (('…' if start > radius else '') + squash(before).lstrip(), squash(excerpt[start:end]),
+                squash(after).rstrip() + ('…' if end + radius < len(excerpt) else ''))
 
     INBOX_GROUP_LIMIT = 200
 
@@ -188,11 +200,18 @@ class EntityRepository:
                 (group['first_key'].split('\x1f', 1)[1], matter_id)).fetchone() if group['first_key'] else None
             mention = dict(first) if first else None
             if mention:
-                # Highlight what was extracted; a reviewer may have renamed the suggestion.
-                for name in (mention.get('surface_text') or '', group['display_name']):
-                    mention['snippet'] = self.snippet(mention['excerpt'], name)
-                    if mention['snippet'][1]:
-                        break
+                # Highlight the recorded occurrence when it is still exact, else what
+                # was extracted (a reviewer may have renamed it), else the name.
+                start, end, surface = mention.get('start_offset'), mention.get('end_offset'), mention.get('surface_text')
+                if (surface and isinstance(start, int) and isinstance(end, int)
+                        and 0 <= start < end <= len(mention['excerpt'])
+                        and mention['excerpt'][start:end] == surface):
+                    mention['snippet'] = self.snippet_at(mention['excerpt'], start, end)
+                else:
+                    for name in (surface or '', group['display_name']):
+                        mention['snippet'] = self.snippet(mention['excerpt'], name)
+                        if mention['snippet'][1]:
+                            break
             group = {key: group[key] for key in group.keys() if key != 'first_key'}
             items.append(dict(group, members=members, first_mention=mention,
                               entity_id=members[0]['entity_id'] if members else '',
