@@ -72,7 +72,10 @@ reserved against the byte budget before it is written; a source that would excee
 the budget is sealed as failed without an inventory. When the budget is reached
 during processing, saved work remains and remaining units stay pending. Every
 committed unit records a content-free `entity.discovery_unit` audit event attributed
-to the system principal.
+to the system principal, in the same transaction as the unit: if the audit cannot be
+written, the unit's suggestions roll back and it stays pending. A matter whose
+sources cannot be read is skipped and reported for administrator attention while
+other matters continue.
 
 A background thread runs when a source becomes ready and sweeps active matters
 at startup and every 15 minutes, so restarts converge without a queue. It never

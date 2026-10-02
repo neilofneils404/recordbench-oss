@@ -838,6 +838,13 @@ MAX_AUTOMATIC_DISCOVERY_UNITS = 20000
 MAX_AUTOMATIC_DISCOVERY_STEPS = 400
 
 
+@dataclass(frozen=True)
+class AutomaticDiscoveryPass:
+    units: int
+    progress: int
+    failed_matters: tuple[str, ...] = ()
+
+
 class AutomaticDiscoveryCoordinator:
     """Find suggested people, things and dates after sources finish processing.
 
@@ -848,7 +855,7 @@ class AutomaticDiscoveryCoordinator:
 
     def __init__(
         self,
-        run_once: Callable[[tuple[str, ...] | None], int],
+        run_once: Callable[[tuple[str, ...] | None], AutomaticDiscoveryPass],
         *,
         sweep_seconds: float = 900.0,
     ) -> None:
@@ -881,11 +888,13 @@ class AutomaticDiscoveryCoordinator:
             try:
                 if sweep:
                     last_sweep = monotonic()
-                    handled = self._run_once(None)
+                    result = self._run_once(None)
                 else:
-                    handled = self._run_once(matter_ids) if matter_ids else 0
+                    result = self._run_once(matter_ids) if matter_ids else AutomaticDiscoveryPass(0, 0)
+                handled = result.progress
                 with self._lock:
-                    self._last_error = ""
+                    self._last_error = (
+                        "Automatic discovery needs administrator attention." if result.failed_matters else "")
                     if handled:
                         # More work may remain; continue without waiting.
                         if sweep:
@@ -1133,7 +1142,7 @@ class CaseIntelligenceWorkbench:
             "on",
         }:
             self.automatic_discovery = AutomaticDiscoveryCoordinator(
-                self.run_automatic_discovery_once
+                self.automatic_discovery_pass
             )
 
     def _prepare_runtime(self) -> None:
@@ -3207,13 +3216,19 @@ class CaseIntelligenceWorkbench:
         return EntityDiscovery(self.entity_service(matter, automatic=True), load_document=load_document)
 
     def run_automatic_discovery_once(self, matter_ids=None, *, unit_limit=200):
-        """Process newly ready sources for active matters; returns units handled.
+        """Process newly ready sources for active matters; returns units handled."""
+        return self.automatic_discovery_pass(matter_ids, unit_limit=unit_limit).units
+
+    def automatic_discovery_pass(self, matter_ids=None, *, unit_limit=200) -> "AutomaticDiscoveryPass":
+        """One bounded pass over active matters.
 
         Sealing a source (including an empty or unavailable one) counts as
-        progress, so a run continues past such sources instead of sleeping.
-        Every committed unit is recorded in the matter audit trail.
+        progress, so callers continue instead of waiting for the next sweep.
+        A failure in one matter is recorded and the remaining matters still run.
+        Every committed unit is audited in the same transaction as the unit.
         """
-        handled = 0
+        units = progress = 0
+        failed = []
         if matter_ids is None:
             matter_ids = self.workspace.active_matter_ids()
         for matter_id in matter_ids:
@@ -3221,10 +3236,11 @@ class CaseIntelligenceWorkbench:
                 matter = self.workspace.get_matter_by_id(matter_id)
             except KeyError:
                 continue
-            discovery = self.automatic_entity_discovery(matter)
             run_id = f"automatic-discovery-{uuid.uuid4().hex}"
             def audit_unit(event, matter=matter, run_id=run_id):
-                self.workspace.append_audit_event(
+                # Called inside the unit's repository transaction (same
+                # connection, re-entrant lock), so the record commits with it.
+                self.workspace._append_audit_event_locked(
                     actor_principal_id=AUTOMATIC_DISCOVERY_PRINCIPAL, session_id=None,
                     matter_id=matter.matter_id, request_id=run_id, action="entity.discovery_unit",
                     outcome="success" if event["state"] == "processed" else "failure",
@@ -3232,18 +3248,24 @@ class CaseIntelligenceWorkbench:
                     details={"count": event["count"], "unit_count": 1,
                              "state": {"processed": "completed", "failed": "failed",
                                        "invalidated": "attention"}[event["state"]]})
-            for _ in range(MAX_AUTOMATIC_DISCOVERY_STEPS):
-                if handled >= unit_limit:
-                    break
-                try:
-                    units, sealed = discovery.automatic_step(
-                        matter.matter_id, unit_limit=min(25, unit_limit - handled), on_committed=audit_unit)
-                except KeyError:
-                    break
-                if not units and not sealed:
-                    break
-                handled += units
-        return handled
+            try:
+                discovery = self.automatic_entity_discovery(matter)
+                for _ in range(MAX_AUTOMATIC_DISCOVERY_STEPS):
+                    if units >= unit_limit:
+                        break
+                    try:
+                        handled, sealed = discovery.automatic_step(
+                            matter.matter_id, unit_limit=min(25, unit_limit - units), audit_unit=audit_unit)
+                    except KeyError:
+                        break
+                    if not handled and not sealed:
+                        break
+                    units += handled
+                    progress += handled + sealed
+            except Exception:
+                # Keep one matter's unreadable sources from stalling the others.
+                failed.append(matter_id)
+        return AutomaticDiscoveryPass(units=units, progress=progress, failed_matters=tuple(failed))
 
     def notebook_reference_from_support(
         self, matter: MatterRecord, token: str

@@ -104,14 +104,15 @@ class EntityDiscovery:
                         unit_ordinal=unit['unit_ordinal'], state=state, count=count))
         return self.coverage(matter_id, actor_id, run_id, limit=0)
 
-    def automatic_step(self, matter_id, *, unit_limit=25, document_limit=5, on_committed=None):
+    def automatic_step(self, matter_id, *, unit_limit=25, document_limit=5, audit_unit=None):
         """Discover suggestions in newly ready sources without a person or a model.
 
         Each source's current version and extracted basis is inventoried once
         (unit ordinals and digests); later steps load only pending ordinals.
         Returns (units handled, sources sealed); either being non-zero is
         progress. The repository must authorize the automatic-discovery
-        principal. on_committed receives a content-free event per unit.
+        principal. audit_unit(event) is called inside each unit's transaction,
+        so its content-free record commits atomically with the unit.
         """
         if self.load_document is None:
             raise ValueError('Automatic discovery needs a whole-document loader.')
@@ -167,10 +168,10 @@ class EntityDiscovery:
                         except WorkspaceProblem:
                             # Budget reached: saved work stays; remaining units stay pending.
                             return handled, sealed
+                        if audit_unit is not None:
+                            audit_unit(dict(document_id=document_id, unit_ordinal=ordinal,
+                                            state=state, count=count))
                     handled += 1
-                    if on_committed is not None:
-                        on_committed(dict(document_id=document_id, unit_ordinal=ordinal,
-                                          state=state, count=count))
         return handled, sealed
 
     def automatic_progress(self, matter_id):

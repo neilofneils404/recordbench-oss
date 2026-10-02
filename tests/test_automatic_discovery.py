@@ -296,7 +296,7 @@ def test_changed_extracted_text_is_rediscovered(workbench):
     seals = bench.workspace.connection.execute(
         "SELECT content_basis_digest FROM workbench_entity_auto_discovery_unit WHERE matter_id=? "
         "AND unit_ordinal=0 ORDER BY content_basis_digest", (matter.matter_id,)).fetchall()
-    assert len(seals) == 2 and seals[-1][0] == "9" * 64
+    assert len(seals) == 2 and "9" * 64 in {row[0] for row in seals}
     # The same passages are not suggested twice.
     assert len(names(bench, matter)) == 4
 
@@ -312,3 +312,62 @@ def test_every_automatic_unit_is_audited(workbench):
     assert {event.actor_principal_id for event in events} == {AUTOMATIC_DISCOVERY_PRINCIPAL}
     assert {event.outcome for event in events} == {"success"}
     assert {event.object_type for event in events} == {"source"}
+
+
+def test_a_failing_audit_rolls_back_its_unit(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    original = bench.workspace._append_audit_event_locked
+    def refuse(**_values):
+        raise RuntimeError("synthetic audit outage")
+    monkeypatch.setattr(bench.workspace, "_append_audit_event_locked", refuse)
+    result = bench.automatic_discovery_pass()
+    assert result.units == 0 and result.failed_matters == (matter.matter_id,)
+    # Nothing from the unit committed without its audit record.
+    assert names(bench, matter) == []
+    states = {row[0] for row in bench.workspace.connection.execute(
+        "SELECT state FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND unit_ordinal>0",
+        (matter.matter_id,))}
+    assert states == {"pending"}
+    monkeypatch.setattr(bench.workspace, "_append_audit_event_locked", original)
+    assert bench.run_automatic_discovery_once() == 1
+    assert len(names(bench, matter)) == 4
+    assert len([event for event in bench.workspace.audit_events(matter.matter_id)
+                if event.action == "entity.discovery_unit"]) == 1
+
+
+def test_one_failing_matter_does_not_stop_the_others(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    other = bench.matter(_create_matter(client, "Synthetic second matter"), WEB_ACTOR)
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    upload(client, other.slug, "Synthetic memo.txt", SECOND)
+    original = bench.automatic_entity_discovery
+    def broken_first(target):
+        if target.matter_id == min(matter.matter_id, other.matter_id):
+            raise RuntimeError("synthetic unreadable source registry")
+        return original(target)
+    monkeypatch.setattr(bench, "automatic_entity_discovery", broken_first)
+    result = bench.automatic_discovery_pass()
+    assert result.failed_matters == (min(matter.matter_id, other.matter_id),)
+    assert result.units == 1
+
+
+def test_sealing_is_reported_as_progress_when_the_step_cap_is_reached(workbench, monkeypatch):
+    import case_intelligence.workbench as workbench_module
+    client, bench, matter, _runtime = workbench
+    for index in range(7):
+        upload(client, matter.slug, f"Synthetic memo {index}.txt", f"Riley Placeholder{index} arrived.".encode())
+    original = bench.automatic_entity_discovery
+    def unavailable(target):
+        discovery = original(target)
+        def load_document(document_id, source_version_id, ordinals=None):
+            raise KeyError(document_id)
+        discovery.load_document = load_document
+        return discovery
+    monkeypatch.setattr(bench, "automatic_entity_discovery", unavailable)
+    monkeypatch.setattr(workbench_module, "MAX_AUTOMATIC_DISCOVERY_STEPS", 1)
+    result = bench.automatic_discovery_pass()
+    # One capped step sealed five sources: no units, but real progress to continue from.
+    assert result.units == 0 and result.progress == 5 and not result.failed_matters
+    assert bench.automatic_discovery_pass().progress == 2
+    assert bench.automatic_discovery_pass().progress == 0
