@@ -86,6 +86,17 @@ document`, counts as detachment only during that wait, just like Selenium's
 stale-element response. Other driver errors and navigation timeouts still fail;
 workflow assertions remain unchanged and the action is never retried.
 
+Matter-knowledge pointer navigation samples target geometry inside its existing
+20-second wait. An offscreen center is scrolled into view and resets stability;
+an onscreen obstruction remains a failure unless it clears. Two consecutive
+identical, unobstructed rectangles are required before one native click, followed
+by the existing detachment and complete-document waits. Positioning timeouts
+retain at most six geometry/hit-test samples without page text or URLs.
+`tests/test_matter_knowledge_click.py` covers displaced scrolling, obstruction,
+moving geometry, bounded diagnostics and a single activation even when navigation
+fails. This handles displaced positioning; it does not prove the timing cause of
+an earlier hosted failure whose receipt contained no geometry samples.
+
 ## Browser pins and deliberate updates
 
 `config/browser-testing.json` records one exact Chrome for Testing version,
