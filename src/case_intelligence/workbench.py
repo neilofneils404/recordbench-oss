@@ -3012,7 +3012,12 @@ class CaseIntelligenceWorkbench:
             raise KeyError(token)
         store = self.source_store(matter)
         for document in store.ready_documents():
-            units = document.parsed_units()
+            try:
+                units = document.parsed_units()
+            except (OSError, RuntimeError, TypeError, ValueError):
+                # Unreadable derived text makes only this source's passages
+                # unavailable; every other source's support still opens.
+                continue
             for ordinal, unit in enumerate(units, 1):
                 candidate = self._candidate(matter, document, unit, ordinal)
                 if token in self._support_tokens(candidate):

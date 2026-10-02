@@ -313,6 +313,17 @@ def test_a_damaged_original_is_reported_unavailable_not_as_an_error(workbench, d
     assert page.status_code == 200 and "Amber Cooperative" in _row(page.text, "Amber Cooperative")
     detail = client.get(f"/matters/{matter.slug}/entities/{amber['entity_id']}")
     assert detail.status_code == 200 and "Original passage changed or is unavailable" in detail.text
+    # Following the inbox link reports the passage unavailable instead of failing,
+    # and a passage in an undamaged source still opens.
+    link = re.search(r'class="suggestion-source" href="([^"]+)"', _row(page.text, "Amber Cooperative"))[1]
+    opened = client.get(html.unescape(link))
+    assert opened.status_code == 404 and "Source support is unavailable" in opened.text
+    upload(client, matter.slug, "Synthetic call.txt", SECOND)
+    bench.run_automatic_discovery_once()
+    items, _total, _kinds = bench.entity_service(matter).inbox(matter.matter_id, WEB_ACTOR)
+    healthy = next(item["first_mention"] for item in items
+                   if item["first_mention"]["document_id"] != mention["document_id"])
+    assert client.get(f"/matters/{matter.slug}", params={"support": healthy["support_token"]}).status_code == 200
 
 
 def test_an_inbox_page_citing_many_sources_reads_no_derived_text(workbench, monkeypatch):  # noqa: F811
@@ -497,3 +508,25 @@ def test_candidate_and_review_pages_keep_the_inbox_position(workbench):  # noqa:
                         params={"kind": "people", "inbox_page": "2", "candidate_page": "2"}).text
     previous = re.search(r'<a href="([^"]+)">Previous candidates</a>', detail)[1]
     assert "kind=people" in previous and "inbox_page=2" in previous
+
+
+def test_a_row_opens_the_identity_whose_passage_it_shows(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    upload(client, matter.slug, "Synthetic call.txt", SECOND)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    earliest, later = sorted((row for row in rows if row["display_name"] == "Alex Example"),
+                             key=lambda row: (row["created_at"], row["entity_id"]))
+    # A reviewer merges the earliest identity's passages into the other; both stay Suggested.
+    service.reconcile(matter.matter_id, WEB_ACTOR, earliest["entity_id"], expected_revision=earliest["revision"],
+                      target_id=later["entity_id"], target_revision=later["revision"], action="merge")
+    assert {row["status"] for row in service.list(matter.matter_id, WEB_ACTOR)[0]
+            if row["display_name"] == "Alex Example"} == {"suggested"}
+    items, _total, _kinds = service.inbox(matter.matter_id, WEB_ACTOR)
+    alex = next(item for item in items if item["display_name"] == "Alex Example")
+    assert alex["first_mention"]["entity_id"] == later["entity_id"] == alex["entity_id"]
+    page = client.get(f"/matters/{matter.slug}/entities").text
+    link = re.search(r'<p class="suggestion-title"><a href="([^"]+)">Alex Example</a>', page)[1]
+    assert f"/entities/{later['entity_id']}" in link

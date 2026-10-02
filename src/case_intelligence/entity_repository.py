@@ -214,7 +214,8 @@ class EntityRepository:
                             break
             group = {key: group[key] for key in group.keys() if key != 'first_key'}
             items.append(dict(group, members=members, first_mention=mention,
-                              entity_id=members[0]['entity_id'] if members else '',
+                              # Open the identity that owns the passage shown.
+                              entity_id=mention['entity_id'] if mention else members[0]['entity_id'] if members else '',
                               targets=','.join(f"{row['entity_id']}:{row['revision']}" for row in members)))
         return items, total, kinds
 

@@ -145,7 +145,9 @@ source was removed, is no longer ready or now has a different version, the row s
 the excerpt is retained history instead of linking. The list checks only the source
 catalog, never derived text, so a page citing many large sources stays quick; the
 identity page and opening the passage still validate the exact cited text and say
-when it changed or cannot be read. Filter by People, Organizations, Places, Things &
+when it changed or cannot be read; a source whose derived text is damaged makes
+only its own passages unavailable. The name opens the identity that owns the
+passage shown, even after a reviewer moved passages between same-named suggestions. Filter by People, Organizations, Places, Things &
 IDs or Dates; searching hides the list, keeps the selected filter and page for the
 way back, and leaves guided discovery collapsed. Counting is
 one pass over the matter's passages, so the list stays quick at the discovery limit.
