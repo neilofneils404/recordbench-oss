@@ -74,8 +74,12 @@ during processing, saved work remains and remaining units stay pending. Every
 committed unit records a content-free `entity.discovery_unit` audit event attributed
 to the system principal, in the same transaction as the unit: if the audit cannot be
 written, the unit's suggestions roll back and it stays pending. A matter whose
-sources cannot be read is skipped and reported for administrator attention while
-other matters continue.
+sources cannot be read is skipped while other matters continue; the first failure
+records a content-free `entity.discovery_automatic` failure event in that matter's
+audit trail and the application log, and a later successful pass clears it. The
+internal principal identifier is reserved: ordinary sign-in cannot claim it, and an
+existing row that is not exactly the inactive internal principal (or holds any
+matter access) stops automatic discovery rather than being trusted.
 
 A background thread runs when a source becomes ready and sweeps active matters
 at startup and every 15 minutes, so restarts converge without a queue. It never

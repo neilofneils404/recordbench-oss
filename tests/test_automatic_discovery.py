@@ -371,3 +371,86 @@ def test_sealing_is_reported_as_progress_when_the_step_cap_is_reached(workbench,
     assert result.units == 0 and result.progress == 5 and not result.failed_matters
     assert bench.automatic_discovery_pass().progress == 2
     assert bench.automatic_discovery_pass().progress == 0
+
+
+def test_a_colliding_principal_is_never_trusted(workbench):
+    from case_intelligence.workspace_store import WorkspaceProblem
+    _client, bench, matter, _runtime = workbench
+    # Ordinary principal creation cannot claim the internal identifier.
+    with pytest.raises(WorkspaceProblem):
+        bench.workspace.upsert_principal("local", "impostor", "Impostor", "impostor",
+                                         preferred_principal_id=AUTOMATIC_DISCOVERY_PRINCIPAL)
+    # A pre-existing row that is not exactly the inactive internal principal is refused.
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute(
+            "INSERT INTO workbench_principal(principal_id,provider,provider_subject,display_name,login_name,"
+            "active,created_at,last_seen_at) VALUES (?,?,?,?,?,1,?,?)",
+            (AUTOMATIC_DISCOVERY_PRINCIPAL, "local", "impostor", "Impostor", "impostor",
+             "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z"))
+    repo = bench.workspace.entity_repository(automatic=True)
+    with pytest.raises(KeyError):
+        with repo.transaction(matter.matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL):
+            pass
+
+
+def test_a_failed_seal_never_exceeds_the_budget(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    original = bench.automatic_entity_discovery
+    used = bench.workspace.entity_repository().discovery_storage_bytes
+    def full(target):
+        discovery = original(target)
+        discovery.byte_limit = max(4096, used(target.matter_id) + 4096 + 10)
+        return discovery
+    monkeypatch.setattr(bench, "automatic_entity_discovery", full)
+    result = bench.automatic_discovery_pass()
+    assert result.units == 0 and result.progress == 0
+    assert bench.workspace.connection.execute(
+        "SELECT COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=?",
+        (matter.matter_id,)).fetchone()[0] == 0
+    assert used(matter.matter_id) <= full(matter).byte_limit
+
+
+def test_budget_is_not_recounted_for_every_unit(workbench, monkeypatch):
+    from case_intelligence.entity_repository import EntityRepository
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    calls = []
+    original = EntityRepository.discovery_storage_bytes
+    def counting(self, matter_id):
+        calls.append(matter_id)
+        return original(self, matter_id)
+    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", counting)
+    assert bench.run_automatic_discovery_once() == 30
+    # Counted once per pass, plus a recount only when the conservative running
+    # estimate approaches the limit; never once per unit.
+    assert 1 <= len(calls) <= 3
+
+
+def test_first_coordinator_pass_always_sweeps(tmp_path, monkeypatch):
+    import case_intelligence.workbench as workbench_module
+    swept = []
+    monkeypatch.setattr(workbench_module, "monotonic", lambda: 1.0)  # Just after host boot.
+    coordinator = AutomaticDiscoveryCoordinator(
+        lambda ids: swept.append(ids) or workbench_module.AutomaticDiscoveryPass(0, 0), sweep_seconds=900)
+    try:
+        deadline = time.time() + 5
+        while not swept and time.time() < deadline:
+            time.sleep(0.01)
+        assert swept[0] is None  # None means "sweep every active matter".
+    finally:
+        coordinator.close()
+
+
+def test_a_skipped_matter_is_recorded_once_for_administrators(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    def broken(target):
+        raise RuntimeError("synthetic unreadable source registry")
+    monkeypatch.setattr(bench, "automatic_entity_discovery", broken)
+    bench.automatic_discovery_pass()
+    bench.automatic_discovery_pass()
+    events = [event for event in bench.workspace.audit_events(matter.matter_id)
+              if event.action == "entity.discovery_automatic"]
+    assert len(events) == 1 and events[0].outcome == "failure"
+    assert "synthetic" not in repr(events[0].details)

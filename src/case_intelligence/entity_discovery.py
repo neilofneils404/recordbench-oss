@@ -104,7 +104,7 @@ class EntityDiscovery:
                         unit_ordinal=unit['unit_ordinal'], state=state, count=count))
         return self.coverage(matter_id, actor_id, run_id, limit=0)
 
-    def automatic_step(self, matter_id, *, unit_limit=25, document_limit=5, audit_unit=None):
+    def automatic_step(self, matter_id, *, unit_limit=25, document_limit=5, audit_unit=None, budget=None):
         """Discover suggestions in newly ready sources without a person or a model.
 
         Each source's current version and extracted basis is inventoried once
@@ -112,7 +112,9 @@ class EntityDiscovery:
         Returns (units handled, sources sealed); either being non-zero is
         progress. The repository must authorize the automatic-discovery
         principal. audit_unit(event) is called inside each unit's transaction,
-        so its content-free record commits atomically with the unit.
+        so its content-free record commits atomically with the unit. budget
+        is an optional dict shared across steps; it carries a conservative
+        running total so the ledger is not re-summed for every unit.
         """
         if self.load_document is None:
             raise ValueError('Automatic discovery needs a whole-document loader.')
@@ -120,14 +122,21 @@ class EntityDiscovery:
         actor_id = AUTOMATIC_DISCOVERY_PRINCIPAL
         version = self.extractor.version
         handled = sealed = 0
+        budget = {} if budget is None else budget
         with service.repository.transaction(matter_id, actor_id) as repo:
             documents = repo.auto_discovery_documents(matter_id, version, document_limit)
+            if 'used' not in budget:
+                budget['used'] = repo.discovery_storage_bytes(matter_id)
         with service.source_guard():
             for document in documents:
                 if handled >= unit_limit:
                     break
                 document_id = document['document_id']
                 if not document['sealed']:
+                    with service.repository.transaction(matter_id, actor_id) as repo:
+                        if not self._fits(repo, matter_id, budget, repo.AUTO_ROW_BYTES):
+                            # Not even a seal fits: stop; nothing else can progress either.
+                            return handled, sealed
                     inventory, state, note = [], 'processed', ''
                     try:
                         for ordinal, text, reference in self.load_document(
@@ -142,12 +151,15 @@ class EntityDiscovery:
                         if not repo.auto_discovery_source_current(matter_id, dict(document, matter_id=matter_id)):
                             continue
                         # Reserve the inventory's logical size before writing it.
-                        reserved = (len(inventory) + 1) * repo.AUTO_ROW_BYTES + 4096
-                        if inventory and repo.discovery_storage_bytes(matter_id) + reserved > self.byte_limit:
+                        if inventory and not self._fits(repo, matter_id, budget,
+                                                        (len(inventory) + 1) * repo.AUTO_ROW_BYTES):
                             inventory, state = [], 'failed'
                             note = 'Entity discovery byte budget reached; this source was not inventoried.'
+                        if not self._fits(repo, matter_id, budget, (len(inventory) + 1) * repo.AUTO_ROW_BYTES):
+                            return handled, sealed
                         if repo.seal_auto_discovery(matter_id, document, version, inventory, state, note):
                             sealed += 1
+                            budget['used'] += (len(inventory) + 1) * repo.AUTO_ROW_BYTES
                 with service.repository.transaction(matter_id, actor_id) as repo:
                     pending = repo.auto_discovery_pending(matter_id, document, version, unit_limit - handled)
                 if not pending:
@@ -164,7 +176,7 @@ class EntityDiscovery:
                             continue
                         try:
                             state, count = self._process_unit(repo, matter_id, actor_id, unit,
-                                                              loaded_units.get(ordinal), AutomaticLedger)
+                                                              loaded_units.get(ordinal), AutomaticLedger, budget)
                         except WorkspaceProblem:
                             # Budget reached: saved work stays; remaining units stay pending.
                             return handled, sealed
@@ -174,13 +186,21 @@ class EntityDiscovery:
                     handled += 1
         return handled, sealed
 
+    def _fits(self, repo, matter_id, budget, required):
+        """True if required logical bytes fit; recount once before refusing."""
+        if budget['used'] + required + 4096 <= self.byte_limit:
+            return True
+        budget['used'] = repo.discovery_storage_bytes(matter_id)
+        return budget['used'] + required + 4096 <= self.byte_limit
+
     def automatic_progress(self, matter_id):
         with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
             return repo.auto_discovery_progress(matter_id, self.extractor.version)
 
-    def _process_unit(self, repo, matter_id, actor_id, unit, loaded, ledger):
+    def _process_unit(self, repo, matter_id, actor_id, unit, loaded, ledger, budget=None):
         service = self.service
-        used_bytes = repo.discovery_storage_bytes(matter_id)
+        # Automatic runs pass a conservative running total; guided runs recount.
+        used_bytes = budget['used'] if budget is not None else repo.discovery_storage_bytes(matter_id)
         if used_bytes + 4096 > self.byte_limit:
             raise WorkspaceProblem('Entity discovery byte budget reached. Saved work is retained; this unit remains unprocessed.')
         ledger.seed(repo, unit)
@@ -245,8 +265,12 @@ class EntityDiscovery:
         reference_bytes = len(json.dumps(reference).encode('utf-8'))
         required_bytes = 4096 + sum(32768 + 4 * reference_bytes
             + 4 * len(json.dumps(asdict(occurrence)).encode('utf-8')) for _, occurrence in prepared)
+        if used_bytes + required_bytes > self.byte_limit and budget is not None:
+            used_bytes = budget['used'] = repo.discovery_storage_bytes(matter_id)
         if used_bytes + required_bytes > self.byte_limit:
             raise WorkspaceProblem('Entity discovery byte budget reached. Saved work is retained; this unit remains unprocessed.')
+        if budget is not None:
+            budget['used'] += required_bytes
         for key, occurrence in prepared:
             if repo.discovery_seen(matter_id, key):
                 continue

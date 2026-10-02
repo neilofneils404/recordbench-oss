@@ -8,6 +8,7 @@ from time import monotonic
 import argparse
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -833,6 +834,7 @@ class MatterMaintenanceCoordinator:
         self._thread.join(timeout=5)
 
 
+LOGGER = logging.getLogger("recordbench.workbench")
 MAX_AUTOMATIC_DISCOVERY_UNITS = 20000
 # Bounds one matter's steps per run; each step seals or processes durable work.
 MAX_AUTOMATIC_DISCOVERY_STEPS = 400
@@ -878,13 +880,13 @@ class AutomaticDiscoveryCoordinator:
         self._wake.set()
 
     def _loop(self) -> None:
-        last_sweep = 0.0
+        last_sweep: float | None = None  # The first pass always sweeps.
         while not self._stop.is_set():
             self._wake.clear()
             with self._lock:
                 matter_ids = tuple(sorted(self._pending))
                 self._pending.clear()
-            sweep = monotonic() - last_sweep >= self._sweep
+            sweep = last_sweep is None or monotonic() - last_sweep >= self._sweep
             try:
                 if sweep:
                     last_sweep = monotonic()
@@ -898,7 +900,7 @@ class AutomaticDiscoveryCoordinator:
                     if handled:
                         # More work may remain; continue without waiting.
                         if sweep:
-                            last_sweep = 0.0
+                            last_sweep = None
                         self._pending.update(matter_ids)
                         self._wake.set()
             except Exception:
@@ -1002,6 +1004,7 @@ class CaseIntelligenceWorkbench:
         self.full_review: ReviewCoordinator | None = None
         self.maintenance: MatterMaintenanceCoordinator | None = None
         self.automatic_discovery: AutomaticDiscoveryCoordinator | None = None
+        self._automatic_discovery_reported: set[str] = set()
         try:
             generation_concurrency = int(
                 os.getenv("CASE_INTELLIGENCE_GENERATION_CONCURRENCY", "2")
@@ -3248,6 +3251,7 @@ class CaseIntelligenceWorkbench:
                     details={"count": event["count"], "unit_count": 1,
                              "state": {"processed": "completed", "failed": "failed",
                                        "invalidated": "attention"}[event["state"]]})
+            budget: dict[str, int] = {}
             try:
                 discovery = self.automatic_entity_discovery(matter)
                 for _ in range(MAX_AUTOMATIC_DISCOVERY_STEPS):
@@ -3255,7 +3259,8 @@ class CaseIntelligenceWorkbench:
                         break
                     try:
                         handled, sealed = discovery.automatic_step(
-                            matter.matter_id, unit_limit=min(25, unit_limit - units), audit_unit=audit_unit)
+                            matter.matter_id, unit_limit=min(25, unit_limit - units), audit_unit=audit_unit,
+                            budget=budget)
                     except KeyError:
                         break
                     if not handled and not sealed:
@@ -3263,8 +3268,21 @@ class CaseIntelligenceWorkbench:
                     units += handled
                     progress += handled + sealed
             except Exception:
-                # Keep one matter's unreadable sources from stalling the others.
+                # Keep one matter's unreadable sources from stalling the others,
+                # and leave a durable, content-free record for administrators.
                 failed.append(matter_id)
+                LOGGER.warning("Automatic discovery skipped a matter after an error.", exc_info=True)
+                if matter_id not in self._automatic_discovery_reported:
+                    try:
+                        self.workspace.append_audit_event(
+                            actor_principal_id=None, session_id=None, matter_id=matter_id,
+                            request_id=run_id, action="entity.discovery_automatic", outcome="failure",
+                            object_type="matter", object_id=matter_id, details={"state": "attention"})
+                        self._automatic_discovery_reported.add(matter_id)
+                    except Exception:
+                        LOGGER.warning("Automatic discovery could not record a matter failure.", exc_info=True)
+            else:
+                self._automatic_discovery_reported.discard(matter_id)
         return AutomaticDiscoveryPass(units=units, progress=progress, failed_matters=tuple(failed))
 
     def notebook_reference_from_support(

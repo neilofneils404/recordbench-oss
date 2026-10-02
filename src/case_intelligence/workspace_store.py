@@ -1607,7 +1607,7 @@ class WorkspaceStore:
             ).fetchone()
             if row is None:
                 principal_id = preferred_principal_id or f"principal-{uuid.uuid4().hex}"
-                if not _PRINCIPAL_ID.fullmatch(principal_id):
+                if not _PRINCIPAL_ID.fullmatch(principal_id) or principal_id == AUTOMATIC_DISCOVERY_PRINCIPAL:
                     raise WorkspaceProblem("Principal identity is invalid.")
                 self.connection.execute(
                     "INSERT INTO workbench_principal("
@@ -3179,6 +3179,18 @@ class WorkspaceStore:
             (AUTOMATIC_DISCOVERY_PRINCIPAL, "system", "automatic-discovery", "Automatic discovery",
              "automatic-discovery", "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z"),
         )
+        # Never trust the identifier alone: a pre-existing row must be exactly the
+        # inactive internal principal and must hold no matter access.
+        principal = self.connection.execute(
+            "SELECT provider,provider_subject,active FROM workbench_principal WHERE principal_id=?",
+            (AUTOMATIC_DISCOVERY_PRINCIPAL,),
+        ).fetchone()
+        member = self.connection.execute(
+            "SELECT 1 FROM workbench_effective_membership WHERE principal_id=? LIMIT 1",
+            (AUTOMATIC_DISCOVERY_PRINCIPAL,),
+        ).fetchone()
+        if principal is None or tuple(principal) != ("system", "automatic-discovery", 0) or member:
+            raise KeyError(matter_id)
 
     def assertion_repository(self, *, export_read=False, administrator_override=False):
         from .assertion_repository import AssertionRepository
