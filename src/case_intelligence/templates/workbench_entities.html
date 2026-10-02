@@ -11,12 +11,14 @@
   {% set reconciliation_draft = draft if draft and draft.action in ('merge','split','alias','reject') else None %}
   {% if reconciliation_draft %}<section class="notice" aria-label="Unsaved reconciliation"><h2>Review your unsaved decision</h2><p>Decision: {{ reconciliation_draft.action }} · source {{ reconciliation_draft.entity_id }} at revision {{ reconciliation_draft.expected_revision }} · destination {{ reconciliation_draft.target_id }} at revision {{ reconciliation_draft.target_revision }} · selected mention {{ reconciliation_draft.mention_id or 'none' }}.</p><p>Compare the saved identities and selected mention before updating the revisions and retrying. Your decision inputs remain below while this identity is available.</p></section>{% endif %}
   {% if passage %}<section class="notebook-tool-card" aria-label="Selected original passage"><h2>Selected original passage</h2><p>{{ passage.source_name }} · {{ passage.location }}</p><blockquote>{{ passage.excerpt }}</blockquote><p>Choose an existing identity below or create a separate one.</p></section>{% endif %}
+  {# The reviewer's place in the suggestions inbox, carried by every entity form. #}
+  {% macro inbox_place() %}{% if inbox_kind %}<input type="hidden" name="kind" value="{{ inbox_kind }}">{% endif %}{% if inbox_page > 1 %}<input type="hidden" name="inbox_page" value="{{ inbox_page }}">{% endif %}{% endmacro %}
   {% macro hidden(action, row=None) %}
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="action" value="{{ action }}">
     <input type="hidden" name="return_to" value="{{ return_to }}">
     <input type="hidden" name="q" value="{{ q }}">
-    {% if inbox_kind %}<input type="hidden" name="kind" value="{{ inbox_kind }}">{% endif %}{% if inbox_page > 1 %}<input type="hidden" name="inbox_page" value="{{ inbox_page }}">{% endif %}
+    {{ inbox_place() }}
     {% if row %}<input type="hidden" name="entity_id" value="{{ row.entity_id }}"><input type="hidden" name="expected_revision" value="{{ row.revision }}">{% endif %}
   {% endmacro %}
   {% if not entity and automatic_paused %}
@@ -98,7 +100,7 @@
       </article>{% else %}<p>No matches on this candidate page. Check further pages or use a destination identity directly. A match never establishes identity.</p>{% endfor %}
       <nav aria-label="Candidate pages">{% if candidate_page > 1 %}<a href="{{ candidate_page_url(candidate_page-1) }}">Previous candidates</a>{% endif %} {% if has_more_candidates %}<a href="{{ candidate_page_url(candidate_page+1) }}">Next candidates</a>{% endif %}</nav>
       <details{% if reconciliation_draft %} open{% endif %}><summary>Split a mention or reconcile a different identity</summary><p>Create a separate identity first, then use its ID and current revision here. Splitting transfers the selected mention, preserving its original support.</p>
-        <form method="post" action="/matters/{{ matter.slug }}/entities/actions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entity_id" value="{{ entity.entity_id }}"><input type="hidden" name="return_to" value="{{ return_to }}"><input type="hidden" name="q" value="{{ q }}">
+        <form method="post" action="/matters/{{ matter.slug }}/entities/actions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entity_id" value="{{ entity.entity_id }}"><input type="hidden" name="return_to" value="{{ return_to }}"><input type="hidden" name="q" value="{{ q }}">{{ inbox_place() }}
           <label>Source revision<input type="number" name="expected_revision" required min="1" value="{{ reconciliation_draft.expected_revision if reconciliation_draft else entity.revision }}"></label>
           <label>Decision<select name="action">{% for value,label in [('split','Split selected mention'),('merge','Merge all mentions'),('alias','Confirm alias link'),('reject','Keep identities distinct')] %}<option value="{{ value }}"{% if reconciliation_draft and reconciliation_draft.action == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
           <label>Destination identity ID<input name="target_id" required maxlength="80" value="{{ reconciliation_draft.target_id if reconciliation_draft else '' }}"></label><label>Destination revision<input type="number" name="target_revision" required min="1" value="{{ reconciliation_draft.target_revision if reconciliation_draft else '' }}"></label>

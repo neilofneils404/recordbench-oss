@@ -594,7 +594,9 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
 .suggestion:last-child { border-bottom: 0; }
 .suggestion-main { flex: 1 1 auto; min-width: 0; }
 .suggestion-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0; }
-.suggestion-title a { color: var(--ink); font-weight: 600; text-decoration: none; }
+/* Long unbroken names (up to 160 characters) wrap rather than run off narrow screens. */
+.notebook-tool-card h3 { overflow-wrap: anywhere; }
+.suggestion-title a { min-width: 0; max-width: 100%; color: var(--ink); font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
 .suggestion-title a:hover,
 .suggestion-title a:focus-visible { text-decoration: underline; }
 .suggestion-type,

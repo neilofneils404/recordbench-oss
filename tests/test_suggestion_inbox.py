@@ -445,3 +445,25 @@ def test_a_failed_detail_action_keeps_the_inbox_position(workbench):  # noqa: F8
     back = re.search(r'<a href="([^"]+)">All entities</a>', stale.text)[1]
     assert "kind=people" in back and "inbox_page=2" in back
     assert '<input type="hidden" name="kind" value="people">' in stale.text
+
+
+def test_the_reconciliation_form_keeps_the_inbox_position(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    rows, _ = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)
+    alex = next(row for row in rows if row["display_name"] == "Alex Example")
+    detail = client.get(f"/matters/{matter.slug}/entities/{alex['entity_id']}",
+                        params={"kind": "people", "inbox_page": "2"}).text
+    form = re.search(r'<form[^>]*>(?:(?!</form>).)*Mention to split(?:(?!</form>).)*</form>', detail, re.S)[0]
+    assert '<input type="hidden" name="kind" value="people">' in form
+    assert '<input type="hidden" name="inbox_page" value="2">' in form
+
+
+def test_long_suggestion_names_wrap_instead_of_overflowing():
+    from pathlib import Path
+    css = (Path(__file__).resolve().parents[1] / "src/case_intelligence/static/workspace-layout.css").read_text()
+    rule = re.search(r"\.suggestion-title a \{([^}]*)\}", css)[1]
+    assert "overflow-wrap: anywhere" in rule and "min-width: 0" in rule
+    # Identity cards in the list below wrap the same long names.
+    assert "overflow-wrap: anywhere" in re.search(r"\.notebook-tool-card h3 \{([^}]*)\}", css)[1]
