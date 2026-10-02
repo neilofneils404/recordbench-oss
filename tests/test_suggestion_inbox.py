@@ -168,7 +168,8 @@ def test_inbox_work_grows_linearly_with_suggestions(workbench):  # noqa: F811
     connection = bench.workspace.connection
 
     def add(count, start):
-        with connection:
+        # Hold the store's lock: background work shares this connection.
+        with bench.workspace._lock, connection:
             for index in range(start, start + count):
                 entity_id = f"synthetic-entity-{index:06d}"
                 connection.execute(
@@ -238,7 +239,7 @@ def test_a_group_larger_than_one_decision_says_so(workbench):  # noqa: F811
     upload(client, matter.slug, "Synthetic memo.txt", FIRST)
     bench.run_automatic_discovery_once()
     connection = bench.workspace.connection
-    with connection:
+    with bench.workspace._lock, connection:
         for index in range(201):
             connection.execute(
                 "INSERT INTO workbench_entity(entity_id,matter_id,entity_type,display_name,status,origin,"
@@ -259,7 +260,7 @@ def test_an_unavailable_original_is_not_offered_as_a_link(workbench):  # noqa: F
     rows, _ = service.list(matter.matter_id, WEB_ACTOR)
     amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
     connection = bench.workspace.connection
-    with connection:  # The retained reference no longer matches its current original.
+    with bench.workspace._lock, connection:  # The retained reference no longer matches its current original.
         connection.execute("UPDATE workbench_entity_mention SET location='Superseded location' WHERE entity_id=?",
                            (amber["entity_id"],))
     page = client.get(f"/matters/{matter.slug}/entities").text
@@ -321,10 +322,22 @@ def test_inbox_validation_reads_only_cited_units_outside_the_transaction(workben
     def whole_file(self):
         raise AssertionError("whole derived file parsed")
     monkeypatch.setattr(PilotDocument, "parsed_units", whole_file)
+    from contextlib import contextmanager
+    depth = [0]
+    transaction = service.repository.transaction
+    @contextmanager
+    def tracked(*args, **kwargs):
+        with transaction(*args, **kwargs) as repo:
+            depth[0] += 1
+            try:
+                yield repo
+            finally:
+                depth[0] -= 1
+    service.repository.transaction = tracked
     validate = service.validate_references
     seen = []
     def observed(references):
-        seen.append(bench.workspace.connection.in_transaction)
+        seen.append(depth[0] > 0)
         return validate(references)
     service.validate_references = observed
     items, _total, _kinds = service.inbox(matter.matter_id, WEB_ACTOR)
