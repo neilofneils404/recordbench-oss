@@ -27,6 +27,7 @@ import uvicorn
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
@@ -134,13 +135,35 @@ def main():
                 suggestion.click()
                 wait.until(EC.staleness_of(suggestion))
                 wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, '.notebook-item.status-suggested .notebook-provenance a'))
-                candidate = next(item for item in driver.find_elements(By.CSS_SELECTOR, '.notebook-item.status-suggested')
-                    if 'North Annex' in item.text)
-                support = candidate.find_element(By.CSS_SELECTOR, '.notebook-provenance a')
-                reachable(support)
-                support.click()
-                wait.until(lambda _: find('.support-pane').is_displayed())
-                assert 'North Annex' in find('.support-pane').text
+
+                def open_support():
+                    # Locate, reveal and click with fresh handles; if the page is
+                    # replaced meanwhile, the wait simply tries again.
+                    try:
+                        candidate = next(item for item in driver.find_elements(By.CSS_SELECTOR, '.notebook-item.status-suggested')
+                            if 'North Annex' in item.text)
+                        support = candidate.find_element(By.CSS_SELECTOR, '.notebook-provenance a')
+                        reachable(support)
+                        support.click()
+                        return True
+                    except TimeoutException:
+                        raise
+                    except (StopIteration, WebDriverException):
+                        return False
+
+                wait.until(lambda _: open_support())
+                # The link may load a new page: read the pane in one script call so
+                # no element handle from the previous document is ever reused.
+                def support_shown():
+                    try:
+                        return js("""const pane = document.querySelector('.support-pane');
+                            return !!pane && pane.getClientRects().length > 0 && pane.textContent.includes('North Annex');""")
+                    except TimeoutException:
+                        raise
+                    except WebDriverException:
+                        return False
+
+                wait.until(lambda _: support_shown())
                 report['checks'].append(f'{percent}% zoom: Find review suggestions remains reachable, submits, and opens the Suggested place original support')
 
                 driver.get(base + prefix + '/setup?view=list')
