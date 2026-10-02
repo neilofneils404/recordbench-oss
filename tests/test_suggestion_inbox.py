@@ -430,3 +430,18 @@ def test_opening_a_suggestion_keeps_the_inbox_position(workbench):  # noqa: F811
         action="update", entity_id=alex["entity_id"], expected_revision=alex["revision"], display_name="Alex Example",
         entity_type="person", status="suggested", kind="people"))
     assert response.status_code == 303 and "kind=people" in response.headers["location"]
+
+
+def test_a_failed_detail_action_keeps_the_inbox_position(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    rows, _ = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)
+    alex = next(row for row in rows if row["display_name"] == "Alex Example")
+    stale = client.post(f"/matters/{matter.slug}/entities/actions", data=dict(
+        action="update", entity_id=alex["entity_id"], expected_revision=alex["revision"] + 5,
+        display_name="Alex Example", entity_type="person", status="suggested", kind="people", inbox_page="2"))
+    assert stale.status_code == 409
+    back = re.search(r'<a href="([^"]+)">All entities</a>', stale.text)[1]
+    assert "kind=people" in back and "inbox_page=2" in back
+    assert '<input type="hidden" name="kind" value="people">' in stale.text

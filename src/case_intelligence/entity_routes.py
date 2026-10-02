@@ -206,13 +206,13 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                               status_code=409)
             try:
                 return render(request, slug, entity_id=entity_id, q=q, support=support, return_to=return_to,
-                              error=error, draft=dict(fields, action=action, entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id),
+                              kind=kind, inbox_page=inbox_page, error=error, draft=dict(fields, action=action, entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id),
                               status_code=409 if isinstance(exc, (EntityEditConflict, KeyError)) else 400)
             except HTTPException as gone:
                 if gone.status_code != 404:
                     raise
                 return render(request, slug, q=q, support=support, return_to=return_to,
-                              error=error, draft=dict(fields, action=action if action in ('merge','split','alias','reject') else 'create', entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id), status_code=409)
+                              kind=kind, inbox_page=inbox_page, error=error, draft=dict(fields, action=action if action in ('merge','split','alias','reject') else 'create', entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id), status_code=409)
         if action == 'decide':
             # One correctly identified event per decided identity, like its history entry.
             for identifier, _revision in pairs:
