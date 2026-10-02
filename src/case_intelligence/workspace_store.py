@@ -3185,9 +3185,12 @@ class WorkspaceStore:
             "SELECT provider,provider_subject,active FROM workbench_principal WHERE principal_id=?",
             (AUTOMATIC_DISCOVERY_PRINCIPAL,),
         ).fetchone()
+        # Check raw grants: the effective-membership view hides inactive
+        # principals, which is exactly what this one is.
         member = self.connection.execute(
-            "SELECT 1 FROM workbench_effective_membership WHERE principal_id=? LIMIT 1",
-            (AUTOMATIC_DISCOVERY_PRINCIPAL,),
+            "SELECT 1 FROM workbench_matter_membership WHERE principal_id=? "
+            "UNION ALL SELECT 1 FROM workbench_team_group_member WHERE principal_id=? LIMIT 1",
+            (AUTOMATIC_DISCOVERY_PRINCIPAL, AUTOMATIC_DISCOVERY_PRINCIPAL),
         ).fetchone()
         if principal is None or tuple(principal) != ("system", "automatic-discovery", 0) or member:
             raise KeyError(matter_id)

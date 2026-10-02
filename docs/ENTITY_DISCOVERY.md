@@ -65,12 +65,16 @@ units. Units are processed in bounded batches of up to 25 per step, under the sa
 source guard, digest check, byte budget and occurrence receipts as guided
 discovery, so the same passage is never suggested twice by either path. A new
 source version, or new extracted text for the same version (for example an OCR or
-transcript retry), seals afresh; unfinished older work stops. Earlier suggestions,
-identity decisions, merges and mention statuses are never changed. Sources whose
-text is unavailable are sealed as failed and do not loop. The inventory's size is
-reserved against the byte budget before it is written; a source that would exceed
-the budget is sealed as failed without an inventory. When the budget is reached
-during processing, saved work remains and remaining units stay pending. Every
+transcript retry), seals afresh, and the ledger rows of the superseded basis are
+deleted; rows for sources removed from the catalog are pruned on the next pass.
+Earlier suggestions, occurrence receipts, identity decisions, merges and mention
+statuses are never changed. Sources whose text is unavailable are sealed as failed
+and do not loop. The ledger is therefore bounded by the current sources (at most
+20,000 units plus a seal each) and sits outside the suggestion byte budget; the
+budget for suggestions is recounted inside each unit's transaction, so concurrent
+reviewer edits are always included. When the budget is reached, saved work remains
+and remaining units stay pending. Each matter receives its own per-pass unit
+allowance, so one large matter cannot delay discovery in the others. Every
 committed unit records a content-free `entity.discovery_unit` audit event attributed
 to the system principal, in the same transaction as the unit: if the audit cannot be
 written, the unit's suggestions roll back and it stays pending. A matter whose
@@ -78,8 +82,9 @@ sources cannot be read is skipped while other matters continue; the first failur
 records a content-free `entity.discovery_automatic` failure event in that matter's
 audit trail and the application log, and a later successful pass clears it. The
 internal principal identifier is reserved: ordinary sign-in cannot claim it, and an
-existing row that is not exactly the inactive internal principal (or holds any
-matter access) stops automatic discovery rather than being trusted.
+existing row that is not exactly the inactive internal principal, or that holds any
+direct or group grant, stops automatic discovery for every matter and is reported
+through the same failure event rather than being trusted.
 
 A background thread runs when a source becomes ready and sweeps active matters
 at startup and every 15 minutes, so restarts converge without a queue. It never

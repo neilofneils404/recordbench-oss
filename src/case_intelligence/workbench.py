@@ -3223,6 +3223,7 @@ class CaseIntelligenceWorkbench:
         return self.automatic_discovery_pass(matter_ids, unit_limit=unit_limit).units
 
     def automatic_discovery_pass(self, matter_ids=None, *, unit_limit=200) -> "AutomaticDiscoveryPass":
+        # unit_limit applies to each matter, so one large matter cannot starve the rest.
         """One bounded pass over active matters.
 
         Sealing a source (including an empty or unavailable one) counts as
@@ -3251,20 +3252,27 @@ class CaseIntelligenceWorkbench:
                     details={"count": event["count"], "unit_count": 1,
                              "state": {"processed": "completed", "failed": "failed",
                                        "invalidated": "attention"}[event["state"]]})
-            budget: dict[str, int] = {}
+            matter_units = 0
             try:
                 discovery = self.automatic_entity_discovery(matter)
                 for _ in range(MAX_AUTOMATIC_DISCOVERY_STEPS):
-                    if units >= unit_limit:
+                    if matter_units >= unit_limit:
                         break
                     try:
                         handled, sealed = discovery.automatic_step(
-                            matter.matter_id, unit_limit=min(25, unit_limit - units), audit_unit=audit_unit,
-                            budget=budget)
+                            matter.matter_id, unit_limit=min(25, unit_limit - matter_units),
+                            audit_unit=audit_unit)
                     except KeyError:
-                        break
+                        # Expected only when the matter just closed; anything else
+                        # (such as a refused system principal) must be reported.
+                        try:
+                            self.workspace.get_matter_by_id(matter.matter_id)
+                        except KeyError:
+                            break
+                        raise
                     if not handled and not sealed:
                         break
+                    matter_units += handled
                     units += handled
                     progress += handled + sealed
             except Exception:

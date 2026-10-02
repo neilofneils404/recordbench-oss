@@ -205,7 +205,7 @@ class EntityRepository:
         total = 0
         for table in ('workbench_entity', 'workbench_entity_mention', 'workbench_entity_history',
                       'workbench_entity_discovery_seen', 'workbench_entity_discovery_unit',
-                      'workbench_entity_auto_discovery_unit', 'workbench_entity_reconciliation'):
+                      'workbench_entity_reconciliation'):
             columns = [row[1] for row in self.connection.execute(f'PRAGMA table_info({table})')]
             sizes = '+'.join(f'COALESCE(length(CAST("{column}" AS BLOB)),0)' for column in columns)
             total += self.connection.execute(f'SELECT COALESCE(SUM(256+{sizes}),0) FROM {table} WHERE matter_id=?',
@@ -243,9 +243,10 @@ class EntityRepository:
                  'unit_ordinal', 'extractor_version')
     _AUTO_CURRENT = ('a.matter_id=c.matter_id AND a.document_id=c.document_id '
                      'AND a.source_version_id=c.version_id AND a.content_basis_digest=c.content_basis_digest')
-    # Logical bytes of one ledger row as discovery_storage_bytes counts it:
-    # the 256-byte row allowance plus bounded identifiers and the digest.
-    AUTO_ROW_BYTES = 256 + 80 + 80 + 80 + 64 + 8 + 64 + 80 + 16
+    # The automatic coverage ledger is bounded by the sources it describes:
+    # one inventory (at most MAX units plus a seal) per current ready source
+    # version and extracted basis. Superseded and removed sources' rows are
+    # deleted, so it is outside the suggestion byte budget.
 
     def auto_discovery_documents(self, matter_id, version, limit):
         """Ready sources whose current basis is unsealed or still has pending units."""
@@ -284,13 +285,20 @@ class EntityRepository:
             "INSERT INTO workbench_entity_auto_discovery_unit (matter_id,document_id,source_version_id,"
             "content_basis_digest,unit_ordinal,unit_digest,extractor_version,state,note) VALUES (?,?,?,?,0,?,?,?,?)",
             (*key, hashlib.sha256(str(len(units)).encode()).hexdigest(), version, state, note))
-        # Earlier versions or extracted bases stop; their saved suggestions and
-        # every human decision stay exactly as they are.
+        # Earlier versions or extracted bases are dropped from the ledger; their
+        # saved suggestions, receipts and every human decision stay as they are.
         self.connection.execute(
-            "UPDATE workbench_entity_auto_discovery_unit SET state='invalidated',"
-            "note='Superseded by newer source text.' WHERE matter_id=? AND document_id=? "
-            "AND NOT (source_version_id=? AND content_basis_digest=?) AND state IN ('pending','failed')", key)
+            "DELETE FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND document_id=? "
+            "AND NOT (source_version_id=? AND content_basis_digest=?)", key)
         return True
+
+    def prune_auto_discovery(self, matter_id):
+        """Drop ledger rows for sources that are no longer in the catalog."""
+        return self.connection.execute(
+            "DELETE FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND NOT EXISTS ("
+            "SELECT 1 FROM workbench_source_catalog c WHERE c.matter_id=? "
+            "AND c.document_id=workbench_entity_auto_discovery_unit.document_id)",
+            (matter_id, matter_id)).rowcount
 
     def auto_discovery_claimable(self, unit):
         row = self.connection.execute(

@@ -90,10 +90,11 @@ def test_new_version_supersedes_without_touching_human_decisions(workbench):
             (matter.matter_id, document.document_id, old_version, "", 9, "0" * 64, "synthetic-older", "pending"))
         assert repo.seal_auto_discovery(matter.matter_id, current, "synthetic-older", [(1, "1" * 64)])
         assert not repo.seal_auto_discovery(matter.matter_id, current, "synthetic-older", [(1, "1" * 64)])
-        state = repo.connection.execute(
-            "SELECT state FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND source_version_id=? "
-            "AND unit_ordinal=9", (matter.matter_id, old_version)).fetchone()[0]
-    assert state == "invalidated"
+        remaining = repo.connection.execute(
+            "SELECT COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND source_version_id=?",
+            (matter.matter_id, old_version)).fetchone()[0]
+    # Superseded ledger rows are dropped; suggestions and decisions are untouched.
+    assert remaining == 0
     assert ("Jordan Sample (reviewed)", "confirmed") in names(bench, matter)
 
 
@@ -237,26 +238,6 @@ def test_sealed_sources_load_only_pending_units(workbench, monkeypatch):
     assert bench.run_automatic_discovery_once() == 0 and calls == [None, 25, 5]
 
 
-def test_inventory_respects_the_byte_budget_before_writing(workbench, monkeypatch):
-    client, bench, matter, _runtime = workbench
-    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
-    original = bench.automatic_entity_discovery
-    used = bench.workspace.entity_repository().discovery_storage_bytes
-    def tight(target):
-        discovery = original(target)
-        with bench.workspace._lock:
-            discovery.byte_limit = max(4096, used(target.matter_id) + 4096 + 1000)
-        return discovery
-    monkeypatch.setattr(bench, "automatic_entity_discovery", tight)
-    assert bench.run_automatic_discovery_once() == 0
-    rows = bench.workspace.connection.execute(
-        "SELECT unit_ordinal,state,note FROM workbench_entity_auto_discovery_unit WHERE matter_id=?",
-        (matter.matter_id,)).fetchall()
-    assert [(row[0], row[1]) for row in rows] == [(0, "failed")]
-    assert "byte budget" in rows[0][2]
-    assert used(matter.matter_id) <= tight(matter).byte_limit
-
-
 def test_unavailable_sources_do_not_stall_a_run(workbench, monkeypatch):
     client, bench, matter, _runtime = workbench
     for index in range(7):
@@ -296,7 +277,7 @@ def test_changed_extracted_text_is_rediscovered(workbench):
     seals = bench.workspace.connection.execute(
         "SELECT content_basis_digest FROM workbench_entity_auto_discovery_unit WHERE matter_id=? "
         "AND unit_ordinal=0 ORDER BY content_basis_digest", (matter.matter_id,)).fetchall()
-    assert len(seals) == 2 and "9" * 64 in {row[0] for row in seals}
+    assert [row[0] for row in seals] == ["9" * 64]  # The superseded basis's ledger rows are dropped.
     # The same passages are not suggested twice.
     assert len(names(bench, matter)) == 4
 
@@ -393,40 +374,6 @@ def test_a_colliding_principal_is_never_trusted(workbench):
             pass
 
 
-def test_a_failed_seal_never_exceeds_the_budget(workbench, monkeypatch):
-    client, bench, matter, _runtime = workbench
-    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
-    original = bench.automatic_entity_discovery
-    used = bench.workspace.entity_repository().discovery_storage_bytes
-    def full(target):
-        discovery = original(target)
-        discovery.byte_limit = max(4096, used(target.matter_id) + 4096 + 10)
-        return discovery
-    monkeypatch.setattr(bench, "automatic_entity_discovery", full)
-    result = bench.automatic_discovery_pass()
-    assert result.units == 0 and result.progress == 0
-    assert bench.workspace.connection.execute(
-        "SELECT COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=?",
-        (matter.matter_id,)).fetchone()[0] == 0
-    assert used(matter.matter_id) <= full(matter).byte_limit
-
-
-def test_budget_is_not_recounted_for_every_unit(workbench, monkeypatch):
-    from case_intelligence.entity_repository import EntityRepository
-    client, bench, matter, _runtime = workbench
-    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
-    calls = []
-    original = EntityRepository.discovery_storage_bytes
-    def counting(self, matter_id):
-        calls.append(matter_id)
-        return original(self, matter_id)
-    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", counting)
-    assert bench.run_automatic_discovery_once() == 30
-    # Counted once per pass, plus a recount only when the conservative running
-    # estimate approaches the limit; never once per unit.
-    assert 1 <= len(calls) <= 3
-
-
 def test_first_coordinator_pass_always_sweeps(tmp_path, monkeypatch):
     import case_intelligence.workbench as workbench_module
     swept = []
@@ -454,3 +401,69 @@ def test_a_skipped_matter_is_recorded_once_for_administrators(workbench, monkeyp
               if event.action == "entity.discovery_automatic"]
     assert len(events) == 1 and events[0].outcome == "failure"
     assert "synthetic" not in repr(events[0].details)
+
+
+def test_ledger_tracks_only_current_sources_and_stays_outside_the_budget(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    used = bench.workspace.entity_repository().discovery_storage_bytes
+    before = used(matter.matter_id)
+    original = bench.automatic_entity_discovery
+    def tight(target):
+        discovery = original(target)
+        discovery.byte_limit = max(4096, used(target.matter_id) + 4096)
+        return discovery
+    monkeypatch.setattr(bench, "automatic_entity_discovery", tight)
+    # The inventory is always recorded; suggestions stop at the budget.
+    result = bench.automatic_discovery_pass()
+    assert result.units == 0 and result.progress == 1
+    count = "SELECT COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=?"
+    assert bench.workspace.connection.execute(count, (matter.matter_id,)).fetchone()[0] == 31
+    assert used(matter.matter_id) == before
+    # A removed source's ledger rows are pruned on the next pass.
+    document = next(iter(bench.source_store(matter).documents.values()))
+    bench.workspace.delete_source_catalog(matter.matter_id, (document.document_id,))
+    bench.automatic_discovery_pass()
+    assert bench.workspace.connection.execute(count, (matter.matter_id,)).fetchone()[0] == 0
+
+
+def test_grants_held_by_the_inactive_principal_are_refused(workbench):
+    _client, bench, matter, _runtime = workbench
+    repo = bench.workspace.entity_repository(automatic=True)
+    with repo.transaction(matter.matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL):
+        pass
+    columns = [row[1] for row in bench.workspace.connection.execute("PRAGMA table_info(workbench_matter_membership)")]
+    values = {"matter_id": matter.matter_id, "principal_id": AUTOMATIC_DISCOVERY_PRINCIPAL, "role": "member",
+              "state": "active", "granted_by": WEB_ACTOR, "created_at": "2026-01-01T00:00:00Z",
+              "updated_at": "2026-01-01T00:00:00Z", "revoked_at": None}
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute(
+            f"INSERT INTO workbench_matter_membership({','.join(columns)}) VALUES ({','.join('?' * len(columns))})",
+            [values.get(column) for column in columns])
+    with pytest.raises(KeyError):
+        with repo.transaction(matter.matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL):
+            pass
+
+
+def test_a_refused_principal_is_reported_not_ignored(workbench):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute(
+            "INSERT INTO workbench_principal(principal_id,provider,provider_subject,display_name,login_name,"
+            "active,created_at,last_seen_at) VALUES (?,?,?,?,?,1,?,?)",
+            (AUTOMATIC_DISCOVERY_PRINCIPAL, "local", "impostor", "Impostor", "impostor",
+             "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z"))
+    result = bench.automatic_discovery_pass()
+    assert result.failed_matters == (matter.matter_id,)
+    assert [event.action for event in bench.workspace.audit_events(matter.matter_id)
+            if event.action == "entity.discovery_automatic"] == ["entity.discovery_automatic"]
+
+
+def test_each_matter_gets_its_own_unit_allowance(workbench):
+    client, bench, matter, _runtime = workbench
+    other = bench.matter(_create_matter(client, "Synthetic second matter"), WEB_ACTOR)
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    upload(client, other.slug, "Synthetic long log.txt", long_text(30, "Jordan"))
+    result = bench.automatic_discovery_pass(unit_limit=10)
+    assert result.units == 20  # Ten units in each matter, not twenty in the first.
