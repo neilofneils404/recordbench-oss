@@ -53,7 +53,7 @@
         </div>
         <div class="suggestion-actions">
           {% for value, label, style in [('confirmed', 'Confirm', 'button-primary'), ('dismissed', 'Not relevant', 'button-secondary')] %}
-          <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('decide') }}<input type="hidden" name="targets" value="{{ row.targets }}"><input type="hidden" name="status" value="{{ value }}"><input type="hidden" name="kind" value="{{ inbox_kind }}"><input type="hidden" name="inbox_page" value="{{ inbox_page }}"><button class="button {{ style }}" aria-label="{{ label }}: {{ row.display_name }}">{{ label }}</button></form>
+          <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('decide') }}<input type="hidden" name="targets" value="{{ row.targets }}"><input type="hidden" name="status" value="{{ value }}"><input type="hidden" name="kind" value="{{ inbox_kind }}"><input type="hidden" name="inbox_page" value="{{ inbox_page }}"><input type="hidden" name="support" value="{{ support }}"><button class="button {{ style }}" aria-label="{{ label }}: {{ row.display_name }}">{{ label }}</button></form>
           {% endfor %}
         </div>
       </li>

@@ -101,9 +101,11 @@ class EntityService:
         return len(targets)
 
     def inbox(self, matter_id, actor_id, *, kind='', page=1, rows=True):
-        with self.source_guard(), self.repository.transaction(matter_id, actor_id) as repo:
-            items, total, kinds = repo.suggestion_inbox(matter_id, kind, page, rows=rows)
-            # Like the detail page, link only passages whose original is still available.
+        with self.source_guard():
+            with self.repository.transaction(matter_id, actor_id) as repo:
+                items, total, kinds = repo.suggestion_inbox(matter_id, kind, page, rows=rows)
+            # Like the detail page, link only passages whose original is still
+            # available; the source reads happen after the repository transaction.
             mentions = [item['first_mention'] for item in items if item['first_mention']]
             available = self.validate_references(mentions)
             for index, mention in enumerate(mentions):
@@ -224,40 +226,55 @@ class EntityService:
             repo.undo_reconciliation(matter_id, operation_id)
 
 
-def current_reference_indexes(references, *, load_document, candidate_for, support_tokens):
-    """Validate only referenced documents, parsing each once under the source guard.
+def current_reference_indexes(references, *, load_document, candidate_for, support_tokens, read_units=None):
+    """Validate only referenced documents, reading each once under the source guard.
 
     Results identify input positions, not tokens: duplicate tokens with differing
-    metadata must each pass the exact original-reference comparison.
+    metadata must each pass the exact original-reference comparison. read_units
+    (document, ordinals) -> (ordinal, unit) pairs, when given, reads only the
+    referenced units through a bounded index instead of parsing whole files. An
+    original that cannot be read (missing, unsafe or damaged derived text) is
+    reported as unavailable rather than failing the page.
     """
     grouped = {}
     for index, reference in enumerate(references):
         grouped.setdefault(reference['document_id'], []).append((index, reference))
     available = set()
     for document_id, expected in grouped.items():
-        try:
-            document = load_document(document_id)
-        except KeyError:
-            continue
-        if document.state != 'ready':
-            continue
-        units = document.parsed_units()
-        candidates = {}
+        wanted = {}
         for index, reference in expected:
             try:
                 ordinal = int(reference['chunk_id'].removeprefix('chunk-'))
             except (TypeError, ValueError, AttributeError):
                 continue
-            if not 1 <= ordinal <= len(units):
+            if ordinal >= 1:
+                wanted.setdefault(ordinal, []).append((index, reference))
+        if not wanted:
+            continue
+        try:
+            document = load_document(document_id)
+            if document.state != 'ready':
                 continue
-            if ordinal not in candidates:
-                candidate = candidate_for(document, units[ordinal - 1], ordinal)
-                candidates[ordinal] = (candidate, support_tokens(candidate))
-            candidate, tokens = candidates[ordinal]
-            current = dict(document_id=candidate.document_id, source_version_id=candidate.source_version_id,
-                source_name=candidate.source_name, location=candidate.citation, unit_number=units[ordinal - 1].number,
-                chunk_id=candidate.chunk_id, excerpt_digest=candidate.excerpt_digest,
-                excerpt=candidate.text[:6000], support_token=reference['support_token'])
-            if reference['support_token'] in tokens and all(current[key] == reference[key] for key in REFERENCE_FIELDS):
-                available.add(index)
+            if read_units is not None:
+                units = dict(read_units(document, sorted(wanted)))
+            else:
+                parsed = document.parsed_units()
+                units = {ordinal: parsed[ordinal - 1] for ordinal in wanted if ordinal <= len(parsed)}
+            for ordinal, references_at in wanted.items():
+                unit = units.get(ordinal)
+                if unit is None:
+                    continue
+                candidate = candidate_for(document, unit, ordinal)
+                tokens = support_tokens(candidate)
+                current = dict(document_id=candidate.document_id, source_version_id=candidate.source_version_id,
+                    source_name=candidate.source_name, location=candidate.citation, unit_number=unit.number,
+                    chunk_id=candidate.chunk_id, excerpt_digest=candidate.excerpt_digest,
+                    excerpt=candidate.text[:6000])
+                for index, reference in references_at:
+                    current['support_token'] = reference['support_token']
+                    if reference['support_token'] in tokens and all(
+                            current[key] == reference[key] for key in REFERENCE_FIELDS):
+                        available.add(index)
+        except (KeyError, OSError, RuntimeError, ValueError):
+            continue
     return frozenset(available)

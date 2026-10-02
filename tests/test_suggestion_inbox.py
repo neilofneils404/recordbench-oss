@@ -277,3 +277,63 @@ def test_guided_discovery_stays_collapsed_while_searching(workbench):  # noqa: F
     page = client.get(f"/matters/{matter.slug}/entities", params={"q": "Alex"}).text
     assert 'class="suggestion-inbox"' not in page
     assert '<details class="notebook-tool-card guided-discovery" aria-labelledby="discovery-heading">' in page
+
+
+def _row(page, name):
+    return re.search(rf'<li class="suggestion" data-suggestion>(?:(?!</li>).)*?>{re.escape(name)}</a>.*?</li>', page, re.S)[0]
+
+
+def test_a_damaged_original_is_reported_unavailable_not_as_an_error(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    store = bench.source_store(matter)
+    rows, _ = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)
+    amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
+    mention = bench.entity_service(matter).detail(matter.matter_id, WEB_ACTOR, amber["entity_id"])[1][0]
+    document = store.get(mention["document_id"])
+    assert document.units_file
+    (store.derived / document.units_file).unlink()  # Derived searchable text is lost.
+    page = client.get(f"/matters/{matter.slug}/entities")
+    assert page.status_code == 200
+    assert "original passage changed or is unavailable" in _row(page.text, "Amber Cooperative")
+    detail = client.get(f"/matters/{matter.slug}/entities/{amber['entity_id']}")
+    assert detail.status_code == 200 and "Original passage changed or is unavailable" in detail.text
+
+
+def test_inbox_validation_reads_only_cited_units_outside_the_transaction(workbench, monkeypatch):  # noqa: F811
+    from case_intelligence.pilot_uploads import PilotDocument
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    def whole_file(self):
+        raise AssertionError("whole derived file parsed")
+    monkeypatch.setattr(PilotDocument, "parsed_units", whole_file)
+    validate = service.validate_references
+    seen = []
+    def observed(references):
+        seen.append(bench.workspace.connection.in_transaction)
+        return validate(references)
+    service.validate_references = observed
+    items, _total, _kinds = service.inbox(matter.matter_id, WEB_ACTOR)
+    assert seen == [False]
+    assert items and all(item["first_mention"]["available"] for item in items)
+
+
+def test_selected_support_survives_inbox_navigation_and_decisions(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
+    support = service.detail(matter.matter_id, WEB_ACTOR, amber["entity_id"])[1][0]["support_token"]
+    page = client.get(f"/matters/{matter.slug}/entities", params={"support": support}).text
+    section = re.search(r'<section class="suggestion-inbox".*?</section>', page, re.S)[0]
+    links = re.findall(r'<a href="(/matters/[^"]+\?kind=[^"]*)"', section)
+    assert links and all(f"support={support}" in link for link in links)
+    assert f'name="support" value="{support}"' in section
+    response = client.post(f"/matters/{matter.slug}/entities/actions", follow_redirects=False, data=dict(
+        action="decide", targets=f"{amber['entity_id']}:{amber['revision']}", status="dismissed", support=support))
+    assert response.status_code == 303 and f"support={support}" in response.headers["location"]

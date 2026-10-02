@@ -3164,7 +3164,9 @@ class CaseIntelligenceWorkbench:
             validate_references=lambda references: current_reference_indexes(references,
                 load_document=self.source_store(matter).get,
                 candidate_for=lambda document, unit, ordinal: self._candidate(matter, document, unit, ordinal),
-                support_tokens=self._support_tokens),
+                support_tokens=self._support_tokens,
+                read_units=lambda document, ordinals: self.entity_unit_reader.iter_selected(
+                    self.source_store(matter), document, ordinals)),
         )
 
     def assertion_service(self, matter):

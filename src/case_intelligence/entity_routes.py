@@ -78,7 +78,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
             'inbox': inbox, 'inbox_total': inbox_total, 'inbox_kinds': inbox_kinds, 'inbox_kind': kind,
             'inbox_page': inbox_page,
             'inbox_url': lambda target_kind=kind, target_page=1: f'/matters/{slug}/entities?' + urlencode(dict(
-                kind=target_kind, inbox_page=target_page, return_to=return_to)) + '#suggestions',
+                kind=target_kind, inbox_page=target_page, support=support, return_to=return_to)) + '#suggestions',
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
         try:
             with service.repository.transaction(matter.matter_id, actor):
@@ -199,7 +199,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
             error = str(exc) if isinstance(exc, WorkspaceProblem) else 'The entity, note, or original passage changed or is unavailable. Your submitted text is preserved below.'
             if action == 'decide':
                 # A stale or removed suggestion: show the refreshed inbox, not an edit draft.
-                return render(request, slug, return_to=return_to, kind=kind, inbox_page=inbox_page,
+                return render(request, slug, return_to=return_to, kind=kind, inbox_page=inbox_page, support=support,
                               error='That suggestion changed since this page loaded. The list below is current.',
                               status_code=409)
             try:
@@ -221,7 +221,8 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                   object_type='entity', object_id=entity_id or deleted_entity_id or matter.matter_id)
         if action == 'decide':
             return RedirectResponse(f'/matters/{slug}/entities?' + urlencode(dict(
-                kind=kind, inbox_page=inbox_page, return_to=return_path(slug, return_to))) + '#suggestions', status_code=303)
+                kind=kind, inbox_page=inbox_page, support=support,
+                return_to=return_path(slug, return_to))) + '#suggestions', status_code=303)
         path = (f'/matters/{slug}/entity-discovery/{run_id}' if action in ('discover', 'retry_discovery')
                 else f'/matters/{slug}/entities' + ('/' + entity_id if entity_id else ''))
         return RedirectResponse(path + '?' + urlencode(dict(q=q, return_to=return_path(slug, return_to))), status_code=303)
