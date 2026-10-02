@@ -467,3 +467,15 @@ def test_long_suggestion_names_wrap_instead_of_overflowing():
     assert "overflow-wrap: anywhere" in rule and "min-width: 0" in rule
     # Identity cards in the list below wrap the same long names.
     assert "overflow-wrap: anywhere" in re.search(r"\.notebook-tool-card h3 \{([^}]*)\}", css)[1]
+
+
+def test_candidate_and_review_pages_keep_the_inbox_position(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    rows, _ = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)
+    alex = next(row for row in rows if row["display_name"] == "Alex Example")
+    detail = client.get(f"/matters/{matter.slug}/entities/{alex['entity_id']}",
+                        params={"kind": "people", "inbox_page": "2", "candidate_page": "2"}).text
+    previous = re.search(r'<a href="([^"]+)">Previous candidates</a>', detail)[1]
+    assert "kind=people" in previous and "inbox_page=2" in previous

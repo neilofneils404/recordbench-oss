@@ -56,10 +56,10 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                 error = error or 'This passage changed or is unavailable. Return to source review and select a current passage.'
         automatic = automatic_progress(matter) if automatic_progress is not None and not entity_id else None
         return_to = return_path(slug, return_to)
+        # The reviewer's place in the suggestions inbox, kept by every link on these pages.
+        place = dict(kind=kind, inbox_page=inbox_page) if kind or inbox_page > 1 else {}
         def entity_url(identifier='', target_page=1):
             path = f'/matters/{slug}/entities' + ('/' + identifier if identifier else '')
-            # Keep the reviewer's place in the suggestions inbox across detail pages.
-            place = dict(kind=kind, inbox_page=inbox_page) if kind or inbox_page > 1 else {}
             return path + '?' + urlencode(dict(q=q, page=target_page, support=support, return_to=return_to, **place))
         response = templates.TemplateResponse(request=request, name='workbench_entities.html', context={
             **base_context(request, matter), 'matter': matter, 'entity': entity,
@@ -69,10 +69,10 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
             'passage': passage, 'support': support, 'return_to': return_to,
             'entity_url': entity_url, 'entity_types': ENTITY_TYPES, 'entity_statuses': ENTITY_STATUSES,
             'coverage': coverage, 'review_page': review_page, 'has_more_reviews': has_more_reviews,
-            'review_page_url': lambda value: f'/matters/{slug}/entities?' + urlencode(dict(q=q, support=support, return_to=return_to, review_page=value)),
+            'review_page_url': lambda value: f'/matters/{slug}/entities?' + urlencode(dict(q=q, support=support, return_to=return_to, review_page=value, **place)),
             'coverage_url': lambda value: f'/matters/{slug}/entity-discovery/{value}?' + urlencode(dict(q=q, return_to=return_to)),
             'candidate_page': candidate_page, 'has_more_candidates': has_more_candidates,
-            'candidate_page_url': lambda value: f'/matters/{slug}/entities/{entity_id}?' + urlencode(dict(q=q, support=support, return_to=return_to, candidate_page=value)),
+            'candidate_page_url': lambda value: f'/matters/{slug}/entities/{entity_id}?' + urlencode(dict(q=q, support=support, return_to=return_to, candidate_page=value, **place)),
             'candidates': candidates, 'reconciliations': [dict(row, before=json.loads(row['before_json'])) for row in reconciliations],
             'error': error, 'draft': draft, 'show_assistant_dock': False,
             'automatic_attention': (automatic or {}).get('sources_attention', 0),
