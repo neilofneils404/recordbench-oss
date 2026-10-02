@@ -150,7 +150,10 @@ def test_restore_export_purge_and_idempotent_migration(workbench, tmp_path):
     upload(client, matter.slug, "Synthetic memo.txt", FIRST)
     bench.run_automatic_discovery_once()
     expected = bench.workspace.entity_repository().discovery_export(matter.matter_id)
-    assert [row["unit_ordinal"] for row in expected["automatic_coverage"]] == [0, 1]
+    # One compact row per source inventory, not one per unit.
+    [coverage] = expected["automatic_coverage"]
+    assert (coverage["inventory_state"], coverage["units"], coverage["processed"], coverage["pending"]) == (
+        "processed", 1, 1, 0)
     assert expected["occurrence_tombstones"]
     before = names(bench, matter)
     client.__exit__(None, None, None)
@@ -379,7 +382,7 @@ def test_first_coordinator_pass_always_sweeps(tmp_path, monkeypatch):
     swept = []
     monkeypatch.setattr(workbench_module, "monotonic", lambda: 1.0)  # Just after host boot.
     coordinator = AutomaticDiscoveryCoordinator(
-        lambda ids: swept.append(ids) or workbench_module.AutomaticDiscoveryPass(0, 0), sweep_seconds=900)
+        lambda ids, **_: swept.append(ids) or workbench_module.AutomaticDiscoveryPass(0, 0), sweep_seconds=900)
     try:
         deadline = time.time() + 5
         while not swept and time.time() < deadline:
@@ -467,3 +470,61 @@ def test_each_matter_gets_its_own_unit_allowance(workbench):
     upload(client, other.slug, "Synthetic long log.txt", long_text(30, "Jordan"))
     result = bench.automatic_discovery_pass(unit_limit=10)
     assert result.units == 20  # Ten units in each matter, not twenty in the first.
+
+
+def test_a_new_extractor_version_replaces_the_old_inventory(workbench):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    discovery = bench.automatic_entity_discovery(matter)
+    discovery.extractor.version = "synthetic-extractor-v2"
+    assert discovery.automatic_step(matter.matter_id) == (1, 1)
+    versions = {row[0] for row in bench.workspace.connection.execute(
+        "SELECT DISTINCT extractor_version FROM workbench_entity_auto_discovery_unit WHERE matter_id=?",
+        (matter.matter_id,))}
+    assert versions == {"synthetic-extractor-v2"}
+    assert len(names(bench, matter)) == 4  # The same passages are not suggested again.
+
+
+def test_removed_sources_are_pruned_once_per_matter_pass(workbench, monkeypatch):
+    from case_intelligence.entity_repository import EntityRepository
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    calls = []
+    original = EntityRepository.prune_auto_discovery
+    def counting(self, matter_id):
+        calls.append(matter_id)
+        return original(self, matter_id)
+    monkeypatch.setattr(EntityRepository, "prune_auto_discovery", counting)
+    assert bench.run_automatic_discovery_once() == 30  # Two 25/5-unit steps in one pass.
+    assert calls == [matter.matter_id]
+
+
+def test_a_stop_request_ends_the_pass_before_the_next_unit(workbench):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    # Checked before the matter, the step, the source, then each unit.
+    requests = iter([False, False, False, True])
+    result = bench.automatic_discovery_pass(should_stop=lambda: next(requests, True))
+    # The source was inventoried, then the pass stopped instead of processing units.
+    assert result.units == 0 and not result.failed_matters
+    states = {row[0] for row in bench.workspace.connection.execute(
+        "SELECT state FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND unit_ordinal>0",
+        (matter.matter_id,))}
+    assert states == {"pending"}
+
+
+def test_closing_waits_for_the_discovery_worker(monkeypatch):
+    import threading
+    import case_intelligence.workbench as workbench_module
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    def slow_pass(ids, should_stop=None):
+        started.set()
+        release.wait(5)
+        finished.set()
+        return workbench_module.AutomaticDiscoveryPass(0, 0)
+    coordinator = AutomaticDiscoveryCoordinator(slow_pass)
+    assert started.wait(5)
+    threading.Timer(0.2, release.set).start()
+    coordinator.close()
+    assert finished.is_set()  # close() returned only after the pass finished.

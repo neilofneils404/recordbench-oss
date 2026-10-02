@@ -65,8 +65,8 @@ units. Units are processed in bounded batches of up to 25 per step, under the sa
 source guard, digest check, byte budget and occurrence receipts as guided
 discovery, so the same passage is never suggested twice by either path. A new
 source version, or new extracted text for the same version (for example an OCR or
-transcript retry), seals afresh, and the ledger rows of the superseded basis are
-deleted; rows for sources removed from the catalog are pruned on the next pass.
+transcript retry) or a new extractor version, seals afresh, and the superseded
+inventory's ledger rows are deleted; rows for sources removed from the catalog are pruned on the next pass.
 Earlier suggestions, occurrence receipts, identity decisions, merges and mention
 statuses are never changed. Sources whose text is unavailable are sealed as failed
 and do not loop. The ledger is therefore bounded by the current sources (at most
@@ -74,7 +74,9 @@ and do not loop. The ledger is therefore bounded by the current sources (at most
 budget for suggestions is recounted inside each unit's transaction, so concurrent
 reviewer edits are always included. When the budget is reached, saved work remains
 and remaining units stay pending. Each matter receives its own per-pass unit
-allowance, so one large matter cannot delay discovery in the others. Every
+allowance, so one large matter cannot delay discovery in the others. On shutdown the
+worker finishes its current unit and stops before the application closes the source
+stores it reads. Every
 committed unit records a content-free `entity.discovery_unit` audit event attributed
 to the system principal, in the same transaction as the unit: if the audit cannot be
 written, the unit's suggestions roll back and it stays pending. A matter whose
@@ -226,8 +228,8 @@ code; never point slice-16 code at slice-17 state. Export later work first becau
 the old backup cannot contain it. Release tags remain immutable.
 
 Migration `0037_automatic_entity_discovery.sql` adds the automatic coverage
-ledger and the inactive system principal. Final bundles include it as
-`automatic_coverage` in `entities/discovery.json`; matter purge and retention
+ledger. Final bundles summarise it as `automatic_coverage` in
+`entities/discovery.json`, one row per source inventory with unit counts by outcome; matter purge and retention
 expiry remove it with the other discovery records. The
 [automatic discovery drill](../scripts/automatic-discovery-restore-drill.py)
 upgrades a store created by the preceding revision, discovers a synthetic

@@ -857,7 +857,7 @@ class AutomaticDiscoveryCoordinator:
 
     def __init__(
         self,
-        run_once: Callable[[tuple[str, ...] | None], AutomaticDiscoveryPass],
+        run_once: Callable[..., AutomaticDiscoveryPass],
         *,
         sweep_seconds: float = 900.0,
     ) -> None:
@@ -890,9 +890,10 @@ class AutomaticDiscoveryCoordinator:
             try:
                 if sweep:
                     last_sweep = monotonic()
-                    result = self._run_once(None)
+                    result = self._run_once(None, should_stop=self._stop.is_set)
                 else:
-                    result = self._run_once(matter_ids) if matter_ids else AutomaticDiscoveryPass(0, 0)
+                    result = (self._run_once(matter_ids, should_stop=self._stop.is_set)
+                              if matter_ids else AutomaticDiscoveryPass(0, 0))
                 handled = result.progress
                 with self._lock:
                     self._last_error = (
@@ -915,9 +916,11 @@ class AutomaticDiscoveryCoordinator:
             return {"enabled": True, "last_error": self._last_error}
 
     def close(self) -> None:
+        # Wait for the worker to finish: a step checks the stop flag before every
+        # source and unit, and callers close the source stores right after this.
         self._stop.set()
         self._wake.set()
-        self._thread.join(timeout=5)
+        self._thread.join()
 
 
 class CaseIntelligenceWorkbench:
@@ -3222,7 +3225,8 @@ class CaseIntelligenceWorkbench:
         """Process newly ready sources for active matters; returns units handled."""
         return self.automatic_discovery_pass(matter_ids, unit_limit=unit_limit).units
 
-    def automatic_discovery_pass(self, matter_ids=None, *, unit_limit=200) -> "AutomaticDiscoveryPass":
+    def automatic_discovery_pass(self, matter_ids=None, *, unit_limit=200,
+                                 should_stop=None) -> "AutomaticDiscoveryPass":
         # unit_limit applies to each matter, so one large matter cannot starve the rest.
         """One bounded pass over active matters.
 
@@ -3235,7 +3239,10 @@ class CaseIntelligenceWorkbench:
         failed = []
         if matter_ids is None:
             matter_ids = self.workspace.active_matter_ids()
+        stopping = should_stop or (lambda: False)
         for matter_id in matter_ids:
+            if stopping():
+                break
             try:
                 matter = self.workspace.get_matter_by_id(matter_id)
             except KeyError:
@@ -3255,13 +3262,14 @@ class CaseIntelligenceWorkbench:
             matter_units = 0
             try:
                 discovery = self.automatic_entity_discovery(matter)
+                discovery.prune_automatic(matter.matter_id)
                 for _ in range(MAX_AUTOMATIC_DISCOVERY_STEPS):
-                    if matter_units >= unit_limit:
+                    if matter_units >= unit_limit or stopping():
                         break
                     try:
                         handled, sealed = discovery.automatic_step(
                             matter.matter_id, unit_limit=min(25, unit_limit - matter_units),
-                            audit_unit=audit_unit)
+                            audit_unit=audit_unit, should_stop=stopping)
                     except KeyError:
                         # Expected only when the matter just closed; anything else
                         # (such as a refused system principal) must be reported.

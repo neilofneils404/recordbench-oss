@@ -104,7 +104,7 @@ class EntityDiscovery:
                         unit_ordinal=unit['unit_ordinal'], state=state, count=count))
         return self.coverage(matter_id, actor_id, run_id, limit=0)
 
-    def automatic_step(self, matter_id, *, unit_limit=25, document_limit=5, audit_unit=None):
+    def automatic_step(self, matter_id, *, unit_limit=25, document_limit=5, audit_unit=None, should_stop=None):
         """Discover suggestions in newly ready sources without a person or a model.
 
         Each source's current version and extracted basis is inventoried once
@@ -114,6 +114,8 @@ class EntityDiscovery:
         principal. audit_unit(event) is called inside each unit's transaction,
         so its content-free record commits atomically with the unit. The
         suggestion byte budget is recounted inside each unit's transaction.
+        should_stop() is checked before each source and unit so shutdown
+        never races the source stores this step reads.
         """
         if self.load_document is None:
             raise ValueError('Automatic discovery needs a whole-document loader.')
@@ -121,12 +123,12 @@ class EntityDiscovery:
         actor_id = AUTOMATIC_DISCOVERY_PRINCIPAL
         version = self.extractor.version
         handled = sealed = 0
+        stopping = should_stop or (lambda: False)
         with service.repository.transaction(matter_id, actor_id) as repo:
-            repo.prune_auto_discovery(matter_id)
             documents = repo.auto_discovery_documents(matter_id, version, document_limit)
         with service.source_guard():
             for document in documents:
-                if handled >= unit_limit:
+                if handled >= unit_limit or stopping():
                     break
                 document_id = document['document_id']
                 if not document['sealed']:
@@ -156,6 +158,8 @@ class EntityDiscovery:
                 except LOAD_ERRORS:
                     loaded_units = {}
                 for ordinal, unit in wanted.items():
+                    if stopping():
+                        return handled, sealed
                     with service.repository.transaction(matter_id, actor_id) as repo:
                         if not repo.auto_discovery_claimable(unit):
                             continue
@@ -170,6 +174,11 @@ class EntityDiscovery:
                                             state=state, count=count))
                     handled += 1
         return handled, sealed
+
+    def prune_automatic(self, matter_id):
+        """Drop ledger rows for removed sources; called once per matter per pass."""
+        with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
+            return repo.prune_auto_discovery(matter_id)
 
     def automatic_progress(self, matter_id):
         with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:

@@ -287,9 +287,10 @@ class EntityRepository:
             (*key, hashlib.sha256(str(len(units)).encode()).hexdigest(), version, state, note))
         # Earlier versions or extracted bases are dropped from the ledger; their
         # saved suggestions, receipts and every human decision stay as they are.
+        # A new extractor version replaces the old inventory the same way.
         self.connection.execute(
             "DELETE FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND document_id=? "
-            "AND NOT (source_version_id=? AND content_basis_digest=?)", key)
+            "AND NOT (source_version_id=? AND content_basis_digest=? AND extractor_version=?)", (*key, version))
         return True
 
     def prune_auto_discovery(self, matter_id):
@@ -466,9 +467,19 @@ class EntityRepository:
             sources=[dict(row) for row in self.connection.execute(
                 'SELECT s.* FROM workbench_text_review_source s JOIN workbench_review_run r ON r.run_id=s.run_id WHERE r.matter_id=?', (matter_id,))],
             coverage=[dict(row) for row in self.connection.execute('SELECT * FROM workbench_entity_discovery_unit WHERE matter_id=?', (matter_id,))],
+            # One compact row per source inventory and outcome, not per unit,
+            # so coverage stays small regardless of source size.
             automatic_coverage=[dict(row) for row in self.connection.execute(
-                'SELECT * FROM workbench_entity_auto_discovery_unit WHERE matter_id=? ORDER BY '
-                'document_id,source_version_id,content_basis_digest,extractor_version,unit_ordinal', (matter_id,))],
+                "SELECT document_id,source_version_id,content_basis_digest,extractor_version,"
+                "MAX(CASE WHEN unit_ordinal=0 THEN state END) AS inventory_state,"
+                "SUM(unit_ordinal>0) AS units,"
+                "SUM(unit_ordinal>0 AND state='processed') AS processed,"
+                "SUM(unit_ordinal>0 AND state='pending') AS pending,"
+                "SUM(unit_ordinal>0 AND state='failed') AS failed,"
+                "SUM(unit_ordinal>0 AND state='invalidated') AS invalidated "
+                'FROM workbench_entity_auto_discovery_unit WHERE matter_id=? '
+                'GROUP BY document_id,source_version_id,content_basis_digest,extractor_version '
+                'ORDER BY document_id,source_version_id,content_basis_digest,extractor_version', (matter_id,))],
             occurrence_tombstones=[row[0] for row in self.connection.execute('SELECT occurrence_key FROM workbench_entity_discovery_seen WHERE matter_id=?', (matter_id,))],
             reconciliations=[dict(row) for row in self.connection.execute('SELECT * FROM workbench_entity_reconciliation WHERE matter_id=?', (matter_id,))])
 
