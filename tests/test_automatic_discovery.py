@@ -487,6 +487,7 @@ def test_a_full_discovery_budget_is_reported_as_paused_and_can_resume(workbench,
     page = client.get(f"/matters/{matter.slug}/entities").text
     assert "Automatic discovery is paused" in page
     assert "delete suggestions you do not need" in page
+    assert "those records alone can fill it" in page  # The terminal case is stated honestly.
     assert 'name="action" value="retry_automatic"' in page
     # With no headroom at all, newly queued work is marked as waiting at once.
     upload(client, matter.slug, "Synthetic later.txt", FIRST + b" Riley Placeholder followed up.")

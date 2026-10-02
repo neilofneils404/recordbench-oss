@@ -71,6 +71,9 @@ index lookups (two partial indexes split open from waiting units), never by coun
 a matter's ledger rows. Deleting suggestions that are not needed frees space (the
 suggestion, its passages and its history are removed permanently; occurrence
 receipts remain, so the same passage is not suggested again); dismissing does not.
+Receipts themselves count toward the limit, so in a matter with very many distinct
+occurrences they can fill it on their own; automatic discovery then stops for that
+matter (the notice says so) and the remaining sources stay searchable and readable.
 **Check again** then wakes the worker. For incomplete coverage,
 People & things offers **Retry automatic discovery**. A retry queues those units
 again (and re-inventories a source whose text was unavailable), keeps every saved
