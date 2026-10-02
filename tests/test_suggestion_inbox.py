@@ -283,7 +283,11 @@ def _row(page, name):
     return re.search(rf'<li class="suggestion" data-suggestion>(?:(?!</li>).)*?>{re.escape(name)}</a>.*?</li>', page, re.S)[0]
 
 
-def test_a_damaged_original_is_reported_unavailable_not_as_an_error(workbench):  # noqa: F811
+import pytest
+
+
+@pytest.mark.parametrize("damage", ["missing", "malformed"])
+def test_a_damaged_original_is_reported_unavailable_not_as_an_error(workbench, damage):  # noqa: F811
     client, bench, matter, _runtime = workbench
     upload(client, matter.slug, "Synthetic memo.txt", FIRST)
     bench.run_automatic_discovery_once()
@@ -293,7 +297,14 @@ def test_a_damaged_original_is_reported_unavailable_not_as_an_error(workbench): 
     mention = bench.entity_service(matter).detail(matter.matter_id, WEB_ACTOR, amber["entity_id"])[1][0]
     document = store.get(mention["document_id"])
     assert document.units_file
-    (store.derived / document.units_file).unlink()  # Derived searchable text is lost.
+    path = store.derived / document.units_file
+    if damage == "missing":
+        path.unlink()  # Derived searchable text is lost.
+    else:
+        import json
+        serialized = json.loads(path.read_text(encoding="utf-8"))
+        serialized["units"] = [{"unexpected": 1} for _unit in serialized["units"]]
+        path.write_text(json.dumps(serialized), encoding="utf-8")  # Valid JSON, wrong record shape.
     page = client.get(f"/matters/{matter.slug}/entities")
     assert page.status_code == 200
     assert "original passage changed or is unavailable" in _row(page.text, "Amber Cooperative")

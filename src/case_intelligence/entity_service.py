@@ -233,7 +233,7 @@ def current_reference_indexes(references, *, load_document, candidate_for, suppo
     metadata must each pass the exact original-reference comparison. read_units
     (document, ordinals) -> (ordinal, unit) pairs, when given, reads only the
     referenced units through a bounded index instead of parsing whole files. An
-    original that cannot be read (missing, unsafe or damaged derived text) is
+    original that cannot be read (missing, unsafe, damaged or malformed derived text) is
     reported as unavailable rather than failing the page.
     """
     grouped = {}
@@ -275,6 +275,7 @@ def current_reference_indexes(references, *, load_document, candidate_for, suppo
                     if reference['support_token'] in tokens and all(
                             current[key] == reference[key] for key in REFERENCE_FIELDS):
                         available.add(index)
-        except (KeyError, OSError, RuntimeError, ValueError):
+        except (KeyError, OSError, RuntimeError, TypeError, AttributeError, ValueError):
+            # Includes malformed unit records (valid JSON of the wrong shape).
             continue
     return frozenset(available)
