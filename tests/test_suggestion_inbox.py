@@ -361,3 +361,28 @@ def test_selected_support_survives_inbox_navigation_and_decisions(workbench):  #
     response = client.post(f"/matters/{matter.slug}/entities/actions", follow_redirects=False, data=dict(
         action="decide", targets=f"{amber['entity_id']}:{amber['revision']}", status="dismissed", support=support))
     assert response.status_code == 303 and f"support={support}" in response.headers["location"]
+
+
+def test_a_renamed_suggestion_still_highlights_the_extracted_text(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
+    service.update(matter.matter_id, WEB_ACTOR, amber["entity_id"], expected_revision=amber["revision"],
+                   display_name="Amber Co-op", entity_type=amber["entity_type"], status="suggested")
+    row = _row(client.get(f"/matters/{matter.slug}/entities").text, "Amber Co-op")
+    assert "<mark>Amber Cooperative</mark>" in row
+
+
+def test_a_search_does_not_wait_for_source_work(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    def busy():
+        raise AssertionError("the source guard was requested")
+    service.source_guard = busy
+    _items, _total, kinds = service.inbox(matter.matter_id, WEB_ACTOR, rows=False)
+    assert sum(kinds.values()) == 4

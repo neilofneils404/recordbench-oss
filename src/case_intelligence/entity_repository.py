@@ -188,7 +188,11 @@ class EntityRepository:
                 (group['first_key'].split('\x1f', 1)[1], matter_id)).fetchone() if group['first_key'] else None
             mention = dict(first) if first else None
             if mention:
-                mention['snippet'] = self.snippet(mention['excerpt'], group['display_name'])
+                # Highlight what was extracted; a reviewer may have renamed the suggestion.
+                for name in (mention.get('surface_text') or '', group['display_name']):
+                    mention['snippet'] = self.snippet(mention['excerpt'], name)
+                    if mention['snippet'][1]:
+                        break
             group = {key: group[key] for key in group.keys() if key != 'first_key'}
             items.append(dict(group, members=members, first_mention=mention,
                               entity_id=members[0]['entity_id'] if members else '',

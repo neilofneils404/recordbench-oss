@@ -101,6 +101,10 @@ class EntityService:
         return len(targets)
 
     def inbox(self, matter_id, actor_id, *, kind='', page=1, rows=True):
+        if not rows:
+            # Counts only (while searching): no source data, so no source guard to wait on.
+            with self.repository.transaction(matter_id, actor_id) as repo:
+                return repo.suggestion_inbox(matter_id, kind, page, rows=False)
         with self.source_guard():
             with self.repository.transaction(matter_id, actor_id) as repo:
                 items, total, kinds = repo.suggestion_inbox(matter_id, kind, page, rows=rows)
