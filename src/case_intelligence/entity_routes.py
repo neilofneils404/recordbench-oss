@@ -209,8 +209,14 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                     raise
                 return render(request, slug, q=q, support=support, return_to=return_to,
                               error=error, draft=dict(fields, action=action if action in ('merge','split','alias','reject') else 'create', entity_id=entity_id, expected_revision=expected_revision, target_id=target_id, target_revision=target_revision, mention_id=mention_id), status_code=409)
-        audit(request, 'entity.' + action, 'success', context=auth_context(request), matter=matter,
-              object_type='entity', object_id=entity_id or deleted_entity_id or matter.matter_id)
+        if action == 'decide':
+            # One correctly identified event per decided identity, like its history entry.
+            for identifier, _revision in pairs:
+                audit(request, 'entity.decide', 'success', context=auth_context(request), matter=matter,
+                      object_type='entity', object_id=identifier)
+        else:
+            audit(request, 'entity.' + action, 'success', context=auth_context(request), matter=matter,
+                  object_type='entity', object_id=entity_id or deleted_entity_id or matter.matter_id)
         if action == 'decide':
             return RedirectResponse(f'/matters/{slug}/entities?' + urlencode(dict(
                 kind=kind, inbox_page=inbox_page, return_to=return_path(slug, return_to))) + '#suggestions', status_code=303)

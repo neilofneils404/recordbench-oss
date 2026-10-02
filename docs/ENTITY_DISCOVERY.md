@@ -136,13 +136,17 @@ guided discovery behaves exactly as before.
 ## Review suggestions
 
 **Case file → People & things** opens with **Suggestions to review** whenever
-suggested identities exist. Rows group suggestions with the same name and type,
-most-mentioned first, and show the first passage with the name highlighted and a
-link to the original. Filter by People, Organizations, Things & IDs or Dates.
+automatically found suggestions exist; identities a reviewer created or imported
+from notes keep their own provenance and are not listed there. Rows group
+suggestions with the same name and type, most-mentioned first, with the number of
+passages and distinct sources across every passage attached to them, and show the
+earliest passage with the name highlighted and a link to the original. Filter by
+People, Organizations, Things & IDs or Dates. Counting is one pass over the
+matter's passages, so the list stays quick at the discovery limit.
 **Confirm** or **Not relevant** records that status on every suggestion in the
 row, up to 200 at a time, in one all-or-nothing save under each identity's
-revision. Nothing is merged, renamed or detached; open the name to reconcile,
-edit or attach passages. If another reviewer changed one of them first, nothing
+revision, with one `entity.decide` audit event per identity. Nothing is merged,
+renamed or detached; open the name to reconcile, edit or attach passages. If another reviewer changed one of them first, nothing
 is saved and the refreshed list is shown. Guided discovery from a full-text
 review remains below, collapsed while suggestions wait.
 

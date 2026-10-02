@@ -102,3 +102,107 @@ def test_no_inbox_without_suggestions(workbench):  # noqa: F811
     page = client.get(f"/matters/{matter.slug}/entities").text
     assert 'class="suggestion-inbox"' not in page
     assert '<details class="notebook-tool-card guided-discovery" aria-labelledby="discovery-heading" open>' in page
+
+
+def test_only_automatically_found_identities_are_listed(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    # A reviewer may record a suggestion by hand; it keeps its own provenance.
+    service.create(matter.matter_id, WEB_ACTOR, display_name="Casey Placeholder", status="suggested")
+    service.create(matter.matter_id, WEB_ACTOR, display_name="Alex Example", status="suggested")
+    page = client.get(f"/matters/{matter.slug}/entities").text
+    assert "Casey Placeholder" not in inbox_names(page)
+    alex = re.search(r'<li class="suggestion" data-suggestion>(?:(?!</li>).)*?>Alex Example</a>.*?</li>', page, re.S)[0]
+    assert "1 mention<" in alex and alex.count('name="targets"') == 2
+    assert len(re.search(r'name="targets" value="([^"]+)"', alex)[1].split(",")) == 1
+
+
+def test_source_count_includes_every_attached_passage(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    upload(client, matter.slug, "Synthetic call.txt", SECOND)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
+    badge = next(row for row in rows if row["display_name"] == "QX-77")
+    support = service.detail(matter.matter_id, WEB_ACTOR, badge["entity_id"])[1][0]["support_token"]
+    service.attach(matter.matter_id, WEB_ACTOR, amber["entity_id"], expected_revision=amber["revision"], support=support)
+    items, _total, _kinds = service.inbox(matter.matter_id, WEB_ACTOR)
+    group = next(item for item in items if item["display_name"] == "Amber Cooperative")
+    assert (group["identity_count"], group["mention_count"], group["source_count"]) == (1, 2, 2)
+
+
+def test_highlight_survives_case_folding_that_changes_length():
+    from case_intelligence.entity_repository import EntityRepository
+    assert EntityRepository.snippet("Straße; Alex Example met", "alex example") == ("Straße; ", "Alex Example", " met")
+    assert EntityRepository.snippet("STRASSE Alex", "straße") == ("", "STRASSE", " Alex")
+
+
+def test_each_grouped_decision_is_audited_against_its_identity(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    upload(client, matter.slug, "Synthetic call.txt", SECOND)
+    bench.run_automatic_discovery_once()
+    rows, _ = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)
+    jordans = [row for row in rows if row["display_name"] == "Jordan Sample"]
+    targets = ",".join(f"{row['entity_id']}:{row['revision']}" for row in jordans)
+    response = client.post(f"/matters/{matter.slug}/entities/actions",
+                           data=dict(action="decide", targets=targets, status="confirmed"), follow_redirects=False)
+    assert response.status_code == 303
+    events = [event for event in bench.workspace.audit_events(matter.matter_id) if event.action == "entity.decide"]
+    assert sorted(event.object_id for event in events) == sorted(row["entity_id"] for row in jordans)
+    assert {event.object_type for event in events} == {"entity"}
+
+
+def test_inbox_work_grows_linearly_with_suggestions(workbench):  # noqa: F811
+    import hashlib
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    sample = service.detail(matter.matter_id, WEB_ACTOR, rows[0]["entity_id"])[1][0]
+    connection = bench.workspace.connection
+
+    def add(count, start):
+        with connection:
+            for index in range(start, start + count):
+                entity_id = f"synthetic-entity-{index:06d}"
+                connection.execute(
+                    "INSERT INTO workbench_entity(entity_id,matter_id,entity_type,display_name,status,origin,"
+                    "created_by,created_at,updated_by,updated_at) VALUES (?,?,'person',?,'suggested','extraction',"
+                    "?,'2026-01-01T00:00:00Z',?,'2026-01-01T00:00:00Z')",
+                    (entity_id, matter.matter_id, f"Synthetic Person {index:06d}", WEB_ACTOR, WEB_ACTOR))
+                connection.execute(
+                    "INSERT INTO workbench_entity_mention(mention_id,matter_id,entity_id,document_id,source_version_id,"
+                    "source_name,location,unit_number,chunk_id,excerpt_digest,excerpt,support_token,origin,created_by,"
+                    "created_at) VALUES (?,?,?,?,?,?,?,1,?,?,?,?,'extraction',?,'2026-01-01T00:00:00Z')",
+                    (f"synthetic-mention-{index:06d}", matter.matter_id, entity_id, sample["document_id"],
+                     sample["source_version_id"], sample["source_name"], sample["location"], sample["chunk_id"],
+                     hashlib.sha256(str(index).encode()).hexdigest(), f"Synthetic Person {index:06d} called.",
+                     sample["support_token"], WEB_ACTOR))
+
+    def steps():
+        counted = [0]
+
+        def tick():
+            counted[0] += 1
+            return 0
+        connection.set_progress_handler(tick, 1000)
+        try:
+            items, total, _kinds = service.inbox(matter.matter_id, WEB_ACTOR)
+        finally:
+            connection.set_progress_handler(None, 0)
+        assert len(items) == 25
+        return counted[0], total
+
+    add(1000, 0)
+    small, total = steps()
+    add(3000, 1000)
+    large, larger_total = steps()
+    assert larger_total - total == 3000
+    # Four times the suggestions costs about four times the work, not sixteen.
+    assert large <= 6 * max(small, 1), (small, large)
