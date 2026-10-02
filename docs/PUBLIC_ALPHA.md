@@ -140,7 +140,13 @@ Local review, review of a plan, a request without completion, an earlier head,
 labels and quota messages cannot replace it. `hosted-review-gate` waits for the
 official Codex bot's completed current-head code-review summary, reconciled
 review discussions and later full-head maintainer acceptance. Unknown or
-incomplete code-review summary formats fail closed. Changed heads and newer or
+incomplete code-review summary formats fail closed. The official completed CODE
+row itself must name the exact 40-character head SHA. Abbreviated SHAs, reactions,
+human attestations and independent acceptance comments cannot supply this proof.
+The observed provider summaries abbreviate their SHA, so they remain blocked
+under this contract. A provider-supported full-head CODE completion format must
+be available before this policy can pass in production; do not edit/copy bot
+evidence or waive this requirement to unblock it. Changed heads and newer or
 edited code-review requests require renewed review. A withdrawn request no
 longer counts; it does not waive the required completion.
 
@@ -181,22 +187,28 @@ hosted code review. Existing native protections and Quality, publication and
 Gitleaks checks remain mandatory. The gate uses pull-request write permission,
 not repository-admin dismissal rights.
 
-Review submission/edit/dismissal and inline-comment creation/edit/deletion
-also trigger automatic revalidation. The `Hosted review events` relay has no
-token permissions, checkout, artifacts or PR-code execution. Its requested and
-completed runs wake the default-branch gate regardless of success; reruns are
-covered by completion. Only the trusted gate selects PR numbers, rereads live
-head/base and findings, and withdraws or renews its native approval. Run outcomes
-and event head/base snapshots never authorize approval. If GitHub omits PR
-associations, the gate reevaluates all open default-branch PRs. All event paths
-share per-PR serialization. No additional token permissions are granted.
+Review and review-comment Actions events execute the PR merge-ref workflow.
+A same-repository PR can change that workflow's permissions: a no-op relay with
+`permissions: {}` is not a trusted boundary. There is no review-event relay or
+`workflow_run` consumer. Only `pull_request_target`, issue comments and explicit
+manual dispatch invoke this gate; see GitHub's
+[Actions event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
+Manual dispatch must select the default branch, never a candidate branch. The
+job also rejects non-default-branch dispatches, but a guard in editable candidate
+YAML cannot make dispatching that candidate safe.
 
-GitHub executes review-event workflows on the PR merge ref, while `workflow_run`
-uses the default branch; see the
-[official Actions event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).
-Keep these workflows separate. Do not add review-event triggers directly to the
-privileged gate or consume relay artifacts. Revalidation remains asynchronous;
-Actions scheduling is not an atomic merge barrier.
+Use explicit trusted revalidation: keep the PR draft while review and findings
+are changing; after completion and reconciliation, post the full-head acceptance
+below or dispatch **Hosted review gate** from the default branch with the PR
+number. Inspect that fresh run and current review evidence before a manual
+merge. Do not use auto-merge with this protocol. After any review submission,
+edit, dismissal, inline-comment mutation or resolution change, repeat
+revalidation and renew acceptance when content changed. Review-surface changes
+do not automatically invalidate an existing green status. This is a maintainer
+procedure, not an atomic merge barrier or complete automated enforcement of
+post-run mutations. If that guarantee is required, remain blocked until a
+separately reviewed trusted event integration is available; this PR grants no
+settings, token or webhook-service changes.
 
 Thread resolution/unresolution is a
 [webhook event](https://docs.github.com/en/webhooks/webhook-events-and-payloads#pull_request_review_thread),
@@ -207,8 +219,8 @@ privileged full-head acceptance after all inline content instead. A contributor
 cannot authorize reconciliation by resolving a thread; toggling an already
 accepted thread does not erase its maintainer reconciliation. Native required
 conversation resolution blocks while the thread is unresolved. New or edited
-comments invalidate the acceptance cutoff through supported review/comment
-events, and acceptance edits/deletion use the existing issue-comment events.
+comments invalidate the acceptance cutoff on the next explicit revalidation;
+acceptance edits/deletion use the existing issue-comment events.
 Inline freshness uses creation, publication and body-edit timestamps, not the
 generic metadata-update timestamp; review submission time is also included.
 If a gate run saw an unresolved thread, resolve it and dispatch the gate or post
@@ -236,7 +248,8 @@ RecordBench maintainer acceptance: FULL_COMMIT_ID
 Acceptance must be strictly later than code completion, every inline comment or
 reply (including edits), and priority-tagged official bot findings in issue
 comments and review bodies, from an account with current write, maintain or admin
-permission. This binds the bot's abbreviated code SHA to the full head; a prefix match alone is insufficient. A changed head, newer
+permission. Acceptance reconciles findings; it cannot establish which commit
+Codex reviewed. A changed head, newer
 code completion or removed acceptance requires renewed acceptance. Missing
 acceptance leaves the gate pending. Current access is verified through GitHub,
 not the comment's displayed association. Security credit availability does not

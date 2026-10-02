@@ -33,7 +33,8 @@ acceptance performed. Do not include private deployment output.
       and attachments were separately inspected before upload.
 - [ ] Before merge: actual hosted Codex code review completed on the final
       implemented head, findings were reconciled and a maintainer accepted the
-      full head under `docs/PUBLIC_ALPHA.md`. Hosted security review is optional;
+      full head under `docs/PUBLIC_ALPHA.md`, including full-SHA bot evidence and
+      explicit trusted revalidation immediately before manual merge. Hosted security review is optional;
       labels and quotas cannot waive code review. All Quality, publication,
       Gitleaks and native branch protections remain required.
 - [ ] No existing release tag was moved or rewritten.

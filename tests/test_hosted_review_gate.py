@@ -22,7 +22,7 @@ def evaluate(head, comments, threads):
 def code_summary():
     code_only = {"user": {"login": GATE.BOT, "type": "Bot"},
                  "updated_at": "2026-01-01T12:00:00Z"}
-    # Complete observed bot format, with synthetic commit and timestamps.
+    # Synthetic full-SHA contract; the observed abbreviated provider row fails closed.
     code_only["body"] = f'''{GATE.SUMMARY}
 
 ## Codex Review Summary
@@ -31,7 +31,7 @@ This comment shows the latest Codex review activity on this pull request.
 
 | Review | Status | Commit | Review trigger |
 | --- | --- | --- | --- |
-| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-01-01T12:00:00Z">2026-01-01T12:00:00Z</relative-time> | `{HEAD[:7]}` | Manual request |
+| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-01-01T12:00:00Z">2026-01-01T12:00:00Z</relative-time> | `{HEAD}` | Manual request |
 
 <details> <summary>ℹ️ About Codex in GitHub</summary>
 <br/>
@@ -49,7 +49,7 @@ Codex reacts with 👀 while any review is running, comments if it has suggestio
 
 def summary(head=HEAD):
     result = code_summary()
-    result["body"] = result["body"].replace(HEAD[:7], head[:7])
+    result["body"] = result["body"].replace(HEAD, head)
     return result
 
 
@@ -102,10 +102,18 @@ def test_contributor_resolution_cannot_replace_privileged_reconciliation():
     assert GATE.evaluate(HEAD, [summary(), approval()], [thread])[0] == "success"
 
 
-def test_short_hash_collision_requires_independent_full_head_acceptance():
+@pytest.mark.parametrize("length", [7, 10, 39])
+def test_abbreviated_review_cannot_pass_even_with_current_full_head_acceptance(length):
+    collision = HEAD[:length] + "b" * (40 - length)
+    stale = summary()
+    stale["body"] = stale["body"].replace(HEAD, HEAD[:length])
+    assert GATE.evaluate(collision, [stale, approval(collision)], [])[0] == "pending"
+    assert GATE.evaluate(HEAD, [stale, approval()], [])[0] == "pending"
+
+
+def test_full_review_sha_cannot_be_rebound_by_maintainer_acceptance():
     collision = HEAD[:7] + "b" * 33
-    assert GATE.evaluate(collision, [summary(collision), approval(HEAD)], [])[0] == "pending"
-    assert GATE.evaluate(collision, [summary(collision), approval(collision, False)], [])[0] == "pending"
+    assert GATE.evaluate(collision, [summary(), approval(collision)], [])[0] == "pending"
     assert GATE.evaluate(collision, [summary(collision), approval(collision)], [])[0] == "success"
 
 
@@ -295,8 +303,8 @@ def test_malformed_code_row_columns_are_rejected():
 def test_code_review_binds_the_commit_column_not_display_text():
     comments = [code_summary()]
     comments[0]["body"] = comments[0]["body"].replace(
-        f"| `{HEAD[:7]}` |", "| `bbbbbbb` |").replace(
-        ">2026-01-01T12:00:00Z</relative-time>", f">`{HEAD[:7]}`</relative-time>")
+        f"| `{HEAD}` |", "| `bbbbbbb` |").replace(
+        ">2026-01-01T12:00:00Z</relative-time>", f">`{HEAD}`</relative-time>")
     assert evaluate(HEAD, comments, [])[0] == "pending"
 
 

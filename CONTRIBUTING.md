@@ -168,7 +168,9 @@ policy. No label transition or quota-exception ceremony is needed. The gate's
 native approval remains PR-specific; Quality, Gitleaks, publication safeguards,
 resolved conversations and all existing branch protections remain independent.
 See [merge and automation controls](docs/PUBLIC_ALPHA.md#merge-and-automation-boundary)
-for the existing full-head acceptance comment and trusted-main execution rules.
+for the full-SHA bot evidence requirement, provider compatibility blocker,
+full-head acceptance and explicit default-branch revalidation procedure.
+Review edits do not automatically revoke a previous pass; do not use auto-merge.
 
 Repository workflows must not post review commands on open or synchronize.
 Keep automatic review disabled in the Codex GitHub repository settings;

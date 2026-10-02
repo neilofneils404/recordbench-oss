@@ -38,7 +38,7 @@ CODE_ONLY_SUFFIX = (
 CODE_ONLY_ROW = re.compile(
     r'\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* '
     r'<relative-time datetime="(?P<completed_at>[^"<>]+)">[^<>]+</relative-time> '
-    r'\| `(?P<head_prefix>[0-9a-f]{7,40})` \| [^|\r\n]+ \|')
+    r'\| `(?P<reviewed_head>[0-9a-f]{40})` \| [^|\r\n]+ \|')
 
 
 def comment_time(comment: dict) -> datetime:
@@ -72,7 +72,7 @@ def evaluate(head: str, comments: list[dict], threads: list[dict],
             or tuple(lines[-len(CODE_ONLY_SUFFIX):]) != CODE_ONLY_SUFFIX
             or (code_match := CODE_ONLY_ROW.fullmatch(lines[len(CODE_ONLY_PREFIX)])) is None):
         return "pending", "Unrecognized or incomplete code review summary"
-    if not head.startswith(code_match.group("head_prefix")):
+    if head != code_match.group("reviewed_head"):
         return "pending", "Waiting for code review of the current commit"
     try:
         completed = datetime.fromisoformat(code_match.group("completed_at").replace("Z", "+00:00"))
@@ -88,9 +88,9 @@ def evaluate(head: str, comments: list[dict], threads: list[dict],
                 return "pending", "A newer code review request is still awaiting completion"
     if any(not thread.get("isResolved", False) for thread in threads):
         return "failure", "Every review discussion must be resolved"
-    # The bot abbreviates the code-review SHA. Independent privileged acceptance
-    # binds the completed code review to the full head, including prefix collisions.
-    # It also follows priority-tagged bot findings, including security findings.
+    # Only the official CODE evidence above binds review to the full head.
+    # Maintainer acceptance reconciles findings; it cannot repair missing or
+    # abbreviated review evidence, including a colliding commit prefix.
     inline_comments = [comment for thread in threads for comment in thread.get("comments", [])]
     # GitHub Actions has no review-thread resolved/unresolved trigger. Last-
     # resolver identity is therefore not durable authorization. The existing

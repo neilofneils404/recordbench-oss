@@ -5,9 +5,6 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
   issue_comment:
     types: [created, edited, deleted]
-  workflow_run:
-    workflows: [Hosted review events]
-    types: [requested, completed]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -21,37 +18,16 @@ permissions:
   pull-requests: write
   statuses: write
 
-jobs:
-  select-prs:
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      pr_numbers: ${{ steps.select.outputs.pr_numbers }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-      - id: select
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-        run: python3 scripts/select-hosted-review-prs.py
+concurrency:
+  group: hosted-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+  cancel-in-progress: false
 
+jobs:
   evaluate:
-    needs: select-prs
-    if: needs.select-prs.outputs.pr_numbers != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        pr_number: ${{ fromJSON(needs.select-prs.outputs.pr_numbers) }}
-    concurrency:
-      group: hosted-review-${{ matrix.pr_number }}
-      cancel-in-progress: false
+    if: >-
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+      (github.event_name != 'workflow_dispatch' ||
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -63,5 +39,5 @@ jobs:
       - name: Evaluate mandatory hosted code review
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ matrix.pr_number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
         run: python3 scripts/hosted-review-gate.py
