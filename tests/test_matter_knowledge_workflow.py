@@ -35,11 +35,14 @@ def test_notebook_connects_same_name_identities_both_accounts_and_original_retur
     compiler.close()
     assert not any(thread.is_alive() for thread in compiler._threads)
     traced = []
-    bench.workspace.connection.set_trace_callback(traced.append)
+    # Serialize callback changes with live workers, not the HTTP request.
+    with bench.workspace._lock:
+        bench.workspace.connection.set_trace_callback(traced.append)
     try:
         response = client.get(prefix + '/notebook')
     finally:
-        bench.workspace.connection.set_trace_callback(None)
+        with bench.workspace._lock:
+            bench.workspace.connection.set_trace_callback(None)
     assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
     for value in ('Saved case notes', note.title, 'A. Example', connections['entity_id'],
                   connections['unrelated_id'], EVENT_FIELDS['title'], EVENT_FIELDS['raw_date'],
