@@ -17,7 +17,7 @@ small disposable test applications.
 ## Contributor commands
 
 Install the normal contributor Python dependencies first. On Ubuntu 24.04 install
-the browser libraries listed in `.github/workflows/quality-gates.yml`. Then run:
+the browser libraries listed in `scripts/install-ci-browser-deps.py`. Then run:
 
 ```console
 .venv/bin/python -m pytest -q tests/test_browser_acceptance_runner.py
@@ -30,6 +30,38 @@ Linux x86_64 and Apple Silicon macOS have pinned archives. Unsupported hosts fai
 before any journey starts. All temporary paths passed to the applications are
 resolved, including on macOS where the system temporary directory can traverse a
 symlink.
+
+### Hosted dependency setup
+
+The Ubuntu 24.04 x86_64 GitHub Actions job uses `install-ci-browser-deps.py` to
+bound APT index refresh to 60 seconds and package download to 180 seconds, with
+up to 10 seconds to kill remaining acquisition processes. If either fails or
+times out, it retries acquisition once using only the official HTTPS Ubuntu
+mirrors already listed on the runner. It restores the original mirror list
+afterward; repository suites, components, signing keys and authentication are
+unchanged. Before changing mirrors, it parses the Ubuntu Deb822 source stanzas
+and requires every active stanza to use only the expected mirror list. Disabled
+stanzas cannot authorize fallback; mixed URIs, missing required fields and
+ambiguous or malformed source configuration fail closed without a mirror write.
+The primary attempt uses the runner's normal APT sources. For every fallback
+APT command (index refresh, download-only acquisition and offline installation),
+the helper sets `Dir::Etc::sourcelist` to the validated `ubuntu.sources` file and
+`Dir::Etc::sourceparts` to `/dev/null`. Additional `sources.list` or
+`sources.list.d` entries therefore cannot delay fallback refresh or supply its
+package candidates; those files are not modified. Refresh errors still fail the
+attempt via `--error-on=any`.
+
+Only after successful acquisition does it install the complete dependency list
+with `--no-download`. Package unpacking has no helper timeout or retry; missing
+archives and install failures fail the job. The existing 20-minute job limit,
+FFmpeg executable checks, browser archive verification and all journeys remain
+required. Setup failure is not a browser acceptance result. The helper is for
+the disposable hosted runner, not a local machine or deployed node.
+
+`tests/test_ci_browser_dependencies.py` mocks package commands to cover success,
+bounded fallback and failure without network or root access. These tests do not
+prove live Ubuntu package acquisition; the hosted browser job supplies that
+evidence.
 
 The default timeout is 300 seconds **per journey**, configurable with
 `--timeout-seconds 1..600`. Each journey runs in its own process session. On
@@ -46,6 +78,24 @@ offline model flags and a small environment allowlist. Deployment settings,
 proxy credentials and Python import overrides from the calling shell are not
 inherited. Browser and driver paths are explicit, so Selenium Manager is not
 used to resolve or install a different version.
+
+Matter-context navigation sends native Enter once, waits for the activated
+control to detach, then requires the replacement document to finish loading.
+Chrome's specific inspector error, `Node with given id does not belong to the
+document`, counts as detachment only during that wait, just like Selenium's
+stale-element response. Other driver errors and navigation timeouts still fail;
+workflow assertions remain unchanged and the action is never retried.
+
+Matter-knowledge pointer navigation samples target geometry inside its existing
+20-second wait. An offscreen center is scrolled into view and resets stability;
+an onscreen obstruction remains a failure unless it clears. Two consecutive
+identical, unobstructed rectangles are required before one native click, followed
+by the existing detachment and complete-document waits. Positioning timeouts
+retain at most six geometry/hit-test samples without page text or URLs.
+`tests/test_matter_knowledge_click.py` covers displaced scrolling, obstruction,
+moving geometry, bounded diagnostics and a single activation even when navigation
+fails. This handles displaced positioning; it does not prove the timing cause of
+an earlier hosted failure whose receipt contained no geometry samples.
 
 ## Browser pins and deliberate updates
 

@@ -107,7 +107,7 @@ def test_receipt_retains_skips_received_bytes_exact_source_and_complete_exports(
         assert bundled == data
         assert not any(n.endswith('report.txt') for n in archive.namelist())
     # A version replacement cannot retarget a previously recorded receipt.
-    with bench.workspace.connection:
+    with bench.workspace._lock, bench.workspace.connection:
         bench.workspace.connection.execute('UPDATE workbench_source_catalog SET version_id=? WHERE matter_id=?', ('f' * 32, matter.matter_id))
     page = client.get(receipt['receipt_url'])
     assert '>Open source</a>' not in page.text and 'Source unavailable' in page.text

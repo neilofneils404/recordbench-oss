@@ -132,10 +132,10 @@ permits sequential protected merges once those gates pass; additional per-commit
 confirmation is not required. This authorization does not assert independent
 human inspection of every later revision or a hosted-security pass.
 
-This series-specific decision does not change the repository's optional hosted
-review policy. Follow [PUBLIC_ALPHA.md](PUBLIC_ALPHA.md) for future strict
-`require-hosted-review` opt-ins and their code/security review, reconciliation and
-maintainer-acceptance requirements.
+That series-specific decision is historical. Follow the current
+[PUBLIC_ALPHA.md](PUBLIC_ALPHA.md) policy for mandatory final-head hosted code
+review, optional hosted security review, findings reconciliation and full-head
+maintainer acceptance.
 
 The series' dependency order is **#112 → #111 → #110 → #113 → #114 → #115 → #116**:
 authentication and lifecycle boundaries, common answer presentation, source-text
@@ -397,10 +397,10 @@ combined candidate; do not repeatedly rerun unrelated suites without a reason.
 Before any authorized publication, run the installed pre-push publication guard
 and separately inspect report text, fixtures and artifact metadata. Follow the
 current upstream [public-alpha](PUBLIC_ALPHA.md) policy: Quality and branch
-protections always apply; hosted review is optional unless `require-hosted-review`
-is enabled. Strict opt-in requires final-head code/security review, reconciliation
-and maintainer acceptance. Honor any additional review requirements explicitly
-set by the maintainer for this work. Do not change the repository review implementation as part of these
+protections always apply; final-head hosted code review, reconciliation and
+maintainer acceptance are mandatory. Hosted security review is optional;
+security-sensitive changes still need a focused assessment. Honor any additional
+review requirements explicitly set by the maintainer for this work. Do not change the repository review implementation as part of these
 fixes. Each implementation section must have its own reviewed change and receipt;
 tracking an issue or publishing a draft PR does not establish acceptance.
 

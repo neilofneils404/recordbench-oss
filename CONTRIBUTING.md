@@ -147,49 +147,36 @@ downstream is private.
 
 ## Pull requests
 
-Hosted Codex review is optional. A maintainer may request `@codex review` or
-`@codex security review` when useful. Local/maintainer review is enough to merge
-when all Quality gates are green and branch protections allow it. Inspect
-synthetic-data provenance and disclosure risk before merging.
+Every PR targeting the default branch requires actual hosted Codex **code
+review on the final implemented head**, reconciled findings and full-head
+maintainer acceptance. Request `@codex review` after implementation and local
+validation; request it again after changing the head. Local review, labels,
+quota limits and a review of a plan or earlier revision cannot substitute.
 
-The required `hosted-review-gate` status passes by default with “Hosted review
-not required”; it does not request Codex work. To make hosted reviews a merge
-requirement for a specific PR, a maintainer uses the draft-first procedure below to add the exact label
-`require-hosted-review`, then requests the reviews they want to run. With that
-label, both current-head code and security review (or the documented security
-quota exception), reconciled findings and full-head maintainer acceptance are
-required. A review command alone does not opt in. Only a label removal by an account
-with current write, maintain or admin permission restores the default policy.
-The gate checks label history, so a triage user removing the label cannot
-disable an existing opt-in. A maintainer can add and remove the label again
-to authorize opt-out after an unauthorized removal. Label changes rerun the gate and invalidate an in-flight
-policy approval if the opt-in state changes.
+Hosted `@codex security review` is optional. Its availability, credits, pending
+requests and execution status do not block merge; do not claim it passed when
+it did not run. Security-sensitive changes still require a focused assessment
+of the affected trust boundaries, abuse cases and regression evidence, recorded
+in the PR's Impact section. Fix real findings or record a reasoned maintainer
+disposition, including findings from optional security review. All review
+discussions require maintainer reconciliation.
 
-To change review policy on an existing PR, first disable auto-merge and convert
-it to draft (`gh pr merge NUMBER --disable-auto`, then `gh pr ready NUMBER --undo`).
-Confirm the PR is draft before adding or removing the label. Keep it draft until
-the resulting gate run finishes and its status/native review reflect the new
-policy; then mark it ready (`gh pr ready NUMBER`). If the run fails, leave it draft
-and fix or rerun it. GitHub label events are asynchronous: adding a label alone
-does not immediately invalidate an old approval. Draft state prevents a merge
-while Actions queues. Do not enable auto-merge or merge during a policy change.
-
-The gate retains its native, PR-specific policy approval so existing branch
-protections can stay in place. A default approval records only that hosted
-review is optional; it is not a claim that code or security review occurred.
-Quality checks, resolved-conversation requirements and other protections remain
-independent. See [merge and automation controls](docs/PUBLIC_ALPHA.md#merge-and-automation-boundary).
-
-| PR scenario | Before | After |
-| --- | --- | --- |
-| Docs-only PR | Waits for hosted code/security reviews and acceptance | Hosted status passes without Codex; maintainer review and green Quality required |
-| Product PR without opt-in | Same mandatory hosted reviews | Same default as docs; maintainer chooses whether to request advisory reviews |
-| Product PR labeled `require-hosted-review` | Mandatory hosted reviews | Strict current-head hosted review, reconciled findings and acceptance remain required, plus Quality |
+The required `hosted-review-gate` checks code-review completion, freshness,
+reconciliation and acceptance for every PR, regardless of labels. The former
+`require-hosted-review` label and security quota receipts no longer change the
+policy. No label transition or quota-exception ceremony is needed. The gate's
+native approval remains PR-specific; Quality, Gitleaks, publication safeguards,
+resolved conversations and all existing branch protections remain independent.
+See [merge and automation controls](docs/PUBLIC_ALPHA.md#merge-and-automation-boundary)
+for native full-commit review evidence, the explicit trusted verification for
+clean comment-only reviews within the same acceptance, and default-branch
+revalidation. A short SHA alone never establishes the reviewed commit.
+Review edits do not automatically revoke a previous pass; do not use auto-merge.
 
 Repository workflows must not post review commands on open or synchronize.
-Keep automatic review disabled in the Codex GitHub repository settings as well;
-that integration setting is separate from the Actions gate. Adding the opt-in
-label enforces review completion but does not launch reviews automatically.
+Keep automatic review disabled in the Codex GitHub repository settings;
+request review deliberately once the implemented code is ready. This policy
+change does not change account or repository settings.
 
 Each pull request should explain the user problem, the resulting behavior, the
 synthetic evidence, and any security, lifecycle, migration, model, or recovery

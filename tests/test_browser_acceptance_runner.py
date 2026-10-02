@@ -83,6 +83,67 @@ def receipt(path, **values):
         'checks': ['Generated check'] * 19, **values}))
 
 
+@pytest.fixture
+def context_script(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / 'scripts'))
+    spec = importlib.util.spec_from_file_location('browser_context', ROOT / 'scripts/browser-accept-matter-context.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize('detachment', ['stale', 'inspector'])
+def test_context_activation_waits_for_detachment_and_complete_load(context_script, detachment):
+    from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
+    from selenium.webdriver.common.keys import Keys
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    driver, element = Mock(), Mock()
+    error = (StaleElementReferenceException() if detachment == 'stale' else WebDriverException(
+        'unknown error: unhandled inspector error: {"code":-32000,"message":"Node with given id does not belong to the document"}'))
+    element.is_enabled.side_effect = [True, error]
+    driver.execute_script.side_effect = ['loading', 'complete']
+    context_script.activate_context_action(driver, WebDriverWait(driver, 1, poll_frequency=.001), element)
+    element.send_keys.assert_called_once_with(Keys.ENTER)
+    assert element.is_enabled.call_count == 2
+    assert driver.execute_script.call_count == 2
+
+
+@pytest.mark.parametrize('phase', ['activation', 'detachment', 'readiness'])
+def test_context_activation_propagates_unexpected_driver_errors(context_script, phase):
+    from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    driver, element = Mock(), Mock()
+    element.is_enabled.side_effect = StaleElementReferenceException()
+    target = {'activation': element.send_keys, 'detachment': element.is_enabled,
+              'readiness': driver.execute_script}[phase]
+    target.side_effect = WebDriverException('Unexpected inspector failure')
+    with pytest.raises(WebDriverException, match='Unexpected inspector failure'):
+        context_script.activate_context_action(driver, WebDriverWait(driver, 1, poll_frequency=.001), element)
+    assert element.send_keys.call_count == 1
+    if phase == 'activation':
+        element.is_enabled.assert_not_called()
+    if phase != 'readiness':
+        driver.execute_script.assert_not_called()
+
+
+@pytest.mark.parametrize('stalled_document', ['old', 'new'])
+def test_context_activation_fails_when_navigation_does_not_finish(context_script, stalled_document):
+    from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    driver, element = Mock(), Mock()
+    if stalled_document == 'new':
+        element.is_enabled.side_effect = StaleElementReferenceException()
+    driver.execute_script.return_value = 'loading'
+    with pytest.raises(TimeoutException):
+        context_script.activate_context_action(driver, WebDriverWait(driver, .01, poll_frequency=.001), element)
+    assert element.send_keys.call_count == 1
+    if stalled_document == 'old':
+        driver.execute_script.assert_not_called()
+
+
 def test_pins_match_browser_driver_version_and_official_archives(runner):
     for name in ('linux64', 'mac-arm64'):
         version, pins = runner.browser_pins(name)

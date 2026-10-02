@@ -40,11 +40,14 @@ def test_http_selection_conflicts_sources_exports_no_model_and_reload(connection
     assert not any(thread.is_alive() for thread in compiler._threads)
     for kind, identifier in [('entity',c['entity_id']),('entity',c['unrelated_id']),('assertion',c['assertion_id'])]:
         traced = []
-        bench.workspace.connection.set_trace_callback(traced.append)
+        # Serialize callback changes with live workers, not the HTTP request.
+        with bench.workspace._lock:
+            bench.workspace.connection.set_trace_callback(traced.append)
         try:
             page = client.get(path, params=dict(kind=kind, object_id=identifier))
         finally:
-            bench.workspace.connection.set_trace_callback(None)
+            with bench.workspace._lock:
+                bench.workspace.connection.set_trace_callback(None)
         assert page.status_code == 200, page.text
         mutations = [sql for sql in traced if sql.lstrip().upper().startswith(('INSERT','UPDATE','DELETE','REPLACE'))]
         assert not any(any(table in sql for table in ('workbench_context','workbench_notebook','workbench_entity','workbench_assertion','workbench_answer')) for sql in mutations)

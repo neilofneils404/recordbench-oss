@@ -19,25 +19,52 @@ def evaluate(head, comments, threads):
     return GATE.evaluate(head, [*comments, approval()], threads)
 
 
+def code_summary():
+    code_only = {"user": {"login": GATE.BOT, "type": "Bot"},
+                 "updated_at": "2026-01-01T12:00:00Z"}
+    # Synthetic full-SHA contract; the observed abbreviated provider row fails closed.
+    code_only["body"] = f'''{GATE.SUMMARY}
+
+## Codex Review Summary
+
+This comment shows the latest Codex review activity on this pull request.
+
+| Review | Status | Commit | Review trigger |
+| --- | --- | --- | --- |
+| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-01-01T12:00:00Z">2026-01-01T12:00:00Z</relative-time> | `{HEAD}` | Manual request |
+
+<details> <summary>ℹ️ About Codex in GitHub</summary>
+<br/>
+
+[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
+- Open a pull request for review
+- Mark a draft as ready
+- Comment "@codex review" or "@codex security review".
+
+Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.
+
+</details>'''
+    return code_only
+
+
 def summary(head=HEAD):
-    return {"user": {"login": GATE.BOT, "type": "Bot"}, "updated_at": "2026-01-01T12:00:00Z",
-        "body": GATE.SUMMARY + '\n<!-- codex-security-review:v1 {"headSha":"' + head + '","status":"completed"} -->\n' +
-        '\n'.join(f'| **{label}** | ✅ **Completed** <relative-time datetime="2026-01-01T12:00:00Z">done</relative-time> | `{head[:7]}` |'
-                   for label in ("Code Review", "Security Review"))}
+    result = code_summary()
+    result["body"] = result["body"].replace(HEAD, head)
+    return result
 
 
-def test_requires_both_reviews_on_current_head():
+def test_requires_actual_code_review_on_current_head():
     assert evaluate(HEAD, [], [])[0] == "pending"
     assert evaluate(HEAD, [summary("b" * 40)], [])[0] == "pending"
     partial = summary()
-    partial["body"] = partial["body"].replace("**Code Review**", "**Other**")
+    partial["body"] = partial["body"].replace("**Code Review**", "**Security Review**")
     assert evaluate(HEAD, [partial], [])[0] == "pending"
     assert evaluate(HEAD, [summary()], [])[0] == "success"
 
 
 def test_unresolved_discussion_blocks_until_reconciled():
     assert evaluate(HEAD, [summary()], [{"isResolved": False}])[0] == "failure"
-    assert evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
+    assert evaluate(HEAD, [summary()], [{"isResolved": True}])[0] == "success"
 
 
 def test_forged_summary_and_new_review_request_do_not_pass():
@@ -50,7 +77,7 @@ def test_forged_summary_and_new_review_request_do_not_pass():
 
 def test_malformed_summary_never_passes():
     broken = summary()
-    broken["body"] = broken["body"].replace('"status":"completed"', '"status":"running"')
+    broken["body"] = broken["body"].replace('**Completed**', '**Running**')
     assert evaluate(HEAD, [broken], [])[0] == "pending"
 
 
@@ -68,28 +95,37 @@ def test_single_review_rerun_is_compared_with_its_own_completion():
         assert evaluate(HEAD, [current, requested], [])[0] == "success"
 
 
-def test_contributor_cannot_self_reconcile_findings():
-    assert evaluate(HEAD, [summary()], [{"isResolved": True}])[0] == "failure"
-    assert evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": False}])[0] == "failure"
-    assert evaluate(HEAD, [summary()], [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
+def test_contributor_resolution_cannot_replace_privileged_reconciliation():
+    thread = {"isResolved": True, "resolvedBy": {"login": "synthetic-contributor"}}
+    assert GATE.evaluate(HEAD, [summary()], [thread])[0] == "pending"
+    assert GATE.evaluate(HEAD, [summary(), approval(permitted=False)], [thread])[0] == "pending"
+    assert GATE.evaluate(HEAD, [summary(), approval()], [thread])[0] == "success"
 
 
-def test_short_hash_collision_requires_independent_full_head_acceptance():
+@pytest.mark.parametrize("length", [7, 10, 39])
+def test_abbreviated_review_cannot_pass_even_with_current_full_head_acceptance(length):
+    collision = HEAD[:length] + "b" * (40 - length)
+    stale = summary()
+    stale["body"] = stale["body"].replace(HEAD, HEAD[:length])
+    assert GATE.evaluate(collision, [stale, approval(collision)], [])[0] == "pending"
+    assert GATE.evaluate(HEAD, [stale, approval()], [])[0] == "pending"
+
+
+def test_full_review_sha_cannot_be_rebound_by_maintainer_acceptance():
     collision = HEAD[:7] + "b" * 33
-    assert GATE.evaluate(collision, [summary(collision), approval(HEAD)], [])[0] == "pending"
-    assert GATE.evaluate(collision, [summary(collision), approval(collision, False)], [])[0] == "pending"
+    assert GATE.evaluate(collision, [summary(), approval(collision)], [])[0] == "pending"
     assert GATE.evaluate(collision, [summary(collision), approval(collision)], [])[0] == "success"
 
 
-def test_acceptance_must_follow_both_completed_reviews():
+def test_acceptance_must_follow_completed_code_review():
     accepted = approval()
     accepted["updated_at"] = "2026-01-01T11:00:00Z"
     assert GATE.evaluate(HEAD, [summary(), accepted], [])[0] == "pending"
     assert GATE.evaluate(HEAD, [summary()], [])[0] == "pending"
 
 
-@pytest.mark.parametrize("quota", [False, True])
-def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch, quota):
+@pytest.mark.parametrize("labels", [[], [{"name": "require-hosted-review"}]])
+def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch, labels):
     monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
     monkeypatch.setenv("PR_NUMBER", "1")
     for permission, expected in (("read", "pending"), ("write", "success")):
@@ -101,7 +137,7 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch, qu
 
         def request(path, data=None, *, method=None):
             if path.endswith("/pulls/1"):
-                return {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}], "head": {"sha": HEAD}, "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}}, "html_url": "https://example.test/pr/1"}
+                return {"state": "open", "labels": labels, "head": {"sha": HEAD}, "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}}, "html_url": "https://example.test/pr/1"}
             if path.split("?")[0].endswith("/reviews"):
                 if data is None:
                     return [{"id": 10, "state": "APPROVED", "user": {"login": "github-actions[bot]"},
@@ -114,14 +150,11 @@ def test_live_gate_derives_acceptance_from_repository_permission(monkeypatch, qu
                 statuses.append(data["state"])
                 return {}
             if "/comments?" in path:
-                if quota:
-                    comments = quota_comments()
-                    for comment in comments:
-                        if comment.get("maintainerCanAccept"):
-                            comment["user"] = {"login": "fixture-reviewer"}
-                    return [*comments, accepted]
                 return [summary(), accepted]
             if path == "graphql":
+                if "reviews(first:" in data["query"]:
+                    return {"data": {"repository": {"pullRequest": {"reviews": {
+                        "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
                 return {"data": {"repository": {"pullRequest": {"reviewThreads": {
                     "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
             if path.endswith("/collaborators/fixture-reviewer/permission"):
@@ -145,7 +178,7 @@ def test_shared_head_does_not_share_native_approval_or_approve_another_base(monk
         monkeypatch.setenv("PR_NUMBER", str(number))
         accepted = approval()
         accepted["user"] = {"login": "fixture-reviewer"}
-        pr = {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}], "head": {"sha": HEAD}, "base": {"sha": "b" * 40,
+        pr = {"state": "open", "labels": [{"name": "require-hosted-review"}], "head": {"sha": HEAD}, "base": {"sha": "b" * 40,
               "ref": "other" if number >= 3 else "main", "repo": {"default_branch": "main"}},
               "html_url": "https://example.test/pr/" + str(number)}
 
@@ -166,6 +199,9 @@ def test_shared_head_does_not_share_native_approval_or_approve_another_base(monk
             if "/comments?" in path:
                 return [summary()] + ([accepted] if number != 2 else [])
             if path == "graphql":
+                if "reviews(first:" in data["query"]:
+                    return {"data": {"repository": {"pullRequest": {"reviews": {
+                        "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
                 return {"data": {"repository": {"pullRequest": {"reviewThreads": {
                     "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
             if path.endswith("/collaborators/fixture-reviewer/permission"):
@@ -191,7 +227,7 @@ def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):
     def request(path, data=None, *, method=None):
         nonlocal changed
         if path.endswith("/pulls/1"):
-            return {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}], "head": {"sha": HEAD}, "base": {
+            return {"state": "open", "labels": [{"name": "require-hosted-review"}], "head": {"sha": HEAD}, "base": {
                 "sha": ("c" if changed else "b") * 40, "ref": "main", "repo": {"default_branch": "main"}},
                 "html_url": "https://example.test/pr/1"}
         if path.split("?")[0].endswith("/reviews"):
@@ -211,6 +247,9 @@ def test_base_change_during_approval_withdraws_the_new_review(monkeypatch):
         if "/comments?" in path:
             return [summary(), accepted]
         if path == "graphql":
+            if "reviews(first:" in data["query"]:
+                return {"data": {"repository": {"pullRequest": {"reviews": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
             return {"data": {"repository": {"pullRequest": {"reviewThreads": {
                 "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
         if path.endswith("/collaborators/fixture-reviewer/permission"):
@@ -232,137 +271,9 @@ def test_acceptance_timestamp_tie_is_ambiguous():
     assert GATE.evaluate(HEAD, [summary(), accepted], [])[0] == "success"
 
 
-def quota_comments():
-    code_only = summary()
-    # Complete observed bot format, with synthetic commit and timestamps.
-    code_only["body"] = f'''{GATE.SUMMARY}
-
-## Codex Review Summary
-
-This comment shows the latest Codex review activity on this pull request.
-
-| Review | Status | Commit | Review trigger |
-| --- | --- | --- | --- |
-| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-01-01T12:00:00Z">2026-01-01T12:00:00Z</relative-time> | `{HEAD[:7]}` | Manual request |
-
-<details> <summary>ℹ️ About Codex in GitHub</summary>
-<br/>
-
-[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
-- Open a pull request for review
-- Mark a draft as ready
-- Comment "@codex review" or "@codex security review".
-
-Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.
-
-</details>'''
-    return [code_only,
-        {"id": 101, "body": "@codex security review\n\nRecordBench security review head: " + HEAD,
-         "maintainerCanAccept": True, "author_association": "OWNER", "updated_at": "2026-01-01T12:01:00Z"},
-        {"id": 102, "body": GATE.QUOTA_RESPONSE, "user": {"login": GATE.BOT, "type": "Bot"},
-         "updated_at": "2026-01-01T12:02:00Z"},
-        {"id": 103, "body": "RecordBench security quota exception: " + HEAD + "; request: 101; response: 102",
-         "maintainerCanAccept": True, "updated_at": "2026-01-01T12:03:00Z"}]
-
-
-def test_quota_requires_explicit_exception_and_later_separate_acceptance():
-    comments = quota_comments()
-    assert evaluate(HEAD, comments, [])[0] == "success"
-    assert "quota exception" in evaluate(HEAD, comments, [])[1]
-    assert GATE.evaluate(HEAD, comments, [])[0] == "pending"
-    assert evaluate(HEAD, comments[:-1], [])[0] == "pending"
-    tied = approval()
-    tied["updated_at"] = comments[-1]["updated_at"]
-    assert GATE.evaluate(HEAD, [*comments, tied], [])[0] == "pending"
-    assert GATE.evaluate(HEAD, [*comments, approval(permitted=False)], [])[0] == "pending"
-
-
-@pytest.mark.parametrize("index,field,value", [
-    (1, "maintainerCanAccept", False),
-    (3, "maintainerCanAccept", False),
-    (2, "user", {"login": "synthetic-contributor", "type": "User"}),
-    (2, "user", {"login": GATE.BOT, "type": "User"}),
-    (2, "body", "Security review failed"),
-    (1, "body", "@codex security review"),
-    (1, "body", "@codex security review\n\nRecordBench security review head: " + "b" * 40),
-    (3, "body", "RecordBench security quota exception: " + "b" * 40 + "; request: 101; response: 102"),
-    (3, "body", "RecordBench security quota exception: " + HEAD + "; request: 999; response: 102"),
-    (3, "body", "RecordBench security quota exception: " + HEAD + "; request: 101; response: 999"),
-    (1, "updated_at", "2026-01-01T12:02:00Z"),
-    (1, "updated_at", "2026-01-01T12:02:01Z"),
-    (3, "updated_at", "2026-01-01T12:02:00Z"),
-])
-def test_quota_rejects_forged_missing_stale_or_edited_evidence(index, field, value):
-    comments = quota_comments()
-    comments[index][field] = value
-    assert evaluate(HEAD, comments, [])[0] == "pending"
-
-
-@pytest.mark.parametrize("remove", [0, 1, 2, 3])
-def test_removed_quota_evidence_invalidates_exception(remove):
-    comments = quota_comments()
-    comments.pop(remove)
-    assert evaluate(HEAD, comments, [])[0] == "pending"
-
-
-def test_quota_does_not_override_code_review_or_unreconciled_findings():
-    comments = quota_comments()
-    comments[0]["body"] = comments[0]["body"].replace("**Completed**", "**Running**")
-    assert evaluate(HEAD, comments, [])[0] == "pending"
-    comments = quota_comments()
-    comments[0]["body"] = comments[0]["body"].replace(HEAD[:7], "b" * 7)
-    assert evaluate(HEAD, comments, [])[0] == "pending"
-    assert evaluate(HEAD, quota_comments(), [{"isResolved": False}])[0] == "failure"
-    assert evaluate(HEAD, quota_comments(), [{"isResolved": True}])[0] == "failure"
-    assert evaluate(HEAD, quota_comments(), [{"isResolved": True, "resolverCanReconcile": True}])[0] == "success"
-
-
-@pytest.mark.parametrize("state", ["running", "failed", "unknown"])
-def test_recorded_security_state_cannot_be_waived(state):
-    comments = quota_comments()
-    comments[0] = summary()
-    comments[0]["body"] = comments[0]["body"].replace('"status":"completed"', '"status":"' + state + '"')
-    assert evaluate(HEAD, comments, [])[0] == "pending"
-
-
-@pytest.mark.parametrize("state", [
-    '<!-- codex-security-review:v1 malformed -->',
-    '<!-- codex-security-review:v2 {} -->',
-    '| **Security Review** | **Running** |',
-    '| **Security review** | **Running** |',
-    '| <strong>SECURITY REVIEW</strong> | Failed |',
-    '| **Safety Review** | **Running** |',
-    '**Security Review**: Failed',
-    'SECURITY REVIEW\nRunning',
-    '<h4>Security review</h4><p>Failed</p>',
-    '- Comment "@codex review" or "@codex security review". Failed',
-    '"@codex security review": Failed',
-    '**Safety check**: Failed',
-    '<!-- unrecognized-review-state -->',
-])
-def test_unrecognized_security_state_cannot_be_waived(state):
-    comments = quota_comments()
-    comments[0]["body"] += "\n" + state
-    assert evaluate(HEAD, comments, [])[0] == "pending"
-
-
-def test_exact_bot_help_line_is_not_security_state():
-    comments = quota_comments()
-    assert GATE.SECURITY_HELP_LINE in comments[0]["body"]
-    assert evaluate(HEAD, comments, [])[0] == "success"
-    comments[0]["body"] += "\n**Security Review**: Failed"
-    assert evaluate(HEAD, comments, [])[0] == "pending"
-
-
-def test_known_full_bot_summary_remains_eligible_for_quota_exception():
-    comments = quota_comments()
-    comments[0]["body"] = "\n\n".join("  " + line for line in comments[0]["body"].splitlines())
-    assert evaluate(HEAD, comments, [])[0] == "success"
-
-
 @pytest.mark.parametrize("index", range(14))
-def test_truncated_code_only_summary_cannot_use_quota_exception(index):
-    comments = quota_comments()
+def test_truncated_code_only_summary_cannot_use_review(index):
+    comments = [code_summary()]
     lines = [line for line in comments[0]["body"].splitlines() if line.strip()]
     assert len(lines) == 14
     del lines[index]
@@ -372,141 +283,182 @@ def test_truncated_code_only_summary_cannot_use_quota_exception(index):
 
 def test_reordered_or_duplicated_known_summary_lines_are_rejected():
     for index in range(13):
-        comments = quota_comments()
+        comments = [code_summary()]
         lines = [line for line in comments[0]["body"].splitlines() if line.strip()]
         lines[index], lines[index + 1] = lines[index + 1], lines[index]
         comments[0]["body"] = "\n".join(lines)
         assert evaluate(HEAD, comments, [])[0] == "pending"
-    comments = quota_comments()
+    comments = [code_summary()]
     comments[0]["body"] += "\n" + GATE.SECURITY_HELP_LINE
     assert evaluate(HEAD, comments, [])[0] == "pending"
 
 
 def test_malformed_code_row_columns_are_rejected():
     for replacement in ("", "| Manual request | Extra column "):
-        comments = quota_comments()
+        comments = [code_summary()]
         comments[0]["body"] = comments[0]["body"].replace("| Manual request ", replacement)
         assert evaluate(HEAD, comments, [])[0] == "pending"
 
 
-def test_quota_binds_the_commit_column_not_display_text():
-    comments = quota_comments()
+def test_code_review_binds_the_commit_column_not_display_text():
+    comments = [code_summary()]
     comments[0]["body"] = comments[0]["body"].replace(
-        f"| `{HEAD[:7]}` |", "| `bbbbbbb` |").replace(
-        ">2026-01-01T12:00:00Z</relative-time>", f">`{HEAD[:7]}`</relative-time>")
+        f"| `{HEAD}` |", "| `bbbbbbb` |").replace(
+        ">2026-01-01T12:00:00Z</relative-time>", f">`{HEAD}`</relative-time>")
     assert evaluate(HEAD, comments, [])[0] == "pending"
 
 
 def test_duplicate_or_unrecognized_code_rows_cannot_hide_other_review_state():
-    comments = quota_comments()
+    comments = [code_summary()]
     code = next(line for line in comments[0]["body"].splitlines() if "**Code Review**" in line)
     comments[0]["body"] += "\n" + code.replace("**Completed**", "**Running**")
     assert evaluate(HEAD, comments, [])[0] == "pending"
-    comments = quota_comments()
+    comments = [code_summary()]
     comments[0]["body"] += "\n" + code.replace("**Code Review**", "Other **Code Review**")
     assert evaluate(HEAD, comments, [])[0] == "pending"
 
 
-@pytest.mark.parametrize("command,when", [
-    ("review", "2026-01-01T12:01:30Z"),
-    ("security review", "2026-01-01T12:01:30Z"),
-    ("security review", "2026-01-01T12:01:00Z"),
-    ("security review", "2026-01-01T12:02:30Z"),
-    ("security review", "2026-01-01T12:02:00Z"),
-    ("security review", "2026-01-01T12:04:00Z"),
+@pytest.mark.parametrize("state", ["running", "failed", "completed", "unknown"])
+@pytest.mark.parametrize("security_head", [HEAD, "b" * 40])
+def test_security_state_is_advisory_but_cannot_replace_code(state, security_head):
+    current = summary()
+    current["body"] += ('\n<!-- codex-security-review:v1 {"headSha":"' + security_head
+                        + '","status":"' + state + '"} -->')
+    row = f"| 🛡️ **Security Review** | **{state}** | `{security_head[:7]}` | Manual request |"
+    current["body"] = current["body"].replace("\n<details>", row + "\n<details>")
+    assert evaluate(HEAD, [current], [])[0] == "success"
+    current["body"] = current["body"].replace("**Code Review**", "**Other**")
+    assert evaluate(HEAD, [current], [])[0] == "pending"
+
+
+@pytest.mark.parametrize("body", [
+    "@codex security review",
+    "You have reached your Codex usage limits for security reviews. Please try again later.",
+    "RecordBench security quota exception: " + HEAD + "; request: 101; response: 102",
 ])
-def test_quota_does_not_ignore_newer_review_requests(command, when):
-    comments = quota_comments()
-    comments.append({"body": "@codex " + command, "author_association": "OWNER", "updated_at": when})
-    assert evaluate(HEAD, comments, [])[0] == "pending"
+def test_optional_security_needs_no_quota_receipt_and_cannot_waive_code(body):
+    advisory = {"body": body, "author_association": "OWNER", "updated_at": "2026-01-01T14:00:00Z"}
+    assert evaluate(HEAD, [summary(), advisory], [])[0] == "success"
+    assert evaluate(HEAD, [advisory], [])[0] == "pending"
 
 
-def test_new_quota_receipt_allows_deliberate_retry():
-    comments = quota_comments()
-    newer = deepcopy(comments[1:])
-    for index, comment in enumerate(newer):
-        comment["id"] += 100
-        comment["updated_at"] = f"2026-01-01T12:0{index + 4}:00Z"
-    newer[-1]["body"] = newer[-1]["body"].replace("101", "201").replace("102", "202")
-    assert evaluate(HEAD, [*comments, *newer], [])[0] == "success"
+@pytest.mark.parametrize("change", ["remove", "stale", "running", "forged"])
+def test_quota_or_acceptance_cannot_substitute_for_completed_code(change):
+    current = summary()
+    if change == "remove":
+        current["body"] = "No findings"
+    elif change == "stale":
+        current = summary("b" * 40)
+    elif change == "running":
+        current["body"] = current["body"].replace("**Completed**", "**Running**")
+    else:
+        current["user"]["type"] = "User"
+    assert evaluate(HEAD, [current], [])[0] == "pending"
 
 
-@pytest.mark.parametrize("labels", [[], [{"name": "documentation"}], [{"name": "product"}]])
-def test_optional_policy_passes_without_fetching_reviews_or_requesting_codex(monkeypatch, labels):
+def test_new_top_level_bot_finding_requires_fresh_acceptance():
+    finding = {"body": "P1 synthetic security finding", "user": {"login": GATE.BOT, "type": "Bot"},
+               "updated_at": "2026-01-01T14:00:00Z"}
+    assert evaluate(HEAD, [summary(), finding], [])[0] == "pending"
+    accepted = approval()
+    accepted["updated_at"] = "2026-01-01T14:01:00Z"
+    assert GATE.evaluate(HEAD, [summary(), finding, accepted], [])[0] == "success"
+
+
+@pytest.mark.parametrize("labels", [[], [{"name": "documentation"}], [{"name": "require-hosted-review"}]])
+def test_no_label_policy_can_approve_without_code(monkeypatch, labels):
     monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
     monkeypatch.setenv("PR_NUMBER", "1")
     statuses, reviews = [], []
-    pr = {"state": "open", "labels": labels, "head": {"sha": HEAD},
-          "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}},
-          "html_url": "https://example.test/pr/1"}
-
     def request(path, data=None, *, method=None):
         if path.endswith("/pulls/1"):
-            return deepcopy(pr)
+            return {"state": "open", "labels": labels, "head": {"sha": HEAD},
+                    "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}},
+                    "html_url": "https://example.test/pr/1"}
         if path.split("?")[0].endswith("/reviews"):
             if data is None:
-                # A strict-mode gate may previously have requested changes.
-                return [{"id": 10, "state": "CHANGES_REQUESTED",
-                         "user": {"login": "github-actions[bot]"},
-                         "body": GATE.APPROVAL_PREFIX + " revalidation required"}]
-            reviews.append(data)
-            return {"id": 11}
-        if "/events?" in path:
+                return []
+            reviews.append(data["event"])
+            return {}
+        if "/comments?" in path:
             return []
         if "/statuses/" in path:
-            statuses.append(data)
+            statuses.append(data["state"])
             return {}
-        # No comment, discussion, permission or review-launch API is needed.
+        if path == "graphql":
+            if "reviews(first:" in data["query"]:
+                return {"data": {"repository": {"pullRequest": {"reviews": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
+            return {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
         raise AssertionError(path)
-
     monkeypatch.setattr(GATE, "request", request)
     assert GATE.main() == 0
-    assert [status["state"] for status in statuses] == ["pending", "success"]
-    assert statuses[-1]["context"] == "hosted-review-gate"
-    assert "not required" in statuses[-1]["description"]
-    assert [review["event"] for review in reviews] == ["REQUEST_CHANGES", "APPROVE"]
-    assert reviews[0]["commit_id"] == HEAD
-    assert "not required" in reviews[-1]["body"]
-    assert "@codex" not in reviews[0]["body"]
+    assert statuses == ["pending", "pending"]
+    assert reviews == ["REQUEST_CHANGES"]
+
+
+@pytest.mark.parametrize("timestamp", ["not-a-time", "2026-01-01T12:00:00"])
+def test_invalid_code_completion_time_fails_closed(timestamp):
+    current = summary()
+    current["body"] = current["body"].replace('datetime="2026-01-01T12:00:00Z"', f'datetime="{timestamp}"')
+    assert evaluate(HEAD, [current], [])[0] == "pending"
+
+
+def test_same_second_code_request_needs_unambiguous_completion():
+    request = {"body": "@codex review", "author_association": "OWNER", "updated_at": "2026-01-01T12:00:00Z"}
+    assert evaluate(HEAD, [summary(), request], [])[0] == "pending"
+
+
+def test_workflow_runs_trusted_main_and_does_not_request_reviews():
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/hosted-review-gate.yml").read_text()
+    assert "ref: ${{ github.event.repository.default_branch }}" in workflow
+    assert "persist-credentials: false" in workflow
+    assert "pull_request_target:" in workflow
+    assert "@codex" not in workflow
+    assert "github.event.pull_request.head" not in workflow
 
 
 @pytest.mark.parametrize("change_at", ["inspection", "approval"])
-@pytest.mark.parametrize("initially_required", [False, True])
-def test_opt_in_change_during_gate_never_publishes_success(monkeypatch, change_at, initially_required):
+@pytest.mark.parametrize("field", ["head", "base", "state"])
+def test_changed_pr_never_publishes_success(monkeypatch, change_at, field):
     monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
     monkeypatch.setenv("PR_NUMBER", "1")
     reads, statuses, reviews = 0, [], []
     accepted = approval()
     accepted["user"] = {"login": "fixture-reviewer"}
-
     def request(path, data=None, *, method=None):
         nonlocal reads
         if path.endswith("/pulls/1"):
             reads += 1
-            changed = reads >= (2 if change_at == "inspection" else 3)
-            required = initially_required != changed
-            return {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}] if required else [],
-                    "head": {"sha": HEAD}, "base": {"sha": "b" * 40, "ref": "main",
-                    "repo": {"default_branch": "main"}}, "html_url": "https://example.test/pr/1"}
+            pr = {"state": "open", "labels": [], "head": {"sha": HEAD},
+                  "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}},
+                  "html_url": "https://example.test/pr/1"}
+            if reads >= (2 if change_at == "inspection" else 3):
+                if field == "state":
+                    pr["state"] = "closed"
+                else:
+                    pr[field]["sha"] = "c" * 40
+            return pr
         if path.split("?")[0].endswith("/reviews"):
             if data is None:
                 return []
             reviews.append(data["event"])
-            return {"id": 11}
-        if "/events?" in path:
-            return []
-        if "/statuses/" in path:
-            statuses.append(data["state"])
             return {}
         if "/comments?" in path:
             return [summary(), accepted]
-        if path == "graphql":
-            return {"data": {"repository": {"pullRequest": {"reviewThreads": {
-                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
-        if path.endswith("/collaborators/fixture-reviewer/permission"):
+        if "/statuses/" in path:
+            statuses.append(data["state"])
+            return {}
+        if path.endswith("/permission"):
             return {"permission": "write"}
+        if path == "graphql":
+            if "reviews(first:" in data["query"]:
+                return {"data": {"repository": {"pullRequest": {"reviews": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
+            return {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "nodes": [], "pageInfo": {"hasNextPage": False}}}}}}
         raise AssertionError(path)
-
     monkeypatch.setattr(GATE, "request", request)
     with pytest.raises(RuntimeError, match="changed during"):
         GATE.main()
@@ -514,130 +466,348 @@ def test_opt_in_change_during_gate_never_publishes_success(monkeypatch, change_a
     assert reviews == ["REQUEST_CHANGES"] + ([] if change_at == "inspection" else ["APPROVE", "REQUEST_CHANGES"])
 
 
-@pytest.mark.parametrize("permission,expected", [
-    ("read", True), ("triage", True), ("write", False), ("maintain", False), ("admin", False),
+def test_latest_summary_cannot_reuse_an_older_completed_code_review():
+    latest = summary()
+    latest["updated_at"] = "2026-01-01T12:01:00Z"
+    latest["body"] = latest["body"].replace("**Completed**", "**Running**")
+    assert evaluate(HEAD, [summary(), latest], [])[0] == "pending"
+
+
+@pytest.mark.parametrize("extra", [
+    '<!-- codex-security-review:v2 {} -->',
+    '| **Other Review** | Failed | `aaaaaaa` | Manual request |',
+    '**Code Review**: Completed',
 ])
-def test_label_removal_requires_live_maintainer_permission(monkeypatch, permission, expected):
-    events = [
-        {"id": 1, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
-        {"id": 2, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
-         "actor": {"login": "fixture-reviewer"}},
-    ]
-
-    def request(path, data=None, *, method=None):
-        if "/events?" in path:
-            return events
-        if path.endswith("/collaborators/fixture-reviewer/permission"):
-            return {"permission": permission}
-        raise AssertionError(path)
-
-    monkeypatch.setattr(GATE, "request", request)
-    assert GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []}) is expected
+def test_unknown_summary_extensions_fail_closed(extra):
+    current = summary()
+    current["body"] += "\n" + extra
+    assert evaluate(HEAD, [current], [])[0] == "pending"
 
 
-def test_label_event_history_is_paginated_and_readding_opts_in(monkeypatch):
-    unrelated = {"id": 1, "event": "labeled", "label": {"name": "documentation"}}
-    events = [
-        {"id": 101, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
-        {"id": 102, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
-         "actor": {"login": "fixture-reviewer"}},
-        {"id": 103, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
-        {"id": 104, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL}, "actor": None},
-    ]
-
-    def request(path, data=None, *, method=None):
-        if path.endswith("page=1"):
-            return [unrelated] * 100
-        if path.endswith("page=2"):
-            return events
-        if path.endswith("/collaborators/fixture-reviewer/permission"):
-            return {"permission": "write"}
-        raise AssertionError(path)
-
-    monkeypatch.setattr(GATE, "request", request)
-    assert GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []})
+def graphql_finding(*, body=None, updated="2026-01-01T14:00:00Z", kind="Bot",
+                    login="chatgpt-codex-connector"):
+    # The badge shape and GraphQL login match observed official inline findings;
+    # the finding itself and all timestamps are synthetic.
+    return {"body": body if body is not None else
+            "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub> Synthetic security finding**",
+            "author": {"login": login, "__typename": kind},
+            "createdAt": "2026-01-01T12:30:00Z",
+            "publishedAt": "2026-01-01T12:30:00Z", "lastEditedAt": updated}
 
 
-def test_missing_label_history_fails_closed(monkeypatch):
-    def request(path, data=None, *, method=None):
-        raise RuntimeError("History unavailable")
-
-    monkeypatch.setattr(GATE, "request", request)
-    with pytest.raises(RuntimeError, match="History unavailable"):
-        GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []})
+def connection(nodes, cursor=None):
+    return {"nodes": nodes, "pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor}}
 
 
-def test_optional_shared_sha_success_leaves_strict_pr_blocked(monkeypatch):
+def finding_api(monkeypatch, accepted, surface, *, broken=None):
+    """Exercise the live gate through later thread, reply and review pages."""
     monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
-    latest_gate_review = {}
-    status = None
-    for number in (1, 2):
-        monkeypatch.setenv("PR_NUMBER", str(number))
-        pr = {"state": "open", "labels": [{"name": GATE.REQUIRED_LABEL}] if number == 1 else [],
-              "head": {"sha": HEAD}, "base": {"sha": "b" * 40, "ref": "main",
-              "repo": {"default_branch": "main"}}, "html_url": f"https://example.test/pr/{number}"}
-
-        def request(path, data=None, *, method=None):
-            nonlocal status
-            if path.endswith(f"/pulls/{number}"):
-                return deepcopy(pr)
-            if path.split("?")[0].endswith("/reviews"):
-                if data is None:
-                    return [{"id": 1, "state": "APPROVED", "user": {"login": "fixture-reviewer"},
-                             "body": "Ordinary maintainer review"}]
-                latest_gate_review[number] = data["event"]
-                return {"id": 2}
-            if "/statuses/" in path:
-                status = data["state"]
-                return {}
-            if "/events?" in path or "/comments?" in path:
+    monkeypatch.setenv("PR_NUMBER", "1")
+    statuses, events, reads = [], [], []
+    finding = graphql_finding()
+    benign = graphql_finding(body="Synthetic maintainer disposition", kind="User",
+                             login="fixture-reviewer", updated="2026-01-01T12:45:00Z")
+    accepted["user"] = {"login": "fixture-reviewer"}
+    def request(path, data=None, *, method=None):
+        if path.endswith("/pulls/1"):
+            return {"state": "open", "labels": [], "head": {"sha": HEAD},
+                    "base": {"sha": "b" * 40, "ref": "main", "repo": {"default_branch": "main"}},
+                    "html_url": "https://example.test/pr/1"}
+        if path.split("?")[0].endswith("/reviews"):
+            if data is None:
                 return []
-            if path == "graphql":
-                return {"data": {"repository": {"pullRequest": {"reviewThreads": {
-                    "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
-            raise AssertionError(path)
-
-        monkeypatch.setattr(GATE, "request", request)
-        assert GATE.main() == 0
-    assert status == "success"  # Optional PR overwrites the shared commit status.
-    assert latest_gate_review == {1: "REQUEST_CHANGES", 2: "APPROVE"}
-
-
-@pytest.mark.parametrize("later_maintainer", [False, True])
-def test_missing_former_collaborator_preserves_strict_policy_until_maintainer_removal(monkeypatch, later_maintainer):
-    events = [
-        {"id": 1, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
-        {"id": 2, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
-         "actor": {"login": "former-reviewer"}},
-    ]
-    if later_maintainer:
-        events += [
-            {"id": 3, "event": "labeled", "label": {"name": GATE.REQUIRED_LABEL}},
-            {"id": 4, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
-             "actor": {"login": "current-reviewer"}},
-        ]
-
-    def request(path, data=None, *, method=None):
-        if "/events?" in path:
-            return events
-        if path.endswith("/collaborators/former-reviewer/permission"):
-            raise GATE.urllib.error.HTTPError(path, 404, "Not Found", {}, None)
-        if path.endswith("/collaborators/current-reviewer/permission"):
+            events.append(data["event"])
+            return {}
+        if "/comments?" in path:
+            return [summary(), accepted] + ([GATE.finding_comment(finding)] if surface == "issue" else [])
+        if "/statuses/" in path:
+            statuses.append(data["state"])
+            return {}
+        if path.endswith("/permission"):
             return {"permission": "write"}
+        if path == "graphql":
+            query, cursor = data["query"], data["variables"]["cursor"]
+            kind = "threads" if "reviewThreads(first:" in query else "replies" if "node(id:" in query else "reviews"
+            reads.append((kind, cursor))
+            if broken == (kind, cursor):
+                return {"data": {}, "errors": [{"message": "Synthetic evidence failure"}]}
+            if kind == "threads":
+                if cursor is None:
+                    nodes = [{"id": "thread-one", "isResolved": True,
+                              "resolvedBy": {"login": "fixture-reviewer"},
+                              "comments": connection([benign])}]
+                    conn = connection(nodes, "next-thread")
+                else:
+                    node = {"id": "thread-two", "isResolved": True,
+                            "resolvedBy": {"login": "fixture-reviewer"},
+                            "comments": connection([finding if surface == "inline" else benign], "next-reply")}
+                    conn = connection([node])
+                return {"data": {"repository": {"pullRequest": {"reviewThreads": conn}}}}
+            if kind == "replies":
+                assert data["variables"]["id"] == "thread-two"
+                assert cursor == "next-reply"
+                return {"data": {"node": {"comments": connection([finding if surface == "reply" else benign])}}}
+            conn = connection([benign], "next-review") if cursor is None else connection([finding if surface == "review" else benign])
+            return {"data": {"repository": {"pullRequest": {"reviews": conn}}}}
         raise AssertionError(path)
-
     monkeypatch.setattr(GATE, "request", request)
-    assert GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []}) is (not later_maintainer)
+    return statuses, events, reads
 
 
-@pytest.mark.parametrize("code", [401, 403, 429, 500])
-def test_permission_service_errors_still_fail_closed(monkeypatch, code):
+@pytest.mark.parametrize("surface", ["issue", "inline", "reply", "review"])
+def test_later_resolved_security_finding_requires_new_full_head_acceptance(monkeypatch, surface):
+    # Code completed at 12; accepted at 13; a priority finding posted/edited at
+    # 14 was resolved by a maintainer. Resolution must not reuse acceptance at 13.
+    accepted = approval()
+    statuses, events, reads = finding_api(monkeypatch, accepted, surface)
+    assert GATE.main() == 0
+    assert statuses == ["pending", "pending"]
+    assert events == ["REQUEST_CHANGES"]
+    assert ("threads", "next-thread") in reads
+    assert ("replies", "next-reply") in reads
+    assert ("reviews", "next-review") in reads
+    accepted["updated_at"] = "2026-01-01T14:00:00Z"
+    assert GATE.main() == 0
+    assert statuses[-1] == "pending"  # Ties remain ambiguous.
+    accepted["updated_at"] = "2026-01-01T14:01:00Z"
+    assert GATE.main() == 0
+    assert statuses[-1] == "success"
+    assert events[-1] == "APPROVE"
+
+
+@pytest.mark.parametrize("page", [("threads", None), ("threads", "next-thread"),
+                                  ("replies", "next-reply"), ("reviews", None),
+                                  ("reviews", "next-review")])
+def test_incomplete_finding_pages_never_issue_approval(monkeypatch, page):
+    statuses, events, _ = finding_api(monkeypatch, approval(), "reply", broken=page)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        GATE.main()
+    assert statuses == ["pending"]
+    assert events == ["REQUEST_CHANGES"]
+
+
+@pytest.mark.parametrize("problem", ["missing", "repeated", "null_node", "null_data", "limit"])
+def test_finding_connection_failures_are_closed(monkeypatch, problem):
+    calls = 0
     def request(path, data=None, *, method=None):
-        if "/events?" in path:
-            return [{"id": 1, "event": "unlabeled", "label": {"name": GATE.REQUIRED_LABEL},
-                     "actor": {"login": "fixture-reviewer"}}]
-        raise GATE.urllib.error.HTTPError(path, code, "Unavailable", {}, None)
-
+        nonlocal calls
+        calls += 1
+        if problem == "null_data":
+            return {"data": None}
+        if problem == "null_node":
+            return {"data": {"items": connection([None])}}
+        cursor = None if problem == "missing" else str(calls) if problem == "limit" else "same"
+        return {"data": {"items": {"nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": cursor}}}}
     monkeypatch.setattr(GATE, "request", request)
-    with pytest.raises(GATE.urllib.error.HTTPError):
-        GATE.effective_hosted_review("repos/fixture/project", 1, {"labels": []})
+    with pytest.raises((RuntimeError, TypeError)):
+        GATE.graphql_nodes("synthetic query", {}, ("items",))
+    assert calls <= 100
+
+
+@pytest.mark.parametrize("kind,login,expected", [
+    ("Bot", "chatgpt-codex-connector", "pending"),
+    ("Bot", GATE.BOT, "pending"),
+    ("User", "chatgpt-codex-connector", "success"),
+    ("User", GATE.BOT, "success"),
+    ("Bot", "other-synthetic-bot", "success"),
+])
+def test_graphql_finding_identity_does_not_trust_display_login_alone(kind, login, expected):
+    finding = GATE.finding_comment(graphql_finding(kind=kind, login=login))
+    assert GATE.evaluate(HEAD, [summary(), approval()], [], [finding])[0] == expected
+
+
+@pytest.mark.parametrize("field,value", [("lastEditedAt", "invalid"),
+                                         ("lastEditedAt", "2026-01-01T14:00:00"),
+                                         ("body", None), ("createdAt", None),
+                                         ("createdAt", "invalid"),
+                                         ("lastEditedAt", "2026-01-01T12:00:00Z")])
+def test_incomplete_finding_fields_fail_closed(field, value):
+    node = graphql_finding()
+    node[field] = value
+    with pytest.raises((RuntimeError, ValueError)):
+        GATE.finding_comment(node)
+
+
+def test_nonfinding_security_activity_does_not_require_new_acceptance():
+    node = graphql_finding(body="Security review unavailable; try again later.")
+    assert GATE.evaluate(HEAD, [summary(), approval()], [], [GATE.finding_comment(node)])[0] == "success"
+
+
+def test_resolution_toggles_cannot_create_or_replace_durable_reconciliation():
+    inline = GATE.finding_comment(graphql_finding(updated="2026-01-01T12:45:00Z"))
+    thread = {"isResolved": True, "resolvedBy": {"login": "fixture-maintainer"}, "comments": [inline]}
+    comments = [summary(), approval()]
+    assert GATE.evaluate(HEAD, comments, [thread])[0] == "success"
+    # Without a workflow wake-up, native conversation protection blocks while
+    # unresolved. On reevaluation the gate independently rejects that state.
+    thread["isResolved"] = False
+    assert GATE.evaluate(HEAD, comments, [thread])[0] == "failure"
+    # The contributor's UI toggle does not overwrite the maintainer's full-head
+    # reconciliation. Its validity is deliberately independent of last resolver.
+    thread.update(isResolved=True, resolvedBy={"login": "synthetic-contributor"})
+    assert GATE.evaluate(HEAD, comments, [thread])[0] == "success"
+    assert GATE.evaluate(HEAD, [summary()], [thread])[0] == "pending"
+    assert GATE.evaluate(HEAD, [summary(), approval(permitted=False)], [thread])[0] == "pending"
+    assert GATE.evaluate(HEAD, [summary(), approval("b" * 40)], [thread])[0] == "pending"
+
+
+@pytest.mark.parametrize("kind", ["User", "Bot"])
+def test_any_new_or_edited_inline_content_requires_later_maintainer_acceptance(kind):
+    node = graphql_finding(body="Synthetic untagged finding or disposition", kind=kind,
+                           login="synthetic-reviewer", updated="2026-01-01T14:00:00Z")
+    thread = {"isResolved": True, "resolvedBy": {"login": "synthetic-contributor"},
+              "comments": [GATE.finding_comment(node)]}
+    assert evaluate(HEAD, [summary()], [thread])[0] == "pending"
+    accepted = approval()
+    accepted["updated_at"] = "2026-01-01T14:00:00Z"
+    assert GATE.evaluate(HEAD, [summary(), accepted], [thread])[0] == "pending"
+    accepted["updated_at"] = "2026-01-01T14:01:00Z"
+    assert GATE.evaluate(HEAD, [summary(), accepted], [thread])[0] == "success"
+
+
+def test_generic_metadata_updates_do_not_silently_invalidate_content_acceptance():
+    node = graphql_finding(updated="2026-01-01T12:45:00Z")
+    node["updatedAt"] = "2026-01-01T14:00:00Z"  # Resolution/reaction metadata is not content.
+    thread = {"isResolved": True, "comments": [GATE.finding_comment(node)]}
+    assert evaluate(HEAD, [summary()], [thread])[0] == "success"
+    node["lastEditedAt"] = "2026-01-01T14:00:00Z"
+    thread["comments"] = [GATE.finding_comment(node)]
+    assert evaluate(HEAD, [summary()], [thread])[0] == "pending"
+
+
+@pytest.mark.parametrize("field", ["publishedAt", "submittedAt"])
+def test_late_publication_or_submission_cannot_reuse_acceptance_of_older_draft(field):
+    node = graphql_finding(updated="2026-01-01T12:45:00Z")
+    node[field] = "2026-01-01T14:00:00Z"
+    assert GATE.evaluate(HEAD, [summary(), approval()], [], [GATE.finding_comment(node)])[0] == "pending"
+
+
+def test_no_edit_has_explicit_nullable_timestamp_but_missing_fields_fail_closed():
+    node = graphql_finding()
+    node["lastEditedAt"] = None
+    thread = {"isResolved": True, "comments": [GATE.finding_comment(node)]}
+    assert evaluate(HEAD, [summary()], [thread])[0] == "success"
+    del node["lastEditedAt"]
+    with pytest.raises(KeyError):
+        GATE.finding_comment(node)
+
+
+def practical_evidence(method="observed-unchanged-head"):
+    current = summary()
+    current["body"] = current["body"].replace(HEAD, HEAD[:7])
+    request = {"id": 10, "body": "@codex review " + HEAD,
+               "created_at": "2026-01-01T11:00:00Z", "updated_at": "2026-01-01T11:00:00Z"}
+    result = {"id": 20, "user": {"login": GATE.BOT, "type": "Bot"},
+              "body": "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `" + HEAD[:10] + "`",
+              "created_at": "2026-01-01T11:59:00Z", "updated_at": "2026-01-01T11:59:00Z"}
+    accepted = approval()
+    accepted["body"] += "\nCODE verification: request 10; result 20; " + method
+    return [current, request, result, accepted]
+
+
+def native_code():
+    return {"id": 30, "user": {"login": GATE.BOT, "type": "Bot"}, "state": "COMMENTED",
+            "commit_id": HEAD, "submitted_at": "2026-01-01T11:59:00Z",
+            "body": "### 💡 Codex Review\n\n**Reviewed commit:** `" + HEAD[:10] + "`"}
+
+
+@pytest.mark.parametrize("method", ["execution-context", "observed-unchanged-head"])
+def test_clean_review_uses_explicit_privileged_verification(method):
+    comments = practical_evidence(method)
+    assert GATE.evaluate(HEAD, comments, [])[0] == "success"
+    comments[-1] = approval()
+    assert GATE.evaluate(HEAD, comments, [])[0] == "pending"
+
+
+@pytest.mark.parametrize("change", ["request_id", "result_id", "request_head", "request_edited",
+    "result_edited", "result_type", "result_author", "security", "result_old", "wrong_prefix",
+    "permission", "method", "later_request", "deleted_request", "deleted_result", "early_acceptance"])
+def test_clean_verification_rejects_stale_forged_or_unprivileged_evidence(change):
+    comments = practical_evidence()
+    current, request, result, accepted = comments
+    if change == "request_id": request["id"] = 11
+    if change == "result_id": result["id"] = 21
+    if change == "request_head": request["body"] = "@codex review " + "b" * 40
+    if change == "request_edited": request["updated_at"] = "2026-01-01T11:01:00Z"
+    if change == "result_edited": result["updated_at"] = "2026-01-01T11:59:01Z"
+    if change == "result_type": result["user"]["type"] = "User"
+    if change == "result_author": result["user"]["login"] = "synthetic-bot"
+    if change == "security": result["body"] = result["body"].replace("Codex Review:", "Codex Security Review:")
+    if change == "result_old": result["created_at"] = result["updated_at"] = "2026-01-01T10:00:00Z"
+    if change == "wrong_prefix": result["body"] = result["body"].replace(HEAD[:10], "b" * 10)
+    if change == "permission": accepted["maintainerCanAccept"] = False
+    if change == "method": accepted["body"] = accepted["body"].replace("observed-unchanged-head", "prefix-match")
+    if change == "later_request": comments.append({**request, "id": 11, "updated_at": "2026-01-01T11:30:00Z"})
+    if change == "deleted_request": comments.remove(request)
+    if change == "deleted_result": comments.remove(result)
+    if change == "early_acceptance": accepted["updated_at"] = "2026-01-01T11:59:00Z"
+    assert GATE.evaluate(HEAD, comments, [])[0] == "pending"
+
+
+def test_clean_collision_cannot_reuse_old_request_or_result_for_new_head():
+    comments = practical_evidence()
+    collision = HEAD[:10] + "b" * 30
+    comments[-1]["body"] = comments[-1]["body"].replace(HEAD, collision)
+    assert GATE.evaluate(collision, comments, [])[0] == "pending"
+    # A new full-head request after the old result also cannot revive it.
+    comments[1]["body"] = "@codex review " + collision
+    comments[1]["created_at"] = comments[1]["updated_at"] = "2026-01-01T11:59:30Z"
+    assert GATE.evaluate(collision, comments, [])[0] == "pending"
+
+
+@pytest.mark.parametrize("change", [None, "commit", "type", "author", "security", "dismissed", "pending", "stale", "future"])
+def test_native_review_binds_full_commit_without_clean_attestation(change):
+    comments = practical_evidence()[:2] + [approval()]
+    review = native_code()
+    if change == "commit": review["commit_id"] = HEAD[:10] + "b" * 30
+    if change == "type": review["user"]["type"] = "User"
+    if change == "author": review["user"]["login"] = "synthetic-bot"
+    if change == "security": review["body"] = review["body"].replace("Codex Review", "Codex Security Review")
+    if change == "dismissed": review["state"] = "DISMISSED"
+    if change == "pending": review["state"] = "PENDING"
+    if change == "stale": review["submitted_at"] = "2026-01-01T10:00:00Z"
+    if change == "future": review["submitted_at"] = "2026-01-01T12:01:00Z"
+    assert GATE.evaluate(HEAD, comments, [], native_reviews=[review])[0] == ("success" if change is None else "pending")
+
+
+def test_native_code_body_edit_requires_renewed_acceptance_without_priority_badge():
+    comments = practical_evidence()[:2] + [approval()]
+    edited = {"user": {"login": GATE.BOT, "type": "Bot"}, "body": native_code()["body"],
+              "updated_at": "2026-01-01T14:00:00Z"}
+    assert GATE.evaluate(HEAD, comments, [], [edited], [native_code()])[0] == "pending"
+    comments[-1]["updated_at"] = "2026-01-01T14:01:00Z"
+    assert GATE.evaluate(HEAD, comments, [], [edited], [native_code()])[0] == "success"
+
+
+def test_clean_attestation_cannot_override_conflicting_native_code_commit():
+    review = native_code()
+    review["commit_id"] = HEAD[:10] + "b" * 30
+    assert GATE.evaluate(HEAD, practical_evidence(), [], native_reviews=[review])[0] == "pending"
+
+
+@pytest.mark.parametrize("permission", ["read", "triage", "write"])
+@pytest.mark.parametrize("path_kind", ["native", "clean"])
+def test_live_evidence_paths_use_current_permission(monkeypatch, permission, path_kind):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
+    monkeypatch.setenv("PR_NUMBER", "1")
+    comments = practical_evidence()
+    if path_kind == "native":
+        comments = comments[:2] + [approval()]
+    comments[-1]["user"] = {"login": "fixture-reviewer"}
+    statuses = []
+    def api(path, data=None, **kwargs):
+        if path.endswith("/pulls/1"):
+            return {"state": "open", "head": {"sha": HEAD}, "base": {"sha": "b" * 40,
+                    "ref": "main", "repo": {"default_branch": "main"}}, "html_url": "https://example.test/pr/1"}
+        if "/reviews" in path:
+            return ([native_code()] if path_kind == "native" else []) if data is None else {}
+        if "/comments?" in path: return comments
+        if path.endswith("/permission"): return {"permission": permission}
+        if "/statuses/" in path:
+            statuses.append(data["state"])
+            return {}
+        raise AssertionError(path)
+    monkeypatch.setattr(GATE, "request", api)
+    monkeypatch.setattr(GATE, "review_evidence", lambda *args: ([], []))
+    GATE.main()
+    assert statuses[-1] == ("success" if permission == "write" else "pending")
