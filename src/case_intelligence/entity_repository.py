@@ -139,7 +139,7 @@ class EntityRepository:
 
     INBOX_GROUP_LIMIT = 200
 
-    def suggestion_inbox(self, matter_id, kind='', page=1, page_size=25):
+    def suggestion_inbox(self, matter_id, kind='', page=1, page_size=25, *, rows=True):
         """Suggested identities grouped by name and type, most-mentioned first.
 
         Grouping is presentation only: each identity stays separate and is
@@ -155,6 +155,9 @@ class EntityRepository:
         counts = {row[0]: row[1] for row in self.connection.execute(
             "SELECT entity_type,COUNT(DISTINCT display_name) FROM workbench_entity WHERE matter_id=? "
             "AND status='suggested' AND origin='extraction' GROUP BY entity_type", (matter_id,))}
+        kinds = {name: sum(counts.get(value, 0) for value in values) for name, values in self.INBOX_KINDS.items()}
+        if not rows:
+            return [], 0, kinds
         total = self.connection.execute(
             'SELECT COUNT(*) FROM (SELECT 1 FROM workbench_entity e WHERE ' + where +
             ' GROUP BY e.entity_type,e.display_name)', params).fetchone()[0]
@@ -181,17 +184,15 @@ class EntityRepository:
                 "AND origin='extraction' AND display_name=? AND entity_type=? ORDER BY created_at,entity_id LIMIT ?",
                 (matter_id, group['display_name'], group['entity_type'], self.INBOX_GROUP_LIMIT))]
             first = self.connection.execute(
-                'SELECT source_name,location,excerpt,support_token FROM workbench_entity_mention '
-                'WHERE mention_id=? AND matter_id=?',
+                'SELECT * FROM workbench_entity_mention WHERE mention_id=? AND matter_id=?',
                 (group['first_key'].split('\x1f', 1)[1], matter_id)).fetchone() if group['first_key'] else None
             mention = dict(first) if first else None
             if mention:
-                mention['snippet'] = self.snippet(mention.pop('excerpt'), group['display_name'])
+                mention['snippet'] = self.snippet(mention['excerpt'], group['display_name'])
             group = {key: group[key] for key in group.keys() if key != 'first_key'}
             items.append(dict(group, members=members, first_mention=mention,
                               entity_id=members[0]['entity_id'] if members else '',
                               targets=','.join(f"{row['entity_id']}:{row['revision']}" for row in members)))
-        kinds = {name: sum(counts.get(value, 0) for value in values) for name, values in self.INBOX_KINDS.items()}
         return items, total, kinds
 
     def has_mention(self, matter_id, entity_id, support_token):

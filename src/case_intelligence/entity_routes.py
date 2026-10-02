@@ -36,8 +36,10 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
         if kind not in ('', 'people', 'organizations', 'things', 'dates'):
             kind = ''
         try:
-            if not entity_id and not q:
-                inbox, inbox_total, inbox_kinds = service.inbox(matter.matter_id, actor, kind=kind, page=inbox_page)
+            if not entity_id:
+                # While searching, only the counts are needed (to keep guided discovery collapsed).
+                inbox, inbox_total, inbox_kinds = service.inbox(matter.matter_id, actor, kind=kind, page=inbox_page,
+                                                                rows=not q)
             entities, total = service.list(matter.matter_id, actor, query=q, page=page)
             if entity_id:
                 entity, mentions, history, note = service.detail(matter.matter_id, actor, entity_id)

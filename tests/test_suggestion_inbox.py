@@ -115,7 +115,7 @@ def test_only_automatically_found_identities_are_listed(workbench):  # noqa: F81
     page = client.get(f"/matters/{matter.slug}/entities").text
     assert "Casey Placeholder" not in inbox_names(page)
     alex = re.search(r'<li class="suggestion" data-suggestion>(?:(?!</li>).)*?>Alex Example</a>.*?</li>', page, re.S)[0]
-    assert "1 mention<" in alex and alex.count('name="targets"') == 2
+    assert "1 mention · 1 source<" in alex and alex.count('name="targets"') == 2
     assert len(re.search(r'name="targets" value="([^"]+)"', alex)[1].split(",")) == 1
 
 
@@ -206,3 +206,74 @@ def test_inbox_work_grows_linearly_with_suggestions(workbench):  # noqa: F811
     assert larger_total - total == 3000
     # Four times the suggestions costs about four times the work, not sixteen.
     assert large <= 6 * max(small, 1), (small, large)
+
+
+def test_decisions_apply_only_to_pending_automatic_suggestions(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    manual = service.create(matter.matter_id, WEB_ACTOR, display_name="Casey Placeholder", status="suggested")
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
+    alex = next(row for row in rows if row["display_name"] == "Alex Example")
+    service.decide(matter.matter_id, WEB_ACTOR, [(alex["entity_id"], alex["revision"])], status="confirmed")
+    alex = service.detail(matter.matter_id, WEB_ACTOR, alex["entity_id"])[0]
+    path = f"/matters/{matter.slug}/entities/actions"
+    # A forged or replayed form naming a manual or already reviewed identity at its
+    # current revision changes nothing, including any other target in the batch.
+    for forged in (manual, alex):
+        targets = f"{amber['entity_id']}:{amber['revision']},{forged['entity_id']}:{forged['revision']}"
+        response = client.post(path, data=dict(action="decide", targets=targets, status="dismissed"))
+        assert response.status_code == 409
+    assert service.detail(matter.matter_id, WEB_ACTOR, amber["entity_id"])[0]["status"] == "suggested"
+    assert service.detail(matter.matter_id, WEB_ACTOR, manual["entity_id"])[0]["status"] == "suggested"
+    assert service.detail(matter.matter_id, WEB_ACTOR, alex["entity_id"])[0]["status"] == "confirmed"
+    assert not [event for event in bench.workspace.audit_events(matter.matter_id)
+                if event.action == "entity.decide" and event.object_id in (amber["entity_id"], manual["entity_id"])]
+
+
+def test_a_group_larger_than_one_decision_says_so(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    connection = bench.workspace.connection
+    with connection:
+        for index in range(201):
+            connection.execute(
+                "INSERT INTO workbench_entity(entity_id,matter_id,entity_type,display_name,status,origin,"
+                "created_by,created_at,updated_by,updated_at) VALUES (?,?,'person','Riley Placeholder','suggested',"
+                "'extraction',?,'2026-01-01T00:00:00Z',?,'2026-01-01T00:00:00Z')",
+                (f"synthetic-riley-{index:03d}", matter.matter_id, WEB_ACTOR, WEB_ACTOR))
+    page = client.get(f"/matters/{matter.slug}/entities").text
+    riley = re.search(r'<li class="suggestion" data-suggestion>(?:(?!</li>).)*?>Riley Placeholder</a>.*?</li>', page, re.S)[0]
+    assert "applies to 200 of these 201 suggestions at a time; the rest stay listed" in riley
+    assert len(re.search(r'name="targets" value="([^"]+)"', riley)[1].split(",")) == 200
+
+
+def test_an_unavailable_original_is_not_offered_as_a_link(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
+    connection = bench.workspace.connection
+    with connection:  # The retained reference no longer matches its current original.
+        connection.execute("UPDATE workbench_entity_mention SET location='Superseded location' WHERE entity_id=?",
+                           (amber["entity_id"],))
+    page = client.get(f"/matters/{matter.slug}/entities").text
+    row = re.search(r'<li class="suggestion" data-suggestion>(?:(?!</li>).)*?>Amber Cooperative</a>.*?</li>', page, re.S)[0]
+    assert 'class="suggestion-source"' not in row and "?support=" not in row
+    assert "original passage changed or is unavailable" in row
+    alex = re.search(r'<li class="suggestion" data-suggestion>(?:(?!</li>).)*?>Alex Example</a>.*?</li>', page, re.S)[0]
+    assert 'class="suggestion-source" href=' in alex
+
+
+def test_guided_discovery_stays_collapsed_while_searching(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    page = client.get(f"/matters/{matter.slug}/entities", params={"q": "Alex"}).text
+    assert 'class="suggestion-inbox"' not in page
+    assert '<details class="notebook-tool-card guided-discovery" aria-labelledby="discovery-heading">' in page

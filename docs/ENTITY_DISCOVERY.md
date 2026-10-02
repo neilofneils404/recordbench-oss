@@ -140,12 +140,16 @@ automatically found suggestions exist; identities a reviewer created or imported
 from notes keep their own provenance and are not listed there. Rows group
 suggestions with the same name and type, most-mentioned first, with the number of
 passages and distinct sources across every passage attached to them, and show the
-earliest passage with the name highlighted and a link to the original. Filter by
-People, Organizations, Things & IDs or Dates. Counting is one pass over the
-matter's passages, so the list stays quick at the discovery limit.
+earliest passage with the name highlighted and a link to the original; when that
+original changed or is unavailable, the row says the excerpt is retained history
+instead of linking. Filter by People, Organizations, Things & IDs or Dates; while
+searching, the list is hidden and guided discovery stays collapsed. Counting is
+one pass over the matter's passages, so the list stays quick at the discovery limit.
 **Confirm** or **Not relevant** records that status on every suggestion in the
-row, up to 200 at a time, in one all-or-nothing save under each identity's
-revision, with one `entity.decide` audit event per identity. Nothing is merged,
+row, up to 200 at a time (a larger row says so, and the rest stay listed), in one
+all-or-nothing save under each identity's revision, with one `entity.decide` audit
+event per identity. Only automatic suggestions still marked Suggested can be
+decided this way; any other target refuses the whole batch. Nothing is merged,
 renamed or detached; open the name to reconcile, edit or attach passages. If another reviewer changed one of them first, nothing
 is saved and the refreshed list is shown. Guided discovery from a full-text
 review remains below, collapsed while suggestions wait.

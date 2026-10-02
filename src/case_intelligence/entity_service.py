@@ -89,16 +89,26 @@ class EntityService:
             raise WorkspaceProblem('Choose confirm, not relevant, or needs review.')
         if not 1 <= len(targets) <= 200 or len({entity_id for entity_id, _ in targets}) != len(targets):
             raise WorkspaceProblem('Choose between 1 and 200 distinct suggestions.')
+        from .entity_repository import EntityEditConflict
         with self.repository.transaction(matter_id, actor_id) as repo:
             for entity_id, expected_revision in targets:
                 current = repo.check_revision(matter_id, entity_id, expected_revision)
+                if current['origin'] != 'extraction' or current['status'] != 'suggested':
+                    # Only pending automatic suggestions; the whole batch rolls back.
+                    raise EntityEditConflict('That suggestion changed since this page loaded.')
                 repo.save(matter_id, actor_id, entity_id, dict(current, status=status))
                 repo.record_history(matter_id, actor_id, entity_id, 'edited')
         return len(targets)
 
-    def inbox(self, matter_id, actor_id, *, kind='', page=1):
-        with self.repository.transaction(matter_id, actor_id) as repo:
-            return repo.suggestion_inbox(matter_id, kind, page)
+    def inbox(self, matter_id, actor_id, *, kind='', page=1, rows=True):
+        with self.source_guard(), self.repository.transaction(matter_id, actor_id) as repo:
+            items, total, kinds = repo.suggestion_inbox(matter_id, kind, page, rows=rows)
+            # Like the detail page, link only passages whose original is still available.
+            mentions = [item['first_mention'] for item in items if item['first_mention']]
+            available = self.validate_references(mentions)
+            for index, mention in enumerate(mentions):
+                mention['available'] = index in available
+            return items, total, kinds
 
     def attach(self, matter_id, actor_id, entity_id, *, expected_revision, support):
         with self.source_guard(), self.repository.transaction(matter_id, actor_id) as repo:
