@@ -29,6 +29,14 @@ class EntityRepository:
             self.authorize(matter_id, actor_id)
             yield self
 
+    @contextmanager
+    def reading(self, matter_id, actor_id):
+        """A deferred read transaction: no writer reservation is taken."""
+        with self.lock, self.connection:
+            self.connection.execute('BEGIN')
+            self.authorize(matter_id, actor_id)
+            yield self
+
     @staticmethod
     def record(row):
         result = dict(row)
@@ -261,14 +269,19 @@ class EntityRepository:
             "NOT EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
             " AND a.extractor_version=? AND a.unit_ordinal=0) OR EXISTS (SELECT 1 FROM "
             "workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
-            " AND a.extractor_version=? AND a.state='pending')) ORDER BY c.document_id LIMIT ?",
-            (version, matter_id, version, version, limit))]
+            " AND a.extractor_version=? AND a.state='pending')) ORDER BY "
+            # Sources with admissible work first; ones only blocked by the storage limit last.
+            "(NOT EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
+            " AND a.extractor_version=? AND a.unit_ordinal=0) OR EXISTS (SELECT 1 FROM "
+            "workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
+            " AND a.extractor_version=? AND a.state='pending' AND a.note='')) DESC, c.document_id LIMIT ?",
+            (version, matter_id, version, version, version, version, limit))]
 
     def auto_discovery_pending(self, matter_id, document, version, limit):
         return [dict(row) for row in self.connection.execute(
             'SELECT * FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND document_id=? '
             "AND source_version_id=? AND content_basis_digest=? AND extractor_version=? AND unit_ordinal>0 "
-            "AND state='pending' ORDER BY unit_ordinal LIMIT ?",
+            "AND state='pending' ORDER BY note<>'', unit_ordinal LIMIT ?",
             (matter_id, document['document_id'], document['source_version_id'],
              document['content_basis_digest'], version, limit))]
 
@@ -318,54 +331,59 @@ class EntityRepository:
             (matter_id, unit['document_id'], unit['source_version_id'],
              unit['content_basis_digest'])).fetchone() is not None
 
+    def block_auto_discovery(self, matter_id, version):
+        """Mark every queued unit of the matter as waiting for storage space."""
+        self.connection.execute(
+            "UPDATE workbench_entity_auto_discovery_unit SET note=? WHERE matter_id=? AND extractor_version=? "
+            "AND state='pending' AND note=''", (self.AUTO_CAPACITY_NOTE, matter_id, version))
+
     def auto_discovery_state(self, unit, state, note):
         self.connection.execute(
             'UPDATE workbench_entity_auto_discovery_unit SET state=?,note=? WHERE matter_id=? AND document_id=? '
             'AND source_version_id=? AND content_basis_digest=? AND unit_ordinal=? AND extractor_version=?',
             (state, note, *(unit[key] for key in self._AUTO_KEY)))
 
-    def auto_discovery_progress(self, matter_id, version):
-        """Unit and source counts for current source text only."""
-        counts = {row[0]: row[1] for row in self.connection.execute(
-            "SELECT a.state,COUNT(*) FROM workbench_entity_auto_discovery_unit a JOIN workbench_source_catalog c "
-            "ON " + self._AUTO_CURRENT + " WHERE a.matter_id=? AND a.extractor_version=? AND a.unit_ordinal>0 "
-            "AND c.source_state='ready' GROUP BY a.state", (matter_id, version))}
+    def auto_discovery_progress(self, matter_id, version, *, detail=False):
+        """Source-level progress for current source text, by index seeks per source.
+
+        The readiness poll uses this, so it never counts a matter's unit rows;
+        detail=True adds unit counts by state for diagnostics and tests.
+        """
+        current = ("FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' AND ")
+        def exists(condition):
+            return ("EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT
+                    + " AND a.extractor_version=? AND " + condition + ")")
+        def count(predicate, repeats):
+            return self.connection.execute("SELECT COUNT(*) " + current + predicate,
+                                           (matter_id, *([version] * repeats))).fetchone()[0]
+        sealed = exists("a.unit_ordinal=0")
+        pending_open = exists("a.state='pending' AND a.note=''")
+        pending_blocked = exists("a.state='pending' AND a.note<>''")
+        unfinished = exists("a.state IN ('pending','failed','invalidated')")
+        incomplete = exists("a.state IN ('failed','invalidated')")
         ready = self.connection.execute(
             "SELECT COUNT(*) FROM workbench_source_catalog WHERE matter_id=? AND source_state='ready'",
             (matter_id,)).fetchone()[0]
-        # Complete means sealed with every unit processed. Failed units, and
-        # units invalidated although their source is still current (their text
-        # was unavailable), are incomplete coverage that needs attention.
-        complete = self.connection.execute(
-            "SELECT COUNT(*) FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' "
-            "AND EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
-            " AND a.extractor_version=? AND a.unit_ordinal=0) AND NOT EXISTS (SELECT 1 FROM "
-            "workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
-            " AND a.extractor_version=? AND a.state IN ('pending','failed','invalidated'))",
-            (matter_id, version, version)).fetchone()[0]
-        attention = self.connection.execute(
-            "SELECT COUNT(*) FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' "
-            "AND EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
-            " AND a.extractor_version=? AND a.state IN ('failed','invalidated'))",
-            (matter_id, version)).fetchone()[0]
-        unsealed = self.connection.execute(
-            "SELECT COUNT(*) FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' "
-            "AND NOT EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
-            " AND a.extractor_version=? AND a.unit_ordinal=0)", (matter_id, version)).fetchone()[0]
+        complete = count(sealed + " AND NOT " + unfinished, 2)
+        attention = count(incomplete, 1)
+        unsealed = count("NOT " + sealed, 1)
+        open_sources = count(pending_open, 1)
+        blocked_sources = count(pending_blocked, 1)
         suggested = self.connection.execute(
             "SELECT COUNT(*) FROM workbench_entity WHERE matter_id=? AND status='suggested'",
             (matter_id,)).fetchone()[0]
-        # Reported from the recorded rejection itself, so it matches every admission check.
-        budget_reached = self.connection.execute(
-            "SELECT 1 FROM workbench_entity_auto_discovery_unit a JOIN workbench_source_catalog c ON "
-            + self._AUTO_CURRENT + " WHERE a.matter_id=? AND a.extractor_version=? AND a.state='pending' "
-            "AND a.note=? AND c.source_state='ready' LIMIT 1",
-            (matter_id, version, self.AUTO_CAPACITY_NOTE)).fetchone() is not None
-        return dict(pending=counts.get('pending', 0), processed=counts.get('processed', 0),
-                    budget_reached=budget_reached,
-                    failed=counts.get('failed', 0), unsealed_sources=unsealed,
-                    sources_complete=complete, sources_attention=attention, sources_ready=ready,
-                    suggested=suggested)
+        result = dict(unsealed_sources=unsealed, sources_complete=complete, sources_attention=attention,
+                      sources_ready=ready, sources_pending=open_sources + blocked_sources, suggested=suggested,
+                      # Paused only when the storage limit blocks everything left to do.
+                      budget_reached=bool(blocked_sources and not open_sources and not unsealed))
+        if detail:
+            counts = {row[0]: row[1] for row in self.connection.execute(
+                "SELECT a.state,COUNT(*) FROM workbench_entity_auto_discovery_unit a JOIN workbench_source_catalog c "
+                "ON " + self._AUTO_CURRENT + " WHERE a.matter_id=? AND a.extractor_version=? AND a.unit_ordinal>0 "
+                "AND c.source_state='ready' GROUP BY a.state", (matter_id, version))}
+            result.update(pending=counts.get('pending', 0), processed=counts.get('processed', 0),
+                          failed=counts.get('failed', 0))
+        return result
 
     def retry_auto_discovery(self, matter_id, version):
         """Queue failed automatic coverage of current sources again.

@@ -62,9 +62,13 @@ N sources** once nothing else remains (even if that source still has pending
 units). If the matter reaches its discovery storage limit while work is still
 queued, Home shows **Finding people and dates paused · suggestion storage limit
 reached** and People & things explains the pause; the remaining work stays queued
-and is never reported as active progress. The pause is recorded on the queued unit
-the limit actually rejected, so it matches every admission check, and clears when
-that unit is processed. Deleting suggestions that are not needed frees space (the
+and is never reported as active progress. A unit whose reservation does not fit is
+marked as waiting and queued last, while smaller units continue; when not even the
+fixed minimum fits, every queued unit is marked at once. Home reports the pause only
+when everything left is waiting for space, and a unit's mark clears when it is
+processed. The readiness poll reads this with a read transaction and per-source
+index lookups (two partial indexes split open from waiting units), never by counting
+a matter's ledger rows. Deleting suggestions that are not needed frees space (the
 suggestion, its passages and its history are removed permanently; occurrence
 receipts remain, so the same passage is not suggested again); dismissing does not.
 **Check again** then wakes the worker. For incomplete coverage,

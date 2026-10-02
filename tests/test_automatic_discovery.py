@@ -50,9 +50,10 @@ def test_processing_yields_suggestions_without_a_model_or_a_review_run(workbench
     assert bench.run_automatic_discovery_once() == 0
     assert bench.workspace.connection.execute(
         "SELECT COUNT(*) FROM workbench_review_run WHERE matter_id=?", (matter.matter_id,)).fetchone()[0] == 0
-    progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
+    progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id, detail=True)
     assert progress == dict(pending=0, processed=1, failed=0, unsealed_sources=0, sources_attention=0,
-                            sources_complete=1, sources_ready=1, suggested=4, budget_reached=False)
+                            sources_complete=1, sources_ready=1, sources_pending=0, suggested=4,
+                            budget_reached=False)
     # Suggestions are attributed to the inactive system principal.
     creators = {row[0] for row in bench.workspace.connection.execute(
         "SELECT created_by FROM workbench_entity WHERE matter_id=?", (matter.matter_id,))}
@@ -260,7 +261,7 @@ def test_unavailable_sources_do_not_stall_a_run(workbench, monkeypatch):
     monkeypatch.setattr(bench, "automatic_entity_discovery", mostly_unavailable)
     # Six unavailable sources seal as failed first; the run continues to the seventh.
     assert bench.run_automatic_discovery_once() == 1
-    progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
+    progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id, detail=True)
     assert progress["unsealed_sources"] == 0 and progress["processed"] == 1
 
 
@@ -421,7 +422,7 @@ def test_attention_is_shown_while_other_units_are_still_pending(workbench, monke
         (matter.matter_id,))
     bench.workspace.connection.commit()
     progress = bench.automatic_discovery_progress(matter)
-    assert progress["pending"] == 5 and progress["sources_attention"] == 1
+    assert progress["sources_pending"] == 1 and progress["sources_attention"] == 1
     status = client.get(f"/matters/{matter.slug}/processing-status").json()
     assert status["discovery"]["label"] == "Finding people and dates needs attention · 1 source"
     # With other sources still being searched, progress continues to show the attention count.
@@ -469,17 +470,16 @@ def test_a_full_discovery_budget_is_reported_as_paused_and_can_resume(workbench,
     upload(client, matter.slug, "Synthetic memo.txt", FIRST)
     upload(client, matter.slug, "Synthetic call.txt", SECOND)
     assert bench.run_automatic_discovery_once(unit_limit=1) == 1  # One source's suggestions are saved.
+    upload(client, matter.slug, "Synthetic note.txt", b"nothing of note was recorded here.")
     measured = EntityRepository.discovery_storage_bytes
-    # Leave 5,000 bytes of headroom: enough for the fixed pre-check, but less than
-    # the per-occurrence reservation the second admission check requires.
     headroom = {"bytes": 5000}
-    def nearly_full(self, matter_id):
-        return DISCOVERY_BYTE_LIMIT - headroom["bytes"]
-    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", nearly_full)
-    assert bench.run_automatic_discovery_once() == 0
+    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes",
+                        lambda self, matter_id: DISCOVERY_BYTE_LIMIT - headroom["bytes"])
+    # 5,000 bytes pass the fixed pre-check but not a unit with a new occurrence. That
+    # unit waits, while the later unit without occurrences still completes.
+    assert bench.run_automatic_discovery_once() == 1
     progress = bench.automatic_discovery_progress(matter)
-    # The rejected unit stays queued and is reported as paused, not as active progress.
-    assert progress["pending"] == 1 and progress["budget_reached"] is True
+    assert progress["sources_pending"] == 1 and progress["budget_reached"] is True
     status = client.get(f"/matters/{matter.slug}/processing-status").json()
     assert status["discovery"] == {
         "label": "Finding people and dates paused · suggestion storage limit reached",
@@ -488,6 +488,12 @@ def test_a_full_discovery_budget_is_reported_as_paused_and_can_resume(workbench,
     assert "Automatic discovery is paused" in page
     assert "delete suggestions you do not need" in page
     assert 'name="action" value="retry_automatic"' in page
+    # With no headroom at all, newly queued work is marked as waiting at once.
+    upload(client, matter.slug, "Synthetic later.txt", FIRST + b" Riley Placeholder followed up.")
+    headroom["bytes"] = 0
+    assert bench.run_automatic_discovery_once() == 0
+    progress = bench.automatic_discovery_progress(matter)
+    assert progress["sources_pending"] == 2 and progress["budget_reached"] is True
     monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", measured)
     # Deleting a suggestion really frees counted space (its mentions and history go with it).
     service = bench.entity_service(matter)
@@ -497,15 +503,35 @@ def test_a_full_discovery_budget_is_reported_as_paused_and_can_resume(workbench,
     service.delete(matter.matter_id, WEB_ACTOR, rows[0]["entity_id"], expected_revision=rows[0]["revision"])
     with service.repository.transaction(matter.matter_id, WEB_ACTOR) as repo:
         assert repo.discovery_storage_bytes(matter.matter_id) < before - 1000
-    # Check again wakes the worker; the queued unit then completes and the pause clears.
+    # Check again wakes the worker; the waiting units then complete and the pause clears.
     woken.clear()
     response = client.post(f"/matters/{matter.slug}/entities/actions",
                            data=dict(action="retry_automatic"), follow_redirects=False)
     assert response.status_code == 303 and woken == [matter.matter_id]
-    assert bench.run_automatic_discovery_once() == 1
+    assert bench.run_automatic_discovery_once() == 2
     progress = bench.automatic_discovery_progress(matter)
-    assert progress["pending"] == 0 and progress["budget_reached"] is False
+    assert progress["sources_pending"] == 0 and progress["budget_reached"] is False
     assert "Automatic discovery is paused" not in client.get(f"/matters/{matter.slug}/entities").text
+
+
+def test_readiness_progress_never_scans_the_coverage_ledger(workbench):
+    """The readiness poll answers with index seeks per source, not a ledger scan."""
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    bench.run_automatic_discovery_once()
+    statements = []
+    connection = bench.workspace.connection
+    connection.set_trace_callback(statements.append)
+    try:
+        bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
+    finally:
+        connection.set_trace_callback(None)
+    queries = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    assert not [sql for sql in statements if "BEGIN IMMEDIATE" in sql.upper()]
+    assert "GROUP BY" not in " ".join(queries).upper()
+    for sql in queries:
+        plan = " ".join(row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + sql))
+        assert "SCAN a" not in plan and "SCAN workbench_entity_auto_discovery_unit" not in plan, (sql, plan)
 
 
 def test_a_failed_seal_is_inventoried_again_on_retry(workbench, monkeypatch):

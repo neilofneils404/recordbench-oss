@@ -17,6 +17,14 @@ DISCOVERY_BYTE_LIMIT = 16 * 1024 * 1024
 LOAD_ERRORS = (KeyError, OSError, ValueError, RuntimeError, TypeError)
 
 
+class DiscoveryBudgetFull(WorkspaceProblem):
+    """No unit can be admitted: the matter is at its discovery storage limit."""
+
+
+class DiscoveryUnitTooLarge(WorkspaceProblem):
+    """This unit's reservation does not fit; smaller units may still be admitted."""
+
+
 class DiscoveryStopped(Exception):
     """A source read abandoned for shutdown; deliberately not a load error."""
 
@@ -174,10 +182,15 @@ class EntityDiscovery:
                         try:
                             state, count = self._process_unit(repo, matter_id, actor_id, unit,
                                                               loaded, AutomaticLedger)
-                        except WorkspaceProblem:
-                            # Budget reached: saved work stays and the unit stays pending,
-                            # marked so progress reports the pause until it is processed.
+                        except DiscoveryUnitTooLarge:
+                            # This unit does not fit; it stays pending, marked and queued
+                            # last, while smaller units continue.
                             repo.auto_discovery_state(unit, 'pending', repo.AUTO_CAPACITY_NOTE)
+                            return None
+                        except WorkspaceProblem:
+                            # Nothing can be admitted: saved work stays and every queued
+                            # unit is marked, so progress reports the pause.
+                            repo.block_auto_discovery(matter_id, version)
                             return False
                         if audit_unit is not None:
                             audit_unit(dict(document_id=document_id, unit_ordinal=ordinal,
@@ -233,16 +246,17 @@ class EntityDiscovery:
         with self.service.repository.transaction(matter_id, actor_id) as repo:
             return repo.retry_auto_discovery(matter_id, self.extractor.version)
 
-    def automatic_progress(self, matter_id):
-        with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
-            return repo.auto_discovery_progress(matter_id, self.extractor.version)
+    def automatic_progress(self, matter_id, *, detail=False):
+        # A read transaction: the readiness poll never takes the writer reservation.
+        with self.service.repository.reading(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
+            return repo.auto_discovery_progress(matter_id, self.extractor.version, detail=detail)
 
     def _process_unit(self, repo, matter_id, actor_id, unit, loaded, ledger):
         service = self.service
         # Counted inside the admitting transaction, so concurrent writers are included.
         used_bytes = repo.discovery_storage_bytes(matter_id)
         if used_bytes + 4096 > self.byte_limit:
-            raise WorkspaceProblem('Entity discovery byte budget reached. Saved work is retained; this unit remains unprocessed.')
+            raise DiscoveryBudgetFull('Entity discovery byte budget reached. Saved work is retained; this unit remains unprocessed.')
         ledger.seed(repo, unit)
         try:
             if not ledger.current(repo, matter_id, unit):
@@ -306,7 +320,7 @@ class EntityDiscovery:
         required_bytes = 4096 + sum(32768 + 4 * reference_bytes
             + 4 * len(json.dumps(asdict(occurrence)).encode('utf-8')) for _, occurrence in prepared)
         if used_bytes + required_bytes > self.byte_limit:
-            raise WorkspaceProblem('Entity discovery byte budget reached. Saved work is retained; this unit remains unprocessed.')
+            raise DiscoveryUnitTooLarge('Entity discovery byte budget reached. Saved work is retained; this unit remains unprocessed.')
         for key, occurrence in prepared:
             if repo.discovery_seen(matter_id, key):
                 continue

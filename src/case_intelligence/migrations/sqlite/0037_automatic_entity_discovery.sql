@@ -19,3 +19,12 @@ CREATE TABLE IF NOT EXISTS workbench_entity_auto_discovery_unit (
 );
 CREATE INDEX IF NOT EXISTS workbench_entity_auto_discovery_state_idx
     ON workbench_entity_auto_discovery_unit(matter_id, extractor_version, state, document_id, unit_ordinal);
+-- Pending units split by whether the storage limit has blocked them, so the
+-- scheduler and the readiness poll answer "is anything admissible left?" with
+-- index seeks instead of scanning a matter's whole ledger.
+CREATE INDEX IF NOT EXISTS workbench_entity_auto_discovery_open_idx
+    ON workbench_entity_auto_discovery_unit(matter_id, extractor_version, document_id, unit_ordinal)
+    WHERE state = 'pending' AND note = '';
+CREATE INDEX IF NOT EXISTS workbench_entity_auto_discovery_blocked_idx
+    ON workbench_entity_auto_discovery_unit(matter_id, extractor_version, document_id, unit_ordinal)
+    WHERE state = 'pending' AND note <> '';
