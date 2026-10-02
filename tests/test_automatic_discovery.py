@@ -1,6 +1,7 @@
 """Synthetic regression: suggestions appear after processing, without a model or a person."""
 from __future__ import annotations
 
+import re
 import shutil
 import sqlite3
 import time
@@ -577,8 +578,11 @@ def test_a_status_poll_never_creates_the_system_principal(workbench):
     finally:
         connection.set_trace_callback(None)
     assert status.status_code == 200 and progress["sources_complete"] == 0
-    assert not [sql for sql in statements if "workbench_principal" in sql
-                and sql.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))]
+    # Only writes whose target is the principal table count; background work on the
+    # shared connection may join it (for example a report-job membership check).
+    principal_write = re.compile(r"^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)"
+                                 r"\s+workbench_principal\b", re.I)
+    assert not [sql for sql in statements if principal_write.match(sql)]
     assert connection.execute(principal, (AUTOMATIC_DISCOVERY_PRINCIPAL,)).fetchone()[0] == 0
 
 
