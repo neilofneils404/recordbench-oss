@@ -6984,7 +6984,14 @@ def create_workbench_app(
             attention = progress["sources_attention"] if progress else 0
             # Sources needing attention are counted independently of pending
             # work, so incomplete coverage stays visible even while work remains.
-            if progress and progress["sources_complete"] + attention < progress["sources_ready"]:
+            if progress and progress["budget_reached"]:
+                # Nothing more can commit until space is freed; never show this as active work.
+                discovery = {
+                    "label": "Finding people and dates paused · suggestion storage limit reached",
+                    "href": f"/matters/{matter.slug}/entities",
+                    "working": False,
+                }
+            elif progress and progress["sources_complete"] + attention < progress["sources_ready"]:
                 discovery = {
                     "label": (
                         f"Finding people and dates · {progress['sources_complete']:,} of "

@@ -59,7 +59,10 @@ linking to **Case file → People & things**. When a source's coverage is incomp
 complete: it adds **· N need attention** to the progress line while other sources
 are still being searched, or shows **Finding people and dates needs attention ·
 N sources** once nothing else remains (even if that source still has pending
-units), and
+units). If the matter reaches its discovery storage limit while work is still
+queued, Home shows **Finding people and dates paused · suggestion storage limit
+reached** and People & things explains the pause; the remaining work stays queued
+and is never reported as active progress. For incomplete coverage,
 People & things offers **Retry automatic discovery**. A retry queues those units
 again (and re-inventories a source whose text was unavailable), keeps every saved
 suggestion and decision, is audited as `entity.retry_automatic`, and wakes the

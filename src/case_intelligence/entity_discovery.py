@@ -233,7 +233,13 @@ class EntityDiscovery:
 
     def automatic_progress(self, matter_id):
         with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
-            return repo.auto_discovery_progress(matter_id, self.extractor.version)
+            progress = repo.auto_discovery_progress(matter_id, self.extractor.version)
+            # The same admission test as _process_unit: when it fails, remaining
+            # work cannot commit, so report a pause instead of active progress.
+            progress['budget_reached'] = bool(
+                (progress['pending'] or progress['unsealed_sources'])
+                and repo.discovery_storage_bytes(matter_id) + 4096 > self.byte_limit)
+            return progress
 
     def _process_unit(self, repo, matter_id, actor_id, unit, loaded, ledger):
         service = self.service

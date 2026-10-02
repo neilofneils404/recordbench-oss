@@ -18,6 +18,11 @@
     <input type="hidden" name="q" value="{{ q }}">
     {% if row %}<input type="hidden" name="entity_id" value="{{ row.entity_id }}"><input type="hidden" name="expected_revision" value="{{ row.revision }}">{% endif %}
   {% endmacro %}
+  {% if not entity and automatic_paused %}
+  <section class="notice" aria-labelledby="automatic-paused-heading"><h2 id="automatic-paused-heading">Automatic discovery is paused</h2>
+    <p>This matter reached its storage limit for discovery suggestions, so the remaining sources have not been searched for people and dates. Saved suggestions and decisions are kept, and the remaining work stays queued rather than being dropped.</p>
+  </section>
+  {% endif %}
   {% if not entity and automatic_attention %}
   <section class="notice" aria-labelledby="automatic-attention-heading"><h2 id="automatic-attention-heading">Automatic discovery needs attention</h2>
     <p>{{ automatic_attention }} source{{ '' if automatic_attention == 1 else 's' }} could not be fully searched for people and dates, so {{ 'its' if automatic_attention == 1 else 'their' }} suggestions may be incomplete. Retrying keeps every saved suggestion and decision; guided discovery below is also available.</p>

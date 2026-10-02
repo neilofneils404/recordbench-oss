@@ -52,7 +52,7 @@ def test_processing_yields_suggestions_without_a_model_or_a_review_run(workbench
         "SELECT COUNT(*) FROM workbench_review_run WHERE matter_id=?", (matter.matter_id,)).fetchone()[0] == 0
     progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
     assert progress == dict(pending=0, processed=1, failed=0, unsealed_sources=0, sources_attention=0,
-                            sources_complete=1, sources_ready=1, suggested=4)
+                            sources_complete=1, sources_ready=1, suggested=4, budget_reached=False)
     # Suggestions are attributed to the inactive system principal.
     creators = {row[0] for row in bench.workspace.connection.execute(
         "SELECT created_by FROM workbench_entity WHERE matter_id=?", (matter.matter_id,))}
@@ -453,6 +453,33 @@ def test_selected_units_are_processed_as_they_are_read(workbench, monkeypatch):
     assert handled == 3
     # Never more than one unit's text is held before it is processed.
     assert events == [("read", 1), ("processed", 1), ("read", 2), ("processed", 2), ("read", 3), ("processed", 3)]
+
+
+def test_a_full_discovery_budget_is_reported_as_paused(workbench, monkeypatch):
+    from case_intelligence.entity_repository import EntityRepository
+    client, bench, matter, _runtime = workbench
+    class Enabled:
+        def wake(self, matter_id):
+            pass
+        def close(self):
+            pass
+    monkeypatch.setattr(bench, "automatic_discovery", Enabled())
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    measured = EntityRepository.discovery_storage_bytes
+    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", lambda self, matter_id: 16 * 1024 * 1024)
+    assert bench.run_automatic_discovery_once() == 0
+    progress = bench.automatic_discovery_progress(matter)
+    # The unit stays queued; it is reported as paused, not as active progress.
+    assert progress["pending"] == 1 and progress["budget_reached"] is True
+    status = client.get(f"/matters/{matter.slug}/processing-status").json()
+    assert status["discovery"] == {
+        "label": "Finding people and dates paused · suggestion storage limit reached",
+        "href": f"/matters/{matter.slug}/entities", "working": False}
+    assert "Automatic discovery is paused" in client.get(f"/matters/{matter.slug}/entities").text
+    # Without pending work there is nothing to pause.
+    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", measured)
+    assert bench.run_automatic_discovery_once() == 1
+    assert bench.automatic_discovery_progress(matter)["budget_reached"] is False
 
 
 def test_a_failed_seal_is_inventoried_again_on_retry(workbench, monkeypatch):

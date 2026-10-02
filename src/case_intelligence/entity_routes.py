@@ -67,6 +67,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
             'candidates': candidates, 'reconciliations': [dict(row, before=json.loads(row['before_json'])) for row in reconciliations],
             'error': error, 'draft': draft, 'show_assistant_dock': False,
             'automatic_attention': (automatic or {}).get('sources_attention', 0),
+            'automatic_paused': bool((automatic or {}).get('budget_reached')),
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
         try:
             with service.repository.transaction(matter.matter_id, actor):
