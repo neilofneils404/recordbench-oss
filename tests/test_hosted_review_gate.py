@@ -690,3 +690,124 @@ def test_no_edit_has_explicit_nullable_timestamp_but_missing_fields_fail_closed(
     del node["lastEditedAt"]
     with pytest.raises(KeyError):
         GATE.finding_comment(node)
+
+
+def practical_evidence(method="observed-unchanged-head"):
+    current = summary()
+    current["body"] = current["body"].replace(HEAD, HEAD[:7])
+    request = {"id": 10, "body": "@codex review " + HEAD,
+               "created_at": "2026-01-01T11:00:00Z", "updated_at": "2026-01-01T11:00:00Z"}
+    result = {"id": 20, "user": {"login": GATE.BOT, "type": "Bot"},
+              "body": "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `" + HEAD[:10] + "`",
+              "created_at": "2026-01-01T11:59:00Z", "updated_at": "2026-01-01T11:59:00Z"}
+    accepted = approval()
+    accepted["body"] += "\nCODE verification: request 10; result 20; " + method
+    return [current, request, result, accepted]
+
+
+def native_code():
+    return {"id": 30, "user": {"login": GATE.BOT, "type": "Bot"}, "state": "COMMENTED",
+            "commit_id": HEAD, "submitted_at": "2026-01-01T11:59:00Z",
+            "body": "### 💡 Codex Review\n\n**Reviewed commit:** `" + HEAD[:10] + "`"}
+
+
+@pytest.mark.parametrize("method", ["execution-context", "observed-unchanged-head"])
+def test_clean_review_uses_explicit_privileged_verification(method):
+    comments = practical_evidence(method)
+    assert GATE.evaluate(HEAD, comments, [])[0] == "success"
+    comments[-1] = approval()
+    assert GATE.evaluate(HEAD, comments, [])[0] == "pending"
+
+
+@pytest.mark.parametrize("change", ["request_id", "result_id", "request_head", "request_edited",
+    "result_edited", "result_type", "result_author", "security", "result_old", "wrong_prefix",
+    "permission", "method", "later_request", "deleted_request", "deleted_result", "early_acceptance"])
+def test_clean_verification_rejects_stale_forged_or_unprivileged_evidence(change):
+    comments = practical_evidence()
+    current, request, result, accepted = comments
+    if change == "request_id": request["id"] = 11
+    if change == "result_id": result["id"] = 21
+    if change == "request_head": request["body"] = "@codex review " + "b" * 40
+    if change == "request_edited": request["updated_at"] = "2026-01-01T11:01:00Z"
+    if change == "result_edited": result["updated_at"] = "2026-01-01T11:59:01Z"
+    if change == "result_type": result["user"]["type"] = "User"
+    if change == "result_author": result["user"]["login"] = "synthetic-bot"
+    if change == "security": result["body"] = result["body"].replace("Codex Review:", "Codex Security Review:")
+    if change == "result_old": result["created_at"] = result["updated_at"] = "2026-01-01T10:00:00Z"
+    if change == "wrong_prefix": result["body"] = result["body"].replace(HEAD[:10], "b" * 10)
+    if change == "permission": accepted["maintainerCanAccept"] = False
+    if change == "method": accepted["body"] = accepted["body"].replace("observed-unchanged-head", "prefix-match")
+    if change == "later_request": comments.append({**request, "id": 11, "updated_at": "2026-01-01T11:30:00Z"})
+    if change == "deleted_request": comments.remove(request)
+    if change == "deleted_result": comments.remove(result)
+    if change == "early_acceptance": accepted["updated_at"] = "2026-01-01T11:59:00Z"
+    assert GATE.evaluate(HEAD, comments, [])[0] == "pending"
+
+
+def test_clean_collision_cannot_reuse_old_request_or_result_for_new_head():
+    comments = practical_evidence()
+    collision = HEAD[:10] + "b" * 30
+    comments[-1]["body"] = comments[-1]["body"].replace(HEAD, collision)
+    assert GATE.evaluate(collision, comments, [])[0] == "pending"
+    # A new full-head request after the old result also cannot revive it.
+    comments[1]["body"] = "@codex review " + collision
+    comments[1]["created_at"] = comments[1]["updated_at"] = "2026-01-01T11:59:30Z"
+    assert GATE.evaluate(collision, comments, [])[0] == "pending"
+
+
+@pytest.mark.parametrize("change", [None, "commit", "type", "author", "security", "dismissed", "pending", "stale", "future"])
+def test_native_review_binds_full_commit_without_clean_attestation(change):
+    comments = practical_evidence()[:2] + [approval()]
+    review = native_code()
+    if change == "commit": review["commit_id"] = HEAD[:10] + "b" * 30
+    if change == "type": review["user"]["type"] = "User"
+    if change == "author": review["user"]["login"] = "synthetic-bot"
+    if change == "security": review["body"] = review["body"].replace("Codex Review", "Codex Security Review")
+    if change == "dismissed": review["state"] = "DISMISSED"
+    if change == "pending": review["state"] = "PENDING"
+    if change == "stale": review["submitted_at"] = "2026-01-01T10:00:00Z"
+    if change == "future": review["submitted_at"] = "2026-01-01T12:01:00Z"
+    assert GATE.evaluate(HEAD, comments, [], native_reviews=[review])[0] == ("success" if change is None else "pending")
+
+
+def test_native_code_body_edit_requires_renewed_acceptance_without_priority_badge():
+    comments = practical_evidence()[:2] + [approval()]
+    edited = {"user": {"login": GATE.BOT, "type": "Bot"}, "body": native_code()["body"],
+              "updated_at": "2026-01-01T14:00:00Z"}
+    assert GATE.evaluate(HEAD, comments, [], [edited], [native_code()])[0] == "pending"
+    comments[-1]["updated_at"] = "2026-01-01T14:01:00Z"
+    assert GATE.evaluate(HEAD, comments, [], [edited], [native_code()])[0] == "success"
+
+
+def test_clean_attestation_cannot_override_conflicting_native_code_commit():
+    review = native_code()
+    review["commit_id"] = HEAD[:10] + "b" * 30
+    assert GATE.evaluate(HEAD, practical_evidence(), [], native_reviews=[review])[0] == "pending"
+
+
+@pytest.mark.parametrize("permission", ["read", "triage", "write"])
+@pytest.mark.parametrize("path_kind", ["native", "clean"])
+def test_live_evidence_paths_use_current_permission(monkeypatch, permission, path_kind):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/project")
+    monkeypatch.setenv("PR_NUMBER", "1")
+    comments = practical_evidence()
+    if path_kind == "native":
+        comments = comments[:2] + [approval()]
+    comments[-1]["user"] = {"login": "fixture-reviewer"}
+    statuses = []
+    def api(path, data=None, **kwargs):
+        if path.endswith("/pulls/1"):
+            return {"state": "open", "head": {"sha": HEAD}, "base": {"sha": "b" * 40,
+                    "ref": "main", "repo": {"default_branch": "main"}}, "html_url": "https://example.test/pr/1"}
+        if "/reviews" in path:
+            return ([native_code()] if path_kind == "native" else []) if data is None else {}
+        if "/comments?" in path: return comments
+        if path.endswith("/permission"): return {"permission": permission}
+        if "/statuses/" in path:
+            statuses.append(data["state"])
+            return {}
+        raise AssertionError(path)
+    monkeypatch.setattr(GATE, "request", api)
+    monkeypatch.setattr(GATE, "review_evidence", lambda *args: ([], []))
+    GATE.main()
+    assert statuses[-1] == ("success" if permission == "write" else "pending")

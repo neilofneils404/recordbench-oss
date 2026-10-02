@@ -140,13 +140,23 @@ Local review, review of a plan, a request without completion, an earlier head,
 labels and quota messages cannot replace it. `hosted-review-gate` waits for the
 official Codex bot's completed current-head code-review summary, reconciled
 review discussions and later full-head maintainer acceptance. Unknown or
-incomplete code-review summary formats fail closed. The official completed CODE
-row itself must name the exact 40-character head SHA. Abbreviated SHAs, reactions,
-human attestations and independent acceptance comments cannot supply this proof.
-The observed provider summaries abbreviate their SHA, so they remain blocked
-under this contract. A provider-supported full-head CODE completion format must
-be available before this policy can pass in production; do not edit/copy bot
-evidence or waive this requirement to unblock it. Changed heads and newer or
+incomplete code-review summary formats fail closed. The completed CODE row must match the current head's
+prefix, but that is only a consistency check. Bind actual review by either:
+
+- An official submitted, non-dismissed native CODE review whose API `commit_id`
+  equals the full current head, following the latest CODE request and no later
+  than the summary's completion. Its abbreviated prose is not the binding.
+  A full SHA directly in the official completed CODE row is also sufficient.
+- For clean comment-only results, the explicit trusted verification in the
+  acceptance below. The gate checks the specific official clean-result comment,
+  full-head request, timestamps and live maintainer permission. It does not claim
+  that the provider's short SHA proves which complete commit ran.
+
+Native review IDs identify records, not immutable bodies: body edits require
+renewed acceptance. Conflicting native CODE commit evidence cannot be overridden
+by clean-result attestation. Missing, deleted, edited or stale clean/request
+records cannot be reused; request a fresh review if needed. SECURITY records
+cannot satisfy either CODE path. Changed heads and newer or
 edited code-review requests require renewed review. A withdrawn request no
 longer counts; it does not waive the required completion.
 
@@ -245,11 +255,38 @@ the full 40-character commit ID:
 RecordBench maintainer acceptance: FULL_COMMIT_ID
 ```
 
+For a clean result with no native CODE review, add one line to that same comment:
+
+```text
+RecordBench maintainer acceptance: FULL_COMMIT_ID
+CODE verification: request REQUEST_COMMENT_ID; result RESULT_COMMENT_ID; observed-unchanged-head
+```
+
+Use `execution-context` instead of `observed-unchanged-head` only when the
+accepting maintainer or authorized merging agent actually inspected the hosted
+review execution context and verified its complete commit ID. Otherwise observe
+the full PR head from the explicit request through completion and verify it did
+not change (including a change away and back). Checking the head only at the two
+endpoints or resolving the short SHA is not enough. If the execution context or
+unchanged-head observation cannot establish the binding, request a fresh review
+on a stable head and observe it; do not attest retrospectively from a prefix.
+The request must name the complete head and remain unedited. Reference the
+specific unedited official clean CODE result comment, not the mutable summary,
+a reaction, SECURITY result or another PR's comment. The gate also requires the
+latest completed CODE summary and fresh findings disposition.
+
+This line explicitly attests: “I verified that this actual hosted CODE review
+reviewed this complete commit.” It is an accountable maintainer trust decision,
+not machine proof of execution. It is not a quota or review waiver. The merging
+agent can perform and record this verification within its existing authority;
+no separate human ceremony is required. Never post it without the observation
+or execution-context evidence it asserts.
+
 Acceptance must be strictly later than code completion, every inline comment or
 reply (including edits), and priority-tagged official bot findings in issue
 comments and review bodies, from an account with current write, maintain or admin
-permission. Acceptance reconciles findings; it cannot establish which commit
-Codex reviewed. A changed head, newer
+permission. Ordinary acceptance reconciles findings; only the explicit verification line
+adds the trusted clean-review binding. A changed head, newer
 code completion or removed acceptance requires renewed acceptance. Missing
 acceptance leaves the gate pending. Current access is verified through GitHub,
 not the comment's displayed association. Security credit availability does not

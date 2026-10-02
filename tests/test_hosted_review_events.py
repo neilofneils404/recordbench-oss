@@ -22,8 +22,8 @@ def test_gate_has_only_trusted_event_paths():
     assert "@codex" not in gate
 
 
-def test_explicit_protocol_documents_unobserved_mutations_and_provider_blocker():
+def test_explicit_protocol_documents_unobserved_mutations_and_trusted_verification():
     policy = (ROOT / "docs/PUBLIC_ALPHA.md").read_text()
-    for contract in ("Do not use auto-merge", "default branch", "Abbreviated",
-                     "not an atomic merge barrier", "40-character", "remain blocked"):
+    for contract in ("Do not use auto-merge", "default branch", "observed-unchanged-head",
+                     "not an atomic merge barrier", "40-character", "execution-context"):
         assert contract in policy

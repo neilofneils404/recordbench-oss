@@ -14,7 +14,10 @@ BOT = "chatgpt-codex-connector[bot]"
 SUMMARY = "<!-- codex-pull-request-review-summary -->"
 CONTEXT = "hosted-review-gate"
 APPROVAL_PREFIX = "RecordBench hosted review gate:"
-ACCEPTANCE = re.compile(r"RecordBench maintainer acceptance: ([0-9a-f]{40})")
+ACCEPTANCE = re.compile(
+    r"RecordBench maintainer acceptance: ([0-9a-f]{40})"
+    r"(?:\nCODE verification: request ([1-9][0-9]*); result ([1-9][0-9]*); "
+    r"(execution-context|observed-unchanged-head))?")
 SECURITY_HELP_LINE = '- Comment "@codex review" or "@codex security review".'
 CODE_ONLY_PREFIX = (
     SUMMARY,
@@ -38,7 +41,7 @@ CODE_ONLY_SUFFIX = (
 CODE_ONLY_ROW = re.compile(
     r'\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* '
     r'<relative-time datetime="(?P<completed_at>[^"<>]+)">[^<>]+</relative-time> '
-    r'\| `(?P<reviewed_head>[0-9a-f]{40})` \| [^|\r\n]+ \|')
+    r'\| `(?P<reviewed_head>[0-9a-f]{7,40})` \| [^|\r\n]+ \|')
 
 
 def comment_time(comment: dict) -> datetime:
@@ -49,7 +52,8 @@ def comment_time(comment: dict) -> datetime:
 
 
 def evaluate(head: str, comments: list[dict], threads: list[dict],
-             review_findings: list[dict] | None = None) -> tuple[str, str]:
+             review_findings: list[dict] | None = None,
+             native_reviews: list[dict] | None = None) -> tuple[str, str]:
     summaries = [c for c in comments if c.get("user", {}).get("login") == BOT
                  and c.get("user", {}).get("type") == "Bot" and SUMMARY in c.get("body", "")]
     if not summaries:
@@ -72,7 +76,7 @@ def evaluate(head: str, comments: list[dict], threads: list[dict],
             or tuple(lines[-len(CODE_ONLY_SUFFIX):]) != CODE_ONLY_SUFFIX
             or (code_match := CODE_ONLY_ROW.fullmatch(lines[len(CODE_ONLY_PREFIX)])) is None):
         return "pending", "Unrecognized or incomplete code review summary"
-    if head != code_match.group("reviewed_head"):
+    if not head.startswith(code_match.group("reviewed_head")):
         return "pending", "Waiting for code review of the current commit"
     try:
         completed = datetime.fromisoformat(code_match.group("completed_at").replace("Z", "+00:00"))
@@ -88,9 +92,25 @@ def evaluate(head: str, comments: list[dict], threads: list[dict],
                 return "pending", "A newer code review request is still awaiting completion"
     if any(not thread.get("isResolved", False) for thread in threads):
         return "failure", "Every review discussion must be resolved"
-    # Only the official CODE evidence above binds review to the full head.
-    # Maintainer acceptance reconciles findings; it cannot repair missing or
-    # abbreviated review evidence, including a colliding commit prefix.
+    # Prefix consistency is not binding. Prefer the provider's native full
+    # commit_id; clean comment-only reviews need explicit trusted attestation.
+    requests = [c for c in comments if c.get("user", {}).get("type") != "Bot"
+                and re.search(r"^@codex\s+review\b", c.get("body", ""), re.I | re.M)]
+    requested_at = max((comment_time(c) for c in requests), default=datetime.min.replace(tzinfo=completed.tzinfo))
+    native_bound = code_match.group("reviewed_head") == head
+    for review in native_reviews or []:
+        if (review.get("user", {}).get("login") != BOT
+                or review.get("user", {}).get("type") != "Bot"
+                or review.get("state") != "COMMENTED"
+                or not review.get("submitted_at")
+                or not review.get("body", "").lstrip().startswith("### 💡 Codex Review\n")):
+            continue
+        submitted = comment_time({"created_at": review["submitted_at"]})
+        if requested_at < submitted <= completed:
+            if review.get("commit_id") != head:
+                return "pending", "Native CODE review identifies a different commit"
+            if re.search(r"\*\*Reviewed commit:\*\* `" + re.escape(head[:10]) + r"`", review["body"]):
+                native_bound = True
     inline_comments = [comment for thread in threads for comment in thread.get("comments", [])]
     # GitHub Actions has no review-thread resolved/unresolved trigger. Last-
     # resolver identity is therefore not durable authorization. The existing
@@ -102,12 +122,33 @@ def evaluate(head: str, comments: list[dict], threads: list[dict],
     findings_at = max((comment_time(c) for c in findings
                        if c.get("user", {}).get("login") == BOT
                        and c.get("user", {}).get("type") == "Bot"
-                       and re.search(r"\bP[0-3]\b", c.get("body", ""))), default=completed)
+                       and (re.search(r"\bP[0-3]\b", c.get("body", ""))
+                            or c.get("body", "").lstrip().startswith("### 💡 Codex Review\n"))), default=completed)
     for c in comments:
         acceptance = ACCEPTANCE.fullmatch(c.get("body", "").strip())
         if not c.get("maintainerCanAccept") or not acceptance or acceptance.group(1) != head:
             continue
-        if comment_time(c) > max(completed, findings_at, reconciled_after):
+        bound = native_bound
+        evidence_at = completed
+        if not bound and acceptance.group(2):
+            request_id, result_id = map(int, acceptance.group(2, 3))
+            request_comment = next((x for x in requests if x.get("id") == request_id), None)
+            result = next((x for x in comments if x.get("id") == result_id), None)
+            if (request_comment and result
+                    and re.search(r"(?<![0-9a-f])" + head + r"(?![0-9a-f])", request_comment["body"])
+                    and request_comment.get("created_at") == request_comment.get("updated_at")
+                    and result.get("user", {}).get("login") == BOT
+                    and result.get("user", {}).get("type") == "Bot"
+                    and result.get("body", "").startswith("Codex Review: Didn't find any major issues.")
+                    and re.search(r"\*\*Reviewed commit:\*\* `" + re.escape(head[:10]) + r"`", result["body"])
+                    and comment_time(request_comment) == requested_at
+                    and requested_at < comment_time(result) <= completed
+                    and result.get("created_at") == result.get("updated_at")):
+                # This explicitly trusts the accepting maintainer's verified
+                # execution context or observation, not the abbreviated hash.
+                bound = True
+                evidence_at = comment_time(result)
+        if bound and comment_time(c) > max(completed, findings_at, reconciled_after, evidence_at):
             return "success", "Code reviewed; maintainer accepted full commit; hosted security review optional"
     return "pending", "Waiting for maintainer acceptance of the full reviewed commit"
 
@@ -228,8 +269,10 @@ def main() -> int:
     # Native approvals belong to one PR. Withdraw the prior gate opinion using
     # a new review; this needs pull-request write permission, not admin dismissal.
     gate_reviews = []
+    native_reviews = []
     for page in range(1, 101):
         reviews = request(f"{review_path}?per_page=100&page={page}")
+        native_reviews.extend(reviews)
         gate_reviews.extend(review for review in reviews
             if review.get("user", {}).get("login") == "github-actions[bot]"
             and review.get("body", "").startswith(APPROVAL_PREFIX)
@@ -269,7 +312,7 @@ def main() -> int:
         comment["maintainerCanAccept"] = False
         if ACCEPTANCE.fullmatch(comment.get("body", "").strip()):
             comment["maintainerCanAccept"] = can_accept(comment.get("user", {}).get("login", ""))
-    state, description = evaluate(head, comments, threads, review_findings)
+    state, description = evaluate(head, comments, threads, review_findings, native_reviews)
     def unchanged():
         current = request(f"{prefix}/pulls/{number}")
         return (current["state"] == "open" and current["head"]["sha"] == head

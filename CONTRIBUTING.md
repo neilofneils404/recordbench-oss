@@ -168,8 +168,9 @@ policy. No label transition or quota-exception ceremony is needed. The gate's
 native approval remains PR-specific; Quality, Gitleaks, publication safeguards,
 resolved conversations and all existing branch protections remain independent.
 See [merge and automation controls](docs/PUBLIC_ALPHA.md#merge-and-automation-boundary)
-for the full-SHA bot evidence requirement, provider compatibility blocker,
-full-head acceptance and explicit default-branch revalidation procedure.
+for native full-commit review evidence, the explicit trusted verification for
+clean comment-only reviews within the same acceptance, and default-branch
+revalidation. A short SHA alone never establishes the reviewed commit.
 Review edits do not automatically revoke a previous pass; do not use auto-merge.
 
 Repository workflows must not post review commands on open or synchronize.
