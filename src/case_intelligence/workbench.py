@@ -6982,11 +6982,14 @@ def create_workbench_app(
         if readiness.total_count:
             progress = bench.automatic_discovery_progress(matter)
             attention = progress["sources_attention"] if progress else 0
+            # Sources needing attention are counted independently of pending
+            # work, so incomplete coverage stays visible even while work remains.
             if progress and progress["sources_complete"] + attention < progress["sources_ready"]:
                 discovery = {
                     "label": (
                         f"Finding people and dates · {progress['sources_complete']:,} of "
                         f"{progress['sources_ready']:,} sources"
+                        + (f" · {attention:,} need{'s' if attention == 1 else ''} attention" if attention else "")
                     ),
                     "href": f"/matters/{matter.slug}/entities",
                     "working": True,

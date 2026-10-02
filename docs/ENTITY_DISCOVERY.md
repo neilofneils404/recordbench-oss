@@ -55,8 +55,11 @@ extractor without a criterion review, a model or a reviewer action. Home shows
 one quiet line under readiness: **Finding people and dates · N of M sources**
 while work remains, then **N suggested people, things and dates to review**,
 linking to **Case file → People & things**. When a source's coverage is incomplete
-(failed units, or units whose text was unavailable), Home shows **Finding people
-and dates needs attention · N sources** instead of counting it as complete, and
+(failed units, or units whose text was unavailable), Home never counts it as
+complete: it adds **· N need attention** to the progress line while other sources
+are still being searched, or shows **Finding people and dates needs attention ·
+N sources** once nothing else remains (even if that source still has pending
+units), and
 People & things offers **Retry automatic discovery**. A retry queues those units
 again (and re-inventories a source whose text was unavailable), keeps every saved
 suggestion and decision, is audited as `entity.retry_automatic`, and wakes the
@@ -67,7 +70,7 @@ cannot sign in, hold membership or act outside an active matter.
 Coverage is recorded per current source version and extracted-text basis in
 `workbench_entity_auto_discovery_unit`. The first visit seals the unit inventory
 (ordinals and text digests; ordinal 0 is the seal); later steps load only pending
-units. Units are processed in bounded batches of up to 25 per step, under the same
+units. Units are processed one at a time as they are read (at most 25 per step), under the same
 source guard, digest check, byte budget and occurrence receipts as guided
 discovery, so the same passage is never suggested twice by either path. A new
 source version, or new extracted text for the same version (for example an OCR or

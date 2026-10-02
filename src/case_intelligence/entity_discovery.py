@@ -164,34 +164,61 @@ class EntityDiscovery:
                 if not pending:
                     continue
                 wanted = {row['unit_ordinal']: row for row in pending}
-                loaded_units = {}
-                try:
-                    for ordinal, text, reference in self.load_document(
-                            document_id, document['source_version_id'], sorted(wanted)):
-                        if stopping():
-                            return handled, sealed
-                        if ordinal in wanted:
-                            loaded_units[ordinal] = (text, reference)
-                except DiscoveryStopped:
-                    return handled, sealed
-                except LOAD_ERRORS:
-                    loaded_units = {}
-                for ordinal, unit in wanted.items():
-                    if stopping():
-                        return handled, sealed
+
+                def process(ordinal, loaded):
+                    """Commit one unit; False when the byte budget stops the step."""
+                    unit = wanted.pop(ordinal)
                     with service.repository.transaction(matter_id, actor_id) as repo:
                         if not repo.auto_discovery_claimable(unit):
-                            continue
+                            return None
                         try:
                             state, count = self._process_unit(repo, matter_id, actor_id, unit,
-                                                              loaded_units.get(ordinal), AutomaticLedger)
+                                                              loaded, AutomaticLedger)
                         except WorkspaceProblem:
                             # Budget reached: saved work stays; remaining units stay pending.
-                            return handled, sealed
+                            return False
                         if audit_unit is not None:
                             audit_unit(dict(document_id=document_id, unit_ordinal=ordinal,
                                             state=state, count=count))
-                    handled += 1
+                    return True
+
+                # Each unit is processed as soon as it is read, so at most one
+                # unit's text is held at a time. Only the reader's own errors
+                # mean unavailable text; processing errors propagate.
+                try:
+                    units = iter(self.load_document(document_id, document['source_version_id'], sorted(wanted)))
+                except DiscoveryStopped:
+                    return handled, sealed
+                except LOAD_ERRORS:
+                    units = iter(())
+                while True:
+                    try:
+                        ordinal, text, reference = next(units)
+                    except StopIteration:
+                        break
+                    except DiscoveryStopped:
+                        return handled, sealed
+                    except LOAD_ERRORS:
+                        break
+                    if stopping():
+                        return handled, sealed
+                    if ordinal not in wanted:
+                        continue
+                    outcome = process(ordinal, (text, reference))
+                    del text
+                    if outcome is False:
+                        return handled, sealed
+                    if outcome:
+                        handled += 1
+                # Units the reader did not produce are recorded as unavailable.
+                for ordinal in sorted(wanted):
+                    if stopping():
+                        return handled, sealed
+                    outcome = process(ordinal, None)
+                    if outcome is False:
+                        return handled, sealed
+                    if outcome:
+                        handled += 1
         return handled, sealed
 
     def prune_automatic(self, matter_id):

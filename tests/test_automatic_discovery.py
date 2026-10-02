@@ -405,6 +405,56 @@ def test_incomplete_coverage_needs_attention_and_can_be_retried(workbench, monke
     assert "entity.retry_automatic" in [event.action for event in bench.workspace.audit_events(matter.matter_id)]
 
 
+def test_attention_is_shown_while_other_units_are_still_pending(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    class Enabled:
+        def wake(self, matter_id):
+            pass
+        def close(self):
+            pass
+    monkeypatch.setattr(bench, "automatic_discovery", Enabled())
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    assert bench.run_automatic_discovery_once(unit_limit=25) == 25
+    # One processed unit later failed; five units are still pending.
+    bench.workspace.connection.execute(
+        "UPDATE workbench_entity_auto_discovery_unit SET state='failed' WHERE matter_id=? AND unit_ordinal=1",
+        (matter.matter_id,))
+    bench.workspace.connection.commit()
+    progress = bench.automatic_discovery_progress(matter)
+    assert progress["pending"] == 5 and progress["sources_attention"] == 1
+    status = client.get(f"/matters/{matter.slug}/processing-status").json()
+    assert status["discovery"]["label"] == "Finding people and dates needs attention · 1 source"
+    # With other sources still being searched, progress continues to show the attention count.
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    status = client.get(f"/matters/{matter.slug}/processing-status").json()
+    assert status["discovery"]["label"] == "Finding people and dates · 0 of 2 sources · 1 needs attention"
+    assert 'name="action" value="retry_automatic"' in client.get(f"/matters/{matter.slug}/entities").text
+
+
+def test_selected_units_are_processed_as_they_are_read(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    events = []
+    original = bench.automatic_entity_discovery
+    def recording(target, should_stop=None):
+        discovery = original(target, should_stop)
+        loader = discovery.load_document
+        def load_document(document_id, source_version_id, ordinals=None):
+            for ordinal, text, reference in loader(document_id, source_version_id, ordinals):
+                if ordinals is not None:
+                    events.append(("read", ordinal))
+                yield ordinal, text, reference
+        discovery.load_document = load_document
+        return discovery
+    monkeypatch.setattr(bench, "automatic_entity_discovery", recording)
+    discovery = bench.automatic_entity_discovery(matter)
+    handled, _sealed = discovery.automatic_step(
+        matter.matter_id, unit_limit=3, audit_unit=lambda event: events.append(("processed", event["unit_ordinal"])))
+    assert handled == 3
+    # Never more than one unit's text is held before it is processed.
+    assert events == [("read", 1), ("processed", 1), ("read", 2), ("processed", 2), ("read", 3), ("processed", 3)]
+
+
 def test_a_failed_seal_is_inventoried_again_on_retry(workbench, monkeypatch):
     client, bench, matter, _runtime = workbench
     upload(client, matter.slug, "Synthetic memo.txt", FIRST)

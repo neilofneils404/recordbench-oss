@@ -343,9 +343,8 @@ class EntityRepository:
         attention = self.connection.execute(
             "SELECT COUNT(*) FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' "
             "AND EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
-            " AND a.extractor_version=? AND a.state IN ('failed','invalidated')) AND NOT EXISTS (SELECT 1 FROM "
-            "workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
-            " AND a.extractor_version=? AND a.state='pending')", (matter_id, version, version)).fetchone()[0]
+            " AND a.extractor_version=? AND a.state IN ('failed','invalidated'))",
+            (matter_id, version)).fetchone()[0]
         unsealed = self.connection.execute(
             "SELECT COUNT(*) FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' "
             "AND NOT EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
