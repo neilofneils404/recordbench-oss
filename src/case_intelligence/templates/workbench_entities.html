@@ -20,7 +20,9 @@
   {% endmacro %}
   {% if not entity and automatic_paused %}
   <section class="notice" aria-labelledby="automatic-paused-heading"><h2 id="automatic-paused-heading">Automatic discovery is paused</h2>
-    <p>This matter reached its storage limit for discovery suggestions, so the remaining sources have not been searched for people and dates. Saved suggestions and decisions are kept, and the remaining work stays queued rather than being dropped.</p>
+    <p>This matter reached its storage limit for discovery suggestions, so some sources have not been searched for people and dates yet. Saved suggestions and decisions are kept, and the remaining work stays queued rather than being dropped.</p>
+    <p>To make room, delete suggestions you do not need. Deleting is permanent: it removes that suggestion, its passages and its history, and the same passage is not suggested again. Dismissing a suggestion keeps it and does not free space. Then check again.</p>
+    <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('retry_automatic') }}<button type="submit">Check again</button></form>
   </section>
   {% endif %}
   {% if not entity and automatic_attention %}

@@ -455,31 +455,57 @@ def test_selected_units_are_processed_as_they_are_read(workbench, monkeypatch):
     assert events == [("read", 1), ("processed", 1), ("read", 2), ("processed", 2), ("read", 3), ("processed", 3)]
 
 
-def test_a_full_discovery_budget_is_reported_as_paused(workbench, monkeypatch):
+def test_a_full_discovery_budget_is_reported_as_paused_and_can_resume(workbench, monkeypatch):
+    from case_intelligence.entity_discovery import DISCOVERY_BYTE_LIMIT
     from case_intelligence.entity_repository import EntityRepository
     client, bench, matter, _runtime = workbench
+    woken = []
     class Enabled:
         def wake(self, matter_id):
-            pass
+            woken.append(matter_id)
         def close(self):
             pass
     monkeypatch.setattr(bench, "automatic_discovery", Enabled())
     upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    upload(client, matter.slug, "Synthetic call.txt", SECOND)
+    assert bench.run_automatic_discovery_once(unit_limit=1) == 1  # One source's suggestions are saved.
     measured = EntityRepository.discovery_storage_bytes
-    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", lambda self, matter_id: 16 * 1024 * 1024)
+    # Leave 5,000 bytes of headroom: enough for the fixed pre-check, but less than
+    # the per-occurrence reservation the second admission check requires.
+    headroom = {"bytes": 5000}
+    def nearly_full(self, matter_id):
+        return DISCOVERY_BYTE_LIMIT - headroom["bytes"]
+    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", nearly_full)
     assert bench.run_automatic_discovery_once() == 0
     progress = bench.automatic_discovery_progress(matter)
-    # The unit stays queued; it is reported as paused, not as active progress.
+    # The rejected unit stays queued and is reported as paused, not as active progress.
     assert progress["pending"] == 1 and progress["budget_reached"] is True
     status = client.get(f"/matters/{matter.slug}/processing-status").json()
     assert status["discovery"] == {
         "label": "Finding people and dates paused · suggestion storage limit reached",
         "href": f"/matters/{matter.slug}/entities", "working": False}
-    assert "Automatic discovery is paused" in client.get(f"/matters/{matter.slug}/entities").text
-    # Without pending work there is nothing to pause.
+    page = client.get(f"/matters/{matter.slug}/entities").text
+    assert "Automatic discovery is paused" in page
+    assert "delete suggestions you do not need" in page
+    assert 'name="action" value="retry_automatic"' in page
     monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", measured)
+    # Deleting a suggestion really frees counted space (its mentions and history go with it).
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    with service.repository.transaction(matter.matter_id, WEB_ACTOR) as repo:
+        before = repo.discovery_storage_bytes(matter.matter_id)
+    service.delete(matter.matter_id, WEB_ACTOR, rows[0]["entity_id"], expected_revision=rows[0]["revision"])
+    with service.repository.transaction(matter.matter_id, WEB_ACTOR) as repo:
+        assert repo.discovery_storage_bytes(matter.matter_id) < before - 1000
+    # Check again wakes the worker; the queued unit then completes and the pause clears.
+    woken.clear()
+    response = client.post(f"/matters/{matter.slug}/entities/actions",
+                           data=dict(action="retry_automatic"), follow_redirects=False)
+    assert response.status_code == 303 and woken == [matter.matter_id]
     assert bench.run_automatic_discovery_once() == 1
-    assert bench.automatic_discovery_progress(matter)["budget_reached"] is False
+    progress = bench.automatic_discovery_progress(matter)
+    assert progress["pending"] == 0 and progress["budget_reached"] is False
+    assert "Automatic discovery is paused" not in client.get(f"/matters/{matter.slug}/entities").text
 
 
 def test_a_failed_seal_is_inventoried_again_on_retry(workbench, monkeypatch):

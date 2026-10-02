@@ -239,6 +239,9 @@ class EntityRepository:
     # Automatic discovery: one ledger per current source version and extracted
     # basis, with no review run. "Current" always means the catalog's ready
     # version and content basis; anything else is history.
+    # Note on a queued unit that the discovery storage limit rejected; cleared
+    # when the unit is later processed.
+    AUTO_CAPACITY_NOTE = 'Waiting for discovery storage space.'
     _AUTO_KEY = ('matter_id', 'document_id', 'source_version_id', 'content_basis_digest',
                  'unit_ordinal', 'extractor_version')
     _AUTO_CURRENT = ('a.matter_id=c.matter_id AND a.document_id=c.document_id '
@@ -352,7 +355,14 @@ class EntityRepository:
         suggested = self.connection.execute(
             "SELECT COUNT(*) FROM workbench_entity WHERE matter_id=? AND status='suggested'",
             (matter_id,)).fetchone()[0]
+        # Reported from the recorded rejection itself, so it matches every admission check.
+        budget_reached = self.connection.execute(
+            "SELECT 1 FROM workbench_entity_auto_discovery_unit a JOIN workbench_source_catalog c ON "
+            + self._AUTO_CURRENT + " WHERE a.matter_id=? AND a.extractor_version=? AND a.state='pending' "
+            "AND a.note=? AND c.source_state='ready' LIMIT 1",
+            (matter_id, version, self.AUTO_CAPACITY_NOTE)).fetchone() is not None
         return dict(pending=counts.get('pending', 0), processed=counts.get('processed', 0),
+                    budget_reached=budget_reached,
                     failed=counts.get('failed', 0), unsealed_sources=unsealed,
                     sources_complete=complete, sources_attention=attention, sources_ready=ready,
                     suggested=suggested)

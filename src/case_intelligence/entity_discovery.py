@@ -175,7 +175,9 @@ class EntityDiscovery:
                             state, count = self._process_unit(repo, matter_id, actor_id, unit,
                                                               loaded, AutomaticLedger)
                         except WorkspaceProblem:
-                            # Budget reached: saved work stays; remaining units stay pending.
+                            # Budget reached: saved work stays and the unit stays pending,
+                            # marked so progress reports the pause until it is processed.
+                            repo.auto_discovery_state(unit, 'pending', repo.AUTO_CAPACITY_NOTE)
                             return False
                         if audit_unit is not None:
                             audit_unit(dict(document_id=document_id, unit_ordinal=ordinal,
@@ -233,13 +235,7 @@ class EntityDiscovery:
 
     def automatic_progress(self, matter_id):
         with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
-            progress = repo.auto_discovery_progress(matter_id, self.extractor.version)
-            # The same admission test as _process_unit: when it fails, remaining
-            # work cannot commit, so report a pause instead of active progress.
-            progress['budget_reached'] = bool(
-                (progress['pending'] or progress['unsealed_sources'])
-                and repo.discovery_storage_bytes(matter_id) + 4096 > self.byte_limit)
-            return progress
+            return repo.auto_discovery_progress(matter_id, self.extractor.version)
 
     def _process_unit(self, repo, matter_id, actor_id, unit, loaded, ledger):
         service = self.service
