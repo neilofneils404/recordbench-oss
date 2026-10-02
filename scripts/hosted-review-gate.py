@@ -54,7 +54,6 @@ DIAGNOSTIC_STAGES = frozenset({
 _diagnostic_stage = "startup"
 NORMALIZATION_REASONS = frozenset({
     "body-type", "created-type", "published-type", "edited-type", "submitted-type",
-    "published-before-created", "edited-before-created", "submitted-before-created",
 })
 
 
@@ -257,20 +256,20 @@ def finding_comment(node: dict) -> dict:
         raise NormalizationError("created-type")
     # Use content/publication timestamps, not generic updatedAt: reaction or
     # resolution metadata must not silently change reconciliation authority.
+    # GitHub does not guarantee ordering between these distinct timestamps.
+    # Keep every valid value; max(times), including creation, bounds acceptance.
     created_time = comment_time({"created_at": created})
     times = [created_time]
-    values = [(node["publishedAt"], "published-type", "published-before-created"),
-              (node["lastEditedAt"], "edited-type", "edited-before-created")]
+    values = [(node["publishedAt"], "published-type"),
+              (node["lastEditedAt"], "edited-type")]
     if "submittedAt" in node:
-        values.append((node["submittedAt"], "submitted-type", "submitted-before-created"))
-    for value, type_reason, order_reason in values:
+        values.append((node["submittedAt"], "submitted-type"))
+    for value, type_reason in values:
         if value is None:
             continue
         if not isinstance(value, str):
             raise NormalizationError(type_reason)
         timestamp = comment_time({"created_at": value})
-        if timestamp < created_time:
-            raise NormalizationError(order_reason)
         times.append(timestamp)
     official = (author is not None and author["__typename"] == "Bot"
                 and author["login"] in {BOT, BOT.removesuffix("[bot]")})

@@ -231,8 +231,13 @@ accepted thread does not erase its maintainer reconciliation. Native required
 conversation resolution blocks while the thread is unresolved. New or edited
 comments invalidate the acceptance cutoff on the next explicit revalidation;
 acceptance edits/deletion use the existing issue-comment events.
-Inline freshness uses creation, publication and body-edit timestamps, not the
-generic metadata-update timestamp; review submission time is also included.
+Inline freshness uses the latest valid creation, publication and body-edit
+timestamp, not the generic metadata-update timestamp; review submission time is
+also included. These fields describe different events, and the
+[GitHub schema](https://docs.github.com/en/graphql/reference/pulls#pullrequestreviewcomment)
+does not guarantee their ordering. Publication before creation is accepted, but
+cannot lower freshness below creation or any newer edit/submission. Missing
+required fields and malformed or timezone-free timestamps still fail closed.
 If a gate run saw an unresolved thread, resolve it and dispatch the gate or post
 fresh acceptance to reevaluate. Keep native conversation protection enabled;
 this division of responsibility requires it. No webhook service, extra token
@@ -309,14 +314,14 @@ manual status publication or a label for successful evaluation.
 
 Explicit finding-normalization rejections also report an allowlisted `reason`
 with `exception_class: NormalizationError`: `body-type`, `created-type`,
-`published-type`, `edited-type`, `submitted-type`, `published-before-created`,
-`edited-before-created`, or `submitted-before-created`. An unrecognized reason
-is `unknown`. These distinguish the rejected field/type or ordering check without
+`published-type`, `edited-type`, or `submitted-type`. An unrecognized reason
+is `unknown`. These distinguish the rejected field/type without
 printing any field value, content, identifier or timestamp. Missing fields and
 timestamp parse errors retain their bounded exception-class diagnostics.
-The ordering reasons identify the current validation rule; they do not establish
-that GitHub guarantees that order or justify relaxing freshness checks. Establish
-the live rejection before selecting a correctness repair.
+Historical `published-before-created`, `edited-before-created` and
+`submitted-before-created` reasons came from an unsupported ordering assumption.
+Normalization now considers all valid timestamps and requires acceptance after
+their maximum, rather than rejecting a differing order.
 
 These diagnostics do not establish or repair the cause of an earlier failure
 whose exception was suppressed. Reproduce that failure in trusted default-branch

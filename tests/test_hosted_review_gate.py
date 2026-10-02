@@ -619,8 +619,7 @@ def test_graphql_finding_identity_does_not_trust_display_login_alone(kind, login
 @pytest.mark.parametrize("field,value", [("lastEditedAt", "invalid"),
                                          ("lastEditedAt", "2026-01-01T14:00:00"),
                                          ("body", None), ("createdAt", None),
-                                         ("createdAt", "invalid"),
-                                         ("lastEditedAt", "2026-01-01T12:00:00Z")])
+                                         ("createdAt", "invalid")])
 def test_incomplete_finding_fields_fail_closed(field, value):
     node = graphql_finding()
     node[field] = value
@@ -689,6 +688,64 @@ def test_no_edit_has_explicit_nullable_timestamp_but_missing_fields_fail_closed(
     assert evaluate(HEAD, [summary()], [thread])[0] == "success"
     del node["lastEditedAt"]
     with pytest.raises(KeyError):
+        GATE.finding_comment(node)
+
+
+@pytest.mark.parametrize("surface,latest", [
+    ("threads", "createdAt"), ("threads", "lastEditedAt"),
+    ("reviews", "createdAt"), ("reviews", "lastEditedAt"), ("reviews", "submittedAt"),
+])
+def test_publication_before_creation_preserves_latest_freshness(monkeypatch, surface, latest):
+    # Synthetic instance of the confirmed published-before-created rejection;
+    # no real review content, identifiers or timestamps are copied.
+    node = graphql_finding(updated=None)
+    node["createdAt"] = "2026-01-01T13:00:01Z"
+    node["publishedAt"] = "2026-01-01T13:00:00Z"
+    node[latest] = "2026-01-01T14:00:00Z"
+    accepted = approval()
+    statuses, events, _ = finding_api(monkeypatch, accepted, "inline")
+    def nodes(query, variables, path, initial=None):
+        if path[-1] == "reviewThreads":
+            return [{"id": "synthetic-thread", "isResolved": True, "comments": {}}] if surface == "threads" else []
+        return [node]
+    monkeypatch.setattr(GATE, "graphql_nodes", nodes)
+    normalized = GATE.finding_comment(node)
+    assert normalized["updated_at"] == "2026-01-01T14:00:00+00:00"
+    assert GATE.main() == 0
+    assert statuses == ["pending", "pending"] and events == ["REQUEST_CHANGES"]
+    accepted["updated_at"] = "2026-01-01T14:00:00Z"
+    assert GATE.main() == 0
+    assert statuses[-1] == "pending"  # Equal-time acceptance still cannot reconcile.
+    accepted["updated_at"] = "2026-01-01T14:00:01Z"
+    assert GATE.main() == 0
+    assert statuses[-1] == "success" and events[-1] == "APPROVE"
+
+
+@pytest.mark.parametrize("field", ["publishedAt", "lastEditedAt", "submittedAt"])
+def test_earlier_content_timestamps_never_reduce_creation_freshness(field):
+    node = graphql_finding(updated=None)
+    node["createdAt"] = "2026-01-01T14:00:00Z"
+    node["publishedAt"] = node["createdAt"]
+    node[field] = "2026-01-01T12:00:00Z"
+    normalized = GATE.finding_comment(node)
+    assert normalized["updated_at"] == "2026-01-01T14:00:00+00:00"
+    assert GATE.evaluate(HEAD, [summary(), approval()], [], [normalized])[0] == "pending"
+
+
+@pytest.mark.parametrize("field", ["createdAt", "publishedAt", "lastEditedAt"])
+def test_missing_required_timestamp_fields_still_fail_closed(field):
+    node = graphql_finding()
+    del node[field]
+    with pytest.raises(KeyError):
+        GATE.finding_comment(node)
+
+
+@pytest.mark.parametrize("field", ["createdAt", "publishedAt", "lastEditedAt", "submittedAt"])
+@pytest.mark.parametrize("value", ["invalid", "2026-01-01T14:00:00", 123])
+def test_malformed_timestamp_fields_still_fail_closed(field, value):
+    node = graphql_finding()
+    node[field] = value
+    with pytest.raises((RuntimeError, ValueError)):
         GATE.finding_comment(node)
 
 
@@ -894,9 +951,6 @@ def test_normal_nonpassing_policy_is_not_an_execution_exception(monkeypatch, cap
     ("publishedAt", {}, "published-type"),
     ("lastEditedAt", [], "edited-type"),
     ("submittedAt", False, "submitted-type"),
-    ("publishedAt", "2026-01-01T12:00:00Z", "published-before-created"),
-    ("lastEditedAt", "2026-01-01T12:00:00Z", "edited-before-created"),
-    ("submittedAt", "2026-01-01T12:00:00Z", "submitted-before-created"),
 ])
 def test_normalization_rejection_reasons_remain_closed(monkeypatch, capsys, surface, field, value, reason):
     node = graphql_finding(body="synthetic-sensitive-body")
@@ -933,7 +987,7 @@ def test_unknown_normalization_reason_is_not_printed(monkeypatch, capsys, reason
 def test_normalization_subclass_cannot_publish_a_reason(monkeypatch, capsys):
     error_type = type("synthetic_sensitive_class", (GATE.NormalizationError,), {})
     def fail():
-        raise error_type("published-before-created")
+        raise error_type("published-type")
     monkeypatch.setattr(GATE, "main", fail)
     assert GATE.run() == 1
     output = capsys.readouterr().err
