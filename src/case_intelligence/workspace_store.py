@@ -3172,19 +3172,21 @@ class WorkspaceStore:
         ).fetchone()
         if row is None:
             raise KeyError(matter_id)
-        # Created on first use; inactive, so it can never sign in or hold membership.
-        self.connection.execute(
-            "INSERT OR IGNORE INTO workbench_principal(principal_id,provider,provider_subject,"
-            "display_name,login_name,active,created_at,last_seen_at) VALUES (?,?,?,?,?,0,?,?)",
-            (AUTOMATIC_DISCOVERY_PRINCIPAL, "system", "automatic-discovery", "Automatic discovery",
-             "automatic-discovery", "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z"),
-        )
         # Never trust the identifier alone: a pre-existing row must be exactly the
         # inactive internal principal and must hold no matter access.
-        principal = self.connection.execute(
-            "SELECT provider,provider_subject,active FROM workbench_principal WHERE principal_id=?",
-            (AUTOMATIC_DISCOVERY_PRINCIPAL,),
-        ).fetchone()
+        lookup = "SELECT provider,provider_subject,active FROM workbench_principal WHERE principal_id=?"
+        principal = self.connection.execute(lookup, (AUTOMATIC_DISCOVERY_PRINCIPAL,)).fetchone()
+        if principal is None:
+            # Created on first use only, so later authorizations (including the
+            # read-only readiness poll) execute nothing but SELECTs. Inactive, so it
+            # can never sign in or hold membership.
+            self.connection.execute(
+                "INSERT OR IGNORE INTO workbench_principal(principal_id,provider,provider_subject,"
+                "display_name,login_name,active,created_at,last_seen_at) VALUES (?,?,?,?,?,0,?,?)",
+                (AUTOMATIC_DISCOVERY_PRINCIPAL, "system", "automatic-discovery", "Automatic discovery",
+                 "automatic-discovery", "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z"),
+            )
+            principal = self.connection.execute(lookup, (AUTOMATIC_DISCOVERY_PRINCIPAL,)).fetchone()
         # Check raw grants: the effective-membership view hides inactive
         # principals, which is exactly what this one is.
         member = self.connection.execute(

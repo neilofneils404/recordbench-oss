@@ -515,6 +515,27 @@ def test_a_full_discovery_budget_is_reported_as_paused_and_can_resume(workbench,
     assert "Automatic discovery is paused" not in client.get(f"/matters/{matter.slug}/entities").text
 
 
+def test_units_waiting_for_space_do_not_hold_up_smaller_units(workbench, monkeypatch):
+    from case_intelligence.entity_discovery import DiscoveryUnitTooLarge, EntityDiscovery
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(60, "Alex"))
+    original = EntityDiscovery._process_unit
+    def first_50_too_large(self, repo, matter_id, actor_id, unit, loaded, ledger):
+        if unit["unit_ordinal"] <= 50:
+            raise DiscoveryUnitTooLarge("synthetic reservation does not fit")
+        return original(self, repo, matter_id, actor_id, unit, loaded, ledger)
+    monkeypatch.setattr(EntityDiscovery, "_process_unit", first_50_too_large)
+    # Two whole 25-unit steps only mark units as waiting; marking them counts as
+    # progress, so the same pass still reaches the ten units that fit.
+    assert bench.run_automatic_discovery_once() == 10
+    waiting = bench.workspace.connection.execute(
+        "SELECT COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND state='pending' "
+        "AND note<>''", (matter.matter_id,)).fetchone()[0]
+    assert waiting == 50
+    # Already-marked units are not counted as progress again, so the pass ends.
+    assert bench.automatic_discovery_pass().progress == 0
+
+
 def test_readiness_progress_never_scans_the_coverage_ledger(workbench):
     """The readiness poll answers with index seeks per source, not a ledger scan."""
     client, bench, matter, _runtime = workbench
@@ -529,6 +550,10 @@ def test_readiness_progress_never_scans_the_coverage_ledger(workbench):
         connection.set_trace_callback(None)
     queries = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
     assert not [sql for sql in statements if "BEGIN IMMEDIATE" in sql.upper()]
+    # Authorization included: the poll executes no write statement at all, so the
+    # deferred transaction never becomes a writer.
+    assert not [sql for sql in statements
+                if sql.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))]
     assert "GROUP BY" not in " ".join(queries).upper()
     for sql in queries:
         plan = " ".join(row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + sql))
@@ -615,9 +640,10 @@ def test_ledger_tracks_only_current_sources_and_stays_outside_the_budget(workben
         discovery.byte_limit = max(4096, used(target.matter_id) + 4096)
         return discovery
     monkeypatch.setattr(bench, "automatic_entity_discovery", tight)
-    # The inventory is always recorded; suggestions stop at the budget.
+    # The inventory is always recorded; suggestions stop at the budget. The seal and
+    # the 30 units newly marked as waiting for space count as scheduling progress.
     result = bench.automatic_discovery_pass()
-    assert result.units == 0 and result.progress == 1
+    assert result.units == 0 and result.progress == 31
     count = "SELECT COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=?"
     assert bench.workspace.connection.execute(count, (matter.matter_id,)).fetchone()[0] == 31
     assert used(matter.matter_id) == before

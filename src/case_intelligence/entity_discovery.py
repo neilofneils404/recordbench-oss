@@ -121,8 +121,9 @@ class EntityDiscovery:
 
         Each source's current version and extracted basis is inventoried once
         (unit ordinals and digests); later steps load only pending ordinals.
-        Returns (units handled, sources sealed); either being non-zero is
-        progress. The repository must authorize the automatic-discovery
+        Returns (units handled, other progress): the second counts sources sealed
+        and units newly marked as waiting for storage space; either being
+        non-zero is progress. The repository must authorize the automatic-discovery
         principal. audit_unit(event) is called inside each unit's transaction,
         so its content-free record commits atomically with the unit. The
         suggestion byte budget is recounted inside each unit's transaction.
@@ -184,9 +185,12 @@ class EntityDiscovery:
                                                               loaded, AutomaticLedger)
                         except DiscoveryUnitTooLarge:
                             # This unit does not fit; it stays pending, marked and queued
-                            # last, while smaller units continue.
+                            # last, while smaller units continue. Marking it is scheduling
+                            # progress (reported with sealing), so the pass moves on to
+                            # later units instead of waiting for the next sweep.
+                            newly = not unit.get('note')
                             repo.auto_discovery_state(unit, 'pending', repo.AUTO_CAPACITY_NOTE)
-                            return None
+                            return 'waiting' if newly else None
                         except WorkspaceProblem:
                             # Nothing can be admitted: saved work stays and every queued
                             # unit is marked, so progress reports the pause.
@@ -223,7 +227,9 @@ class EntityDiscovery:
                     del text
                     if outcome is False:
                         return handled, sealed
-                    if outcome:
+                    if outcome == 'waiting':
+                        sealed += 1
+                    elif outcome:
                         handled += 1
                 # Units the reader did not produce are recorded as unavailable.
                 for ordinal in sorted(wanted):
@@ -232,7 +238,9 @@ class EntityDiscovery:
                     outcome = process(ordinal, None)
                     if outcome is False:
                         return handled, sealed
-                    if outcome:
+                    if outcome == 'waiting':
+                        sealed += 1
+                    elif outcome:
                         handled += 1
         return handled, sealed
 
