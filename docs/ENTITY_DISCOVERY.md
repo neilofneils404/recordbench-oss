@@ -77,7 +77,8 @@ and remaining units stay pending. Each matter receives its own per-pass unit
 allowance, so one large matter cannot delay discovery in the others. On shutdown the
 worker finishes its current unit, or abandons a partly read source without sealing it
 (the source readers poll for the stop on every bounded read, including a transient index
-build), and stops before the application closes the source stores it reads. Every
+build, and immediately before and after decoding one size-bounded unit record), and stops
+before the application closes the source stores it reads. Every
 committed unit records a content-free `entity.discovery_unit` audit event attributed
 to the system principal, in the same transaction as the unit: if the audit cannot be
 written, the unit's suggestions roll back and it stays pending. A matter whose

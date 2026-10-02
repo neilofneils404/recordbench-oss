@@ -26,18 +26,25 @@ class EntityUnitReader:
 
     @staticmethod
     def _read_span(raw, length, read_check):
-        # Bounded reads so a caller polling read_check can abandon a large record.
+        """Read one record into a single buffer in bounded reads.
+
+        read_check is polled before every 64 KiB read, so a caller can abandon a
+        large record; the buffer is filled in place, so no second copy is held.
+        """
         if read_check is None:
             return raw.read(length)
-        chunks, remaining = [], length
-        while remaining > 0:
-            read_check(length - remaining)
-            chunk = raw.read(min(READ_BYTES, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b''.join(chunks)
+        buffer = bytearray(length)
+        view, filled = memoryview(buffer), 0
+        try:
+            while filled < length:
+                read_check(filled)
+                count = raw.readinto(view[filled:filled + READ_BYTES])
+                if not count:
+                    raise ValueError('Derived searchable unit ended early.')
+                filled += count
+        finally:
+            view.release()
+        return buffer
 
     def iter_selected(self, store, document, ordinals, *, read_check=None):
         requested = sorted(set(ordinals))
@@ -101,7 +108,15 @@ class EntityUnitReader:
                 if end - start > 4 * MAX_UNIT_RECORD_CHARS:
                     raise ValueError('Derived searchable unit exceeds its serialized bound.')
                 raw.seek(start)
-                record = json.loads(self._read_span(raw, end - start, read_check))
+                serialized = self._read_span(raw, end - start, read_check)
+                if read_check is not None:
+                    # The one decode is bounded by the span limit above; poll on
+                    # either side of it, as the streaming unit reader does.
+                    read_check(len(serialized))
+                record = json.loads(serialized)
+                del serialized
+                if read_check is not None:
+                    read_check(0)
                 if self.identity(os.fstat(raw.fileno())) != identity:
                     raise RuntimeError('Derived searchable text changed during discovery.')
                 yield ordinal, PilotUnit(**record)

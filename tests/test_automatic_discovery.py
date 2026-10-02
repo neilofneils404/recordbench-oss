@@ -573,9 +573,32 @@ def test_source_readers_observe_a_stop_mid_read(workbench):
     with pytest.raises(DiscoveryStopped):
         list(reader.iter_selected(store, document, [30], read_check=stop_on_record_read))
     assert polls == [0]
+    # A stop that arrives after the last read is observed before the record is decoded.
+    calls = []
+    def stop_before_decode(chars):
+        calls.append(chars)
+        if len(calls) == 2:
+            raise DiscoveryStopped()
+    with pytest.raises(DiscoveryStopped):
+        list(reader.iter_selected(store, document, [30], read_check=stop_before_decode))
+    assert calls[0] == 0 and calls[1] > 0  # One read of a small record, then the pre-decode poll.
     # Once the stop clears, the next pass discovers everything.
     stop.clear()
     assert bench.run_automatic_discovery_once() == 30
+
+
+def test_selected_records_are_read_into_one_buffer_with_a_poll_per_read():
+    import io
+    import json
+    from case_intelligence.entity_unit_reader import READ_BYTES, EntityUnitReader
+    record = json.dumps({"text": "Synthetic " * 30000}).encode()
+    assert len(record) > 4 * READ_BYTES
+    polls = []
+    serialized = EntityUnitReader._read_span(io.BytesIO(record), len(record), polls.append)
+    assert isinstance(serialized, bytearray) and bytes(serialized) == record
+    assert polls == [index * READ_BYTES for index in range(-(-len(record) // READ_BYTES))]
+    with pytest.raises(ValueError):
+        EntityUnitReader._read_span(io.BytesIO(record[:-1]), len(record), lambda chars: None)
 
 
 def test_closing_waits_for_the_discovery_worker(monkeypatch):
