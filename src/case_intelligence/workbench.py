@@ -3154,7 +3154,7 @@ class CaseIntelligenceWorkbench:
         )
 
     def entity_service(self, matter, *, automatic=False):
-        from .entity_service import EntityService, current_reference_indexes
+        from .entity_service import EntityService, current_reference_indexes, current_source_indexes
         return EntityService(
             self.workspace.entity_repository(automatic=automatic),
             source_guard=self.source_store(matter).mutation_guard,
@@ -3167,6 +3167,7 @@ class CaseIntelligenceWorkbench:
                 support_tokens=self._support_tokens,
                 read_units=lambda document, ordinals: self.entity_unit_reader.iter_selected(
                     self.source_store(matter), document, ordinals)),
+            current_sources=lambda references: current_source_indexes(references, self.source_store(matter).get),
         )
 
     def assertion_service(self, matter):

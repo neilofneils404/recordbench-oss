@@ -261,8 +261,8 @@ def test_an_unavailable_original_is_not_offered_as_a_link(workbench):  # noqa: F
     rows, _ = service.list(matter.matter_id, WEB_ACTOR)
     amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
     connection = bench.workspace.connection
-    with bench.workspace._lock, connection:  # The retained reference no longer matches its current original.
-        connection.execute("UPDATE workbench_entity_mention SET location='Superseded location' WHERE entity_id=?",
+    with bench.workspace._lock, connection:  # The retained reference cites an earlier source version.
+        connection.execute("UPDATE workbench_entity_mention SET source_version_id='superseded-version' WHERE entity_id=?",
                            (amber["entity_id"],))
     page = client.get(f"/matters/{matter.slug}/entities").text
     row = re.search(r'<li class="suggestion" data-suggestion>(?:(?!</li>).)*?>Amber Cooperative</a>.*?</li>', page, re.S)[0]
@@ -307,43 +307,61 @@ def test_a_damaged_original_is_reported_unavailable_not_as_an_error(workbench, d
         serialized = json.loads(path.read_text(encoding="utf-8"))
         serialized["units"] = [{"unexpected": 1} for _unit in serialized["units"]]
         path.write_text(json.dumps(serialized), encoding="utf-8")  # Valid JSON, wrong record shape.
+    # The inbox checks catalog metadata only; the identity page validates the
+    # exact passage text and reports the damage.
     page = client.get(f"/matters/{matter.slug}/entities")
-    assert page.status_code == 200
-    assert "original passage changed or is unavailable" in _row(page.text, "Amber Cooperative")
+    assert page.status_code == 200 and "Amber Cooperative" in _row(page.text, "Amber Cooperative")
     detail = client.get(f"/matters/{matter.slug}/entities/{amber['entity_id']}")
     assert detail.status_code == 200 and "Original passage changed or is unavailable" in detail.text
 
 
-def test_inbox_validation_reads_only_cited_units_outside_the_transaction(workbench, monkeypatch):  # noqa: F811
+def test_an_inbox_page_citing_many_sources_reads_no_derived_text(workbench, monkeypatch):  # noqa: F811
+    from case_intelligence.entity_unit_reader import EntityUnitReader
     from case_intelligence.pilot_uploads import PilotDocument
+    client, bench, matter, _runtime = workbench
+    for number in range(12):  # More sources than any source-index cache holds.
+        upload(client, matter.slug, f"Synthetic note {number}.txt",
+               f"Casey Person{number} met Alex Example about badge QX-{number:02}.".encode())
+    bench.run_automatic_discovery_once()
+    service = bench.entity_service(matter)
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("derived text read while listing the inbox")
+    monkeypatch.setattr(PilotDocument, "parsed_units", refuse)
+    monkeypatch.setattr(EntityUnitReader, "iter_selected", refuse)
+    service.validate_references = refuse
+    items, total, _kinds = service.inbox(matter.matter_id, WEB_ACTOR)
+    sources = {item["first_mention"]["document_id"] for item in items}
+    assert total >= 13 and len(sources) == 12
+    assert all(item["first_mention"]["available"] for item in items)
+    page = client.get(f"/matters/{matter.slug}/entities")
+    assert page.status_code == 200 and page.text.count('class="suggestion-source" href=') == len(items)
+
+
+def test_a_source_that_is_not_ready_is_not_offered_as_a_link(workbench):  # noqa: F811
     client, bench, matter, _runtime = workbench
     upload(client, matter.slug, "Synthetic memo.txt", FIRST)
     bench.run_automatic_discovery_once()
-    service = bench.entity_service(matter)
-    def whole_file(self):
-        raise AssertionError("whole derived file parsed")
-    monkeypatch.setattr(PilotDocument, "parsed_units", whole_file)
-    from contextlib import contextmanager
-    depth = [0]
-    transaction = service.repository.transaction
-    @contextmanager
-    def tracked(*args, **kwargs):
-        with transaction(*args, **kwargs) as repo:
-            depth[0] += 1
-            try:
-                yield repo
-            finally:
-                depth[0] -= 1
-    service.repository.transaction = tracked
-    validate = service.validate_references
-    seen = []
-    def observed(references):
-        seen.append(depth[0] > 0)
-        return validate(references)
-    service.validate_references = observed
-    items, _total, _kinds = service.inbox(matter.matter_id, WEB_ACTOR)
-    assert seen == [False]
-    assert items and all(item["first_mention"]["available"] for item in items)
+    rows, _ = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)
+    amber = next(row for row in rows if row["display_name"] == "Amber Cooperative")
+    mention = bench.entity_service(matter).detail(matter.matter_id, WEB_ACTOR, amber["entity_id"])[1][0]
+    bench.source_store(matter).mark_failed(mention["document_id"], "Synthetic failure")
+    page = client.get(f"/matters/{matter.slug}/entities").text
+    assert "original passage changed or is unavailable" in _row(page, "Amber Cooperative")
+    assert 'class="suggestion-source" href=' not in page
+
+
+def test_searching_keeps_the_inbox_position(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    page = client.get(f"/matters/{matter.slug}/entities", params={"kind": "people"}).text
+    search = re.search(r'<form method="get" class="notebook-filter-form">.*?</form>', page, re.S)[0]
+    assert '<input type="hidden" name="kind" value="people">' in search
+    results = client.get(f"/matters/{matter.slug}/entities", params={"q": "Alex", "kind": "people"}).text
+    link = re.search(r'<a href="([^"]+)">Alex Example</a>', results)[1]
+    assert "kind=people" in html.unescape(link)
+    back = client.get(html.unescape(link)).text
+    assert "kind=people" in re.search(r'<a href="([^"]+)">All entities</a>', back)[1]
 
 
 def test_selected_support_survives_inbox_navigation_and_decisions(workbench):  # noqa: F811

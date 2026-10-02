@@ -417,10 +417,10 @@ def test_attention_is_shown_while_other_units_are_still_pending(workbench, monke
     upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
     assert bench.run_automatic_discovery_once(unit_limit=25) == 25
     # One processed unit later failed; five units are still pending.
-    bench.workspace.connection.execute(
-        "UPDATE workbench_entity_auto_discovery_unit SET state='failed' WHERE matter_id=? AND unit_ordinal=1",
-        (matter.matter_id,))
-    bench.workspace.connection.commit()
+    with bench.workspace._lock, bench.workspace.connection as connection:  # Shared with background readers.
+        connection.execute(
+            "UPDATE workbench_entity_auto_discovery_unit SET state='failed' WHERE matter_id=? AND unit_ordinal=1",
+            (matter.matter_id,))
     progress = bench.automatic_discovery_progress(matter)
     assert progress["sources_pending"] == 1 and progress["sources_attention"] == 1
     status = client.get(f"/matters/{matter.slug}/processing-status").json()

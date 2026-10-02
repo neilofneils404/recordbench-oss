@@ -141,10 +141,13 @@ from notes keep their own provenance and are not listed there. Rows group
 suggestions with the same name and type, most-mentioned first, with the number of
 passages and distinct sources across every passage attached to them, and show the
 earliest passage with the name highlighted and a link to the original; when that
-original changed, is unavailable or cannot be read, the row says the excerpt is
-retained history instead of linking. That check reads only the cited units through
-the bounded unit index, after the repository transaction has ended. Filter by People, Organizations, Places, Things & IDs or Dates; while
-searching, the list is hidden and guided discovery stays collapsed. Counting is
+source was removed, is no longer ready or now has a different version, the row says
+the excerpt is retained history instead of linking. The list checks only the source
+catalog, never derived text, so a page citing many large sources stays quick; the
+identity page and opening the passage still validate the exact cited text and say
+when it changed or cannot be read. Filter by People, Organizations, Places, Things &
+IDs or Dates; searching hides the list, keeps the selected filter and page for the
+way back, and leaves guided discovery collapsed. Counting is
 one pass over the matter's passages, so the list stays quick at the discovery limit.
 **Confirm** or **Not relevant** records that status on every suggestion in the
 row, up to 200 at a time (a larger row says so, and the rest stay listed), in one

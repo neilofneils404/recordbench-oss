@@ -11,12 +11,14 @@ REFERENCE_FIELDS = ('document_id', 'source_version_id', 'source_name', 'location
 
 
 class EntityService:
-    def __init__(self, repository, *, source_guard, resolve_support, load_note, load_references, validate_references):
+    def __init__(self, repository, *, source_guard, resolve_support, load_note, load_references, validate_references,
+                 current_sources=None):
         self.repository = repository
         self.source_guard = source_guard
         self.resolve_support = resolve_support
         self.load_note = load_note
         self.load_references = load_references
+        self.current_sources = current_sources
         self.validate_references = validate_references
 
     @staticmethod
@@ -108,10 +110,13 @@ class EntityService:
         with self.source_guard():
             with self.repository.transaction(matter_id, actor_id) as repo:
                 items, total, kinds = repo.suggestion_inbox(matter_id, kind, page, rows=rows)
-            # Like the detail page, link only passages whose original is still
-            # available; the source reads happen after the repository transaction.
+            # Link only passages whose source is still present, ready and at the
+            # same version. This reads catalog metadata only, never derived text,
+            # so a page citing many large sources stays cheap; the identity page
+            # and opening the passage itself still validate the exact text.
             mentions = [item['first_mention'] for item in items if item['first_mention']]
-            available = self.validate_references(mentions)
+            check = self.current_sources or self.validate_references
+            available = check(mentions)
             for index, mention in enumerate(mentions):
                 mention['available'] = index in available
             return items, total, kinds
@@ -228,6 +233,22 @@ class EntityService:
                 added_mentions=[dict(row, entity_id=source['entity_id']) for row in moved])
             repo.record_history(matter_id, actor_id, target['entity_id'], 'reconciliation undone', removed_mentions=moved)
             repo.undo_reconciliation(matter_id, operation_id)
+
+
+def current_source_indexes(references, load_document):
+    """Positions whose source is present, ready and still at the cited version.
+
+    Catalog metadata only: no derived text is read.
+    """
+    available = set()
+    for index, reference in enumerate(references):
+        try:
+            document = load_document(reference['document_id'])
+        except (KeyError, OSError, RuntimeError):
+            continue
+        if document.state == 'ready' and document.version_id == reference['source_version_id']:
+            available.add(index)
+    return frozenset(available)
 
 
 def current_reference_indexes(references, *, load_document, candidate_for, support_tokens, read_units=None):
