@@ -811,3 +811,77 @@ def test_live_evidence_paths_use_current_permission(monkeypatch, permission, pat
     monkeypatch.setattr(GATE, "review_evidence", lambda *args: ([], []))
     GATE.main()
     assert statuses[-1] == ("success" if permission == "write" else "pending")
+
+
+@pytest.mark.parametrize("stage,exception,expected", [
+    ("review-evidence-api", GATE.urllib.error.HTTPError("synthetic-sensitive-url", 403, "synthetic-sensitive-message", {}, None), "HTTPError"),
+    ("thread-normalization", KeyError("synthetic-sensitive-field"), "KeyError"),
+    ("review-normalization", RuntimeError("synthetic-sensitive-body"), "RuntimeError"),
+    ("policy-evaluation", ValueError("synthetic-sensitive-time"), "ValueError"),
+])
+def test_failure_diagnostics_are_bounded_and_do_not_emit_payload(monkeypatch, capsys, stage, exception, expected):
+    def fail():
+        GATE.diagnostic_stage(stage)
+        raise exception
+    monkeypatch.setattr(GATE, "main", fail)
+    assert GATE.run() == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == ('Hosted review gate could not complete; no passing status issued. '
+                          + GATE.json.dumps({"stage": stage, "exception_class": expected}) + '\n')
+    assert "synthetic-sensitive" not in output.err
+
+
+def test_unknown_exception_name_and_stage_cannot_leak(monkeypatch, capsys):
+    error_type = type("synthetic_sensitive_class", (RuntimeError,), {})
+    def fail():
+        GATE.diagnostic_stage("synthetic-sensitive-stage")
+        raise error_type("synthetic-sensitive-message")
+    monkeypatch.setattr(GATE, "main", fail)
+    assert GATE.run() == 1
+    error = capsys.readouterr().err
+    assert '"stage": "startup"' in error and '"exception_class": "Exception"' in error
+    assert "synthetic" not in error
+
+
+@pytest.mark.parametrize("surface,expected", [("threads", "thread-normalization"), ("reviews", "review-normalization")])
+def test_evidence_normalization_failure_identifies_surface(monkeypatch, capsys, surface, expected):
+    malformed = graphql_finding()
+    del malformed["lastEditedAt"]
+    def nodes(query, variables, path, initial=None):
+        if path[-1] == "reviewThreads":
+            return [{"id": "synthetic-thread", "isResolved": True, "comments": {}}] if surface == "threads" else []
+        return [malformed]
+    monkeypatch.setattr(GATE, "graphql_nodes", nodes)
+    monkeypatch.setattr(GATE, "main", lambda: GATE.review_evidence("fixture/project", 1))
+    assert GATE.run() == 1
+    assert '"stage": "' + expected + '"' in capsys.readouterr().err
+
+
+def test_graphql_api_and_response_failures_are_distinct(monkeypatch, capsys):
+    def main():
+        GATE.graphql_nodes("synthetic-query", {}, ("repository",))
+    monkeypatch.setattr(GATE, "main", main)
+    monkeypatch.setattr(GATE, "request", lambda *args: {"errors": [{"message": "synthetic-sensitive-body"}]})
+    assert GATE.run() == 1
+    error = capsys.readouterr().err
+    assert '"stage": "review-evidence-page"' in error
+    assert '"exception_class": "RuntimeError"' in error
+    assert "synthetic-sensitive" not in error
+    def fail(*args):
+        raise GATE.urllib.error.URLError("synthetic-sensitive-network")
+    monkeypatch.setattr(GATE, "request", fail)
+    assert GATE.run() == 1
+    error = capsys.readouterr().err
+    assert '"stage": "review-evidence-api"' in error and '"exception_class": "URLError"' in error
+    assert "synthetic-sensitive" not in error
+
+
+def test_normal_nonpassing_policy_is_not_an_execution_exception(monkeypatch, capsys):
+    for comments, threads, expected in [([], [], "pending"), ([summary()], [{"isResolved": False}], "failure")]:
+        def main():
+            assert GATE.evaluate(HEAD, comments, threads)[0] == expected
+            return 0
+        monkeypatch.setattr(GATE, "main", main)
+        assert GATE.run() == 0
+        assert capsys.readouterr().err == ""

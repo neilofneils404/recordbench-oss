@@ -292,6 +292,22 @@ acceptance leaves the gate pending. Current access is verified through GitHub,
 not the comment's displayed association. Security credit availability does not
 add a separate acceptance or exception step.
 
+### Diagnosing gate execution failures
+
+A normal missing-review or missing-acceptance result leaves the gate pending;
+unresolved findings produce a failed policy status. These are distinct from an
+execution exception, which exits nonzero and leaves no passing status. Its log
+reports only a fixed `stage` and an allowlisted `exception_class`. API transport,
+GraphQL response validation, thread/review normalization, permission checks and
+policy evaluation have separate stages. Unknown exception types are reported as
+`Exception`; no exception message, response body, request URL, token or traceback
+is printed. Preserve fail-closed behavior while investigating; never substitute
+manual status publication or a label for successful evaluation.
+
+These diagnostics do not establish or repair the cause of an earlier failure
+whose exception was suppressed. Reproduce that failure in trusted default-branch
+execution to obtain the bounded diagnostic before choosing a repair.
+
 ### Historical security-quota policy
 
 The former security-quota exception landed in
