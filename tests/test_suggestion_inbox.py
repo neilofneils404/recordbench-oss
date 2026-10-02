@@ -569,3 +569,34 @@ def test_guided_discovery_keeps_the_inbox_position(workbench):  # noqa: F811
         csrf_token=csrf, action="discover", run_id=run.run_id, kind="people", inbox_page=2))
     assert done.status_code == 303 and "kind=people" in done.headers["location"]
     assert "inbox_page=2" in done.headers["location"]
+
+
+def test_an_occurrence_past_the_retained_excerpt_shows_what_was_found(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    filler = "the crate sat quietly beside the loading dock while rain fell on the yard " * 6
+    lines = [filler] * 19 + ["Late in the log, Riley Sample signed the receiving sheet."]
+    assert len("\n".join(lines[:19])) > 6000
+    upload(client, matter.slug, "Synthetic long log.txt", "\n".join(lines).encode())
+    bench.run_automatic_discovery_once()
+    items, _total, _kinds = bench.entity_service(matter).inbox(matter.matter_id, WEB_ACTOR)
+    riley = next(item for item in items if item["display_name"] == "Riley Sample")["first_mention"]
+    assert riley["start_offset"] > len(riley["excerpt"])
+    assert riley["snippet"] == ("…", "Riley Sample", "…")
+    row = _row(client.get(f"/matters/{matter.slug}/entities").text, "Riley Sample")
+    assert "<mark>Riley Sample</mark>" in row and "the crate sat" not in row
+    assert "Found later in this passage" in row
+
+
+@pytest.mark.parametrize("revision", ["\u00b2", "9" * 5000, "-1", ""],
+                         ids=["superscript", "over-conversion-limit", "negative", "empty"])
+def test_a_malformed_batch_revision_is_refused_not_an_error(workbench, revision):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    rows, _ = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)
+    alex = next(row for row in rows if row["display_name"] == "Alex Example")
+    response = client.post(f"/matters/{matter.slug}/entities/actions", data=dict(
+        action="decide", status="confirmed", targets=f"{alex['entity_id']}:{revision}"))
+    assert response.status_code == 409
+    after = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)[0]
+    assert next(row for row in after if row["entity_id"] == alex["entity_id"])["status"] == "suggested"

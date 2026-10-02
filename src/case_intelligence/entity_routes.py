@@ -180,7 +180,8 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                 pairs = []
                 for part in (targets.split(',') if targets else [f'{entity_id}:{expected_revision}']):
                     identifier, _, revision = part.partition(':')
-                    if not identifier or not revision.isdigit():
+                    # ASCII digits only, bounded, so int() cannot fail (e.g. '²' or a huge value).
+                    if not identifier or not (revision.isascii() and revision.isdigit() and len(revision) <= 18):
                         raise WorkspaceProblem('Choose between 1 and 200 distinct suggestions.')
                     pairs.append((identifier, int(revision)))
                 service.decide(matter.matter_id, actor, pairs, status=status)

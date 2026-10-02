@@ -203,9 +203,13 @@ class EntityRepository:
                 # Highlight the recorded occurrence when it is still exact, else what
                 # was extracted (a reviewer may have renamed it), else the name.
                 start, end, surface = mention.get('start_offset'), mention.get('end_offset'), mention.get('surface_text')
-                if (surface and isinstance(start, int) and isinstance(end, int)
-                        and 0 <= start < end <= len(mention['excerpt'])
-                        and mention['excerpt'][start:end] == surface):
+                recorded = surface and isinstance(start, int) and isinstance(end, int) and 0 <= start < end
+                if recorded and end > len(mention['excerpt']):
+                    # The occurrence lies past the retained excerpt prefix: show what
+                    # was found rather than unrelated opening text or an earlier match.
+                    mention['snippet'] = ('…', ' '.join(surface.split()), '…')
+                    mention['beyond_excerpt'] = True
+                elif recorded and mention['excerpt'][start:end] == surface:
                     mention['snippet'] = self.snippet_at(mention['excerpt'], start, end)
                 else:
                     for name in (surface or '', group['display_name']):

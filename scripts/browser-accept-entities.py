@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import uvicorn
 from selenium import webdriver
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -92,6 +92,12 @@ def main():
                 wait.until(detached(element))
                 wait.until(lambda d: d.execute_script('return document.readyState') == 'complete')
             def body():
+                # The page may be replaced between locating and reading the body.
+                for _attempt in range(5):
+                    try:
+                        return driver.find_element(By.TAG_NAME, 'body').text
+                    except StaleElementReferenceException:
+                        continue
                 return driver.find_element(By.TAG_NAME, 'body').text
             go('/matters/new')
             fill('#matter-name', 'Generated entity review')

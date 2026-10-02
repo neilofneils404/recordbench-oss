@@ -147,7 +147,9 @@ catalog, never derived text, so a page citing many large sources stays quick; th
 identity page and opening the passage still validate the exact cited text and say
 when it changed or cannot be read; a source whose derived text is damaged makes
 only its own passages unavailable. The name opens the identity that owns the
-passage shown, even after a reviewer moved passages between same-named suggestions. Filter by People, Organizations, Places, Things &
+passage shown, even after a reviewer moved passages between same-named suggestions.
+When the occurrence lies beyond the retained excerpt of a long passage, the row shows
+the text that was found and says to open the original for its context. Filter by People, Organizations, Places, Things &
 IDs or Dates; searching hides the list, keeps the selected filter and page for the
 way back, and leaves guided discovery collapsed. Guided discovery runs opened from
 the inbox also keep the filter and page through their batches and return link. Counting is
