@@ -16,10 +16,12 @@ class EntityEditConflict(WorkspaceProblem):
 
 
 class EntityRepository:
-    def __init__(self, *, connection, lock, authorize, now):
+    def __init__(self, *, connection, lock, authorize, now, read_authorize=None):
         self.connection = connection
         self.lock = lock
         self.authorize = authorize
+        # Authorization for reading(); it must execute only SELECT statements.
+        self.read_authorize = read_authorize or authorize
         self.now = now
 
     @contextmanager
@@ -34,7 +36,7 @@ class EntityRepository:
         """A deferred read transaction: no writer reservation is taken."""
         with self.lock, self.connection:
             self.connection.execute('BEGIN')
-            self.authorize(matter_id, actor_id)
+            self.read_authorize(matter_id, actor_id)
             yield self
 
     @staticmethod
@@ -274,14 +276,17 @@ class EntityRepository:
             "(NOT EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
             " AND a.extractor_version=? AND a.unit_ordinal=0) OR EXISTS (SELECT 1 FROM "
             "workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
-            " AND a.extractor_version=? AND a.state='pending' AND a.note='')) DESC, c.document_id LIMIT ?",
-            (version, matter_id, version, version, version, version, limit))]
+            " AND a.extractor_version=? AND a.state='pending' AND a.note='')) DESC, "
+            # Sources whose waiting work was retried most recently rotate to the back.
+            "COALESCE((SELECT a.wait_round FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
+            " AND a.extractor_version=? AND a.unit_ordinal=0), 0), c.document_id LIMIT ?",
+            (version, matter_id, version, version, version, version, version, limit))]
 
     def auto_discovery_pending(self, matter_id, document, version, limit):
         return [dict(row) for row in self.connection.execute(
             'SELECT * FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND document_id=? '
             "AND source_version_id=? AND content_basis_digest=? AND extractor_version=? AND unit_ordinal>0 "
-            "AND state='pending' ORDER BY note<>'', unit_ordinal LIMIT ?",
+            "AND state='pending' ORDER BY note<>'', wait_round, unit_ordinal LIMIT ?",
             (matter_id, document['document_id'], document['source_version_id'],
              document['content_basis_digest'], version, limit))]
 
@@ -330,6 +335,21 @@ class EntityRepository:
             "AND source_state='ready' AND version_id=? AND content_basis_digest=?",
             (matter_id, unit['document_id'], unit['source_version_id'],
              unit['content_basis_digest'])).fetchone() is not None
+
+    def wait_auto_discovery(self, unit):
+        """Mark a unit as waiting for space and rotate it behind other waiting units."""
+        self.connection.execute(
+            'UPDATE workbench_entity_auto_discovery_unit SET note=?,wait_round=wait_round+1 WHERE matter_id=? '
+            'AND document_id=? AND source_version_id=? AND content_basis_digest=? AND unit_ordinal=? '
+            'AND extractor_version=?', (self.AUTO_CAPACITY_NOTE, *(unit[key] for key in self._AUTO_KEY)))
+
+    def rotate_auto_discovery_source(self, matter_id, document, version):
+        """Move a source whose step admitted nothing behind other waiting sources."""
+        self.connection.execute(
+            'UPDATE workbench_entity_auto_discovery_unit SET wait_round=wait_round+1 WHERE matter_id=? '
+            'AND document_id=? AND source_version_id=? AND content_basis_digest=? AND extractor_version=? '
+            'AND unit_ordinal=0', (matter_id, document['document_id'], document['source_version_id'],
+                                   document['content_basis_digest'], version))
 
     def block_auto_discovery(self, matter_id, version):
         """Mark every queued unit of the matter as waiting for storage space."""

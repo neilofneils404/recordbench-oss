@@ -66,12 +66,18 @@ and is never reported as active progress. A unit whose reservation does not fit 
 marked as waiting and queued last, while smaller units continue (newly marking a unit
 counts as scheduling progress, so a pass keeps going past a run of waiting units
 instead of stopping until the next sweep); when not even the fixed minimum fits, every
-queued unit is marked at once. Home reports the pause only
+queued unit is marked at once. Each sweep tries waiting units again, oldest attempt
+first: a unit that still does not fit, and a source none of whose units fit, rotate
+behind the others, so space freed partway is used by whichever units now fit without
+anyone pressing **Check again**. Repeated attempts count toward the matter's per-pass
+allowance but are not progress, so units that never fit cannot keep the worker busy.
+Home reports the pause only
 when everything left is waiting for space, and a unit's mark clears when it is
 processed. The readiness poll reads this with a read transaction and per-source
 index lookups (two partial indexes split open from waiting units), never by counting
-a matter's ledger rows; authorizing the system principal executes only SELECTs once
-the principal exists, so the poll never becomes a writer. Deleting suggestions that are not needed frees space (the
+a matter's ledger rows; the poll only checks the system principal and never creates
+it (before first use there is simply no progress to report), so it executes only
+SELECTs and never becomes a writer. Deleting suggestions that are not needed frees space (the
 suggestion, its passages and its history are removed permanently; occurrence
 receipts remain, so the same passage is not suggested again); dismissing does not.
 Receipts themselves count toward the limit, so in a matter with very many distinct

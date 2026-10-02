@@ -449,7 +449,7 @@ def test_selected_units_are_processed_as_they_are_read(workbench, monkeypatch):
         return discovery
     monkeypatch.setattr(bench, "automatic_entity_discovery", recording)
     discovery = bench.automatic_entity_discovery(matter)
-    handled, _sealed = discovery.automatic_step(
+    handled, _sealed, _retried = discovery.automatic_step(
         matter.matter_id, unit_limit=3, audit_unit=lambda event: events.append(("processed", event["unit_ordinal"])))
     assert handled == 3
     # Never more than one unit's text is held before it is processed.
@@ -532,8 +532,54 @@ def test_units_waiting_for_space_do_not_hold_up_smaller_units(workbench, monkeyp
         "SELECT COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND state='pending' "
         "AND note<>''", (matter.matter_id,)).fetchone()[0]
     assert waiting == 50
-    # Already-marked units are not counted as progress again, so the pass ends.
+    # Repeated attempts at already-marked units are not progress, so the
+    # worker waits for the next sweep instead of retrying at once.
     assert bench.automatic_discovery_pass().progress == 0
+
+
+def test_partly_freed_space_reaches_later_units_without_a_retry(workbench, monkeypatch):
+    from case_intelligence.entity_discovery import DISCOVERY_BYTE_LIMIT, DiscoveryUnitTooLarge, EntityDiscovery
+    from case_intelligence.entity_repository import EntityRepository
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(60, "Alex"))
+    measured = EntityRepository.discovery_storage_bytes
+    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes",
+                        lambda self, matter_id: DISCOVERY_BYTE_LIMIT)
+    assert bench.run_automatic_discovery_once() == 0
+    assert bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)["budget_reached"]
+    # Some space is freed: the first 25 queued units still do not fit, later ones do.
+    monkeypatch.setattr(EntityRepository, "discovery_storage_bytes", measured)
+    original = EntityDiscovery._process_unit
+    def first_25_too_large(self, repo, matter_id, actor_id, unit, loaded, ledger):
+        if unit["unit_ordinal"] <= 25:
+            raise DiscoveryUnitTooLarge("synthetic reservation does not fit")
+        return original(self, repo, matter_id, actor_id, unit, loaded, ledger)
+    monkeypatch.setattr(EntityDiscovery, "_process_unit", first_25_too_large)
+    # Units that still do not fit rotate behind the others, so an ordinary pass
+    # reaches every unit that fits without anyone pressing Check again.
+    assert bench.run_automatic_discovery_once() == 35
+    rows = dict(bench.workspace.connection.execute(
+        "SELECT state, COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=? "
+        "AND unit_ordinal>0 GROUP BY state", (matter.matter_id,)).fetchall())
+    assert rows == {"pending": 25, "processed": 35}
+
+
+def test_a_status_poll_never_creates_the_system_principal(workbench):
+    client, bench, matter, _runtime = workbench
+    connection = bench.workspace.connection
+    principal = "SELECT COUNT(*) FROM workbench_principal WHERE principal_id=?"
+    assert connection.execute(principal, (AUTOMATIC_DISCOVERY_PRINCIPAL,)).fetchone()[0] == 0
+    statements = []
+    connection.set_trace_callback(statements.append)
+    try:
+        progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
+        status = client.get(f"/matters/{matter.slug}/processing-status")
+    finally:
+        connection.set_trace_callback(None)
+    assert status.status_code == 200 and progress["sources_complete"] == 0
+    assert not [sql for sql in statements if "workbench_principal" in sql
+                and sql.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))]
+    assert connection.execute(principal, (AUTOMATIC_DISCOVERY_PRINCIPAL,)).fetchone()[0] == 0
 
 
 def test_readiness_progress_never_scans_the_coverage_ledger(workbench):
@@ -702,7 +748,7 @@ def test_a_new_extractor_version_replaces_the_old_inventory(workbench):
     bench.run_automatic_discovery_once()
     discovery = bench.automatic_entity_discovery(matter)
     discovery.extractor.version = "synthetic-extractor-v2"
-    assert discovery.automatic_step(matter.matter_id) == (1, 1)
+    assert discovery.automatic_step(matter.matter_id) == (1, 1, 0)
     versions = {row[0] for row in bench.workspace.connection.execute(
         "SELECT DISTINCT extractor_version FROM workbench_entity_auto_discovery_unit WHERE matter_id=?",
         (matter.matter_id,))}
@@ -770,7 +816,7 @@ def test_source_readers_observe_a_stop_mid_read(workbench):
     discovery = bench.automatic_entity_discovery(matter, should_stop=stop.is_set)
     # Only the reader polls here: the inventory read is abandoned before its first
     # unit, and the source stays unsealed instead of being marked failed.
-    assert discovery.automatic_step(matter.matter_id) == (0, 0)
+    assert discovery.automatic_step(matter.matter_id) == (0, 0, 0)
     assert ledger_states(bench, matter) == []
     assert bench.workspace.connection.execute(
         "SELECT COUNT(*) FROM workbench_entity_auto_discovery_unit WHERE matter_id=?",

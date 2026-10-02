@@ -3290,7 +3290,7 @@ class CaseIntelligenceWorkbench:
                     if matter_units >= unit_limit or stopping():
                         break
                     try:
-                        handled, sealed = discovery.automatic_step(
+                        handled, sealed, retried = discovery.automatic_step(
                             matter.matter_id, unit_limit=min(25, unit_limit - matter_units),
                             audit_unit=audit_unit, should_stop=stopping)
                     except KeyError:
@@ -3301,9 +3301,13 @@ class CaseIntelligenceWorkbench:
                         except KeyError:
                             break
                         raise
-                    if not handled and not sealed:
+                    if not handled and not sealed and not retried:
                         break
-                    matter_units += handled
+                    # Sealing and waiting-for-space attempts use the allowance too,
+                    # so a matter that cannot admit anything does bounded work.
+                    # Repeated attempts are not progress: the worker then waits
+                    # for the next sweep or wake instead of retrying at once.
+                    matter_units += handled + sealed + retried
                     units += handled
                     progress += handled + sealed
             except Exception:

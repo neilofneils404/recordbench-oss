@@ -121,10 +121,11 @@ class EntityDiscovery:
 
         Each source's current version and extracted basis is inventoried once
         (unit ordinals and digests); later steps load only pending ordinals.
-        Returns (units handled, other progress): the second counts sources sealed
-        and units newly marked as waiting for storage space; either being
-        non-zero is progress. The repository must authorize the automatic-discovery
-        principal. audit_unit(event) is called inside each unit's transaction,
+        Returns (units handled, other progress, retried): the second counts
+        sources sealed and units newly marked as waiting for storage space;
+        either being non-zero is progress. The third counts repeated attempts
+        at units already waiting for space: work done, but not progress. The
+        repository must authorize the automatic-discovery principal. audit_unit(event) is called inside each unit's transaction,
         so its content-free record commits atomically with the unit. The
         suggestion byte budget is recounted inside each unit's transaction.
         should_stop() is checked before each source and for every unit read
@@ -138,13 +139,15 @@ class EntityDiscovery:
         service = self.service
         actor_id = AUTOMATIC_DISCOVERY_PRINCIPAL
         version = self.extractor.version
-        handled = sealed = 0
+        handled = sealed = waits = retried = 0
         stopping = should_stop or (lambda: False)
         with service.repository.transaction(matter_id, actor_id) as repo:
             documents = repo.auto_discovery_documents(matter_id, version, document_limit)
         with service.source_guard():
             for document in documents:
-                if handled >= unit_limit or stopping():
+                # Units left waiting for space count toward the allowance, so a
+                # matter whose queue cannot be admitted does bounded work per step.
+                if handled + waits >= unit_limit or stopping():
                     break
                 document_id = document['document_id']
                 if not document['sealed']:
@@ -154,12 +157,12 @@ class EntityDiscovery:
                                 document_id, document['source_version_id']):
                             if stopping():
                                 # Unsealed: the next run inventories this source again.
-                                return handled, sealed
+                                return handled, sealed, retried
                             if reference['source_version_id'] != document['source_version_id']:
                                 raise KeyError('changed source')
                             inventory.append((ordinal, hashlib.sha256(text.encode()).hexdigest()))
                     except DiscoveryStopped:
-                        return handled, sealed
+                        return handled, sealed, retried
                     except LOAD_ERRORS:
                         inventory, state = [], 'failed'
                         note = 'Searchable text was unavailable for automatic discovery.'
@@ -169,10 +172,12 @@ class EntityDiscovery:
                         if repo.seal_auto_discovery(matter_id, document, version, inventory, state, note):
                             sealed += 1
                 with service.repository.transaction(matter_id, actor_id) as repo:
-                    pending = repo.auto_discovery_pending(matter_id, document, version, unit_limit - handled)
+                    pending = repo.auto_discovery_pending(matter_id, document, version,
+                                                       unit_limit - handled - waits)
                 if not pending:
                     continue
                 wanted = {row['unit_ordinal']: row for row in pending}
+                admitted_before, waits_before = handled, waits
 
                 def process(ordinal, loaded):
                     """Commit one unit; False when the byte budget stops the step."""
@@ -184,13 +189,12 @@ class EntityDiscovery:
                             state, count = self._process_unit(repo, matter_id, actor_id, unit,
                                                               loaded, AutomaticLedger)
                         except DiscoveryUnitTooLarge:
-                            # This unit does not fit; it stays pending, marked and queued
-                            # last, while smaller units continue. Marking it is scheduling
-                            # progress (reported with sealing), so the pass moves on to
-                            # later units instead of waiting for the next sweep.
-                            newly = not unit.get('note')
-                            repo.auto_discovery_state(unit, 'pending', repo.AUTO_CAPACITY_NOTE)
-                            return 'waiting' if newly else None
+                            # This unit does not fit; it stays pending, marked and rotated
+                            # behind other waiting units, while smaller units continue.
+                            # Only the first mark is progress; a repeated attempt is not,
+                            # so units that never fit cannot keep the worker busy.
+                            repo.wait_auto_discovery(unit)
+                            return 'retried' if unit['note'] else 'waiting'
                         except WorkspaceProblem:
                             # Nothing can be admitted: saved work stays and every queued
                             # unit is marked, so progress reports the pause.
@@ -207,7 +211,7 @@ class EntityDiscovery:
                 try:
                     units = iter(self.load_document(document_id, document['source_version_id'], sorted(wanted)))
                 except DiscoveryStopped:
-                    return handled, sealed
+                    return handled, sealed, retried
                 except LOAD_ERRORS:
                     units = iter(())
                 while True:
@@ -216,33 +220,42 @@ class EntityDiscovery:
                     except StopIteration:
                         break
                     except DiscoveryStopped:
-                        return handled, sealed
+                        return handled, sealed, retried
                     except LOAD_ERRORS:
                         break
                     if stopping():
-                        return handled, sealed
+                        return handled, sealed, retried
                     if ordinal not in wanted:
                         continue
                     outcome = process(ordinal, (text, reference))
                     del text
                     if outcome is False:
-                        return handled, sealed
-                    if outcome == 'waiting':
-                        sealed += 1
+                        return handled, sealed, retried
+                    if outcome in ('waiting', 'retried'):
+                        sealed += outcome == 'waiting'
+                        retried += outcome == 'retried'
+                        waits += 1
                     elif outcome:
                         handled += 1
                 # Units the reader did not produce are recorded as unavailable.
                 for ordinal in sorted(wanted):
                     if stopping():
-                        return handled, sealed
+                        return handled, sealed, retried
                     outcome = process(ordinal, None)
                     if outcome is False:
-                        return handled, sealed
-                    if outcome == 'waiting':
-                        sealed += 1
+                        return handled, sealed, retried
+                    if outcome in ('waiting', 'retried'):
+                        sealed += outcome == 'waiting'
+                        retried += outcome == 'retried'
+                        waits += 1
                     elif outcome:
                         handled += 1
-        return handled, sealed
+                if waits > waits_before and handled == admitted_before:
+                    # Nothing from this source fit: move it behind other sources so
+                    # the next step reaches units that may fit in the space freed.
+                    with service.repository.transaction(matter_id, actor_id) as repo:
+                        repo.rotate_auto_discovery_source(matter_id, document, version)
+        return handled, sealed, retried
 
     def prune_automatic(self, matter_id):
         """Drop ledger rows for removed sources; called once per matter per pass."""

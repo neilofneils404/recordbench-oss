@@ -3156,13 +3156,20 @@ class WorkspaceStore:
         from .entity_repository import EntityRepository
         authority = (lambda matter_id, actor_id: self._authorize_export_read(
             matter_id, actor_id, administrator_override=administrator_override)) if export_read else self.membership
+        read_authority = None
         if automatic:
             authority = self._authorize_automatic_discovery
+            read_authority = lambda matter_id, actor_id: self._authorize_automatic_discovery(
+                matter_id, actor_id, create=False)
         return EntityRepository(connection=self.connection, lock=self._lock,
-                                authorize=authority, now=self._now)
+                                authorize=authority, now=self._now, read_authorize=read_authority)
 
-    def _authorize_automatic_discovery(self, matter_id: str, actor_id: str) -> None:
-        """Allow only the inactive system principal, and only on an active matter."""
+    def _authorize_automatic_discovery(self, matter_id: str, actor_id: str, *, create: bool = True) -> None:
+        """Allow only the inactive system principal, and only on an active matter.
+
+        create=False (reads) never writes: before first use there is no principal
+        row, hence no grant to refuse, and the read may proceed.
+        """
 
         if actor_id != AUTOMATIC_DISCOVERY_PRINCIPAL:
             raise KeyError(matter_id)
@@ -3176,6 +3183,8 @@ class WorkspaceStore:
         # inactive internal principal and must hold no matter access.
         lookup = "SELECT provider,provider_subject,active FROM workbench_principal WHERE principal_id=?"
         principal = self.connection.execute(lookup, (AUTOMATIC_DISCOVERY_PRINCIPAL,)).fetchone()
+        if principal is None and not create:
+            return
         if principal is None:
             # Created on first use only, so later authorizations (including the
             # read-only readiness poll) execute nothing but SELECTs. Inactive, so it

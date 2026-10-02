@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS workbench_entity_auto_discovery_unit (
     extractor_version TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('pending', 'processed', 'failed', 'invalidated')),
     note TEXT NOT NULL DEFAULT '',
+    -- Times this unit (or, on the seal row, this source) was retried while still
+    -- waiting for storage space; waiting work rotates to the back of the queue.
+    wait_round INTEGER NOT NULL DEFAULT 0 CHECK (wait_round >= 0),
     PRIMARY KEY (matter_id, document_id, source_version_id, content_basis_digest, unit_ordinal, extractor_version)
 );
 CREATE INDEX IF NOT EXISTS workbench_entity_auto_discovery_state_idx
