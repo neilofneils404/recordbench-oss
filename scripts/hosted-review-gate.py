@@ -52,6 +52,18 @@ DIAGNOSTIC_STAGES = frozenset({
     "policy-evaluation", "freshness-check", "approval-publication", "status-publication",
 })
 _diagnostic_stage = "startup"
+NORMALIZATION_REASONS = frozenset({
+    "body-type", "created-type", "published-type", "edited-type", "submitted-type",
+    "published-before-created", "edited-before-created", "submitted-before-created",
+})
+
+
+class NormalizationError(RuntimeError):
+    """Carry a fixed rejection reason, never the rejected evidence."""
+
+    def __init__(self, reason: str):
+        super().__init__("Finding normalization rejected evidence")
+        self.reason = reason
 
 
 def diagnostic_stage(stage: str) -> None:
@@ -69,10 +81,16 @@ def run() -> int:
         classes = {urllib.error.HTTPError: "HTTPError", urllib.error.URLError: "URLError",
                    TimeoutError: "TimeoutError", KeyError: "KeyError", TypeError: "TypeError",
                    ValueError: "ValueError", RuntimeError: "RuntimeError",
-                   json.JSONDecodeError: "JSONDecodeError", OSError: "OSError"}
+                   json.JSONDecodeError: "JSONDecodeError", OSError: "OSError",
+                   NormalizationError: "NormalizationError"}
         stage = _diagnostic_stage if _diagnostic_stage in DIAGNOSTIC_STAGES else "startup"
+        diagnostic = {"stage": stage, "exception_class": classes.get(type(error), "Exception")}
+        if type(error) is NormalizationError:
+            reason = error.reason
+            diagnostic["reason"] = (reason if type(reason) is str and reason in NORMALIZATION_REASONS
+                                    else "unknown")
         print("Hosted review gate could not complete; no passing status issued. "
-              + json.dumps({"stage": stage, "exception_class": classes.get(type(error), "Exception")}),
+              + json.dumps(diagnostic),
               file=sys.stderr)
         return 1
 
@@ -233,23 +251,26 @@ def finding_comment(node: dict) -> dict:
     """Normalize GraphQL authors explicitly; a similarly named User is not Codex."""
     author = node["author"]
     body, created = node["body"], node["createdAt"]
-    if not isinstance(body, str) or not isinstance(created, str):
-        raise RuntimeError("Incomplete finding evidence")
+    if not isinstance(body, str):
+        raise NormalizationError("body-type")
+    if not isinstance(created, str):
+        raise NormalizationError("created-type")
     # Use content/publication timestamps, not generic updatedAt: reaction or
     # resolution metadata must not silently change reconciliation authority.
     created_time = comment_time({"created_at": created})
     times = [created_time]
-    values = [node["publishedAt"], node["lastEditedAt"]]
+    values = [(node["publishedAt"], "published-type", "published-before-created"),
+              (node["lastEditedAt"], "edited-type", "edited-before-created")]
     if "submittedAt" in node:
-        values.append(node["submittedAt"])
-    for value in values:
+        values.append((node["submittedAt"], "submitted-type", "submitted-before-created"))
+    for value, type_reason, order_reason in values:
         if value is None:
             continue
         if not isinstance(value, str):
-            raise RuntimeError("Incomplete finding evidence")
+            raise NormalizationError(type_reason)
         timestamp = comment_time({"created_at": value})
         if timestamp < created_time:
-            raise RuntimeError("Invalid finding timestamps")
+            raise NormalizationError(order_reason)
         times.append(timestamp)
     official = (author is not None and author["__typename"] == "Bot"
                 and author["login"] in {BOT, BOT.removesuffix("[bot]")})

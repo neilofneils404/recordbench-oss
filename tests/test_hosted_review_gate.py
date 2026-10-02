@@ -885,3 +885,57 @@ def test_normal_nonpassing_policy_is_not_an_execution_exception(monkeypatch, cap
         monkeypatch.setattr(GATE, "main", main)
         assert GATE.run() == 0
         assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("surface", ["threads", "reviews"])
+@pytest.mark.parametrize("field,value,reason", [
+    ("body", None, "body-type"),
+    ("createdAt", None, "created-type"),
+    ("publishedAt", {}, "published-type"),
+    ("lastEditedAt", [], "edited-type"),
+    ("submittedAt", False, "submitted-type"),
+    ("publishedAt", "2026-01-01T12:00:00Z", "published-before-created"),
+    ("lastEditedAt", "2026-01-01T12:00:00Z", "edited-before-created"),
+    ("submittedAt", "2026-01-01T12:00:00Z", "submitted-before-created"),
+])
+def test_normalization_rejection_reasons_remain_closed(monkeypatch, capsys, surface, field, value, reason):
+    node = graphql_finding(body="synthetic-sensitive-body")
+    node[field] = value
+    statuses, events, _ = finding_api(monkeypatch, approval(), "inline")
+    def nodes(query, variables, path, initial=None):
+        if path[-1] == "reviewThreads":
+            return [{"id": "synthetic-sensitive-id", "isResolved": True, "comments": {}}] if surface == "threads" else []
+        return [node]
+    monkeypatch.setattr(GATE, "graphql_nodes", nodes)
+    assert GATE.run() == 1
+    output = capsys.readouterr()
+    stage = "thread-normalization" if surface == "threads" else "review-normalization"
+    assert output.err == ('Hosted review gate could not complete; no passing status issued. '
+                          + GATE.json.dumps({"stage": stage, "exception_class": "NormalizationError",
+                                             "reason": reason}) + '\n')
+    assert "synthetic-sensitive" not in output.err and "2026" not in output.err
+    assert statuses == ["pending"]
+    assert events == ["REQUEST_CHANGES"]
+
+
+@pytest.mark.parametrize("reason", ["synthetic-sensitive-reason", {}, None])
+def test_unknown_normalization_reason_is_not_printed(monkeypatch, capsys, reason):
+    def fail():
+        GATE.diagnostic_stage("thread-normalization")
+        raise GATE.NormalizationError(reason)
+    monkeypatch.setattr(GATE, "main", fail)
+    assert GATE.run() == 1
+    output = capsys.readouterr().err
+    assert '"reason": "unknown"' in output
+    assert "synthetic-sensitive" not in output
+
+
+def test_normalization_subclass_cannot_publish_a_reason(monkeypatch, capsys):
+    error_type = type("synthetic_sensitive_class", (GATE.NormalizationError,), {})
+    def fail():
+        raise error_type("published-before-created")
+    monkeypatch.setattr(GATE, "main", fail)
+    assert GATE.run() == 1
+    output = capsys.readouterr().err
+    assert '"exception_class": "Exception"' in output
+    assert '"reason"' not in output and "synthetic_sensitive" not in output

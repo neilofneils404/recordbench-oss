@@ -307,6 +307,17 @@ policy evaluation have separate stages. Unknown exception types are reported as
 is printed. Preserve fail-closed behavior while investigating; never substitute
 manual status publication or a label for successful evaluation.
 
+Explicit finding-normalization rejections also report an allowlisted `reason`
+with `exception_class: NormalizationError`: `body-type`, `created-type`,
+`published-type`, `edited-type`, `submitted-type`, `published-before-created`,
+`edited-before-created`, or `submitted-before-created`. An unrecognized reason
+is `unknown`. These distinguish the rejected field/type or ordering check without
+printing any field value, content, identifier or timestamp. Missing fields and
+timestamp parse errors retain their bounded exception-class diagnostics.
+The ordering reasons identify the current validation rule; they do not establish
+that GitHub guarantees that order or justify relaxing freshness checks. Establish
+the live rejection before selecting a correctness repair.
+
 These diagnostics do not establish or repair the cause of an earlier failure
 whose exception was suppressed. Reproduce that failure in trusted default-branch
 execution to obtain the bounded diagnostic before choosing a repair.
