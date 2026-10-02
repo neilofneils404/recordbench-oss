@@ -564,6 +564,15 @@ def test_source_readers_observe_a_stop_mid_read(workbench):
         list(reader.iter_selected(store, document, [1], read_check=read_check))
     assert not reader._indexes
     assert len(list(reader.iter_selected(store, document, [1, 30]))) == 2
+    # With the index cached, reading a selected record still polls before every bounded read.
+    assert reader._indexes
+    polls = []
+    def stop_on_record_read(chars):
+        polls.append(chars)
+        raise DiscoveryStopped()
+    with pytest.raises(DiscoveryStopped):
+        list(reader.iter_selected(store, document, [30], read_check=stop_on_record_read))
+    assert polls == [0]
     # Once the stop clears, the next pass discovers everything.
     stop.clear()
     assert bench.run_automatic_discovery_once() == 30
