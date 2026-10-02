@@ -44,6 +44,56 @@ CODE_ONLY_ROW = re.compile(
     r'\| `(?P<reviewed_head>[0-9a-f]{7,40})` \| [^|\r\n]+ \|')
 
 
+# Only these source-controlled labels may reach public diagnostics.
+DIAGNOSTIC_STAGES = frozenset({
+    "startup", "pr-read", "pending-status", "native-review-read", "approval-withdrawal",
+    "issue-comment-read", "review-evidence-api", "review-evidence-page",
+    "thread-normalization", "review-normalization", "maintainer-permission",
+    "policy-evaluation", "freshness-check", "approval-publication", "status-publication",
+})
+_diagnostic_stage = "startup"
+NORMALIZATION_REASONS = frozenset({
+    "body-type", "created-type", "published-type", "edited-type", "submitted-type",
+})
+
+
+class NormalizationError(RuntimeError):
+    """Carry a fixed rejection reason, never the rejected evidence."""
+
+    def __init__(self, reason: str):
+        super().__init__("Finding normalization rejected evidence")
+        self.reason = reason
+
+
+def diagnostic_stage(stage: str) -> None:
+    global _diagnostic_stage
+    _diagnostic_stage = stage if stage in DIAGNOSTIC_STAGES else "startup"
+
+
+def run() -> int:
+    """Keep failure diagnostics useful without exposing exception-controlled text."""
+    diagnostic_stage("startup")
+    try:
+        return main()
+    except Exception as error:
+        # Exact type lookup: unknown/subclass names and str(error) are never logged.
+        classes = {urllib.error.HTTPError: "HTTPError", urllib.error.URLError: "URLError",
+                   TimeoutError: "TimeoutError", KeyError: "KeyError", TypeError: "TypeError",
+                   ValueError: "ValueError", RuntimeError: "RuntimeError",
+                   json.JSONDecodeError: "JSONDecodeError", OSError: "OSError",
+                   NormalizationError: "NormalizationError"}
+        stage = _diagnostic_stage if _diagnostic_stage in DIAGNOSTIC_STAGES else "startup"
+        diagnostic = {"stage": stage, "exception_class": classes.get(type(error), "Exception")}
+        if type(error) is NormalizationError:
+            reason = error.reason
+            diagnostic["reason"] = (reason if type(reason) is str and reason in NORMALIZATION_REASONS
+                                    else "unknown")
+        print("Hosted review gate could not complete; no passing status issued. "
+              + json.dumps(diagnostic),
+              file=sys.stderr)
+        return 1
+
+
 def comment_time(comment: dict) -> datetime:
     value = datetime.fromisoformat((comment.get("updated_at") or comment["created_at"]).replace("Z", "+00:00"))
     if value.tzinfo is None:
@@ -172,12 +222,15 @@ def graphql_nodes(query: str, variables: dict, path: tuple[str, ...], *, initial
         if page == 0 and initial is not None:
             connection = initial
         else:
+            diagnostic_stage("review-evidence-api")
             result = request("graphql", {"query": query, "variables": {**variables, "cursor": cursor}})
+            diagnostic_stage("review-evidence-page")
             if result.get("errors"):
                 raise RuntimeError("Review evidence unavailable")
             connection = result["data"]
             for key in path:
                 connection = connection[key]
+        diagnostic_stage("review-evidence-page")
         items = connection["nodes"]
         info = connection["pageInfo"]
         if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
@@ -197,23 +250,26 @@ def finding_comment(node: dict) -> dict:
     """Normalize GraphQL authors explicitly; a similarly named User is not Codex."""
     author = node["author"]
     body, created = node["body"], node["createdAt"]
-    if not isinstance(body, str) or not isinstance(created, str):
-        raise RuntimeError("Incomplete finding evidence")
+    if not isinstance(body, str):
+        raise NormalizationError("body-type")
+    if not isinstance(created, str):
+        raise NormalizationError("created-type")
     # Use content/publication timestamps, not generic updatedAt: reaction or
     # resolution metadata must not silently change reconciliation authority.
+    # GitHub does not guarantee ordering between these distinct timestamps.
+    # Keep every valid value; max(times), including creation, bounds acceptance.
     created_time = comment_time({"created_at": created})
     times = [created_time]
-    values = [node["publishedAt"], node["lastEditedAt"]]
+    values = [(node["publishedAt"], "published-type"),
+              (node["lastEditedAt"], "edited-type")]
     if "submittedAt" in node:
-        values.append(node["submittedAt"])
-    for value in values:
+        values.append((node["submittedAt"], "submitted-type"))
+    for value, type_reason in values:
         if value is None:
             continue
         if not isinstance(value, str):
-            raise RuntimeError("Incomplete finding evidence")
+            raise NormalizationError(type_reason)
         timestamp = comment_time({"created_at": value})
-        if timestamp < created_time:
-            raise RuntimeError("Invalid finding timestamps")
         times.append(timestamp)
     official = (author is not None and author["__typename"] == "Bot"
                 and author["login"] in {BOT, BOT.removesuffix("[bot]")})
@@ -241,6 +297,7 @@ def review_evidence(repo: str, number: int) -> tuple[list[dict], list[dict]]:
     for thread in threads:
         comments = graphql_nodes(comment_query, {"id": thread["id"]}, ("node", "comments"),
                                  initial=thread["comments"])
+        diagnostic_stage("thread-normalization")
         thread["comments"] = [finding_comment(comment) for comment in comments]
     review_query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
       repository(owner:$owner,name:$name) { pullRequest(number:$number) {
@@ -248,6 +305,7 @@ def review_evidence(repo: str, number: int) -> tuple[list[dict], list[dict]]:
       } }
     }""".replace("FIELDS", fields)
     reviews = graphql_nodes(review_query, variables, ("repository", "pullRequest", "reviews"))
+    diagnostic_stage("review-normalization")
     return threads, [finding_comment(review) for review in reviews]
 
 
@@ -257,17 +315,20 @@ def main() -> int:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) or number <= 0:
         raise ValueError("Invalid repository or PR")
     prefix = f"repos/{repo}"
+    diagnostic_stage("pr-read")
     pr = request(f"{prefix}/pulls/{number}")
     if pr["state"] != "open":
         return 0
     head = pr["head"]["sha"]
     base = pr["base"]["sha"]
     review_path = f"{prefix}/pulls/{number}/reviews"
+    diagnostic_stage("pending-status")
     request(f"{prefix}/statuses/{head}", {"state": "pending", "context": CONTEXT,
         "description": "Rechecking current-commit hosted review policy",
         "target_url": pr["html_url"]})
     # Native approvals belong to one PR. Withdraw the prior gate opinion using
     # a new review; this needs pull-request write permission, not admin dismissal.
+    diagnostic_stage("native-review-read")
     gate_reviews = []
     native_reviews = []
     for page in range(1, 101):
@@ -286,10 +347,12 @@ def main() -> int:
     # Statuses are shared by commit SHA across PRs. Block this PR even on its
     # first evaluation so another PR cannot satisfy its strict review policy.
     if default_base or (previous and previous["state"] == "APPROVED"):
+        diagnostic_stage("approval-withdrawal")
         request(review_path, {"commit_id": head, "event": "REQUEST_CHANGES",
             "body": f"{APPROVAL_PREFIX} PR #{number} requires gate revalidation before approval."})
     if not default_base:
         return 0
+    diagnostic_stage("issue-comment-read")
     comments = []
     for page in range(1, 101):
         items = request(f"{prefix}/issues/{number}/comments?per_page=100&page={page}")
@@ -299,6 +362,7 @@ def main() -> int:
     else:
         raise RuntimeError("Comment limit exceeded")
     threads, review_findings = review_evidence(repo, number)
+    diagnostic_stage("maintainer-permission")
     maintainer_permissions = {}
     def can_accept(login):
         if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
@@ -312,8 +376,10 @@ def main() -> int:
         comment["maintainerCanAccept"] = False
         if ACCEPTANCE.fullmatch(comment.get("body", "").strip()):
             comment["maintainerCanAccept"] = can_accept(comment.get("user", {}).get("login", ""))
+    diagnostic_stage("policy-evaluation")
     state, description = evaluate(head, comments, threads, review_findings, native_reviews)
     def unchanged():
+        diagnostic_stage("freshness-check")
         current = request(f"{prefix}/pulls/{number}")
         return (current["state"] == "open" and current["head"]["sha"] == head
                 and current["base"]["sha"] == base and current["base"]["ref"] == pr["base"]["ref"])
@@ -321,13 +387,16 @@ def main() -> int:
     if not unchanged():
         raise RuntimeError("PR or base changed during inspection; rerun the gate")
     if state == "success":
+        diagnostic_stage("approval-publication")
         request(review_path, {"commit_id": head, "event": "APPROVE",
             "body": f"{APPROVAL_PREFIX} PR #{number}, head {head}, base {base}. {description}."})
         if not unchanged():
             current = request(f"{prefix}/pulls/{number}")
+            diagnostic_stage("approval-withdrawal")
             request(review_path, {"commit_id": current["head"]["sha"], "event": "REQUEST_CHANGES",
                 "body": f"{APPROVAL_PREFIX} PR #{number} changed during approval; gate revalidation is required."})
             raise RuntimeError("PR changed during approval; rerun the gate")
+    diagnostic_stage("status-publication")
     request(f"{prefix}/statuses/{head}", {"state": state, "context": CONTEXT,
         "description": description, "target_url": pr["html_url"]})
     print(json.dumps({"pr": number, "state": state, "head": head}))
@@ -335,9 +404,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception:
-        # Never print API payloads, tokens, comments, or raw exception bodies.
-        print("Hosted review gate could not complete; no passing status issued.", file=sys.stderr)
-        raise SystemExit(1)
+    raise SystemExit(run())

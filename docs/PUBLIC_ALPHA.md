@@ -231,8 +231,13 @@ accepted thread does not erase its maintainer reconciliation. Native required
 conversation resolution blocks while the thread is unresolved. New or edited
 comments invalidate the acceptance cutoff on the next explicit revalidation;
 acceptance edits/deletion use the existing issue-comment events.
-Inline freshness uses creation, publication and body-edit timestamps, not the
-generic metadata-update timestamp; review submission time is also included.
+Inline freshness uses the latest valid creation, publication and body-edit
+timestamp, not the generic metadata-update timestamp; review submission time is
+also included. These fields describe different events, and the
+[GitHub schema](https://docs.github.com/en/graphql/reference/pulls#pullrequestreviewcomment)
+does not guarantee their ordering. Publication before creation is accepted, but
+cannot lower freshness below creation or any newer edit/submission. Missing
+required fields and malformed or timezone-free timestamps still fail closed.
 If a gate run saw an unresolved thread, resolve it and dispatch the gate or post
 fresh acceptance to reevaluate. Keep native conversation protection enabled;
 this division of responsibility requires it. No webhook service, extra token
@@ -291,6 +296,36 @@ code completion or removed acceptance requires renewed acceptance. Missing
 acceptance leaves the gate pending. Current access is verified through GitHub,
 not the comment's displayed association. Security credit availability does not
 add a separate acceptance or exception step.
+
+### Diagnosing gate execution failures
+
+A normal missing-review or missing-acceptance result leaves the gate pending.
+Findings without a later maintainer acceptance also leave it pending; unresolved
+review discussions produce a failed policy status. These are distinct from an
+execution exception, which exits nonzero and issues no new passing status. An
+early exception, before the pending status is published, can preserve an older
+successful status for the same head. Its log reports only a fixed `stage` and an
+allowlisted `exception_class`. API transport,
+GraphQL response validation, thread/review normalization, permission checks and
+policy evaluation have separate stages. Unknown exception types are reported as
+`Exception`; no exception message, response body, request URL, token or traceback
+is printed. Preserve fail-closed behavior while investigating; never substitute
+manual status publication or a label for successful evaluation.
+
+Explicit finding-normalization rejections also report an allowlisted `reason`
+with `exception_class: NormalizationError`: `body-type`, `created-type`,
+`published-type`, `edited-type`, or `submitted-type`. An unrecognized reason
+is `unknown`. These distinguish the rejected field/type without
+printing any field value, content, identifier or timestamp. Missing fields and
+timestamp parse errors retain their bounded exception-class diagnostics.
+Historical `published-before-created`, `edited-before-created` and
+`submitted-before-created` reasons came from an unsupported ordering assumption.
+Normalization now considers all valid timestamps and requires acceptance after
+their maximum, rather than rejecting a differing order.
+
+These diagnostics do not establish or repair the cause of an earlier failure
+whose exception was suppressed. Reproduce that failure in trusted default-branch
+execution to obtain the bounded diagnostic before choosing a repair.
 
 ### Historical security-quota policy
 
