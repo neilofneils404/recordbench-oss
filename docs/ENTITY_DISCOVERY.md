@@ -58,16 +58,21 @@ linking to **Case file → People & things**. Every result is **Suggested** and
 attributed to the inactive **Automatic discovery** system principal, which
 cannot sign in, hold membership or act outside an active matter.
 
-Coverage is recorded per current source version in
-`workbench_entity_auto_discovery_unit`. The first visit seals the version's unit
-inventory (ordinals and text digests; ordinal 0 is the seal). Units are then
-processed in bounded batches of up to 25 units per step, under the same source
-guard, digest check, byte budget and occurrence receipts as guided discovery, so
-the same passage is never suggested twice by either path. A new source version
-seals afresh; unfinished work for older versions stops. Earlier suggestions,
+Coverage is recorded per current source version and extracted-text basis in
+`workbench_entity_auto_discovery_unit`. The first visit seals the unit inventory
+(ordinals and text digests; ordinal 0 is the seal); later steps load only pending
+units. Units are processed in bounded batches of up to 25 per step, under the same
+source guard, digest check, byte budget and occurrence receipts as guided
+discovery, so the same passage is never suggested twice by either path. A new
+source version, or new extracted text for the same version (for example an OCR or
+transcript retry), seals afresh; unfinished older work stops. Earlier suggestions,
 identity decisions, merges and mention statuses are never changed. Sources whose
-text is unavailable are sealed as failed and do not loop. When the byte budget is
-reached, saved work remains and remaining units stay pending.
+text is unavailable are sealed as failed and do not loop. The inventory's size is
+reserved against the byte budget before it is written; a source that would exceed
+the budget is sealed as failed without an inventory. When the budget is reached
+during processing, saved work remains and remaining units stay pending. Every
+committed unit records a content-free `entity.discovery_unit` audit event attributed
+to the system principal.
 
 A background thread runs when a source becomes ready and sweeps active matters
 at startup and every 15 minutes, so restarts converge without a queue. It never

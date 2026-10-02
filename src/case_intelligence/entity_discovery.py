@@ -104,47 +104,57 @@ class EntityDiscovery:
                         unit_ordinal=unit['unit_ordinal'], state=state, count=count))
         return self.coverage(matter_id, actor_id, run_id, limit=0)
 
-    def automatic_step(self, matter_id, *, unit_limit=25, document_limit=5):
+    def automatic_step(self, matter_id, *, unit_limit=25, document_limit=5, on_committed=None):
         """Discover suggestions in newly ready sources without a person or a model.
 
-        Each source version is inventoried once (unit ordinals and digests),
-        then processed in bounded batches. Returns the number of units handled.
-        The repository must authorize the automatic-discovery principal.
+        Each source's current version and extracted basis is inventoried once
+        (unit ordinals and digests); later steps load only pending ordinals.
+        Returns (units handled, sources sealed); either being non-zero is
+        progress. The repository must authorize the automatic-discovery
+        principal. on_committed receives a content-free event per unit.
         """
         if self.load_document is None:
             raise ValueError('Automatic discovery needs a whole-document loader.')
         service = self.service
         actor_id = AUTOMATIC_DISCOVERY_PRINCIPAL
         version = self.extractor.version
-        handled = 0
+        handled = sealed = 0
         with service.repository.transaction(matter_id, actor_id) as repo:
             documents = repo.auto_discovery_documents(matter_id, version, document_limit)
         with service.source_guard():
             for document in documents:
                 if handled >= unit_limit:
                     break
-                document_id, source_version_id = document['document_id'], document['source_version_id']
-                inventory, state = [], 'processed'
-                try:
-                    for ordinal, text, reference in self.load_document(document_id, source_version_id):
-                        if reference['source_version_id'] != source_version_id:
-                            raise KeyError('changed source')
-                        inventory.append((ordinal, hashlib.sha256(text.encode()).hexdigest()))
-                except LOAD_ERRORS:
-                    inventory, state = [], 'failed'
+                document_id = document['document_id']
+                if not document['sealed']:
+                    inventory, state, note = [], 'processed', ''
+                    try:
+                        for ordinal, text, reference in self.load_document(
+                                document_id, document['source_version_id']):
+                            if reference['source_version_id'] != document['source_version_id']:
+                                raise KeyError('changed source')
+                            inventory.append((ordinal, hashlib.sha256(text.encode()).hexdigest()))
+                    except LOAD_ERRORS:
+                        inventory, state = [], 'failed'
+                        note = 'Searchable text was unavailable for automatic discovery.'
+                    with service.repository.transaction(matter_id, actor_id) as repo:
+                        if not repo.auto_discovery_source_current(matter_id, dict(document, matter_id=matter_id)):
+                            continue
+                        # Reserve the inventory's logical size before writing it.
+                        reserved = (len(inventory) + 1) * repo.AUTO_ROW_BYTES + 4096
+                        if inventory and repo.discovery_storage_bytes(matter_id) + reserved > self.byte_limit:
+                            inventory, state = [], 'failed'
+                            note = 'Entity discovery byte budget reached; this source was not inventoried.'
+                        if repo.seal_auto_discovery(matter_id, document, version, inventory, state, note):
+                            sealed += 1
                 with service.repository.transaction(matter_id, actor_id) as repo:
-                    if not repo.auto_discovery_source_current(matter_id, document | dict(matter_id=matter_id)):
-                        continue
-                    repo.seal_auto_discovery(matter_id, document_id, source_version_id, version, inventory, state)
-                    pending = {row['unit_ordinal']: row for row in
-                               repo.auto_discovery_pending(matter_id, document_id, source_version_id, version)}
-                wanted = dict(islice(pending.items(), unit_limit - handled))
-                if not wanted:
+                    pending = repo.auto_discovery_pending(matter_id, document, version, unit_limit - handled)
+                if not pending:
                     continue
+                wanted = {row['unit_ordinal']: row for row in pending}
                 try:
-                    stream = self.load_document(document_id, source_version_id, sorted(wanted))
-                    loaded_units = {ordinal: (text, reference) for ordinal, text, reference in stream
-                                    if ordinal in wanted}
+                    loaded_units = {ordinal: (text, reference) for ordinal, text, reference in self.load_document(
+                        document_id, document['source_version_id'], sorted(wanted)) if ordinal in wanted}
                 except LOAD_ERRORS:
                     loaded_units = {}
                 for ordinal, unit in wanted.items():
@@ -152,13 +162,16 @@ class EntityDiscovery:
                         if not repo.auto_discovery_claimable(unit):
                             continue
                         try:
-                            self._process_unit(repo, matter_id, actor_id, unit,
-                                               loaded_units.get(ordinal), AutomaticLedger)
+                            state, count = self._process_unit(repo, matter_id, actor_id, unit,
+                                                              loaded_units.get(ordinal), AutomaticLedger)
                         except WorkspaceProblem:
                             # Budget reached: saved work stays; remaining units stay pending.
-                            return handled
+                            return handled, sealed
                     handled += 1
-        return handled
+                    if on_committed is not None:
+                        on_committed(dict(document_id=document_id, unit_ordinal=ordinal,
+                                          state=state, count=count))
+        return handled, sealed
 
     def automatic_progress(self, matter_id):
         with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:

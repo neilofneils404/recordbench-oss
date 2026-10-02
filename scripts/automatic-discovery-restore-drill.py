@@ -97,8 +97,8 @@ def main():
                                 load_references=store.notebook_references,
                                 validate_references=lambda refs: frozenset(range(len(refs))))
         discovery = EntityDiscovery(service, load_document=load_document)
-        assert discovery.automatic_step(matter_id) == 1
-        assert discovery.automatic_step(matter_id) == 0
+        assert discovery.automatic_step(matter_id) == (1, 1)
+        assert discovery.automatic_step(matter_id) == (0, 0)
         assert store.connection.execute(principal_sql, (AUTOMATIC_DISCOVERY_PRINCIPAL,)).fetchone()[0] == 0
         exported = store.entity_repository().discovery_export(matter_id)
         suggested = sorted(row[0] for row in store.connection.execute(

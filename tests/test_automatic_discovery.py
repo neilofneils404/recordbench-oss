@@ -81,14 +81,15 @@ def test_new_version_supersedes_without_touching_human_decisions(workbench):
     assert "Riley Placeholder" in {row["display_name"] for row in rows}
     # A newer version of a source seals afresh and stops unfinished older work.
     repo = bench.workspace.entity_repository(automatic=True)
+    current = dict(document_id=document.document_id, source_version_id="synthetic-newer-version",
+                   content_basis_digest="")
     with repo.transaction(matter.matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL):
         repo.connection.execute(
-            "INSERT INTO workbench_entity_auto_discovery_unit VALUES (?,?,?,?,?,?,?,?)",
-            (matter.matter_id, document.document_id, old_version, 9, "0" * 64, "synthetic-older", "pending", ""))
-        assert repo.seal_auto_discovery(matter.matter_id, document.document_id, "synthetic-newer-version",
-                                        "synthetic-older", [(1, "1" * 64)])
-        assert not repo.seal_auto_discovery(matter.matter_id, document.document_id, "synthetic-newer-version",
-                                            "synthetic-older", [(1, "1" * 64)])
+            "INSERT INTO workbench_entity_auto_discovery_unit (matter_id,document_id,source_version_id,"
+            "content_basis_digest,unit_ordinal,unit_digest,extractor_version,state) VALUES (?,?,?,?,?,?,?,?)",
+            (matter.matter_id, document.document_id, old_version, "", 9, "0" * 64, "synthetic-older", "pending"))
+        assert repo.seal_auto_discovery(matter.matter_id, current, "synthetic-older", [(1, "1" * 64)])
+        assert not repo.seal_auto_discovery(matter.matter_id, current, "synthetic-older", [(1, "1" * 64)])
         state = repo.connection.execute(
             "SELECT state FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND source_version_id=? "
             "AND unit_ordinal=9", (matter.matter_id, old_version)).fetchone()[0]
@@ -208,3 +209,106 @@ def test_system_provider_is_reserved_for_internal_principals(workbench):
         "SELECT display_name, active FROM workbench_principal WHERE principal_id=?",
         (AUTOMATIC_DISCOVERY_PRINCIPAL,)).fetchone()
     assert tuple(row) == ("Automatic discovery", 0)
+
+
+def long_text(units, marker):
+    # Text sources split into 20-line units; one synthetic name per unit.
+    return "\n".join(f"{marker} Example{index // 20} called on line {index}." for index in range(units * 20)).encode()
+
+
+def test_sealed_sources_load_only_pending_units(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    calls = []
+    original = bench.automatic_entity_discovery
+    def counting(target):
+        discovery = original(target)
+        loader = discovery.load_document
+        def load_document(document_id, source_version_id, ordinals=None):
+            calls.append(None if ordinals is None else len(ordinals))
+            return loader(document_id, source_version_id, ordinals)
+        discovery.load_document = load_document
+        return discovery
+    monkeypatch.setattr(bench, "automatic_entity_discovery", counting)
+    assert bench.run_automatic_discovery_once(unit_limit=25) == 25
+    assert bench.run_automatic_discovery_once() == 5
+    # One full inventory pass, then only the pending ordinals.
+    assert calls == [None, 25, 5]
+    assert bench.run_automatic_discovery_once() == 0 and calls == [None, 25, 5]
+
+
+def test_inventory_respects_the_byte_budget_before_writing(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    original = bench.automatic_entity_discovery
+    used = bench.workspace.entity_repository().discovery_storage_bytes
+    def tight(target):
+        discovery = original(target)
+        with bench.workspace._lock:
+            discovery.byte_limit = max(4096, used(target.matter_id) + 4096 + 1000)
+        return discovery
+    monkeypatch.setattr(bench, "automatic_entity_discovery", tight)
+    assert bench.run_automatic_discovery_once() == 0
+    rows = bench.workspace.connection.execute(
+        "SELECT unit_ordinal,state,note FROM workbench_entity_auto_discovery_unit WHERE matter_id=?",
+        (matter.matter_id,)).fetchall()
+    assert [(row[0], row[1]) for row in rows] == [(0, "failed")]
+    assert "byte budget" in rows[0][2]
+    assert used(matter.matter_id) <= tight(matter).byte_limit
+
+
+def test_unavailable_sources_do_not_stall_a_run(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    for index in range(7):
+        upload(client, matter.slug, f"Synthetic memo {index}.txt", f"Riley Placeholder{index} arrived.".encode())
+    documents = sorted(bench.source_store(matter).documents)
+    readable = documents[-1]
+    original = bench.automatic_entity_discovery
+    def mostly_unavailable(target):
+        discovery = original(target)
+        loader = discovery.load_document
+        def load_document(document_id, source_version_id, ordinals=None):
+            if document_id != readable:
+                raise KeyError(document_id)
+            return loader(document_id, source_version_id, ordinals)
+        discovery.load_document = load_document
+        return discovery
+    monkeypatch.setattr(bench, "automatic_entity_discovery", mostly_unavailable)
+    # Six unavailable sources seal as failed first; the run continues to the seventh.
+    assert bench.run_automatic_discovery_once() == 1
+    progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
+    assert progress["unsealed_sources"] == 0 and progress["processed"] == 1
+
+
+def test_changed_extracted_text_is_rediscovered(workbench):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    assert bench.run_automatic_discovery_once() == 1
+    document = next(iter(bench.source_store(matter).documents.values()))
+    # Same source version, new extracted basis (for example an OCR retry).
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute(
+            "UPDATE workbench_source_catalog SET content_basis_digest=? WHERE matter_id=? AND document_id=?",
+            ("9" * 64, matter.matter_id, document.document_id))
+    discovery = bench.automatic_entity_discovery(matter)
+    assert discovery.automatic_progress(matter.matter_id)["unsealed_sources"] == 1
+    assert bench.run_automatic_discovery_once() == 1
+    seals = bench.workspace.connection.execute(
+        "SELECT content_basis_digest FROM workbench_entity_auto_discovery_unit WHERE matter_id=? "
+        "AND unit_ordinal=0 ORDER BY content_basis_digest", (matter.matter_id,)).fetchall()
+    assert len(seals) == 2 and seals[-1][0] == "9" * 64
+    # The same passages are not suggested twice.
+    assert len(names(bench, matter)) == 4
+
+
+def test_every_automatic_unit_is_audited(workbench):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    upload(client, matter.slug, "Synthetic second memo.txt", SECOND)
+    assert bench.run_automatic_discovery_once() == 2
+    events = [event for event in bench.workspace.audit_events(matter.matter_id)
+              if event.action == "entity.discovery_unit"]
+    assert len(events) == 2
+    assert {event.actor_principal_id for event in events} == {AUTOMATIC_DISCOVERY_PRINCIPAL}
+    assert {event.outcome for event in events} == {"success"}
+    assert {event.object_type for event in events} == {"source"}

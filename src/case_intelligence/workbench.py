@@ -170,6 +170,7 @@ from .source_locations import (
 )
 from .service_endpoints import validate_service_endpoint
 from .workspace_store import (
+    AUTOMATIC_DISCOVERY_PRINCIPAL,
     AnswerJobRecord,
     ConversationRecord,
     MatterLifecycleRecord,
@@ -833,6 +834,8 @@ class MatterMaintenanceCoordinator:
 
 
 MAX_AUTOMATIC_DISCOVERY_UNITS = 20000
+# Bounds one matter's steps per run; each step seals or processes durable work.
+MAX_AUTOMATIC_DISCOVERY_STEPS = 400
 
 
 class AutomaticDiscoveryCoordinator:
@@ -3204,7 +3207,12 @@ class CaseIntelligenceWorkbench:
         return EntityDiscovery(self.entity_service(matter, automatic=True), load_document=load_document)
 
     def run_automatic_discovery_once(self, matter_ids=None, *, unit_limit=200):
-        """Process newly ready sources for active matters; returns units handled."""
+        """Process newly ready sources for active matters; returns units handled.
+
+        Sealing a source (including an empty or unavailable one) counts as
+        progress, so a run continues past such sources instead of sleeping.
+        Every committed unit is recorded in the matter audit trail.
+        """
         handled = 0
         if matter_ids is None:
             matter_ids = self.workspace.active_matter_ids()
@@ -3214,14 +3222,27 @@ class CaseIntelligenceWorkbench:
             except KeyError:
                 continue
             discovery = self.automatic_entity_discovery(matter)
-            while handled < unit_limit:
+            run_id = f"automatic-discovery-{uuid.uuid4().hex}"
+            def audit_unit(event, matter=matter, run_id=run_id):
+                self.workspace.append_audit_event(
+                    actor_principal_id=AUTOMATIC_DISCOVERY_PRINCIPAL, session_id=None,
+                    matter_id=matter.matter_id, request_id=run_id, action="entity.discovery_unit",
+                    outcome="success" if event["state"] == "processed" else "failure",
+                    object_type="source", object_id=event["document_id"],
+                    details={"count": event["count"], "unit_count": 1,
+                             "state": {"processed": "completed", "failed": "failed",
+                                       "invalidated": "attention"}[event["state"]]})
+            for _ in range(MAX_AUTOMATIC_DISCOVERY_STEPS):
+                if handled >= unit_limit:
+                    break
                 try:
-                    step = discovery.automatic_step(matter.matter_id, unit_limit=min(25, unit_limit - handled))
+                    units, sealed = discovery.automatic_step(
+                        matter.matter_id, unit_limit=min(25, unit_limit - handled), on_committed=audit_unit)
                 except KeyError:
                     break
-                if not step:
+                if not units and not sealed:
                     break
-                handled += step
+                handled += units
         return handled
 
     def notebook_reference_from_support(
