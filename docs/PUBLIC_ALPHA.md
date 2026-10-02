@@ -294,10 +294,13 @@ add a separate acceptance or exception step.
 
 ### Diagnosing gate execution failures
 
-A normal missing-review or missing-acceptance result leaves the gate pending;
-unresolved findings produce a failed policy status. These are distinct from an
-execution exception, which exits nonzero and leaves no passing status. Its log
-reports only a fixed `stage` and an allowlisted `exception_class`. API transport,
+A normal missing-review or missing-acceptance result leaves the gate pending.
+Findings without a later maintainer acceptance also leave it pending; unresolved
+review discussions produce a failed policy status. These are distinct from an
+execution exception, which exits nonzero and issues no new passing status. An
+early exception, before the pending status is published, can preserve an older
+successful status for the same head. Its log reports only a fixed `stage` and an
+allowlisted `exception_class`. API transport,
 GraphQL response validation, thread/review normalization, permission checks and
 policy evaluation have separate stages. Unknown exception types are reported as
 `Exception`; no exception message, response body, request URL, token or traceback
