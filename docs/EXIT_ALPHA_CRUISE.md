@@ -64,9 +64,12 @@ matter search, one-line readiness and Home-only retention detail; (2) reader
 refinements; (3) automatic deterministic people/things/date suggestions after
 processing, with a bulk review inbox (approved in principle; suggestions stay
 Suggested until a reviewer decides); (4) compact cited answers; (5) assistant
-actions under a separate brief. Increments 0 and 1 are in progress; each PR
-requests hosted code review before merge. See the
-[workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar).
+actions under a separate brief. Increments 0 and 1 landed in
+[PR #126](https://github.com/neilofneils404/recordbench-oss/pull/126) at `d991411`
+after hosted code review; hosted security review was unavailable and was waived for
+that PR. Increment 2 (whole-page PDF fit, folders in the reader queue, find in this
+file) is in progress locally. Each PR requests hosted code review before merge. See
+the [workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar).
 
 Model/runtime changes, unrelated visual work/slice 21, Mac work/PR #34,
 PR #87, wider onboarding, later slice-19 work, deployment and supported-release

@@ -45,6 +45,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .derived_text import presentation_text
 from .static_assets import asset_url, static_cache_control
+from .source_find import MAX_FIND_CHARS, find_in_source, highlight_find
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
 from .answer_presentation import GENERATED_REVIEW_NOTICE, answer_content, answer_introduction, answer_limitation, answer_failure_notice, modality_coverage_notice, research_content, rejected_answer_content, rejected_answer_notice, review_rejection_notice, REJECTED_ANSWER_NOTICE
 from .branding import PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_TAGLINE
@@ -6033,6 +6034,10 @@ class CaseIntelligenceWorkbench:
         }
 
 
+_READER_STATE_KEYS = frozenset(
+    {"unit", "start_ms", "segment", "q", "speaker", "speaker_review", "flag", "page"})
+
+
 def _query_url(path: str, **values: str) -> str:
     filtered = {key: value for key, value in values.items() if value}
     return path + (("?" + urlencode(filtered)) if filtered else "")
@@ -6044,6 +6049,16 @@ def _source_browse_href(href: str, browse: str) -> str:
     parsed = urlparse(href)
     query = parse_qs(parsed.query, keep_blank_values=True)
     query["browse"] = [browse]
+    return parsed._replace(query=urlencode(query, doseq=True)).geturl()
+
+
+def _source_find_href(href: str, find_query: str = "") -> str:
+    """Keep find-in-this-file active across section navigation."""
+    if not href or not find_query:
+        return href
+    parsed = urlparse(href)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query["q"] = [find_query]
     return parsed._replace(query=urlencode(query, doseq=True)).geturl()
 
 
@@ -6229,8 +6244,10 @@ def create_workbench_app(
         citation_href=_workspace_citation_href,
         entity_context_href=_entity_context_href,
         source_browse_href=_source_browse_href,
+        source_find_href=_source_find_href,
         source_review_return_href=_source_review_return_href,
         asset_url=asset_url,
+        highlight_find=highlight_find,
     )
     app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
 
@@ -7646,7 +7663,8 @@ def create_workbench_app(
             "action_token": row.action_token,
         }
 
-    def source_browser_projection(matter, document_id: str, browse: str, origin: str = ""):
+    def source_browser_projection(matter, document_id: str, browse: str, origin: str = "",
+                                  reader_state: Mapping[str, object] | None = None):
         origin = _source_review_return_href(matter.slug, origin)
         # Context is data, never a redirect URL; only library filters are accepted.
         try:
@@ -7705,8 +7723,31 @@ def create_workbench_app(
             scope_labels.insert(0, bench.workspace.source_collection(matter.matter_id, library.collection_id).name)
         if library.source_set_id:
             scope_labels.append(bench.workspace.source_set(matter.matter_id, library.source_set_id).name)
+        # Folder steps keep the open source and re-scope only the queue, with the
+        # library's own exact folder boundaries and filters.
+        current_token = bench.source_store(matter).action_token(bench.source_store(matter).get(document_id))
+        # The reader's own position, find and transcript state are kept as-is.
+        kept = {key: str(value) for key, value in (reader_state or {}).items()
+                if key in _READER_STATE_KEYS and value not in (None, "", 0)}
+        def folder_href(folder):
+            scoped = {key: value for key, value in {**values, "folder": folder}.items()
+                      if value and key not in {"page", "folder_page"}}
+            return _query_url(f"/matters/{matter.slug}/sources/{current_token}",
+                **kept, browse=urlencode(scoped), entity_return_to=origin)
+        child_folders = bench.workspace.source_catalog_folders(matter.matter_id,
+            folder=library.folder, query_key=library.query.casefold(), tone=library.status,
+            kind=library.kind, review_state=library.review, collection_id=library.collection_id,
+            source_set_id=library.source_set_id, same_content=library.same_content,
+            matching_only=library.matching_only, limit=20, offset=0)
+        folders = dict(
+            current=library.folder,
+            parent_href=folder_href(library.folder.rpartition("/")[0]) if library.folder else None,
+            all_href=folder_href("") if library.folder else None,
+            items=[dict(name=folder.name, count=folder.source_count, href=folder_href(folder.path))
+                   for folder in child_folders.items],
+            more=child_folders.total > len(child_folders.items))
         return dict(items=items, previous=previous, next=following, library=library,
-            scope_labels=scope_labels,
+            scope_labels=scope_labels, folders=folders,
             context=encoded, position=position,
             library_href=_query_url(f"/matters/{matter.slug}/setup", **values) + "#source-library")
 
@@ -12326,7 +12367,10 @@ def create_workbench_app(
             document = bench.source_store(matter).get_by_action_token(token)
             source_sequence = source_browser_projection(
                 matter, document.document_id, browse,
-                _source_review_return_href(slug, request.query_params.get("entity_return_to", ""))
+                _source_review_return_href(slug, request.query_params.get("entity_return_to", "")),
+                reader_state=dict(unit=unit, start_ms=start_ms, segment=segment, q=q, speaker=speaker,
+                                  speaker_review=speaker_review, flag=flag,
+                                  page=page if page > 1 else None),
             )
             if is_media_type(document.media_type):
                 with bench.source_store(matter).mutation_guard(), bench.workspace._lock:
@@ -12471,6 +12515,8 @@ def create_workbench_app(
                     if source.document.media_type in EMAIL_MEDIA_TYPES or source.document.media_type == "application/pdf" else ""
                 ),
                 "source_sequence": source_sequence,
+                "source_find": find_in_source(source.document, q) if q else None,
+                "find_query": " ".join(q.split())[:MAX_FIND_CHARS],
                 "source_note_request_key": getattr(request.state, "source_note_request_key", uuid.uuid4().hex),
                 "source_note_draft": getattr(request.state, "source_note_draft", ""),
                 "source_note_basis": source_note_basis,

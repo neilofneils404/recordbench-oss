@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import json
 from pathlib import Path
 import socket
@@ -16,7 +17,7 @@ from fastapi.testclient import TestClient
 from starlette.responses import Response
 import uvicorn
 from selenium import webdriver
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -88,6 +89,49 @@ def seed(runtime):
         return dict(slug=slug, person=person['entity_id'], other=other['entity_id'])
 
 
+def click_navigation(driver, wait, element):
+    """Settle an unobstructed native pointer target within the existing wait."""
+    samples = deque(maxlen=6)
+    previous = None
+
+    def stable(current):
+        nonlocal previous
+        sample = current.execute_script('''const e=arguments[0],r=e.getBoundingClientRect();
+            const x=r.left+r.width/2,y=r.top+r.height/2;
+            const offscreen=x<0||y<0||x>=innerWidth||y>=innerHeight;
+            const hit=offscreen ? null : document.elementFromPoint(x,y);
+            return {box:[r.left,r.top,r.width,r.height],viewport:[innerWidth,innerHeight],
+                offscreen,unobstructed:!!hit&&e.contains(hit),hit_tag:hit?.tagName||null};''', element)
+        samples.append(sample)
+        if sample['offscreen']:
+            previous = None
+            current.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", element)
+            return False
+        if not sample['unobstructed']:
+            previous = None
+            return False
+        box = sample['box']
+        settled = box == previous
+        previous = box
+        return settled
+    try:
+        wait.until(stable)
+    except TimeoutException as exc:
+        # Geometry only: bounded diagnostics contain no page text or URLs.
+        raise TimeoutException('Native pointer positioning did not settle: '
+                               + json.dumps(list(samples))) from exc
+    element.click()
+    def detached(current):
+        try:
+            return EC.staleness_of(element)(current)
+        except WebDriverException as exc:
+            if 'Node with given id does not belong to the document' not in exc.msg:
+                raise
+            return True
+    wait.until(detached)
+    wait.until(lambda current: current.execute_script('return document.readyState') == 'complete')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--chrome-binary', type=Path, required=True)
@@ -144,25 +188,7 @@ def main():
             def no_overflow():
                 assert driver.execute_script('return document.documentElement.scrollWidth <= innerWidth')
             def click(element):
-                driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'})", element)
-                positions = []
-                def stable(current):
-                    box = current.execute_script('''const e=arguments[0],r=e.getBoundingClientRect();
-                        const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
-                        return hit && e.contains(hit) ? [r.left,r.top,r.width,r.height] : null;''', element)
-                    positions.append(box)
-                    return box is not None and len(positions) > 1 and box == positions[-2]
-                wait.until(stable)
-                element.click()
-                def detached(current):
-                    try:
-                        return EC.staleness_of(element)(current)
-                    except WebDriverException as exc:
-                        if 'Node with given id does not belong to the document' not in exc.msg:
-                            raise
-                        return True
-                wait.until(detached)
-                wait.until(lambda current: current.execute_script('return document.readyState') == 'complete')
+                click_navigation(driver, wait, element)
             # Hold actual readiness fetch responses before rendering. Native Tab
             # establishes focus; no stale-element exceptions or JS clicks are
             # swallowed when a polling render removes the focused action.

@@ -87,7 +87,7 @@ jobs:
     needs: [change-scope, publication-scan]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Require successful classification and publication scan
         env:
@@ -297,10 +297,7 @@ jobs:
           cache: pip
       - name: Install browser and media runtimes and contributor dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            libnss3 libatk-bridge2.0-0 libxkbcommon0 libxcomposite1 \
-            libxdamage1 libxrandr2 libgbm1 libasound2t64 libgtk-3-0 fonts-liberation ffmpeg
+          python scripts/install-ci-browser-deps.py
           test -x /usr/bin/ffprobe
           test -x /usr/bin/ffmpeg
           python -m pip install --disable-pip-version-check -e '.[dev]'

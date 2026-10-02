@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from fastapi.testclient import TestClient
 import uvicorn
 from selenium import webdriver
-from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -26,6 +26,22 @@ spec = importlib.util.spec_from_file_location('knowledge_browser', Path(__file__
 knowledge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(knowledge)
 from case_intelligence.matter_context import MatterContextService
+
+
+def activate_context_action(driver, wait, element):
+    """Activate once with native Enter, then wait for navigation to finish."""
+    element.send_keys(Keys.ENTER)
+    def detached(current):
+        try:
+            return EC.staleness_of(element)(current)
+        except WebDriverException as exc:
+            # Chrome can report an old document's node through its inspector
+            # instead of Selenium's usual stale-element exception.
+            if 'Node with given id does not belong to the document' not in exc.msg:
+                raise
+            return True
+    wait.until(detached)
+    wait.until(lambda _: driver.execute_script('return document.readyState') == 'complete')
 
 
 def main():
@@ -78,9 +94,7 @@ def main():
                 root = root or driver
                 return next(e for e in root.find_elements(By.TAG_NAME,'button') if e.text == label)
             def activate(element):
-                element.send_keys(Keys.ENTER)
-                wait.until(EC.staleness_of(element))
-                wait.until(lambda _: driver.execute_script('return document.readyState') == 'complete')
+                activate_context_action(driver, wait, element)
             def inspect(kind, identifier):
                 driver.get(base+path+f'?kind={kind}&object_id={identifier}')
             def no_overflow():

@@ -22,6 +22,15 @@ def sidebar(text):
     return re.search(r'<aside class="source-browser".*?</aside>', text, re.S).group()
 
 
+def source_list(text):
+    """The queue's source links only; folder steps are a separate nav."""
+    return re.search(r'<nav aria-label="Source list".*?</nav>', sidebar(text), re.S).group()
+
+
+def library_link(panel):
+    return html.unescape(re.search(r'<a href="([^"]+)">Open in Review with all filters</a>', panel).group(1))
+
+
 @pytest.mark.parametrize('return_kind', ['search', 'external', 'foreign'])
 def test_search_return_survives_source_list_and_review_actions(tmp_path, return_kind):
     app = create_workbench_app(tmp_path / 'runtime', generator=UnavailableGenerator(),
@@ -40,8 +49,12 @@ def test_search_return_survives_source_list_and_review_actions(tmp_path, return_
             origin = 'https://example.com/' if return_kind == 'external' else '/matters/another/exact-search'
         opened = client.get(urlsplit(hit).path, params={'entity_return_to': origin, 'browse': 'sort=name'})
         expected = [origin] if return_kind == 'search' else []
-        source_links = [url for url in links(sidebar(opened.text)) if '/sources/' in urlsplit(url).path]
+        source_links = [url for url in links(source_list(opened.text)) if '/sources/' in urlsplit(url).path]
         assert len(source_links) == 2
+        # Folder steps re-scope the queue and keep the same validated return origin.
+        folder_links = [url for url in links(sidebar(opened.text)) if '/sources/' in urlsplit(url).path
+                        and url not in source_links]
+        assert all(parse_qs(urlsplit(url).query).get('entity_return_to', []) == expected for url in folder_links)
         sequence = re.search(r'<nav class="review-sequence".*?</nav>', opened.text, re.S)[0]
         for url in source_links + links(sequence):
             assert parse_qs(urlsplit(url).query).get('entity_return_to', []) == expected
@@ -81,14 +94,14 @@ def test_order_and_cross_page_navigation_match_library(tmp_path, sort):
         base = f'/matters/{slug}/sources/'
         opened = client.get(base + page1.items[-1].action_token, params={'browse': context})
         assert opened.status_code == 200
-        assert len(re.findall('href="[^"]+/sources/', sidebar(opened.text))) == 25
+        assert len(re.findall('href="[^"]+/sources/', source_list(opened.text))) == 25
         assert 'Northwest' not in sidebar(opened.text)
         next_url = links(re.search(r'<a class="review-sequence-neighbor next".*?</a>', opened.text, re.S).group())[0]
         assert page2.items[0].action_token in next_url
         next_page = client.get(next_url)
         assert 'Page 2 of 2' in sidebar(next_page.text)
         assert 'aria-current="page"' in sidebar(next_page.text)
-        assert len(re.findall('href="[^"]+/sources/', sidebar(next_page.text))) == 2
+        assert len(re.findall('href="[^"]+/sources/', source_list(next_page.text))) == 2
         back = links(re.search(r'<a class="review-sequence-neighbor previous".*?</a>', next_page.text, re.S).group())[0]
         assert page1.items[-1].action_token in back
         assert 'Page 1 of 2' in sidebar(client.get(back).text)
@@ -117,7 +130,7 @@ def test_filters_return_context_empty_view_and_mark_continue(tmp_path):
         opened = client.get(url)
         assert opened.status_code == 200
         panel = sidebar(opened.text)
-        return_url = links(panel)[0]
+        return_url = library_link(panel)
         returned = parse_qs(urlsplit(return_url).query)
         assert all(returned[key] == [str(value)] for key, value in values.items())
         action = html.unescape(re.search(r'action="([^"]+/review-next[^"]*)"', opened.text).group(1))
