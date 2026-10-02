@@ -114,7 +114,8 @@ class EntityDiscovery:
         principal. audit_unit(event) is called inside each unit's transaction,
         so its content-free record commits atomically with the unit. The
         suggestion byte budget is recounted inside each unit's transaction.
-        should_stop() is checked before each source and unit so shutdown
+        should_stop() is checked before each source and for every unit read
+        or processed, so shutdown never waits on a whole large source and
         never races the source stores this step reads.
         """
         if self.load_document is None:
@@ -136,6 +137,9 @@ class EntityDiscovery:
                     try:
                         for ordinal, text, reference in self.load_document(
                                 document_id, document['source_version_id']):
+                            if stopping():
+                                # Unsealed: the next run inventories this source again.
+                                return handled, sealed
                             if reference['source_version_id'] != document['source_version_id']:
                                 raise KeyError('changed source')
                             inventory.append((ordinal, hashlib.sha256(text.encode()).hexdigest()))
@@ -152,9 +156,14 @@ class EntityDiscovery:
                 if not pending:
                     continue
                 wanted = {row['unit_ordinal']: row for row in pending}
+                loaded_units = {}
                 try:
-                    loaded_units = {ordinal: (text, reference) for ordinal, text, reference in self.load_document(
-                        document_id, document['source_version_id'], sorted(wanted)) if ordinal in wanted}
+                    for ordinal, text, reference in self.load_document(
+                            document_id, document['source_version_id'], sorted(wanted)):
+                        if stopping():
+                            return handled, sealed
+                        if ordinal in wanted:
+                            loaded_units[ordinal] = (text, reference)
                 except LOAD_ERRORS:
                     loaded_units = {}
                 for ordinal, unit in wanted.items():

@@ -75,8 +75,8 @@ budget for suggestions is recounted inside each unit's transaction, so concurren
 reviewer edits are always included. When the budget is reached, saved work remains
 and remaining units stay pending. Each matter receives its own per-pass unit
 allowance, so one large matter cannot delay discovery in the others. On shutdown the
-worker finishes its current unit and stops before the application closes the source
-stores it reads. Every
+worker finishes its current unit, or abandons a partly read source without sealing it,
+and stops before the application closes the source stores it reads. Every
 committed unit records a content-free `entity.discovery_unit` audit event attributed
 to the system principal, in the same transaction as the unit: if the audit cannot be
 written, the unit's suggestions roll back and it stays pending. A matter whose

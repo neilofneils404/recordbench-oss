@@ -500,18 +500,39 @@ def test_removed_sources_are_pruned_once_per_matter_pass(workbench, monkeypatch)
     assert calls == [matter.matter_id]
 
 
-def test_a_stop_request_ends_the_pass_before_the_next_unit(workbench):
+def ledger_states(bench, matter):
+    return [row[0] for row in bench.workspace.connection.execute(
+        "SELECT state FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND unit_ordinal>0",
+        (matter.matter_id,))]
+
+
+def stop_after(checks):
+    calls = []
+    def should_stop():
+        calls.append(None)
+        return len(calls) > checks
+    return should_stop
+
+
+def test_a_stop_request_while_inventorying_leaves_the_source_unsealed(workbench):
     client, bench, matter, _runtime = workbench
     upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
-    # Checked before the matter, the step, the source, then each unit.
-    requests = iter([False, False, False, True])
-    result = bench.automatic_discovery_pass(should_stop=lambda: next(requests, True))
-    # The source was inventoried, then the pass stopped instead of processing units.
+    # Checked before the matter, the step and the source, then for every unit read.
+    result = bench.automatic_discovery_pass(should_stop=stop_after(5))
     assert result.units == 0 and not result.failed_matters
-    states = {row[0] for row in bench.workspace.connection.execute(
-        "SELECT state FROM workbench_entity_auto_discovery_unit WHERE matter_id=? AND unit_ordinal>0",
-        (matter.matter_id,))}
-    assert states == {"pending"}
+    assert ledger_states(bench, matter) == []  # Nothing sealed; the next pass starts over.
+    assert bench.run_automatic_discovery_once() == 30
+
+
+def test_a_stop_request_while_loading_pending_units_ends_the_pass(workbench):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic long log.txt", long_text(30, "Alex"))
+    # 3 checks before the source, 30 while inventorying, then 2 pending units read.
+    result = bench.automatic_discovery_pass(should_stop=stop_after(35))
+    # The source was inventoried, then the pass stopped instead of reading every unit.
+    assert result.units == 0 and not result.failed_matters
+    assert set(ledger_states(bench, matter)) == {"pending"}
+    assert bench.run_automatic_discovery_once() == 30
 
 
 def test_closing_waits_for_the_discovery_worker(monkeypatch):
