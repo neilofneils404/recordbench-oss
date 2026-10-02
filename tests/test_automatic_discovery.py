@@ -760,6 +760,63 @@ def test_selected_record_decoding_holds_one_serialization_at_a_time(workbench):
     assert peak < 2.5 * span, (peak, span)
 
 
+KILLED_MID_UNIT = """
+import os, sys
+from fastapi.testclient import TestClient
+from case_intelligence import entity_discovery
+from case_intelligence.workbench import create_workbench_app
+from tests.test_automatic_discovery import FIRST, upload
+from tests.test_matter_notebook import WEB_ACTOR, _create_matter
+with TestClient(create_workbench_app(sys.argv[1], auth_mode="test")) as client:
+    slug = _create_matter(client)
+    upload(client, slug, "Synthetic memo.txt", FIRST)
+    bench = client.app.state.workbench
+    def killed(repo, unit, state, note):
+        if state == "processed":
+            # The unit's suggestions are written but not committed: a forced stop
+            # after the shutdown grace period lands exactly here.
+            count = repo.connection.execute(
+                "SELECT COUNT(*) FROM workbench_entity WHERE status='suggested'").fetchone()[0]
+            print(count, flush=True)
+            os._exit(137)
+    entity_discovery.AutomaticLedger.state = staticmethod(killed)
+    bench.run_automatic_discovery_once()
+"""
+
+
+def test_a_forced_stop_mid_unit_leaves_the_store_consistent(tmp_path, monkeypatch):
+    """A record decode or extraction that outlasts the shutdown grace period ends
+    in a forced kill; the unit's transaction rolls back and is redone later."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    monkeypatch.setenv("CASE_INTELLIGENCE_STORAGE_RESERVE_GIB", "0")
+    monkeypatch.delenv("CASE_INTELLIGENCE_AUTOMATIC_DISCOVERY", raising=False)
+    runtime = tmp_path / "runtime"
+    root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(root / "src"), str(root)])}
+    killed = subprocess.run([sys.executable, "-c", KILLED_MID_UNIT, str(runtime)], cwd=root, env=env,
+                            capture_output=True, text=True, timeout=300)
+    assert killed.returncode == 137, killed.stderr
+    assert int(killed.stdout.split()[-1]) == 4  # Uncommitted suggestions existed when it was killed.
+    with TestClient(create_workbench_app(runtime, auth_mode="test")) as client:
+        bench = client.app.state.workbench
+        matter_id = bench.workspace.connection.execute("SELECT matter_id FROM workbench_matter").fetchone()[0]
+        matter = bench.workspace.get_matter_by_id(matter_id)
+        connection = bench.workspace.connection
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+        # Nothing from the interrupted unit persisted: no suggestions, no audit, unit still pending.
+        assert names(bench, matter) == []
+        assert ledger_states(bench, matter) == ["pending"]
+        assert not [event for event in bench.workspace.audit_events(matter_id)
+                    if event.action == "entity.discovery_unit"]
+        # The next run completes it exactly once.
+        assert bench.run_automatic_discovery_once() == 1
+        assert len(names(bench, matter)) == 4
+
+
 def test_closing_waits_for_the_discovery_worker(monkeypatch):
     import threading
     import case_intelligence.workbench as workbench_module
