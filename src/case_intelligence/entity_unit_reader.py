@@ -33,6 +33,7 @@ class EntityUnitReader:
         """
         if read_check is None:
             return raw.read(length)
+        read_check(0)  # Before reserving the record's buffer.
         buffer = bytearray(length)
         view, filled = memoryview(buffer), 0
         try:
@@ -113,8 +114,12 @@ class EntityUnitReader:
                     # The one decode is bounded by the span limit above; poll on
                     # either side of it, as the streaming unit reader does.
                     read_check(len(serialized))
-                record = json.loads(serialized)
+                # Decode explicitly and drop the bytes before parsing, so at most
+                # one complete serialization is held while objects are built.
+                text = serialized.decode('utf-8')
                 del serialized
+                record = json.loads(text)
+                del text
                 if read_check is not None:
                     read_check(0)
                 if self.identity(os.fstat(raw.fileno())) != identity:

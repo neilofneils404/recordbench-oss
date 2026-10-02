@@ -3231,6 +3231,19 @@ class CaseIntelligenceWorkbench:
                 yield ordinal, unit.text, self._discovery_reference(matter, document, unit, ordinal)
         return EntityDiscovery(self.entity_service(matter, automatic=True), load_document=load_document)
 
+    def automatic_discovery_progress(self, matter):
+        """Coverage counts when automatic discovery is enabled; otherwise None."""
+        if self.automatic_discovery is None:
+            return None
+        try:
+            return self.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
+        except KeyError:
+            return None
+
+    def wake_automatic_discovery(self, matter):
+        if self.automatic_discovery is not None:
+            self.automatic_discovery.wake(matter.matter_id)
+
     def run_automatic_discovery_once(self, matter_ids=None, *, unit_limit=200):
         """Process newly ready sources for active matters; returns units handled."""
         return self.automatic_discovery_pass(matter_ids, unit_limit=unit_limit).units
@@ -6966,12 +6979,10 @@ def create_workbench_app(
             )
         coverage = _source_coverage(readiness)
         discovery = {"label": "", "href": "", "working": False}
-        if bench.automatic_discovery is not None and readiness.total_count:
-            try:
-                progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
-            except KeyError:
-                progress = None
-            if progress and progress["sources_complete"] < progress["sources_ready"]:
+        if readiness.total_count:
+            progress = bench.automatic_discovery_progress(matter)
+            attention = progress["sources_attention"] if progress else 0
+            if progress and progress["sources_complete"] + attention < progress["sources_ready"]:
                 discovery = {
                     "label": (
                         f"Finding people and dates · {progress['sources_complete']:,} of "
@@ -6979,6 +6990,15 @@ def create_workbench_app(
                     ),
                     "href": f"/matters/{matter.slug}/entities",
                     "working": True,
+                }
+            elif attention:
+                discovery = {
+                    "label": (
+                        f"Finding people and dates needs attention · {attention:,} "
+                        f"source{'' if attention == 1 else 's'}"
+                    ),
+                    "href": f"/matters/{matter.slug}/entities",
+                    "working": False,
                 }
             elif progress and progress["suggested"]:
                 discovery = {
@@ -14088,7 +14108,9 @@ def create_workbench_app(
                           require_csrf=require_csrf, templates=templates,
                           base_context=base_context, audit=audit,
                           require_response_lease=require_matter_response_lease,
-                          transfer_response_lease=transfer_matter_response_lease)
+                          transfer_response_lease=transfer_matter_response_lease,
+                          automatic_progress=bench.automatic_discovery_progress,
+                          wake_automatic=bench.wake_automatic_discovery)
 
     from .assertion_routes import install_assertion_routes
     install_assertion_routes(app, service_for=bench.assertion_service, entities_for=bench.entity_service,

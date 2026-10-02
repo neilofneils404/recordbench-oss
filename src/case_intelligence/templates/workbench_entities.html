@@ -18,6 +18,12 @@
     <input type="hidden" name="q" value="{{ q }}">
     {% if row %}<input type="hidden" name="entity_id" value="{{ row.entity_id }}"><input type="hidden" name="expected_revision" value="{{ row.revision }}">{% endif %}
   {% endmacro %}
+  {% if not entity and automatic_attention %}
+  <section class="notice" aria-labelledby="automatic-attention-heading"><h2 id="automatic-attention-heading">Automatic discovery needs attention</h2>
+    <p>{{ automatic_attention }} source{{ '' if automatic_attention == 1 else 's' }} could not be fully searched for people and dates, so {{ 'its' if automatic_attention == 1 else 'their' }} suggestions may be incomplete. Retrying keeps every saved suggestion and decision; guided discovery below is also available.</p>
+    <form method="post" action="/matters/{{ matter.slug }}/entities/actions">{{ hidden('retry_automatic') }}<button type="submit">Retry automatic discovery</button></form>
+  </section>
+  {% endif %}
   {% if not entity %}
   <section class="notebook-tool-card" aria-labelledby="discovery-heading"><h2 id="discovery-heading">Suggested findings: guided discovery</h2>
     <p>Uses the frozen unit inventory from Review all extracted text. Each action processes up to 10 pending units and saves progress. Recognition is a bounded deterministic suggestion, not proof of completeness or identity. No model is required.</p>

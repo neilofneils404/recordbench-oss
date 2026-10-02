@@ -54,7 +54,13 @@ source that finishes processing is visited by the same local deterministic
 extractor without a criterion review, a model or a reviewer action. Home shows
 one quiet line under readiness: **Finding people and dates · N of M sources**
 while work remains, then **N suggested people, things and dates to review**,
-linking to **Case file → People & things**. Every result is **Suggested** and
+linking to **Case file → People & things**. When a source's coverage is incomplete
+(failed units, or units whose text was unavailable), Home shows **Finding people
+and dates needs attention · N sources** instead of counting it as complete, and
+People & things offers **Retry automatic discovery**. A retry queues those units
+again (and re-inventories a source whose text was unavailable), keeps every saved
+suggestion and decision, is audited as `entity.retry_automatic`, and wakes the
+background worker; guided discovery remains available for the same sources. Every result is **Suggested** and
 attributed to the inactive **Automatic discovery** system principal, which
 cannot sign in, hold membership or act outside an active matter.
 
@@ -69,7 +75,7 @@ transcript retry) or a new extractor version, seals afresh, and the superseded
 inventory's ledger rows are deleted; rows for sources removed from the catalog are pruned on the next pass.
 Earlier suggestions, occurrence receipts, identity decisions, merges and mention
 statuses are never changed. Sources whose text is unavailable are sealed as failed
-and do not loop. The ledger is therefore bounded by the current sources (at most
+and do not loop until a reviewer retries them. The ledger is therefore bounded by the current sources (at most
 20,000 units plus a seal each) and sits outside the suggestion byte budget; the
 budget for suggestions is recounted inside each unit's transaction, so concurrent
 reviewer edits are always included. When the budget is reached, saved work remains

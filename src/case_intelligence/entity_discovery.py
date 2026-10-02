@@ -199,6 +199,11 @@ class EntityDiscovery:
         with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
             return repo.prune_auto_discovery(matter_id)
 
+    def retry_automatic(self, matter_id, actor_id):
+        """A reviewer's request to retry automatic coverage that failed."""
+        with self.service.repository.transaction(matter_id, actor_id) as repo:
+            return repo.retry_auto_discovery(matter_id, self.extractor.version)
+
     def automatic_progress(self, matter_id):
         with self.service.repository.transaction(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
             return repo.auto_discovery_progress(matter_id, self.extractor.version)

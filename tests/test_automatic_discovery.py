@@ -51,7 +51,7 @@ def test_processing_yields_suggestions_without_a_model_or_a_review_run(workbench
     assert bench.workspace.connection.execute(
         "SELECT COUNT(*) FROM workbench_review_run WHERE matter_id=?", (matter.matter_id,)).fetchone()[0] == 0
     progress = bench.automatic_entity_discovery(matter).automatic_progress(matter.matter_id)
-    assert progress == dict(pending=0, processed=1, failed=0, unsealed_sources=0,
+    assert progress == dict(pending=0, processed=1, failed=0, unsealed_sources=0, sources_attention=0,
                             sources_complete=1, sources_ready=1, suggested=4)
     # Suggestions are attributed to the inactive system principal.
     creators = {row[0] for row in bench.workspace.connection.execute(
@@ -357,6 +357,74 @@ def test_sealing_is_reported_as_progress_when_the_step_cap_is_reached(workbench,
     assert bench.automatic_discovery_pass().progress == 0
 
 
+def test_incomplete_coverage_needs_attention_and_can_be_retried(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    woken = []
+    class Enabled:
+        def wake(self, matter_id):
+            woken.append(matter_id)
+        def close(self):
+            pass
+    monkeypatch.setattr(bench, "automatic_discovery", Enabled())
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    original = bench.automatic_entity_discovery
+    def pending_units_unavailable(target, should_stop=None):
+        discovery = original(target, should_stop)
+        loader = discovery.load_document
+        def load_document(document_id, source_version_id, ordinals=None):
+            if ordinals is None:
+                return loader(document_id, source_version_id)
+            return iter(())  # The inventory succeeds, then the unit's text is unavailable.
+        discovery.load_document = load_document
+        return discovery
+    monkeypatch.setattr(bench, "automatic_entity_discovery", pending_units_unavailable)
+    assert bench.run_automatic_discovery_once() == 1
+    progress = bench.automatic_discovery_progress(matter)
+    # The source is not reported as complete: its coverage needs attention.
+    assert progress["sources_complete"] == 0 and progress["sources_attention"] == 1
+    status = client.get(f"/matters/{matter.slug}/processing-status").json()
+    assert status["discovery"] == {
+        "label": "Finding people and dates needs attention · 1 source",
+        "href": f"/matters/{matter.slug}/entities", "working": False}
+    page = client.get(f"/matters/{matter.slug}/entities").text
+    assert "Automatic discovery needs attention" in page
+    assert 'name="action" value="retry_automatic"' in page
+    assert names(bench, matter) == []
+    monkeypatch.setattr(bench, "automatic_entity_discovery", original)
+    woken.clear()
+    response = client.post(f"/matters/{matter.slug}/entities/actions",
+                           data=dict(action="retry_automatic"), follow_redirects=False)
+    assert response.status_code == 303
+    assert woken == [matter.matter_id]
+    assert ledger_states(bench, matter) == ["pending"]
+    assert bench.run_automatic_discovery_once() == 1
+    progress = bench.automatic_discovery_progress(matter)
+    assert progress["sources_complete"] == 1 and progress["sources_attention"] == 0
+    assert len(names(bench, matter)) == 4
+    assert "Automatic discovery needs attention" not in client.get(f"/matters/{matter.slug}/entities").text
+    assert "entity.retry_automatic" in [event.action for event in bench.workspace.audit_events(matter.matter_id)]
+
+
+def test_a_failed_seal_is_inventoried_again_on_retry(workbench, monkeypatch):
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    original = bench.automatic_entity_discovery
+    def unreadable(target, should_stop=None):
+        discovery = original(target, should_stop)
+        def load_document(document_id, source_version_id, ordinals=None):
+            raise KeyError(document_id)
+        discovery.load_document = load_document
+        return discovery
+    monkeypatch.setattr(bench, "automatic_entity_discovery", unreadable)
+    bench.run_automatic_discovery_once()
+    assert original(matter).automatic_progress(matter.matter_id)["sources_attention"] == 1
+    monkeypatch.setattr(bench, "automatic_entity_discovery", original)
+    # A reviewer retry (the same call the page's action makes) re-inventories the source.
+    assert bench.entity_discovery(matter).retry_automatic(matter.matter_id, WEB_ACTOR) == 1
+    assert bench.run_automatic_discovery_once() == 1
+    assert len(names(bench, matter)) == 4
+
+
 def test_a_colliding_principal_is_never_trusted(workbench):
     from case_intelligence.workspace_store import WorkspaceProblem
     _client, bench, matter, _runtime = workbench
@@ -577,11 +645,12 @@ def test_source_readers_observe_a_stop_mid_read(workbench):
     calls = []
     def stop_before_decode(chars):
         calls.append(chars)
-        if len(calls) == 2:
+        if len(calls) == 3:
             raise DiscoveryStopped()
     with pytest.raises(DiscoveryStopped):
         list(reader.iter_selected(store, document, [30], read_check=stop_before_decode))
-    assert calls[0] == 0 and calls[1] > 0  # One read of a small record, then the pre-decode poll.
+    # Before the buffer, before its one read (a small record), then before decoding.
+    assert calls[:2] == [0, 0] and calls[2] > 0
     # Once the stop clears, the next pass discovers everything.
     stop.clear()
     assert bench.run_automatic_discovery_once() == 30
@@ -596,9 +665,49 @@ def test_selected_records_are_read_into_one_buffer_with_a_poll_per_read():
     polls = []
     serialized = EntityUnitReader._read_span(io.BytesIO(record), len(record), polls.append)
     assert isinstance(serialized, bytearray) and bytes(serialized) == record
-    assert polls == [index * READ_BYTES for index in range(-(-len(record) // READ_BYTES))]
+    # Once before the buffer is reserved, then before every bounded read.
+    assert polls == [0] + [index * READ_BYTES for index in range(-(-len(record) // READ_BYTES))]
     with pytest.raises(ValueError):
         EntityUnitReader._read_span(io.BytesIO(record[:-1]), len(record), lambda chars: None)
+    # A stop already requested is observed before the record's buffer is reserved.
+    import tracemalloc
+    from case_intelligence.entity_discovery import DiscoveryStopped
+    def stop(_chars):
+        raise DiscoveryStopped()
+    tracemalloc.start()
+    try:
+        with pytest.raises(DiscoveryStopped):
+            EntityUnitReader._read_span(io.BytesIO(b""), 64 * 1024 * 1024, stop)
+        assert tracemalloc.get_traced_memory()[1] < 1024 * 1024
+    finally:
+        tracemalloc.stop()
+
+
+def test_selected_record_decoding_holds_one_serialization_at_a_time(workbench):
+    import tracemalloc
+    from case_intelligence.entity_unit_reader import EntityUnitReader
+    client, bench, matter, _runtime = workbench
+    # One large synthetic unit: twenty long lines, about 1.8 MB in a single record.
+    upload(client, matter.slug, "Synthetic long memo.txt",
+           "\n".join("Alex Example arrived. " * 4_000 for _ in range(20)).encode())
+    store = bench.source_store(matter)
+    document = store.get(bench.workspace.connection.execute(
+        "SELECT document_id FROM workbench_source_catalog WHERE matter_id=?", (matter.matter_id,)).fetchone()[0])
+    reader = EntityUnitReader()
+    list(reader.iter_selected(store, document, [1]))  # Build and cache the index first.
+    ((start, end),) = next(iter(reader._indexes.values()))
+    span = end - start
+    assert span > 1_000_000
+    tracemalloc.start()
+    try:
+        ((ordinal, unit),) = list(reader.iter_selected(store, document, [1], read_check=lambda chars: None))
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert ordinal == 1 and unit.text
+    # Bytes and their decoded text never coexist with the parsed record:
+    # roughly two copies at the peak, not three.
+    assert peak < 2.5 * span, (peak, span)
 
 
 def test_closing_waits_for_the_discovery_worker(monkeypatch):

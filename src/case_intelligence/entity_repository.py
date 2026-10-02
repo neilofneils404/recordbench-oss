@@ -330,10 +330,20 @@ class EntityRepository:
         ready = self.connection.execute(
             "SELECT COUNT(*) FROM workbench_source_catalog WHERE matter_id=? AND source_state='ready'",
             (matter_id,)).fetchone()[0]
+        # Complete means sealed with every unit processed. Failed units, and
+        # units invalidated although their source is still current (their text
+        # was unavailable), are incomplete coverage that needs attention.
         complete = self.connection.execute(
             "SELECT COUNT(*) FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' "
             "AND EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
             " AND a.extractor_version=? AND a.unit_ordinal=0) AND NOT EXISTS (SELECT 1 FROM "
+            "workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
+            " AND a.extractor_version=? AND a.state IN ('pending','failed','invalidated'))",
+            (matter_id, version, version)).fetchone()[0]
+        attention = self.connection.execute(
+            "SELECT COUNT(*) FROM workbench_source_catalog c WHERE c.matter_id=? AND c.source_state='ready' "
+            "AND EXISTS (SELECT 1 FROM workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
+            " AND a.extractor_version=? AND a.state IN ('failed','invalidated')) AND NOT EXISTS (SELECT 1 FROM "
             "workbench_entity_auto_discovery_unit a WHERE " + self._AUTO_CURRENT +
             " AND a.extractor_version=? AND a.state='pending')", (matter_id, version, version)).fetchone()[0]
         unsealed = self.connection.execute(
@@ -345,7 +355,30 @@ class EntityRepository:
             (matter_id,)).fetchone()[0]
         return dict(pending=counts.get('pending', 0), processed=counts.get('processed', 0),
                     failed=counts.get('failed', 0), unsealed_sources=unsealed,
-                    sources_complete=complete, sources_ready=ready, suggested=suggested)
+                    sources_complete=complete, sources_attention=attention, sources_ready=ready,
+                    suggested=suggested)
+
+    def retry_auto_discovery(self, matter_id, version):
+        """Queue failed automatic coverage of current sources again.
+
+        Failed or invalidated units of a current source return to pending; a
+        source whose text was unavailable loses its failed seal so it is
+        inventoried again. Suggestions,
+        receipts and human decisions are untouched. Returns sources affected.
+        """
+        table = 'workbench_entity_auto_discovery_unit'
+        current = (f"EXISTS (SELECT 1 FROM workbench_source_catalog c WHERE c.matter_id={table}.matter_id "
+                   f"AND c.source_state='ready' AND c.document_id={table}.document_id "
+                   f"AND c.version_id={table}.source_version_id "
+                   f"AND c.content_basis_digest={table}.content_basis_digest)")
+        failed = f"matter_id=? AND extractor_version=? AND state IN ('failed','invalidated') AND {current}"
+        sources = self.connection.execute(
+            f"SELECT COUNT(DISTINCT document_id) FROM {table} WHERE {failed}", (matter_id, version)).fetchone()[0]
+        self.connection.execute(f"DELETE FROM {table} WHERE unit_ordinal=0 AND state='failed' AND {failed}",
+                                (matter_id, version))
+        self.connection.execute(f"UPDATE {table} SET state='pending',note='' WHERE unit_ordinal>0 AND {failed}",
+                                (matter_id, version))
+        return sources
 
     def discovery_coverage(self, matter_id, run_id, version, *, page=1, source_page=1, limit=50):
         self.require_discovery_run(matter_id, run_id)

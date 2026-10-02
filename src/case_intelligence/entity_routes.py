@@ -13,7 +13,8 @@ from .review_navigation import matter_return_path
 
 def install_entity_routes(app, *, service_for, discovery_for, assertions_for, authorized_matter, auth_context,
                           require_csrf, templates, base_context, audit,
-                          require_response_lease, transfer_response_lease):
+                          require_response_lease, transfer_response_lease,
+                          automatic_progress=None, wake_automatic=None):
     def return_path(slug, value):
         return matter_return_path(slug, value, fallback=f'/matters/{slug}')
 
@@ -46,6 +47,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                     passage = service.resolve_support(support)
             except (KeyError, WorkspaceProblem):
                 error = error or 'This passage changed or is unavailable. Return to source review and select a current passage.'
+        automatic = automatic_progress(matter) if automatic_progress is not None and not entity_id else None
         return_to = return_path(slug, return_to)
         def entity_url(identifier='', target_page=1):
             path = f'/matters/{slug}/entities' + ('/' + identifier if identifier else '')
@@ -64,6 +66,7 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
             'candidate_page_url': lambda value: f'/matters/{slug}/entities/{entity_id}?' + urlencode(dict(q=q, support=support, return_to=return_to, candidate_page=value)),
             'candidates': candidates, 'reconciliations': [dict(row, before=json.loads(row['before_json'])) for row in reconciliations],
             'error': error, 'draft': draft, 'show_assistant_dock': False,
+            'automatic_attention': (automatic or {}).get('sources_attention', 0),
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
         try:
             with service.repository.transaction(matter.matter_id, actor):
@@ -128,6 +131,11 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
                         context=auth_context(request), matter=matter, object_type='review_run', object_id=run_id,
                         details={'count': event['count'], 'unit_count': 1,
                                  'state': {'processed': 'completed', 'failed': 'failed', 'invalidated': 'attention'}[event['state']]}))
+            elif action == 'retry_automatic':
+                # Failed automatic units are queued again; nothing already saved changes.
+                discovery_for(matter).retry_automatic(matter.matter_id, actor)
+                if wake_automatic is not None:
+                    wake_automatic(matter)
             elif action in ('merge', 'split', 'alias', 'reject'):
                 service.reconcile(matter.matter_id, actor, entity_id, expected_revision=expected_revision,
                     target_id=target_id, target_revision=target_revision, action=action,
