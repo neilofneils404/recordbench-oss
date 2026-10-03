@@ -72,8 +72,11 @@ current presentation.
 ## Compact answer presentation
 
 On the Ask page each statement reads first, followed by small numbered citation
-links. Each distinct cited passage gets one number per answer, in reading order,
-and the number opens the same passage as its full citation. The full citations stay
+links. Each distinct cited passage gets one number per answer, in reading order
+(statements first, then a sourced limitation), and the number opens the same
+passage as its full citation. Full citations are read aloud as "Source N", and a
+transcript citation keeps its number, wrapping source label and icon in separate
+columns so a long recording name never overflows a narrow screen. The full citations stay
 below each statement, numbered to match, with **Save passage to case notes**,
 per-citation **Save** and **Compare cited context** unchanged. Each answer's caveats
 (source coverage when the answer was created, the generated-text caution and the

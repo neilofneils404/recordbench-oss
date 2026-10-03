@@ -2,6 +2,10 @@
 {% from "workbench_cited_context_macros.html" import cited_context %}
 {# A cited passage's identity for answer numbering: its support link, else name and location. #}
 {% macro citation_ref_key(citation) %}{% set href = citation_href(citation, matter.slug) %}{{ href if 'support=' in href else (citation.source_name ~ '|' ~ citation.location) }}{% endmacro %}
+{# Small numbered links after a statement or limitation, one per distinct passage. #}
+{% macro citation_refs(citations, keys, conversation_id, review_return) %}{% set shown = namespace(keys=[]) %}{% for citation in citations or [] %}{% set key = (citation_ref_key(citation)|string) %}{% if key not in shown.keys %}{% set shown.keys = shown.keys + [key] %}{% set number = keys.index(key) + 1 %}<a class="citation-ref" href="{{ citation_href(citation, matter.slug, conversation_id, entity_return_to=review_return) }}" aria-label="Source {{ number }}: {{ citation.source_name }} · {{ citation.location }}">{{ number }}</a>{% endif %}{% endfor %}{% endmacro %}
+{# A full citation link carrying its passage number, read aloud as "Source N". #}
+{% macro numbered_citation(citation, number, href) %}<a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ href }}"><span class="citation-number"><span class="visually-hidden">Source </span>{{ number }}</span>{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}<span class="citation-label">{{ citation.source_name }} · {{ citation.location }}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>{% endmacro %}
 
 {% block title %}{{ matter.display_name }} · {{ product_name }}{% endblock %}
 {% block body_class %}workspace-page {% if support %}support-is-open{% endif %} {% if support and support.evidence_kind == 'transcript' %}support-media-is-open{% endif %}{% endblock %}
@@ -362,7 +366,9 @@
                   <p class="answer-introduction">{{ answer_introduction(message.payload.introduction) }}</p>
                   {# Number each distinct cited passage once per answer, in reading order. #}
                   {% set refs = namespace(keys=[]) %}
-                  {% for claim in message.payload.claims %}{% for citation in claim.citations or [] %}{% set key = (citation_ref_key(citation)|string) %}{% if key not in refs.keys %}{% set refs.keys = refs.keys + [key] %}{% endif %}{% endfor %}{% endfor %}
+                  {# Statements first, then any sourced limitation, in reading order. #}
+                  {% set cited = namespace(items=[]) %}{% for claim in message.payload.claims %}{% set cited.items = cited.items + (claim.citations or []) %}{% endfor %}{% if message.payload.limitation %}{% set cited.items = cited.items + (message.payload.limitation.citations or []) %}{% endif %}
+                  {% for citation in cited.items %}{% set key = (citation_ref_key(citation)|string) %}{% if key not in refs.keys %}{% set refs.keys = refs.keys + [key] %}{% endif %}{% endfor %}
                   {% if message.payload.notebook_context %}
                   <details class="answer-context-summary">
                     <summary>Used {{ message.payload.notebook_context.count }} user-selected notebook item{% if message.payload.notebook_context.count != 1 %}s{% endif %} as orientation</summary>
@@ -374,7 +380,7 @@
                     {% for claim in message.payload.claims %}
                     {% set claim_index = loop.index0 %}
                     <li>
-                      <p class="answer-claim-text">{{ claim.text }}{% set shown = namespace(keys=[]) %}{% for citation in claim.citations or [] %}{% set key = (citation_ref_key(citation)|string) %}{% if key not in shown.keys %}{% set shown.keys = shown.keys + [key] %}{% set number = refs.keys.index(key) + 1 %}<a class="citation-ref" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}" aria-label="Source {{ number }}: {{ citation.source_name }} · {{ citation.location }}">{{ number }}</a>{% endif %}{% endfor %}</p>
+                      <p class="answer-claim-text">{{ claim.text }}{{ citation_refs(claim.citations, refs.keys, conversation.conversation_id, review_return) }}</p>
                       <form class="save-claim-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/notebook/claims/{{ claim_index }}" data-working-form data-working-label="Saving…">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit">Save passage to case notes</button>
@@ -384,10 +390,7 @@
                         {% for citation in claim.citations %}
                         <div class="cited-context-item">
                         <div class="citation-with-save">
-                          <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">
-                            <span class="citation-number" aria-hidden="true">{{ refs.keys.index((citation_ref_key(citation)|string)) + 1 }}</span>{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg>
-                          </a>
+                          {{ numbered_citation(citation, refs.keys.index((citation_ref_key(citation)|string)) + 1, citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return)) }}
                           <form method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/notebook/claims/{{ claim_index }}/citations/{{ loop.index0 }}" data-working-form data-working-label="Saving…">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <button type="submit" aria-label="Save {{ citation.source_name }} {{ citation.location }} to notebook">Save</button>
@@ -403,12 +406,12 @@
                   </ol>
                   {% if message.payload.limitation %}
                   <div class="answer-limitation">
-                    <p><strong>Limitation:</strong> {{ answer_limitation(message.payload) }}</p>
+                    <p><strong>Limitation:</strong> {{ answer_limitation(message.payload) }}{{ citation_refs(message.payload.limitation.citations, refs.keys, conversation.conversation_id, review_return) }}</p>
                     {% if message.payload.limitation.citations %}
                     <div class="citation-list cited-context-list">
                       {% for citation in message.payload.limitation.citations %}
                       <div class="cited-context-item">
-                      <a class="citation{% if citation.evidence_kind == 'transcript' %} media-citation{% endif %}" href="{{ citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return) }}">{% if citation.evidence_kind == 'transcript' %}<span class="citation-action">▶ Play cited moment</span>{% endif %}{{ citation.source_name }} · {{ citation.location }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg></a>
+                      {{ numbered_citation(citation, refs.keys.index((citation_ref_key(citation)|string)) + 1, citation_href(citation, matter.slug, conversation.conversation_id, entity_return_to=review_return)) }}
                       {{ cited_context(matter.slug, conversation.conversation_id, message.message_id, 'limitation', loop.index0, citation) }}
                       </div>
                       {% endfor %}

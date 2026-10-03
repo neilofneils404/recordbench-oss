@@ -639,4 +639,11 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
 .answer-about > summary { cursor: pointer; font-weight: 700; color: var(--ink-soft); }
 .answer-about > summary small { margin-left: 8px; font-weight: 500; color: var(--ink-faint); }
 .answer-about[open] > summary { margin-bottom: 6px; }
-.media-citation .citation-number { align-self: flex-start; flex: 0 0 auto; width: 16px; }
+/* Numbered transcript citations: action on its own row, then number, a wrapping
+   label and the icon in explicit columns so a long filename never overflows. */
+.answer-claims .media-citation, .answer-limitation .media-citation { grid-template-columns: auto minmax(0, 1fr) auto; max-width: 100%; }
+.answer-claims .media-citation .citation-action, .answer-limitation .media-citation .citation-action { grid-column: 1 / -1; grid-row: 1; }
+.answer-claims .media-citation .citation-number, .answer-limitation .media-citation .citation-number { grid-column: 1; grid-row: 2; align-self: start; }
+.answer-claims .media-citation .citation-label, .answer-limitation .media-citation .citation-label { grid-column: 2; grid-row: 2; min-width: 0; overflow-wrap: anywhere; }
+.answer-claims .media-citation svg, .answer-limitation .media-citation svg { grid-column: 3; grid-row: 2; }
+.answer-claims .citation-label, .answer-limitation .citation-label { min-width: 0; overflow-wrap: anywhere; }
