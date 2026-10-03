@@ -154,6 +154,9 @@ python scripts/assertion-storage-restore-drill.py
 python scripts/browser-accept-assertions.py --chrome-binary /path/to/chrome --chromedriver /path/to/chromedriver --output /tmp/generated-assertion-acceptance
 ```
 
+The browser journey also runs in the required
+[synthetic browser runner](BROWSER_ACCEPTANCE.md) (`scripts/run-browser-acceptance.py`).
+
 The [dated validation receipt](EVIDENCE_ASSERTIONS_VALIDATION_2026-09-12.json)
 records actual results and limitations. Hosted
 final-head code/security review, required CI and maintainer acceptance are
