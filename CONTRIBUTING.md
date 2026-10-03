@@ -32,7 +32,12 @@ Clone your fork and enter the repository. Before committing, configure Git
 with your public GitHub username and the no-reply address shown in your GitHub
 email settings (`git config user.name` and `git config user.email`). Ordinary
 personal addresses are rejected by the publication check unless explicitly
-reviewed by a maintainer. Then install the host tools. On a fresh
+reviewed by a maintainer. Use your own identity, not a maintainer's: contributors
+retain credit for their work when a PR lands. The maintainer's identity applies
+only to commits created by the maintainer or on their behalf. All contributors
+follow the same publication and PR review requirements.
+
+Then install the host tools. On a fresh
 Ubuntu 24.04 development machine:
 
 ```console

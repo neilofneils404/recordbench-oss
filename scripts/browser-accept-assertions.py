@@ -42,7 +42,9 @@ def main():
     parser.add_argument('--chromedriver', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=False)
+    args.output.mkdir(parents=True, exist_ok=True)
+    if any(args.output.iterdir()):
+        raise ValueError('Choose an empty output directory.')
     isolate_environment()
     checks = []
     drivers = []
@@ -258,7 +260,13 @@ def main():
             go(event_path + '?' + urlencode(dict(return_to=review_return)))
             click_element(driver.find_elements(By.LINK_TEXT, 'Open original passage')[0])
             wait.until(lambda d: d.find_element(By.ID, 'support-pane'))
-            return_link = wait.until(EC.visibility_of_element_located((By.LINK_TEXT, 'Return to review context')))
+            # The page behind the drawer keeps its own return link, which may scroll under the
+            # sticky question box; the drawer's link is the one the reviewer must be able to reach.
+            return_link = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, '#support-pane a.support-return-context')))
+            # Judge the settled drawer, not a frame of its slide-in animation.
+            wait.until(lambda d: d.execute_script(
+                "return document.getElementById('support-pane').getAnimations().every(a => a.playState !== 'running')"))
+            assert return_link.text == 'Return to review context'
             wait.until(lambda d: d.execute_script('''const link = arguments[0];
                 const box = link.getBoundingClientRect();
                 const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
@@ -369,13 +377,13 @@ def main():
             assert exported['history'] and {(role['entity_id'], role['role']) for role in exported['roles']} == {
                 (entity_path.split('/')[-1], 'subject'), (depot_path.split('/')[-1], 'location')}
             record('Visible export action downloads review status, typed role, uncertain date, history, and both incompatible original accounts')
-            (args.output / 'receipt.json').write_text(json.dumps(dict(synthetic=True, success=True,
+            (args.output / 'receipt.json').write_text(json.dumps(dict(synthetic_only=True, passed=True,
                 checks=checks, browser=driver.capabilities.get('browserVersion'),
                 scope='Manual browser workflow without a model. Complete original-source restore, authorization, source changes and purge are covered by test_assertion_workflow.py.'), indent=2))
         except Exception as exc:
             if drivers:
                 drivers[0].save_screenshot(str(args.output / 'failure.png'))
-            (args.output / 'receipt.json').write_text(json.dumps(dict(synthetic=True, success=False,
+            (args.output / 'receipt.json').write_text(json.dumps(dict(synthetic_only=True, passed=False,
                 checks=checks, error=type(exc).__name__), indent=2))
             raise
         finally:

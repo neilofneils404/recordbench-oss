@@ -38,9 +38,15 @@ commit-and-identity boundary above and grants no exception to later commits.
 The maintainer approved the existing attribution on commit
 `f8ccae72b39704942c23caecb8195874a74e7699` under the same exact-commit and
 identity-digest rule. This historical disposition does not rewrite published
-history. New commits and merges must use the maintainer's validated GitHub
-no-reply attribution; this exception does not authorize later personal-address
-attribution.
+history. New commits and merges must use the responsible contributor's validated
+GitHub no-reply attribution; this exception does not authorize later
+personal-address attribution. Contributors use their own public GitHub username
+and no-reply address and retain credit for their work. A maintainer's identity
+applies only to commits created by that maintainer or on their behalf; it is not
+an identity requirement for outside contributors. Preserve contributor authorship
+when landing a PR, and use the maintainer's no-reply identity for any new merge
+commit the maintainer creates. Publication checks, review requirements and branch
+protections apply to every contributor.
 
 The maintainer explicitly accepted keeping merge commit
 `a8f4fbe36439a374746f9c2b2ca9660d89793044` in public history with its existing

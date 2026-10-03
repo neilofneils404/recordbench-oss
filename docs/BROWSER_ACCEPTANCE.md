@@ -6,6 +6,11 @@ receipt, Dusk readability and Report bundle journeys on Ubuntu 24.04 and Python
 source repair, cross-matter denial and interrupted-close recovery as well as
 Markdown/Word downloads. The Report script enters the visible reading/editor
 views and expands the blank-document and written-section controls before editing.
+The runner also includes the [events/assertions journey](EVIDENCE_ASSERTIONS.md),
+which checks at 390 pixels that the source drawer's own "Return to review
+context" link is inside the viewport and receives the click once the drawer has
+settled. The page behind the drawer has a same-named link that can scroll under
+the sticky question box, so the journey targets the drawer's link explicitly.
 
 All applications are generated for the run and listen on ephemeral loopback
 ports. They use the unavailable generator and synthetic text fixtures. This is
