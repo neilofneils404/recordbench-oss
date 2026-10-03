@@ -418,6 +418,8 @@ def main(argv=None):
             viewport(1024, 768)
             wait.until(lambda _: driver.switch_to.active_element == picker and picker.is_displayed())
             viewport(390, 844)
+            # The page builds the disclosure from resize callbacks after the resize returns.
+            wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, ".matter-section-disclosure summary"))
             summary = find(".matter-section-disclosure summary")
             reachable(summary)
             summary.click()
