@@ -77,7 +77,11 @@ discovery after processing, migration `0037`, behind
 after clean final-head hosted code review, passing Quality and maintainer
 acceptance; its restore drill is `scripts/automatic-discovery-restore-drill.py`.
 Increment 3b (one grouped suggestions inbox on People & things, no schema change)
-is proposed in its own PR. Each PR requests hosted code review before merge. See
+landed in [PR #135](https://github.com/neilofneils404/recordbench-oss/pull/135) at
+`bd3333a` after a clean final-head hosted code review (all 34 earlier review threads
+reconciled), passing Quality and maintainer acceptance. Increment 4a (compact cited
+answers: numbered citations and one collapsed caveat line per answer, no schema
+change) is proposed in its own PR. Each PR requests hosted code review before merge. See
 the [workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar) and
 [entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing).
 
