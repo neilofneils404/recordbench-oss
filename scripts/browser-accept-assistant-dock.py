@@ -182,13 +182,22 @@ def main(argv=None):
             draft = find(".assistant-draft-empty")
             assert draft.find_element(By.CSS_SELECTOR, ".assistant-suggestions-heading").text == "Suggested for this source"
             assert scope().startswith("All searchable sources"), scope()
+            # A slow scope response must hold the composer: nothing can be sent or typed meanwhile.
+            js("const original = window.fetch; window.fetch = (url, init) => /\\/sources\\/[^/]+\\/ask/.test(String(url))"
+               " ? new Promise((resolve) => setTimeout(resolve, 1500)).then(() => original(url, init)) : original(url, init);")
+            find("#assistant-question").send_keys("Synthetic unsent draft")
             draft.find_elements(By.CSS_SELECTOR, "[data-assistant-suggestion]")[2].click()
+            composer = js("const t=document.querySelector('#assistant-question'), b=t.form.querySelector('button[type=submit]');"
+                          "return [t.disabled, b.disabled, t.value, document.querySelector('.assistant-draft-empty .assistant-suggestions').getAttribute('aria-busy')]")
+            assert composer == [True, True, "Synthetic unsent draft", "true"], composer
             wait.until(lambda _: find("#assistant-question").get_attribute("value")
                        == "Which dates appear in this source, and what happened on each?")
             assert scope() == "Only · " + SOURCE_NAME, scope()
+            assert js("const t=document.querySelector('#assistant-question');"
+                      "return !t.disabled && !t.form.querySelector('button[type=submit]').disabled")
             ids = js("return [...document.querySelectorAll('[id]')].map(e => e.id)")
             assert len(ids) == len(set(ids)), "duplicate ids after drafting a new chat"
-            checks.append("New chat offers the same source suggestions, which again limit scope before filling the box")
+            checks.append("New chat offers the same source suggestions; while a slow scope response is pending the question box, Send and suggestions are held, then the box is filled with the scope applied")
 
             open_page(prefix + "/notebook")
             wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, "[data-assistant-suggestion]"))

@@ -3818,10 +3818,24 @@
         const textarea = assistantDock?.querySelector("[data-assistant-question-form] textarea");
         if (!textarea || textarea.disabled) return;
         if (button.dataset.assistantSuggestionScope === "source") {
-          const status = button.closest(".assistant-suggestions")?.querySelector("[data-assistant-suggestion-status]");
+          const group = button.closest(".assistant-suggestions");
+          const status = group?.querySelector("[data-assistant-suggestion-status]");
           const sourceForm = document.querySelector("[data-review-ask-source]");
+          // Nothing can be sent, typed or chosen until the scope is settled, so a
+          // question cannot go out with the previous scope or be overwritten.
+          const submit = textarea.form?.querySelector('button[type="submit"]');
+          const choices = [...(group?.querySelectorAll("[data-assistant-suggestion]") || [])];
+          const held = [textarea, submit, ...choices].filter((control) => control && !control.disabled);
+          held.forEach((control) => { control.disabled = true; });
+          group?.setAttribute("aria-busy", "true");
           if (status) status.textContent = "Limiting your next question to this source…";
-          const selected = Boolean(sourceForm && selectReviewSource && await selectReviewSource(sourceForm));
+          let selected = false;
+          try {
+            selected = Boolean(sourceForm && selectReviewSource && await selectReviewSource(sourceForm));
+          } finally {
+            held.forEach((control) => { control.disabled = false; });
+            group?.removeAttribute("aria-busy");
+          }
           if (status) status.textContent = selected ? "Your next question is limited to this source."
             : "This source could not be selected, so nothing was filled in. Try again or choose Ask using this source.";
           if (!selected || !textarea.isConnected) return;
