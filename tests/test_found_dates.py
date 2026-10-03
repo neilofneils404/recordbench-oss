@@ -314,3 +314,41 @@ def test_reviewing_a_found_date_keeps_the_selected_passage_and_its_return(workbe
     query = parse_qs(urlsplit(back).query)
     assert query["support"] == [token] and query["return_to"] == [source_review]
     assert client.get(back.split("#")[0]).status_code == 200
+
+
+def test_only_a_date_or_a_stated_time_after_it_is_placed_in_order(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:1])
+    service = bench.entity_service(matter)
+    row = service.list(matter.matter_id, WEB_ACTOR)[0][0]
+    sample = service.detail(matter.matter_id, WEB_ACTOR, row["entity_id"])[1][0]
+    _add_dates(bench, matter, sample, 6, 0)
+    stated_forms = ["2025-01-02 draft", "2025-01-03T09", "2025-01-04T09:30Zed",
+                    "2025-01-05 09:30", "2025-01-06T09:30:15+01:00", "2025-01-07T09:30Z"]
+    connection = bench.workspace.connection
+    with bench.workspace._lock, connection:  # A replacement extractor may emit other date-shaped labels.
+        for index, value in enumerate(stated_forms):
+            connection.execute("UPDATE workbench_entity_mention SET surface_text=? WHERE mention_id=?",
+                               (value, f"synthetic-date-mention-{index:06d}"))
+    draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    ordered = re.search(r"<h3>In date order</h3><ol class=\"found-date-list\">(.*?)</ol>", draft, re.S)[1]
+    unordered = re.search(r"<h3>Order not established</h3><ul class=\"found-date-list\">(.*?)</ul>", draft, re.S)[1]
+    assert {"2025-01-05 09:30", "2025-01-06T09:30:15+01:00", "2025-01-07T09:30Z"} <= set(stated(ordered))
+    assert {"2025-01-02 draft", "2025-01-03T09", "2025-01-04T09:30Zed"} == set(stated(unordered))
+
+
+def test_a_long_return_path_still_opens_the_date_identity(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:1])
+    service = bench.entity_service(matter)
+    token = service.detail(matter.matter_id, WEB_ACTOR,
+                           service.list(matter.matter_id, WEB_ACTOR)[0][0]["entity_id"])[1][0]["support_token"]
+    # A same-matter return path just inside the accepted limit, which grows when nested.
+    long_return = f"/matters/{matter.slug}?q=" + "a%2Fb" * ((3970 - len(matter.slug)) // 5)
+    assert 3950 <= len(long_return) <= 4000
+    page = client.get(f"/matters/{matter.slug}/chronology", params={"support": token, "return_to": long_return}).text
+    link = html.unescape(re.findall(r'<a href="([^"]+)" aria-label="[^"]+">Review this date</a>', section(page))[0])
+    assert client.get(link).status_code == 200
+    back = parse_qs(urlsplit(link).query)["return_to"][0]
+    # The nested return path is dropped to fit; the selected passage is kept.
+    assert len(back) <= 4000 and parse_qs(urlsplit(back).query)["support"] == [token]

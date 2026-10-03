@@ -10,6 +10,9 @@ from .assertion_service import ROLE_TYPES as ROLES, ASSERTION_STATUSES as STATUS
 from .workspace_store import WorkspaceProblem
 from .review_navigation import matter_return_path
 
+# The longest return path the entity and chronology routes accept.
+RETURN_LIMIT = 4000
+
 
 def install_assertion_routes(app, *, service_for, entities_for, authorized_matter, auth_context,
                              require_csrf, templates, base_context, audit,
@@ -55,6 +58,13 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
         def dates_page_url(number):
             return (f'/matters/{slug}/chronology?' + urlencode(dict(
                 page=page, dates_page=number, support=support, return_to=return_to)) + '#found-dates-heading')
+        # Reviewing a found date can return to this timeline position, keeping any selected
+        # passage. A nested return path that would exceed the identity page's limit is dropped.
+        timeline_here = f'/matters/{slug}/chronology?' + urlencode(dict(
+            page=page, dates_page=dates_page, support=support, return_to=return_to)) + '#found-dates-heading'
+        if len(timeline_here) > RETURN_LIMIT:
+            timeline_here = f'/matters/{slug}/chronology?' + urlencode(dict(
+                page=page, dates_page=dates_page, support=support)) + '#found-dates-heading'
         response = templates.TemplateResponse(request=request, name='workbench_assertions.html', context={
             **base_context(request, matter), 'matter': matter, 'detail': detail,
             'creating': creating, 'entity': entity, 'entity_id': entity_id, 'mentions': mentions,
@@ -64,9 +74,7 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
             'record_url': record_url, 'page_url': page_url, 'error': error, 'draft': draft,
             'found_dates': found_dates, 'found_total': found_total, 'found_ordered': found_ordered,
             'dates_page': dates_page, 'dates_page_url': dates_page_url, 'dates_page_size': 25,
-            # Reviewing a found date can return to this timeline position, keeping any selected passage.
-            'timeline_here': f'/matters/{slug}/chronology?' + urlencode(dict(
-                page=page, dates_page=dates_page, support=support, return_to=return_to)) + '#found-dates-heading',
+            'timeline_here': timeline_here,
             'removed': removed, 'show_assistant_dock': False,
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
         try:
