@@ -81,7 +81,12 @@ landed in [PR #135](https://github.com/neilofneils404/recordbench-oss/pull/135) 
 `bd3333a` after a clean final-head hosted code review (all 34 earlier review threads
 reconciled), passing Quality and maintainer acceptance. Increment 4a (compact cited
 answers: numbered citations and one collapsed caveat line per answer, no schema
-change) is proposed in its own PR. Each PR requests hosted code review before merge. See
+change) landed in [PR #138](https://github.com/neilofneils404/recordbench-oss/pull/138)
+at `0817b20` after clean final-head hosted code review, passing Quality and
+maintainer acceptance. Increment 3c (a read-only draft of found dates on the
+timeline, no schema change; reviewer-created events stay the existing flow) is
+proposed in its own PR. Increment 5 (assistant actions) awaits approval of its
+brief. Each PR requests hosted code review before merge. See
 the [workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar) and
 [entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing).
 
