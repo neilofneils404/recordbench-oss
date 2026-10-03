@@ -127,7 +127,8 @@ its accessible name, "Close Ask RecordBench", includes the visible label. Closin
 moves focus to the collapsed **Ask RecordBench** tab, and reopening returns focus
 to the question box with any unsent question kept.
 
-An empty chat offers three suggested questions in a labelled group. Each fills
+An empty chat, including one started with **New chat**, offers three suggested
+questions in a labelled group. Each fills
 the question box and moves focus there; nothing is sent until the reviewer
 chooses Send. Suggestions depend on the page:
 

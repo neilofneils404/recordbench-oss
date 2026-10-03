@@ -1,4 +1,10 @@
 {% from "workbench_cited_context_macros.html" import cited_context %}
+{% macro suggestion_group(suffix='') %}<div class="assistant-suggestions" role="group" aria-labelledby="assistant-suggestions-heading{{ suffix }}">
+          <p id="assistant-suggestions-heading{{ suffix }}" class="assistant-suggestions-heading">{{ assistant.suggestions.heading }}</p>
+          {% for label, question in assistant.suggestions.questions %}<button type="button" data-assistant-suggestion="{{ question }}"{% if assistant.suggestions.scope %} data-assistant-suggestion-scope="{{ assistant.suggestions.scope }}"{% endif %} aria-describedby="assistant-suggestions-hint{{ suffix }}">{{ label }}</button>
+          {% endfor %}<p id="assistant-suggestions-hint{{ suffix }}" class="assistant-suggestions-hint">{{ assistant.suggestions.hint }}</p>
+          <p class="assistant-suggestions-hint" data-assistant-suggestion-status role="status"></p>
+        </div>{% endmacro %}
 <aside class="matter-assistant" data-assistant-dock data-assistant-presentation="{{ assistant.presentation }}" data-fragment-url="{{ assistant.fragment_url }}" data-matter-id="{{ matter.matter_id }}" data-conversation-id="{{ assistant.conversation.conversation_id }}" data-matter-ready="{{ 'true' if assistant.matter_ready else 'false' }}" aria-label="Ask RecordBench">
   <button class="assistant-collapsed-tab" type="button" data-assistant-expand aria-label="Open Ask RecordBench">
     <span class="assistant-brand-mark" aria-hidden="true">RB</span>
@@ -114,14 +120,7 @@
         <span class="assistant-brand-mark" aria-hidden="true">RB</span>
         <h2>Ask while you review</h2>
         <p>I’ll answer from this matter’s searchable sources and keep citations attached.</p>
-        {% if assistant.matter_ready %}
-        <div class="assistant-suggestions" role="group" aria-labelledby="assistant-suggestions-heading">
-          <p id="assistant-suggestions-heading" class="assistant-suggestions-heading">{{ assistant.suggestions.heading }}</p>
-          {% for label, question in assistant.suggestions.questions %}<button type="button" data-assistant-suggestion="{{ question }}"{% if assistant.suggestions.scope %} data-assistant-suggestion-scope="{{ assistant.suggestions.scope }}"{% endif %} aria-describedby="assistant-suggestions-hint">{{ label }}</button>
-          {% endfor %}<p id="assistant-suggestions-hint" class="assistant-suggestions-hint">{{ assistant.suggestions.hint }}</p>
-          <p class="assistant-suggestions-hint" data-assistant-suggestion-status role="status"></p>
-        </div>
-        {% endif %}
+        {% if assistant.matter_ready %}{{ suggestion_group() }}{% endif %}
       </div>
       {% endfor %}
     </div>
@@ -166,5 +165,7 @@
       </div>
       <small data-assistant-readiness-hint>{% if assistant.readiness.partial_query %}Partial searchable text only. Inspect Search coverage &amp; extraction limits above.{% elif assistant.matter_ready %}Generated answers use selected passages; check claims against the original sources.{% elif assistant.readiness.state == 'preparing' %}Questions will be available when active preparation finishes.{% else %}{{ assistant.readiness.guidance }}{% endif %}</small>
     </form>
+    {# A new chat drafted in the browser reuses the same suggestions. #}
+    {% if assistant.matter_ready %}<template data-assistant-suggestions-template>{{ suggestion_group('-draft') }}</template>{% endif %}
   </div>
 </aside>

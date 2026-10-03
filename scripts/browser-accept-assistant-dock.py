@@ -176,6 +176,20 @@ def main(argv=None):
             assert find("#assistant-question").get_attribute("value") == question
             checks.append("Close and reopen work from the keyboard, move focus to the reopen tab and back to the kept question")
 
+            # A new chat drafted in the browser offers the same source suggestions.
+            find("[data-assistant-new-chat]").click()
+            wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, ".assistant-draft-empty [data-assistant-suggestion]"))
+            draft = find(".assistant-draft-empty")
+            assert draft.find_element(By.CSS_SELECTOR, ".assistant-suggestions-heading").text == "Suggested for this source"
+            assert scope().startswith("All searchable sources"), scope()
+            draft.find_elements(By.CSS_SELECTOR, "[data-assistant-suggestion]")[2].click()
+            wait.until(lambda _: find("#assistant-question").get_attribute("value")
+                       == "Which dates appear in this source, and what happened on each?")
+            assert scope() == "Only · " + SOURCE_NAME, scope()
+            ids = js("return [...document.querySelectorAll('[id]')].map(e => e.id)")
+            assert len(ids) == len(set(ids)), "duplicate ids after drafting a new chat"
+            checks.append("New chat offers the same source suggestions, which again limit scope before filling the box")
+
             open_page(prefix + "/notebook")
             wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, "[data-assistant-suggestion]"))
             heading, buttons = suggestions()

@@ -3609,6 +3609,12 @@
     if (thread) {
       thread.innerHTML = '<div class="assistant-empty assistant-draft-empty"><span class="assistant-brand-mark" aria-hidden="true">RB</span><h2>New chat</h2><p>This draft is saved with the matter when you send its first question.</p></div>';
       thread.dataset.hasMessages = "false";
+      const suggestions = assistantDock.querySelector("[data-assistant-suggestions-template]");
+      const empty = thread.querySelector(".assistant-draft-empty");
+      if (suggestions && empty) {
+        empty.append(suggestions.content.cloneNode(true));
+        bindAssistantSuggestions(empty);
+      }
     }
     const status = assistantDock.querySelector("[data-assistant-status]");
     if (status) {
@@ -3804,6 +3810,29 @@
     }
   };
 
+  // Suggestions only fill the question box; a source suggestion first limits
+  // the next question to the open source.
+  const bindAssistantSuggestions = (root) => {
+    root.querySelectorAll("[data-assistant-suggestion]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const textarea = assistantDock?.querySelector("[data-assistant-question-form] textarea");
+        if (!textarea || textarea.disabled) return;
+        if (button.dataset.assistantSuggestionScope === "source") {
+          const status = button.closest(".assistant-suggestions")?.querySelector("[data-assistant-suggestion-status]");
+          const sourceForm = document.querySelector("[data-review-ask-source]");
+          if (status) status.textContent = "Limiting your next question to this source…";
+          const selected = Boolean(sourceForm && selectReviewSource && await selectReviewSource(sourceForm));
+          if (status) status.textContent = selected ? "Your next question is limited to this source."
+            : "This source could not be selected, so nothing was filled in. Try again or choose Ask using this source.";
+          if (!selected || !textarea.isConnected) return;
+        }
+        textarea.value = button.dataset.assistantSuggestion || "";
+        resizeAssistantTextarea(textarea);
+        textarea.focus({ preventScroll: true });
+      });
+    });
+  };
+
   const resizeAssistantTextarea = (textarea) => {
     if (!textarea) return;
     textarea.style.height = "auto";
@@ -3924,25 +3953,7 @@
     const textarea = form?.querySelector("textarea");
     textarea?.addEventListener("input", () => resizeAssistantTextarea(textarea));
     resizeAssistantTextarea(textarea);
-    assistantDock.querySelectorAll("[data-assistant-suggestion]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        if (!textarea || textarea.disabled) return;
-        if (button.dataset.assistantSuggestionScope === "source") {
-          // A question about "this source" is only filled in once the next
-          // question is limited to that source.
-          const status = assistantDock?.querySelector("[data-assistant-suggestion-status]");
-          const sourceForm = document.querySelector("[data-review-ask-source]");
-          if (status) status.textContent = "Limiting your next question to this source…";
-          const selected = Boolean(sourceForm && selectReviewSource && await selectReviewSource(sourceForm));
-          if (status) status.textContent = selected ? "Your next question is limited to this source."
-            : "This source could not be selected, so nothing was filled in. Try again or choose Ask using this source.";
-          if (!selected || !textarea.isConnected) return;
-        }
-        textarea.value = button.dataset.assistantSuggestion || "";
-        resizeAssistantTextarea(textarea);
-        textarea.focus({ preventScroll: true });
-      });
-    });
+    bindAssistantSuggestions(assistantDock);
 
     form?.addEventListener("submit", async (event) => {
       event.preventDefault();
