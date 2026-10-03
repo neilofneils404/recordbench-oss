@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+from urllib.parse import parse_qs, urlsplit
 
 from tests.test_automatic_discovery import upload, workbench  # noqa: F401
 from tests.test_matter_notebook import WEB_ACTOR
@@ -234,6 +235,7 @@ def test_calendar_validity_does_not_depend_on_the_sqlite_build(workbench):  # no
     prepare(client, bench, matter, (
         ("Synthetic leap.txt", b"Filed 2028-02-29 and again 2026-12-31 at noon."),
         ("Synthetic bad.txt", b"Copied 2026-02-29, 2026-04-31, 2026-13-01 and 2026-00-10 by hand."),
+        ("Synthetic year zero.txt", b"A template stamp reads 0000-02-29 in the footer."),
     ))
     connection = bench.workspace.connection
     # Some SQLite builds return an impossible day from date() unchanged; behave like one.
@@ -245,7 +247,7 @@ def test_calendar_validity_does_not_depend_on_the_sqlite_build(workbench):  # no
     ordered = re.search(r"<h3>In date order</h3><ol class=\"found-date-list\">(.*?)</ol>", draft, re.S)[1]
     unordered = re.search(r"<h3>Order not established</h3><ul class=\"found-date-list\">(.*?)</ul>", draft, re.S)[1]
     assert stated(ordered) == ["2026-12-31", "2028-02-29"]
-    assert sorted(stated(unordered)) == ["2026-00-10", "2026-02-29", "2026-04-31", "2026-13-01"]
+    assert sorted(stated(unordered)) == ["0000-02-29", "2026-00-10", "2026-02-29", "2026-04-31", "2026-13-01"]
 
 
 def test_a_passage_found_as_another_kind_is_not_listed_after_retyping_or_merging(workbench):  # noqa: F811
@@ -293,3 +295,22 @@ def test_an_entry_shows_its_passage_review_apart_from_its_identity(workbench):  
     when = re.search(r'<p class="found-date-when">(.*?)</p>', draft, re.S)[1]
     assert '<span class="suggestion-type">Identity: Confirmed</span>' in when
     assert '<span class="suggestion-type">Passage: Disputed</span>' in when
+
+
+def test_reviewing_a_found_date_keeps_the_selected_passage_and_its_return(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:2])
+    service = bench.entity_service(matter)
+    row = next(row for row in service.list(matter.matter_id, WEB_ACTOR)[0] if row["display_name"] == "2026-03-05")
+    token = service.detail(matter.matter_id, WEB_ACTOR, row["entity_id"])[1][0]["support_token"]
+    source_review = f"/matters/{matter.slug}?support={token}"
+    # The reviewer is choosing where to use a passage, then reviews a found date.
+    page = client.get(f"/matters/{matter.slug}/chronology", params={"support": token, "return_to": source_review}).text
+    link = html.unescape(re.findall(r'<a href="([^"]+)" aria-label="[^"]+">Review this date</a>', section(page))[0])
+    opened = client.get(link).text
+    back = html.unescape(re.search(r'<a href="([^"]+)">Return to source review</a>', opened)[1])
+    assert back.startswith(f"/matters/{matter.slug}/chronology?") and back.endswith("#found-dates-heading")
+    # The selected passage and its own return path survive the round trip.
+    query = parse_qs(urlsplit(back).query)
+    assert query["support"] == [token] and query["return_to"] == [source_review]
+    assert client.get(back.split("#")[0]).status_code == 200

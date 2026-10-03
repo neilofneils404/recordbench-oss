@@ -188,7 +188,7 @@ class EntityRepository:
         # Calendar arithmetic, not date(): SQLite builds differ on impossible days.
         leap = f'({year}%4=0 AND ({year}%100<>0 OR {year}%400=0))'
         month_days = f'CASE WHEN {month}=2 THEN 28+{leap} ELSE 30+({month}+{month}/8)%2 END'
-        ordered = (f"({stated} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' AND {month} BETWEEN 1 AND 12 "
+        ordered = (f"({stated} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' AND {year} >= 1 AND {month} BETWEEN 1 AND 12 "
                    f'AND CAST(substr({stated},9,2) AS INTEGER) BETWEEN 1 AND {month_days})')
         marks = ','.join('?' * len(self.DATE_DRAFT_STATUSES))
         # One pass over the matter's passages, each joined to its identity by key.

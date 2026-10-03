@@ -64,9 +64,9 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
             'record_url': record_url, 'page_url': page_url, 'error': error, 'draft': draft,
             'found_dates': found_dates, 'found_total': found_total, 'found_ordered': found_ordered,
             'dates_page': dates_page, 'dates_page_url': dates_page_url, 'dates_page_size': 25,
-            # Reviewing a found date can return to this timeline position.
-            'timeline_here': f'/matters/{slug}/chronology?' + urlencode(dict(page=page, dates_page=dates_page))
-            + '#found-dates-heading',
+            # Reviewing a found date can return to this timeline position, keeping any selected passage.
+            'timeline_here': f'/matters/{slug}/chronology?' + urlencode(dict(
+                page=page, dates_page=dates_page, support=support, return_to=return_to)) + '#found-dates-heading',
             'removed': removed, 'show_assistant_dock': False,
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
         try:
