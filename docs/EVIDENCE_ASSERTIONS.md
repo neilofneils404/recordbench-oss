@@ -62,7 +62,9 @@ or an impossible day like `2026-02-30`, is listed after them by source and is ne
 guessed. Each entry shows its passage with the date highlighted, links to the
 original when its source is still current (otherwise it is labelled retained
 history) and to the date identity, which can return to the same timeline position.
-Pages hold 25 dates. Nothing in the draft is saved, confirmed or exported; to keep
+Each entry shows the review status of its date identity and, separately, of its
+passage, so a disputed passage is visible even on a confirmed identity. Pages
+hold 25 dates. Viewing the draft saves, confirms and exports nothing; to keep
 one, open its passage and choose **Use in event or assertion**. An identity's
 filtered chronology does not show the draft. See
 [entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing).

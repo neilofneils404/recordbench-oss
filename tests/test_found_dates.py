@@ -66,7 +66,7 @@ def test_the_draft_saves_nothing_and_skips_dates_set_aside(workbench):  # noqa: 
                            mention_id=march[1][0]["mention_id"], status="dismissed")
     draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
     assert sorted(stated(draft)) == ["2026-01-02T09:30Z", "2026-02-30"]
-    assert "nothing here is saved or confirmed" in draft
+    assert "viewing it saves and confirms nothing" in draft
     assert bench.assertion_service(matter).list(matter.matter_id, WEB_ACTOR)[1] == 0
 
 
@@ -277,3 +277,19 @@ def test_repeated_dates_in_one_passage_have_distinct_review_link_names(workbench
     labels = re.findall(r'aria-label="([^"]+)">Review this date</a>', draft)
     assert stated(draft) == ["2026-03-05", "2026-03-05"]
     assert len(set(labels)) == 2 and all("Synthetic notice.txt" in label for label in labels)
+
+
+def test_an_entry_shows_its_passage_review_apart_from_its_identity(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:1])
+    service = bench.entity_service(matter)
+    row = service.list(matter.matter_id, WEB_ACTOR)[0][0]
+    service.decide(matter.matter_id, WEB_ACTOR, [(row["entity_id"], row["revision"])], status="confirmed")
+    entity, mentions = service.detail(matter.matter_id, WEB_ACTOR, row["entity_id"])[:2]
+    # The identity is confirmed, but the reviewer disputes this passage.
+    service.review_mention(matter.matter_id, WEB_ACTOR, entity["entity_id"], expected_revision=entity["revision"],
+                           mention_id=mentions[0]["mention_id"], status="disputed")
+    draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    when = re.search(r'<p class="found-date-when">(.*?)</p>', draft, re.S)[1]
+    assert '<span class="suggestion-type">Identity: Confirmed</span>' in when
+    assert '<span class="suggestion-type">Passage: Disputed</span>' in when
