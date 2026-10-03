@@ -84,9 +84,13 @@ answers: numbered citations and one collapsed caveat line per answer, no schema
 change) landed in [PR #138](https://github.com/neilofneils404/recordbench-oss/pull/138)
 at `0817b20` after clean final-head hosted code review, passing Quality and
 maintainer acceptance. Increment 3c (a read-only draft of found dates on the
-timeline, no schema change; reviewer-created events stay the existing flow) is
-proposed in its own PR. Increment 5 (assistant actions) awaits approval of its
-brief. Each PR requests hosted code review before merge. See
+timeline, no schema change; reviewer-created events stay the existing flow) landed
+in [PR #139](https://github.com/neilofneils404/recordbench-oss/pull/139) at
+`a512e3c` after a clean final-head hosted code review (all 12 review threads
+reconciled), passing Quality and maintainer acceptance. Increment 5
+([assistant actions](product-slices/assistant-actions.md)) is approved: A (assistant
+panel basics) is proposed in its own PR; B and C follow. Each PR requests hosted
+code review before merge. See
 the [workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar) and
 [entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing).
 
