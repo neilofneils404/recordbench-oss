@@ -26,6 +26,7 @@ MAX_RECEIPT_BYTES = 64 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 MAX_LOG_BYTES = 256 * 1024
+MAX_SUMMARY_LINES = 12
 JOURNEYS = (
     ('intake', 'browser-accept-intake-receipts.py', 'receipt-browser-result.json', 11, ()),
     ('dusk', 'browser-accept-dusk.py', 'receipt.json', 12, ()),
@@ -242,6 +243,23 @@ def collect_artifacts(raw: Path, destination: Path, log: Path, remaining: int) -
     return remaining, omitted
 
 
+def failure_summary(log: Path) -> list[str]:
+    """Return the end of a failed journey's traceback for the CI log.
+
+    Hosted artifacts can be unavailable to the person diagnosing a failure, so
+    the job log names where the synthetic journey stopped. Native driver frames
+    are omitted and every line is bounded.
+    """
+    if not log.exists() or not stat.S_ISREG(log.lstat().st_mode):
+        return []
+    with log.open('rb') as stream:
+        stream.seek(max(0, log.stat().st_size - 64 * 1024))
+        text = stream.read().decode('utf-8', 'replace')
+    lines = [line.rstrip() for line in text.splitlines()
+        if line.strip() and not re.match(r'\s*#\d+ 0x[0-9a-f]+ ', line)]
+    return [line[:300] for line in lines[-MAX_SUMMARY_LINES:]]
+
+
 def run_journeys(chrome: Path, driver: Path, scratch: Path, output: Path, timeout: float) -> list[dict]:
     results = []
     remaining = MAX_ARTIFACT_BYTES
@@ -272,6 +290,9 @@ def run_journeys(chrome: Path, driver: Path, scratch: Path, output: Path, timeou
             results.append(result)
             (output / 'journeys.json').write_text(json.dumps(results, indent=2) + '\n')
         print(f"{name}: {'passed' if result['passed'] else 'FAILED'}", flush=True)
+        if not result['passed']:
+            for line in failure_summary(log):
+                print(f'  {line}', flush=True)
     return results
 
 

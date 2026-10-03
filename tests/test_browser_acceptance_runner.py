@@ -605,3 +605,36 @@ def test_entities_text_preserves_unexpected_driver_failures(entities_script):
     with pytest.raises(TimeoutException):
         entities_script.page_text(driver, attempts=3)
     assert driver.find_element.call_count == 3
+
+
+def test_failed_journey_names_where_it_stopped_in_the_job_log(runner, tmp_path, monkeypatch, capsys):
+    scratch, output = tmp_path / 'scratch', tmp_path / 'output'
+    scratch.mkdir()
+    output.mkdir()
+
+    def run(command, log, environment, timeout):
+        failing = 'browser-accept-workspace-layout.py' in command[1]
+        raw = Path(command[command.index('--output') + 1])
+        if failing:
+            frames = ''.join(f'#{index} 0x55aa{index:04x} <unknown>\n' for index in range(30))
+            log.write_text('Generated progress\n' * 50 + 'Traceback (most recent call last):\n'
+                           '  File "generated-journey.py", line 42, in main\n'
+                           '    assert overflow == 0, ' + 'x' * 400 + '\n'
+                           'AssertionError: generated layout overflow\nStacktrace:\n' + frames)
+            return 1
+        log.write_text('Generated child output')
+        name = 'receipt-browser-result.json' if 'intake' in command[1] else 'receipt.json'
+        receipt(raw / name, passed=True)
+        return 0
+
+    monkeypatch.setattr(runner, 'run_process', run)
+    runner.run_journeys(Path('/generated/chrome'), Path('/generated/driver'), scratch, output, 1)
+    printed = capsys.readouterr().out.splitlines()
+    failed = printed.index('workspace-layout: FAILED')
+    summary = printed[failed + 1:printed.index('activity: passed')]
+    assert summary[-2:] == ['  AssertionError: generated layout overflow', '  Stacktrace:']
+    assert '    File "generated-journey.py", line 42, in main' in summary
+    assert len(summary) == runner.MAX_SUMMARY_LINES and all(len(line) <= 302 for line in summary)
+    assert not any('0x55aa' in line for line in summary)
+    # Passing journeys stay one line each.
+    assert printed[failed - 1] == 'reports: passed' and printed[failed + len(summary) + 1] == 'activity: passed'

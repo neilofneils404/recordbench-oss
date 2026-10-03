@@ -153,6 +153,10 @@ are omitted and listed in `journeys.json`. The small `summary.json` and
 copies a journey directory. Runtime databases, browser profiles, downloaded
 archives and exported bundles are excluded. CI uploads only this sanitized
 output directory and retains it for five days, including when a journey fails.
+When a journey fails, the runner also prints the last 12 lines of its child log
+(native driver stack frames omitted, each line bounded to 300 characters) under
+the failed journey's name, so the job log shows where it stopped even when the
+artifact cannot be downloaded.
 
 Check `summary.json` first, then the failed journey's log and screenshot. A
 receipt proves only the generated steps recorded in its `checks` array. CI
