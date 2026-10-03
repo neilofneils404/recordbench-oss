@@ -634,7 +634,38 @@ def test_failed_journey_names_where_it_stopped_in_the_job_log(runner, tmp_path, 
     summary = printed[failed + 1:printed.index('activity: passed')]
     assert summary[-2:] == ['  AssertionError: generated layout overflow', '  Stacktrace:']
     assert '    File "generated-journey.py", line 42, in main' in summary
-    assert len(summary) == runner.MAX_SUMMARY_LINES and all(len(line) <= 302 for line in summary)
+    assert summary[0] == '  Journey exited with status 1.'
+    assert len(summary) == runner.MAX_SUMMARY_LINES + 1 and all(len(line) <= 302 for line in summary)
     assert not any('0x55aa' in line for line in summary)
     # Passing journeys stay one line each.
     assert printed[failed - 1] == 'reports: passed' and printed[failed + len(summary) + 1] == 'activity: passed'
+
+
+def test_failure_summary_omits_macos_driver_frames_and_names_receipt_errors(runner, tmp_path, monkeypatch, capsys):
+    scratch, output = tmp_path / 'scratch', tmp_path / 'output'
+    scratch.mkdir()
+    output.mkdir()
+
+    def run(command, log, environment, timeout):
+        raw = Path(command[command.index('--output') + 1])
+        if 'browser-accept-zoom.py' in command[1]:
+            frames = ''.join(f'{index}   chromedriver                        0x00000001{index:08x} cxxbridge1$str$ptr + 1\n'
+                             for index in range(30))
+            log.write_text('Traceback (most recent call last):\n  File "generated-journey.py", line 7, in main\n'
+                           'selenium.common.exceptions.NoSuchElementException: generated\nStacktrace:\n' + frames)
+            return 1
+        log.write_text('Generated child output that looks successful')
+        name = 'receipt-browser-result.json' if 'intake' in command[1] else 'receipt.json'
+        # The activity journey exits cleanly but leaves an incomplete receipt.
+        receipt(raw / name, passed='browser-accept-activity.py' not in command[1])
+        return 0
+
+    monkeypatch.setattr(runner, 'run_process', run)
+    runner.run_journeys(Path('/generated/chrome'), Path('/generated/driver'), scratch, output, 1)
+    printed = capsys.readouterr().out.splitlines()
+    activity = printed[printed.index('activity: FAILED') + 1:printed.index('zoom: FAILED')]
+    assert activity[0] == '  Journey did not report a successful synthetic receipt.'
+    zoom = printed[printed.index('zoom: FAILED') + 1:printed.index('account-controls: passed')]
+    assert zoom[0] == '  Journey exited with status 1.'
+    assert '  selenium.common.exceptions.NoSuchElementException: generated' in zoom
+    assert not any('chromedriver' in line for line in zoom)

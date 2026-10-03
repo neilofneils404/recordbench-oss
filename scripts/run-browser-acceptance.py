@@ -27,6 +27,8 @@ MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 MAX_LOG_BYTES = 256 * 1024
 MAX_SUMMARY_LINES = 12
+# ChromeDriver stack frames: Linux "#0 0x55..." and macOS "0   chromedriver   0x0001...".
+NATIVE_FRAME = re.compile(r'\s*(?:#\d+ 0x[0-9a-f]+\b|\d+\s+\S+\s+0x[0-9a-f]+\b)')
 JOURNEYS = (
     ('intake', 'browser-accept-intake-receipts.py', 'receipt-browser-result.json', 11, ()),
     ('dusk', 'browser-accept-dusk.py', 'receipt.json', 12, ()),
@@ -256,7 +258,7 @@ def failure_summary(log: Path) -> list[str]:
         stream.seek(max(0, log.stat().st_size - 64 * 1024))
         text = stream.read().decode('utf-8', 'replace')
     lines = [line.rstrip() for line in text.splitlines()
-        if line.strip() and not re.match(r'\s*#\d+ 0x[0-9a-f]+ ', line)]
+        if line.strip() and not NATIVE_FRAME.match(line)]
     return [line[:300] for line in lines[-MAX_SUMMARY_LINES:]]
 
 
@@ -291,6 +293,8 @@ def run_journeys(chrome: Path, driver: Path, scratch: Path, output: Path, timeou
             (output / 'journeys.json').write_text(json.dumps(results, indent=2) + '\n')
         print(f"{name}: {'passed' if result['passed'] else 'FAILED'}", flush=True)
         if not result['passed']:
+            if result.get('error'):
+                print(f"  {result['error'][:300]}", flush=True)
             for line in failure_summary(log):
                 print(f'  {line}', flush=True)
     return results
