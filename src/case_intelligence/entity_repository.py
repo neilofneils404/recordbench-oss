@@ -175,9 +175,9 @@ class EntityRepository:
     def date_draft(self, matter_id, page=1, page_size=25):
         """Each passage stating an automatically found date, for a draft timeline.
 
-        Only passages discovery itself found are listed, whichever identity
-        now holds them. Only a full calendar date naming a real day is placed
-        in order, by calendar day; any other date (day/month order unknown, an
+        Only passages discovery itself found and recorded as dates are listed,
+        whichever date identity now holds them. Only a full calendar date
+        naming a real day is placed in order, by calendar day; any other date (day/month order unknown, an
         impossible day) keeps its order unestablished and is never guessed; those
         follow, by source and position. Times and offsets are shown as stated but
         not used for ordering.
@@ -193,7 +193,8 @@ class EntityRepository:
         marks = ','.join('?' * len(self.DATE_DRAFT_STATUSES))
         # One pass over the matter's passages, each joined to its identity by key.
         base = ('FROM workbench_entity_mention m CROSS JOIN workbench_entity e ON e.entity_id=m.entity_id '
-                "WHERE m.matter_id=? AND m.origin='extraction' AND e.matter_id=m.matter_id AND e.entity_type='date' "
+                "WHERE m.matter_id=? AND m.origin='extraction' AND json_extract(m.date_json,'$.kind')='date' "
+                "AND e.matter_id=m.matter_id AND e.entity_type='date' "
                 f'AND e.status IN ({marks}) AND m.review_status IN ({marks})')
         params = (matter_id, *self.DATE_DRAFT_STATUSES, *self.DATE_DRAFT_STATUSES)
         total, ordered_total = self.connection.execute(
@@ -204,9 +205,10 @@ class EntityRepository:
             'm.start_offset,m.mention_id LIMIT ? OFFSET ?',
             (*params, page_size, (page - 1) * page_size)).fetchall()
         items = []
-        for row in rows:
+        for index, row in enumerate(rows):
             mention = self.highlight(dict(row), row['stated'])
             mention['ordered'] = bool(row['ordered'])
+            mention['position'] = (page - 1) * page_size + index + 1
             # Discovery records {"kind": ..., "date": {"raw", "ambiguity", ...}} per occurrence.
             recorded = json.loads(mention.get('date_json') or 'null') or {}
             mention['detail'] = recorded.get('date') if isinstance(recorded.get('date'), dict) else {}

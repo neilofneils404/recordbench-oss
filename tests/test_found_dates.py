@@ -119,7 +119,8 @@ def _add_dates(bench, matter, sample, count, start):
             connection.execute(
                 "INSERT INTO workbench_entity_mention(mention_id,matter_id,entity_id,document_id,source_version_id,"
                 "source_name,location,unit_number,chunk_id,excerpt_digest,excerpt,support_token,origin,created_by,"
-                "created_at,surface_text) VALUES (?,?,?,?,?,?,?,1,?,?,?,?,'extraction',?,'2026-01-01T00:00:00Z',?)",
+                "created_at,surface_text,date_json) VALUES (?,?,?,?,?,?,?,1,?,?,?,?,'extraction',?,'2026-01-01T00:00:00Z',?,"
+                "'{\"kind\": \"date\", \"date\": {}}')",
                 (f"synthetic-date-mention-{index:06d}", matter.matter_id, entity_id, sample["document_id"],
                  sample["source_version_id"], sample["source_name"], sample["location"], sample["chunk_id"],
                  hashlib.sha256(str(index).encode()).hexdigest(), f"Logged {day}.", sample["support_token"],
@@ -188,6 +189,7 @@ def test_reviewing_a_found_date_can_return_to_the_same_timeline_position(workben
     opened = client.get(html.unescape(links[0][0])).text
     back = html.unescape(re.search(r'<a href="([^"]+)">Return to source review</a>', opened)[1])
     assert back.startswith(f"/matters/{matter.slug}/chronology?") and "dates_page=2" in back
+    assert back.endswith("#found-dates-heading")
 
 
 def test_paging_saved_records_keeps_the_found_date_page(workbench, monkeypatch):  # noqa: F811
@@ -244,3 +246,34 @@ def test_calendar_validity_does_not_depend_on_the_sqlite_build(workbench):  # no
     unordered = re.search(r"<h3>Order not established</h3><ul class=\"found-date-list\">(.*?)</ul>", draft, re.S)[1]
     assert stated(ordered) == ["2026-12-31", "2028-02-29"]
     assert sorted(stated(unordered)) == ["2026-00-10", "2026-02-29", "2026-04-31", "2026-13-01"]
+
+
+def test_a_passage_found_as_another_kind_is_not_listed_after_retyping_or_merging(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, (
+        ("Synthetic shift log.txt", b"Morgan Ellis inspected the crate on 2026-03-05 at Synthetic Freight Ltd."),
+    ))
+    service = bench.entity_service(matter)
+    rows = service.list(matter.matter_id, WEB_ACTOR)[0]
+    others = [row for row in rows if row["entity_type"] != "date"]
+    date = next(row for row in rows if row["entity_type"] == "date")
+    assert len(others) >= 2, [(row["display_name"], row["entity_type"]) for row in rows]
+    # A reviewer retypes one found name as a date, and merges another into the found date.
+    retyped, merged = others[0], others[1]
+    service.update(matter.matter_id, WEB_ACTOR, retyped["entity_id"], expected_revision=retyped["revision"],
+                   display_name=retyped["display_name"], entity_type="date", status="suggested", aliases="")
+    service.reconcile(matter.matter_id, WEB_ACTOR, merged["entity_id"], expected_revision=merged["revision"],
+                      target_id=date["entity_id"], target_revision=date["revision"], action="merge")
+    draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    assert stated(draft) == ["2026-03-05"]
+
+
+def test_repeated_dates_in_one_passage_have_distinct_review_link_names(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, (
+        ("Synthetic notice.txt", b"Payment due 2026-03-05; the reminder repeats 2026-03-05 at the foot."),
+    ))
+    draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    labels = re.findall(r'aria-label="([^"]+)">Review this date</a>', draft)
+    assert stated(draft) == ["2026-03-05", "2026-03-05"]
+    assert len(set(labels)) == 2 and all("Synthetic notice.txt" in label for label in labels)
