@@ -11,6 +11,10 @@ which checks at 390 pixels that the source drawer's own "Return to review
 context" link is inside the viewport and receives the click once the drawer has
 settled. The page behind the drawer has a same-named link that can scroll under
 the sticky question box, so the journey targets the drawer's link explicitly.
+The [assistant dock journey](WORKSPACE_LAYOUT.md#assistant-dock-suggestions-and-close)
+checks the labelled Close control and the suggested questions with the keyboard
+at 1440, 390 and 320 pixels: on an open source, choosing a suggestion limits the
+next question to that source before filling the box, and nothing is sent.
 
 All applications are generated for the run and listen on ephemeral loopback
 ports. They use the unavailable generator and synthetic text fixtures. This is

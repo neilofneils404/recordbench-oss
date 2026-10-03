@@ -9,8 +9,8 @@
       <div><span>Ask RecordBench</span><strong>{{ assistant.display_label }}</strong></div>
       <div>
         <a href="{{ assistant.open_url }}" aria-label="Open case conversation and manage conversations">Full conversation</a>
-        <button type="button" data-assistant-collapse aria-label="Collapse Ask RecordBench">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 6-6 6 6 6"/></svg>
+        <button type="button" class="assistant-close" data-assistant-collapse aria-label="Close Ask RecordBench">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 6-6 6 6 6"/></svg><span>Close</span>
         </button>
       </div>
     </header>
@@ -115,10 +115,11 @@
         <h2>Ask while you review</h2>
         <p>I’ll answer from this matter’s searchable sources and keep citations attached.</p>
         {% if assistant.matter_ready %}
-        <div class="assistant-suggestions" aria-label="Suggested questions">
-          <button type="button" data-assistant-suggestion="Summarize the records in this matter.">Summarize the records</button>
-          <button type="button" data-assistant-suggestion="Which people and organizations are mentioned in these records?">Find people and organizations</button>
-          <button type="button" data-assistant-suggestion="What dates and events should I review first?">Review dates and events</button>
+        <div class="assistant-suggestions" role="group" aria-labelledby="assistant-suggestions-heading">
+          <p id="assistant-suggestions-heading" class="assistant-suggestions-heading">{{ assistant.suggestions.heading }}</p>
+          {% for label, question in assistant.suggestions.questions %}<button type="button" data-assistant-suggestion="{{ question }}"{% if assistant.suggestions.scope %} data-assistant-suggestion-scope="{{ assistant.suggestions.scope }}"{% endif %} aria-describedby="assistant-suggestions-hint">{{ label }}</button>
+          {% endfor %}<p id="assistant-suggestions-hint" class="assistant-suggestions-hint">{{ assistant.suggestions.hint }}</p>
+          <p class="assistant-suggestions-hint" data-assistant-suggestion-status role="status"></p>
         </div>
         {% endif %}
       </div>

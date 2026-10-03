@@ -3436,6 +3436,8 @@
   let assistantEpoch = 0;
   let assistantHistorySwitch = null;
   let reviewQuestionScope = null;
+  // Set by the source reader: limits the next question to the open source.
+  let selectReviewSource = null;
 
   const releaseAssistantHistorySwitch = (operation = assistantHistorySwitch) => {
     if (!operation || assistantHistorySwitch !== operation) return;
@@ -3647,7 +3649,13 @@
     assistantDraftBuffer = null;
     assistantDock.classList.remove("is-draft");
     assistantDock.dataset.conversationId = job.conversation_id;
-    if (job.fragment_url) assistantDock.dataset.fragmentUrl = job.fragment_url;
+    if (job.fragment_url) {
+      // Keep the page the dock is shown on, which the job's own URL does not carry.
+      const next = new URL(job.fragment_url, window.location.origin);
+      const page = new URL(assistantDock.dataset.fragmentUrl || job.fragment_url, window.location.origin).searchParams.get("assistant_from");
+      if (page && !next.searchParams.has("assistant_from")) next.searchParams.set("assistant_from", page);
+      assistantDock.dataset.fragmentUrl = `${next.pathname}${next.search}`;
+    }
     const form = assistantDock.querySelector("[data-assistant-question-form]");
     const conversation = form?.querySelector('input[name="conversation"]');
     if (conversation) conversation.value = job.conversation_id;
@@ -3917,8 +3925,19 @@
     textarea?.addEventListener("input", () => resizeAssistantTextarea(textarea));
     resizeAssistantTextarea(textarea);
     assistantDock.querySelectorAll("[data-assistant-suggestion]").forEach((button) => {
-      button.addEventListener("click", () => {
+      button.addEventListener("click", async () => {
         if (!textarea || textarea.disabled) return;
+        if (button.dataset.assistantSuggestionScope === "source") {
+          // A question about "this source" is only filled in once the next
+          // question is limited to that source.
+          const status = assistantDock?.querySelector("[data-assistant-suggestion-status]");
+          const sourceForm = document.querySelector("[data-review-ask-source]");
+          if (status) status.textContent = "Limiting your next question to this source…";
+          const selected = Boolean(sourceForm && selectReviewSource && await selectReviewSource(sourceForm));
+          if (status) status.textContent = selected ? "Your next question is limited to this source."
+            : "This source could not be selected, so nothing was filled in. Try again or choose Ask using this source.";
+          if (!selected || !textarea.isConnected) return;
+        }
         textarea.value = button.dataset.assistantSuggestion || "";
         resizeAssistantTextarea(textarea);
         textarea.focus({ preventScroll: true });
@@ -4241,11 +4260,9 @@
     reviewWorkspace.querySelector("[data-review-note-open]")?.addEventListener("click", (event) => { event.preventDefault(); showNote(true); });
     notePanel?.querySelector("[data-review-note-close]")?.addEventListener("click", () => showNote(false));
     notePanel?.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); showNote(false); } });
-    reviewWorkspace.querySelector("[data-review-ask-source]")?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const form = event.currentTarget;
+    selectReviewSource = async (form) => {
       const button = form.querySelector("button");
-      if (button.disabled) return;
+      if (button.disabled) return false;
       button.disabled = true;
       let feedback = form.querySelector("[role=status]");
       if (!feedback) { feedback = document.createElement("span"); feedback.setAttribute("role", "status"); form.append(feedback); }
@@ -4258,7 +4275,7 @@
         if (!result.source_set_id || typeof result.name !== "string") throw new Error("The source selection could not be confirmed. Try again.");
         if (epoch !== assistantEpoch || originatingDock !== assistantDock) {
           feedback.textContent = "The conversation changed. Select this source again for the current question.";
-          return;
+          return false;
         }
         assistantEpoch += 1;
         window.clearTimeout(assistantPollTimer);
@@ -4269,8 +4286,13 @@
         showNote(false, false);
         setAssistantCollapsed(false, { focus: true });
         feedback.textContent = "Source selected for your next question.";
-      } catch (error) { feedback.textContent = error.message; }
+        return true;
+      } catch (error) { feedback.textContent = error.message; return false; }
       finally { button.disabled = false; }
+    };
+    reviewWorkspace.querySelector("[data-review-ask-source]")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      selectReviewSource(event.currentTarget);
     });
     noteForm?.addEventListener("submit", async (event) => {
       event.preventDefault();

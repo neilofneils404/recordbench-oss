@@ -120,6 +120,32 @@ Simulated error responses test inline recovery; the Python route regressions in
 revoked-access and CSRF rejection without writes. This supplemental run does not
 replace the pinned browser or other hosted Quality gates.
 
+## Assistant dock suggestions and Close
+
+The dock header has a labelled **Close** button (the chevron stays as its icon);
+its accessible name, "Close Ask RecordBench", includes the visible label. Closing
+moves focus to the collapsed **Ask RecordBench** tab, and reopening returns focus
+to the question box with any unsent question kept.
+
+An empty chat offers three suggested questions in a labelled group. Each fills
+the question box and moves focus there; nothing is sent until the reviewer
+chooses Send. Suggestions depend on the page:
+
+- With a ready source open in the reader, the dock offers **Summarize this
+  source**, **Who and what appears here** and **What dates appear here**.
+  Choosing one first runs the existing **Ask using this source** action, so the
+  next question's scope becomes that source alone, and only then fills the box.
+  If the source cannot be selected, nothing is filled in and the dock says so.
+- Elsewhere the general suggestions remain, searching all searchable sources
+  unless the reviewer chooses a scope.
+
+The dock keeps its page when it refreshes from its own route; only a path inside
+the same matter is accepted for that. No schema, model or generation change is
+involved. The dock is not shown on Home, People & things, the timeline, the graph,
+Search or Reports, so no suggestions are offered there.
+`tests/test_assistant_suggestions.py` and the pinned
+`scripts/browser-accept-assistant-dock.py` journey cover this behavior.
+
 ## Manual source review workspace
 
 **Review** opens the source library. **Find records matching a rule** retains

@@ -41,6 +41,7 @@ JOURNEYS = (
     ('matter-context', 'browser-accept-matter-context.py', 'receipt.json', 7, ()),
     ('cited-context', 'browser-accept-cited-context.py', 'receipt.json', 11, ()),
     ('assertions', 'browser-accept-assertions.py', 'receipt.json', 14, ()),
+    ('assistant-dock', 'browser-accept-assistant-dock.py', 'receipt.json', 5, ()),
 )
 ARTIFACT_NAMES = (
     'receipt-browser-result.json', 'receipt.json', 'failure.png', 'failure.html',
@@ -67,6 +68,7 @@ ARTIFACT_NAMES = (
     'assertion-desktop.png', 'assertion-accounts.png', 'assertion-source-return-mobile.png',
     'assertion-conflict.png', 'assertion-mobile.png', 'assertion-mobile-recovery.png',
     'assertion-chronology.png',
+    'dock-source-1440.png', 'dock-source-390.png', 'dock-source-320.png',
 )
 
 

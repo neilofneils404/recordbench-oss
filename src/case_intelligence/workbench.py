@@ -7065,6 +7065,48 @@ def create_workbench_app(
             "poll_after_ms": 2_000 if readiness.state == "preparing" else 8_000,
         }
 
+    DEFAULT_ASSISTANT_SUGGESTIONS = {
+        "heading": "Suggested questions",
+        "scope": "",
+        "hint": "Fills the question box; nothing is sent until you choose Send. "
+                "Searches all searchable sources unless you choose a scope below.",
+        "questions": (
+            ("Summarize the records", "Summarize the records in this matter."),
+            ("Find people and organizations", "Which people and organizations are mentioned in these records?"),
+            ("Review dates and events", "What dates and events should I review first?"),
+        ),
+    }
+    SOURCE_ASSISTANT_SUGGESTIONS = {
+        "heading": "Suggested for this source",
+        "scope": "source",
+        "hint": "Fills the question box and limits your next question to this source; "
+                "nothing is sent until you choose Send.",
+        "questions": (
+            ("Summarize this source", "Summarize this source."),
+            ("Who and what appears here", "Which people, organizations and things appear in this source?"),
+            ("What dates appear here", "Which dates appear in this source, and what happened on each?"),
+        ),
+    }
+
+    def assistant_suggestions(matter: MatterRecord, page: str) -> dict[str, object]:
+        """Suggested questions for the page the reviewer has open.
+
+        Suggestions only fill the question box. On an open, ready source they
+        ask about that source, and choosing one first limits the next question
+        to it through the existing single-source scope.
+        """
+        prefix = f"/matters/{matter.slug}/sources/"
+        path = urlparse(page).path
+        if path.startswith(prefix):
+            token = path[len(prefix):].split("/", 1)[0]
+            try:
+                document = bench.source_store(matter).get_by_action_token(token)
+            except (KeyError, OSError, RuntimeError):
+                document = None
+            if document is not None and document.state == "ready":
+                return SOURCE_ASSISTANT_SUGGESTIONS
+        return DEFAULT_ASSISTANT_SUGGESTIONS
+
     def assistant_context(
         request: Request,
         matter: MatterRecord,
@@ -7125,10 +7167,19 @@ def create_workbench_app(
         else:
             presentation = "matter"
         from .matter_context_repository import MatterContextRepository
+        from .review_navigation import matter_return_path
         with bench.workspace._lock:
             saved_context = MatterContextRepository(bench.workspace.assertion_repository()).selection(matter.matter_id, context.principal_id)
+        # The dock refreshes from its own fragment route, so it carries the page it
+        # is shown on; only a path inside this matter is accepted.
+        if request.url.path == f"/matters/{matter.slug}/assistant":
+            page = request.query_params.get("assistant_from", "")
+        else:
+            page = request.url.path + ("?" + request.url.query if request.url.query else "")
+        page = matter_return_path(matter.slug, page)
         return {
             "saved_context": saved_context,
+            "suggestions": assistant_suggestions(matter, page),
             "matter": matter,
             "conversation": conversation,
             "conversation_choices": conversation_choices,
@@ -7146,6 +7197,7 @@ def create_workbench_app(
                 f"/matters/{matter.slug}/assistant",
                 conversation=conversation.conversation_id,
                 assistant_presentation=presentation,
+                assistant_from=page,
             ),
             "open_url": _query_url(
                 f"/matters/{matter.slug}",

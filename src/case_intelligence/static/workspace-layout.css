@@ -654,3 +654,9 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
 .found-date-when { margin: 0; overflow-wrap: anywhere; }
 .found-date-note { color: var(--ink-soft); font-size: 0.85em; }
 .found-date-actions { margin: 2px 0 0; font-size: 0.9em; }
+
+/* Assistant dock: a labelled Close control and page-aware suggested questions. */
+.assistant-header .assistant-close { display: inline-flex; gap: 4px; align-items: center; padding-inline: 8px; font-size: 11px; }
+.assistant-suggestions-heading { margin: 0; color: var(--ink-soft); font-size: 10px; font-weight: 700; }
+.assistant-suggestions-hint { margin: 2px 0 0; color: var(--ink-soft); font-size: 10px; }
+.assistant-suggestions button { overflow-wrap: anywhere; }

@@ -257,7 +257,7 @@ def test_temporary_matter_theme_lifecycle_and_persistent_assistant_routes(tmp_pa
             "data-rail-toggle",
             'aria-label="Open account menu"',
             'data-assistant-expand aria-label="Open Ask RecordBench"',
-            'data-assistant-collapse aria-label="Collapse Ask RecordBench"',
+            'data-assistant-collapse aria-label="Close Ask RecordBench"',
             'data-assistant-new-chat',
             'aria-label="Start a new chat"',
             'for="assistant-conversation-picker"',
