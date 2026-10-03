@@ -190,11 +190,20 @@ def main(argv=None):
             composer = js("const t=document.querySelector('#assistant-question'), b=t.form.querySelector('button[type=submit]');"
                           "return [t.disabled, b.disabled, t.value, document.querySelector('.assistant-draft-empty .assistant-suggestions').getAttribute('aria-busy')]")
             assert composer == [True, True, "Synthetic unsent draft", "true"], composer
+            # A readiness update and a forced submission while pending must not reopen or send.
+            held = ("const t=document.querySelector('#assistant-question'), b=t.form.querySelector('button[type=submit]');"
+                    "return [t.disabled, b.disabled, t.value]")
+            js("window.dispatchEvent(new CustomEvent('recordbench:readiness', {detail: {can_query: true, state: 'ready',"
+               " searchable_count: 1, total_count: 1}}))")
+            assert js(held) == [True, True, "Synthetic unsent draft"], js(held)
+            js("document.querySelector('#assistant-question').form.requestSubmit()")
+            assert js(held) == [True, True, "Synthetic unsent draft"], js(held)
             wait.until(lambda _: find("#assistant-question").get_attribute("value")
                        == "Which dates appear in this source, and what happened on each?")
             assert scope() == "Only · " + SOURCE_NAME, scope()
             assert js("const t=document.querySelector('#assistant-question');"
                       "return !t.disabled && !t.form.querySelector('button[type=submit]').disabled")
+            assert not app.state.workbench.workspace.answer_jobs_for_actor(ACTOR), "a question was sent while scope was pending"
             ids = js("return [...document.querySelectorAll('[id]')].map(e => e.id)")
             assert len(ids) == len(set(ids)), "duplicate ids after drafting a new chat"
             checks.append("New chat offers the same source suggestions; while a slow scope response is pending the question box, Send and suggestions are held, then the box is filled with the scope applied")

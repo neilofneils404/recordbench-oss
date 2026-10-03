@@ -3823,18 +3823,28 @@
           const sourceForm = document.querySelector("[data-review-ask-source]");
           // Nothing can be sent, typed or chosen until the scope is settled, so a
           // question cannot go out with the previous scope or be overwritten.
-          const submit = textarea.form?.querySelector('button[type="submit"]');
+          // The flag also keeps readiness updates and submission from reopening it.
+          const composer = textarea.form;
+          const submit = composer?.querySelector('button[type="submit"]');
           const choices = [...(group?.querySelectorAll("[data-assistant-suggestion]") || [])];
-          const held = [textarea, submit, ...choices].filter((control) => control && !control.disabled);
-          held.forEach((control) => { control.disabled = true; });
+          const heldChoices = choices.filter((control) => !control.disabled);
+          if (composer) composer.dataset.scopePending = "true";
+          [textarea, submit, ...heldChoices].forEach((control) => { if (control) control.disabled = true; });
           group?.setAttribute("aria-busy", "true");
           if (status) status.textContent = "Limiting your next question to this source…";
           let selected = false;
           try {
             selected = Boolean(sourceForm && selectReviewSource && await selectReviewSource(sourceForm));
           } finally {
-            held.forEach((control) => { control.disabled = false; });
+            if (composer) delete composer.dataset.scopePending;
+            heldChoices.forEach((control) => { control.disabled = false; });
             group?.removeAttribute("aria-busy");
+            // Restore the composer from current readiness and any answer in progress.
+            const state = assistantDock?.querySelector("[data-assistant-status]")?.dataset.state || "";
+            const blocked = composer?.dataset.sourcesReady !== "true" || composer?.getAttribute("aria-busy") === "true"
+              || ["queued", "running"].includes(state);
+            textarea.disabled = blocked;
+            if (submit) submit.disabled = blocked;
           }
           if (status) status.textContent = selected ? "Your next question is limited to this source."
             : "This source could not be selected, so nothing was filled in. Try again or choose Ask using this source.";
@@ -3975,7 +3985,7 @@
         textarea?.focus();
         return;
       }
-      if (form.getAttribute("aria-busy") === "true") return;
+      if (form.getAttribute("aria-busy") === "true" || form.dataset.scopePending === "true") return;
       // A new submission supersedes history work even when that work began
       // at the terminal transition of the previous question.
       assistantEpoch += 1;
@@ -4084,7 +4094,7 @@
     const form = assistantDock.querySelector("[data-assistant-question-form]");
     if (form) form.dataset.sourcesReady = ready ? "true" : "false";
     const status = assistantDock.querySelector("[data-assistant-status]");
-    const working = form?.getAttribute("aria-busy") === "true"
+    const working = form?.getAttribute("aria-busy") === "true" || form?.dataset.scopePending === "true"
       || ["queued", "running"].includes(status?.dataset.state || "");
     const textarea = form?.querySelector("textarea");
     const submit = form?.querySelector('button[type="submit"]');
