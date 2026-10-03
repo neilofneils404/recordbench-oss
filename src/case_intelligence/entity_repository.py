@@ -175,19 +175,25 @@ class EntityRepository:
     def date_draft(self, matter_id, page=1, page_size=25):
         """Each passage stating an automatically found date, for a draft timeline.
 
-        Only a full calendar date that SQLite reads back unchanged is placed in
-        order, by calendar day; any other date (day/month order unknown, an
+        Only passages discovery itself found are listed, whichever identity
+        now holds them. Only a full calendar date naming a real day is placed
+        in order, by calendar day; any other date (day/month order unknown, an
         impossible day) keeps its order unestablished and is never guessed; those
         follow, by source and position. Times and offsets are shown as stated but
         not used for ordering.
         """
         stated = "COALESCE(NULLIF(m.surface_text,''),e.display_name)"
         day = f'substr({stated},1,10)'
-        ordered = f"({stated} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' AND date({day}) IS {day})"
+        year, month = f'CAST(substr({stated},1,4) AS INTEGER)', f'CAST(substr({stated},6,2) AS INTEGER)'
+        # Calendar arithmetic, not date(): SQLite builds differ on impossible days.
+        leap = f'({year}%4=0 AND ({year}%100<>0 OR {year}%400=0))'
+        month_days = f'CASE WHEN {month}=2 THEN 28+{leap} ELSE 30+({month}+{month}/8)%2 END'
+        ordered = (f"({stated} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' AND {month} BETWEEN 1 AND 12 "
+                   f'AND CAST(substr({stated},9,2) AS INTEGER) BETWEEN 1 AND {month_days})')
         marks = ','.join('?' * len(self.DATE_DRAFT_STATUSES))
         # One pass over the matter's passages, each joined to its identity by key.
         base = ('FROM workbench_entity_mention m CROSS JOIN workbench_entity e ON e.entity_id=m.entity_id '
-                "WHERE m.matter_id=? AND e.matter_id=m.matter_id AND e.entity_type='date' AND e.origin='extraction' "
+                "WHERE m.matter_id=? AND m.origin='extraction' AND e.matter_id=m.matter_id AND e.entity_type='date' "
                 f'AND e.status IN ({marks}) AND m.review_status IN ({marks})')
         params = (matter_id, *self.DATE_DRAFT_STATUSES, *self.DATE_DRAFT_STATUSES)
         total, ordered_total = self.connection.execute(

@@ -201,3 +201,46 @@ def test_paging_saved_records_keeps_the_found_date_page(workbench, monkeypatch):
     nav = re.search(r'<nav aria-label="Chronology pages">(.*?)</nav>', page, re.S)[1]
     links = [html.unescape(href) for href in re.findall(r'href="([^"]+)"', nav)]
     assert links and all("dates_page=3" in href for href in links)
+
+
+def test_only_passages_discovery_found_are_listed_whichever_identity_holds_them(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:3])
+    service = bench.entity_service(matter)
+    rows = {row["display_name"]: row for row in service.list(matter.matter_id, WEB_ACTOR)[0]}
+    march = rows["2026-03-05"]
+    call = service.detail(matter.matter_id, WEB_ACTOR, rows["03/04/2026"]["entity_id"])[1][0]
+    # A reviewer attaches an unrelated passage to a found date: it is the reviewer's, not a found date.
+    service.attach(matter.matter_id, WEB_ACTOR, march["entity_id"], expected_revision=march["revision"],
+                   support=call["support_token"])
+    draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    assert sorted(stated(draft)) == ["03/04/2026", "2026-01-02T09:30Z", "2026-03-05"]
+    # A found passage split into a reviewer-created date identity is still a found date.
+    manual = service.create(matter.matter_id, WEB_ACTOR, display_name="Inspection day", entity_type="date",
+                            status="confirmed", aliases="")
+    inspection = rows["2026-01-02T09:30Z"]
+    found = service.detail(matter.matter_id, WEB_ACTOR, inspection["entity_id"])[1][0]
+    service.reconcile(matter.matter_id, WEB_ACTOR, inspection["entity_id"], expected_revision=inspection["revision"],
+                      target_id=manual["entity_id"], target_revision=manual["revision"], action="split",
+                      mention_ids=[found["mention_id"]])
+    draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    assert sorted(stated(draft)) == ["03/04/2026", "2026-01-02T09:30Z", "2026-03-05"]
+
+
+def test_calendar_validity_does_not_depend_on_the_sqlite_build(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, (
+        ("Synthetic leap.txt", b"Filed 2028-02-29 and again 2026-12-31 at noon."),
+        ("Synthetic bad.txt", b"Copied 2026-02-29, 2026-04-31, 2026-13-01 and 2026-00-10 by hand."),
+    ))
+    connection = bench.workspace.connection
+    # Some SQLite builds return an impossible day from date() unchanged; behave like one.
+    connection.create_function("date", 1, lambda value: value, deterministic=True)
+    try:
+        draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    finally:
+        connection.create_function("date", 1, None)
+    ordered = re.search(r"<h3>In date order</h3><ol class=\"found-date-list\">(.*?)</ol>", draft, re.S)[1]
+    unordered = re.search(r"<h3>Order not established</h3><ul class=\"found-date-list\">(.*?)</ul>", draft, re.S)[1]
+    assert stated(ordered) == ["2026-12-31", "2028-02-29"]
+    assert sorted(stated(unordered)) == ["2026-00-10", "2026-02-29", "2026-04-31", "2026-13-01"]

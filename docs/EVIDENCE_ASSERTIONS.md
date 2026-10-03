@@ -51,7 +51,9 @@ This is a reviewer-maintained chronology, not an exhaustive event extractor.
 
 Below the saved records, the matter-wide chronology shows **Dates found in
 sources**: a read-only draft of every passage in which automatic discovery found a
-date, from identities and passages a reviewer has not marked Not relevant. A full
+date, from identities and passages a reviewer has not marked Not relevant. A
+passage a reviewer attached by hand is not listed; a found passage moved into
+another date identity still is. A full
 calendar date (`YYYY-MM-DD`, with or without a stated time) that is a real day
 appears in date order by day; times and offsets are shown as stated but never used
 for ordering. Any other date, such as `03/04/2026` whose day/month order is unknown
