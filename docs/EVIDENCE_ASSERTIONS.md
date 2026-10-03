@@ -49,6 +49,21 @@ date first, then unresolved or undated records. Pages contain 50 records; entity
 detail links to its filtered chronology and shows the first 50 linked records.
 This is a reviewer-maintained chronology, not an exhaustive event extractor.
 
+Below the saved records, the matter-wide chronology shows **Dates found in
+sources**: a read-only draft of every passage in which automatic discovery found a
+date, from identities and passages a reviewer has not marked Not relevant. A full
+calendar date (`YYYY-MM-DD`, with or without a stated time) that is a real day
+appears in date order by day; times and offsets are shown as stated but never used
+for ordering. Any other date, such as `03/04/2026` whose day/month order is unknown
+or an impossible day like `2026-02-30`, is listed after them by source and is never
+guessed. Each entry shows its passage with the date highlighted, links to the
+original when its source is still current (otherwise it is labelled retained
+history) and to the date identity, which can return to the same timeline position.
+Pages hold 25 dates. Nothing in the draft is saved, confirmed or exported; to keep
+one, open its passage and choose **Use in event or assertion**. An identity's
+filtered chronology does not show the draft. See
+[entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing).
+
 ## Revisions, originals and identities
 
 All mutations check the displayed record revision inside the existing immediate

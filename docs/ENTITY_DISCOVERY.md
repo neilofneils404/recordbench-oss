@@ -165,6 +165,10 @@ renamed or detached; open the name to reconcile, edit or attach passages. If ano
 is saved and the refreshed list is shown. Guided discovery from a full-text
 review remains below, collapsed while suggestions wait.
 
+Found dates also appear on the matter's timeline as a read-only draft, **Dates
+found in sources**, ordered only where a full calendar date makes the order certain;
+see [events and assertions](EVIDENCE_ASSERTIONS.md#reviewer-workflow).
+
 ## What the initial extractor recognizes
 
 `deterministic-entities-v1` is a replaceable local rule implementation. It finds

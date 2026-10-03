@@ -121,6 +121,19 @@ class EntityService:
                 mention['available'] = index in available
             return items, total, kinds
 
+    def date_draft(self, matter_id, actor_id, *, page=1):
+        """Passages stating automatically found dates, for a read-only draft timeline."""
+        with self.source_guard():
+            with self.repository.transaction(matter_id, actor_id) as repo:
+                items, total, ordered_total = repo.date_draft(matter_id, page)
+            # As in the inbox: catalog metadata only; opening the passage still
+            # validates the exact cited text.
+            check = self.current_sources or self.validate_references
+            available = check(items)
+            for index, item in enumerate(items):
+                item['available'] = index in available
+            return items, total, ordered_total
+
     def attach(self, matter_id, actor_id, entity_id, *, expected_revision, support):
         with self.source_guard(), self.repository.transaction(matter_id, actor_id) as repo:
             current = repo.check_revision(matter_id, entity_id, expected_revision)

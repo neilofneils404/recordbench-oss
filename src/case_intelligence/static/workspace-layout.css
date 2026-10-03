@@ -647,3 +647,10 @@ body.review-notes-open .matter-assistant { visibility: hidden; }
 .answer-claims .media-citation .citation-label, .answer-limitation .media-citation .citation-label { grid-column: 2; grid-row: 2; min-width: 0; overflow-wrap: anywhere; }
 .answer-claims .media-citation svg, .answer-limitation .media-citation svg { grid-column: 3; grid-row: 2; }
 .answer-claims .citation-label, .answer-limitation .citation-label { min-width: 0; overflow-wrap: anywhere; }
+
+/* Read-only draft of found dates on the timeline. */
+.found-date-list { margin: 6px 0 10px; padding-left: 1.4em; display: grid; gap: 8px; }
+.found-date { min-width: 0; }
+.found-date-when { margin: 0; overflow-wrap: anywhere; }
+.found-date-note { color: var(--ink-soft); font-size: 0.85em; }
+.found-date-actions { margin: 2px 0 0; font-size: 0.9em; }

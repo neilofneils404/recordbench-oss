@@ -149,6 +149,64 @@ class EntityRepository:
         return (('…' if start > radius else '') + squash(before).lstrip(), squash(excerpt[start:end]),
                 squash(after).rstrip() + ('…' if end + radius < len(excerpt) else ''))
 
+    @classmethod
+    def highlight(cls, mention, name):
+        """Set mention['snippet'] around the recorded occurrence when it is still exact,
+        else around what was extracted (a reviewer may have renamed it), else the name."""
+        start, end, surface = mention.get('start_offset'), mention.get('end_offset'), mention.get('surface_text')
+        recorded = surface and isinstance(start, int) and isinstance(end, int) and 0 <= start < end
+        if recorded and end > len(mention['excerpt']):
+            # The occurrence lies past the retained excerpt prefix: show what was
+            # found rather than unrelated opening text or an earlier match.
+            mention['snippet'] = ('…', ' '.join(surface.split()), '…')
+            mention['beyond_excerpt'] = True
+        elif recorded and mention['excerpt'][start:end] == surface:
+            mention['snippet'] = cls.snippet_at(mention['excerpt'], start, end)
+        else:
+            for candidate in (surface or '', name):
+                mention['snippet'] = cls.snippet(mention['excerpt'], candidate)
+                if mention['snippet'][1]:
+                    break
+        return mention
+
+    # Found dates a reviewer has not set aside, by identity and by passage.
+    DATE_DRAFT_STATUSES = ('suggested', 'needs_review', 'confirmed', 'disputed')
+
+    def date_draft(self, matter_id, page=1, page_size=25):
+        """Each passage stating an automatically found date, for a draft timeline.
+
+        Only a full calendar date that SQLite reads back unchanged is placed in
+        order, by calendar day; any other date (day/month order unknown, an
+        impossible day) keeps its order unestablished and is never guessed; those
+        follow, by source and position. Times and offsets are shown as stated but
+        not used for ordering.
+        """
+        stated = "COALESCE(NULLIF(m.surface_text,''),e.display_name)"
+        day = f'substr({stated},1,10)'
+        ordered = f"({stated} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' AND date({day}) IS {day})"
+        marks = ','.join('?' * len(self.DATE_DRAFT_STATUSES))
+        # One pass over the matter's passages, each joined to its identity by key.
+        base = ('FROM workbench_entity_mention m CROSS JOIN workbench_entity e ON e.entity_id=m.entity_id '
+                "WHERE m.matter_id=? AND e.matter_id=m.matter_id AND e.entity_type='date' AND e.origin='extraction' "
+                f'AND e.status IN ({marks}) AND m.review_status IN ({marks})')
+        params = (matter_id, *self.DATE_DRAFT_STATUSES, *self.DATE_DRAFT_STATUSES)
+        total, ordered_total = self.connection.execute(
+            f'SELECT COUNT(*),COALESCE(SUM({ordered}),0) ' + base, params).fetchone()
+        rows = self.connection.execute(
+            f'SELECT m.*,e.display_name,e.status AS entity_status,{stated} AS stated,{ordered} AS ordered '
+            f'{base} ORDER BY ordered DESC,CASE WHEN {ordered} THEN {day} END,m.source_name,m.unit_number,'
+            'm.start_offset,m.mention_id LIMIT ? OFFSET ?',
+            (*params, page_size, (page - 1) * page_size)).fetchall()
+        items = []
+        for row in rows:
+            mention = self.highlight(dict(row), row['stated'])
+            mention['ordered'] = bool(row['ordered'])
+            # Discovery records {"kind": ..., "date": {"raw", "ambiguity", ...}} per occurrence.
+            recorded = json.loads(mention.get('date_json') or 'null') or {}
+            mention['detail'] = recorded.get('date') if isinstance(recorded.get('date'), dict) else {}
+            items.append(mention)
+        return items, total, ordered_total
+
     INBOX_GROUP_LIMIT = 200
 
     def suggestion_inbox(self, matter_id, kind='', page=1, page_size=25, *, rows=True):
@@ -200,22 +258,7 @@ class EntityRepository:
                 (group['first_key'].split('\x1f', 1)[1], matter_id)).fetchone() if group['first_key'] else None
             mention = dict(first) if first else None
             if mention:
-                # Highlight the recorded occurrence when it is still exact, else what
-                # was extracted (a reviewer may have renamed it), else the name.
-                start, end, surface = mention.get('start_offset'), mention.get('end_offset'), mention.get('surface_text')
-                recorded = surface and isinstance(start, int) and isinstance(end, int) and 0 <= start < end
-                if recorded and end > len(mention['excerpt']):
-                    # The occurrence lies past the retained excerpt prefix: show what
-                    # was found rather than unrelated opening text or an earlier match.
-                    mention['snippet'] = ('…', ' '.join(surface.split()), '…')
-                    mention['beyond_excerpt'] = True
-                elif recorded and mention['excerpt'][start:end] == surface:
-                    mention['snippet'] = self.snippet_at(mention['excerpt'], start, end)
-                else:
-                    for name in (surface or '', group['display_name']):
-                        mention['snippet'] = self.snippet(mention['excerpt'], name)
-                        if mention['snippet'][1]:
-                            break
+                self.highlight(mention, group['display_name'])
             if mention and mention['entity_id'] not in {row['entity_id'] for row in members}:
                 # The row opens the passage's owner, so a bounded decision must include it.
                 owner = self.connection.execute(

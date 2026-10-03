@@ -18,7 +18,7 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
         return matter_return_path(slug, value, fallback=f'/matters/{slug}')
 
     def render(request, slug, *, assertion_id='', creating=False, entity_id='', q='', page=1,
-               support='', return_to='', error='', draft=None, status_code=200, removed=False):
+               support='', return_to='', error='', draft=None, status_code=200, removed=False, dates_page=1):
         matter = authorized_matter(request, slug)
         actor = auth_context(request).principal_id
         service, entities = service_for(matter), entities_for(matter)
@@ -30,6 +30,9 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
             if entity_id:
                 entity, mentions, _, _ = entities.detail(matter.matter_id, actor, entity_id)
             records, total = service.list(matter.matter_id, actor, entity_id=entity_id, page=page)
+            # The matter-wide timeline also shows a read-only draft of found dates.
+            found_dates, found_total, found_ordered = (entities.date_draft(matter.matter_id, actor, page=dates_page)
+                if not (assertion_id or creating or entity_id) else ([], 0, 0))
             choices, choice_total = entities.list(matter.matter_id, actor, query=q, page=page)
         except KeyError as exc:
             raise HTTPException(404, 'Record, entity or matter is no longer available') from exc
@@ -45,7 +48,13 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
             return f'/matters/{slug}/assertions/{identifier}?' + urlencode(dict(support=support, return_to=return_to))
         def page_url(number):
             path = f'/matters/{slug}/assertions/{assertion_id}' if assertion_id else f'/matters/{slug}/chronology'
-            return path + '?' + urlencode(dict(entity_id=entity_id, q=q, page=number, support=support, return_to=return_to))
+            # Paging saved records keeps the found-date draft's page too.
+            kept = dict(dates_page=dates_page) if dates_page > 1 and not assertion_id else {}
+            return path + '?' + urlencode(dict(entity_id=entity_id, q=q, page=number, support=support,
+                                               return_to=return_to, **kept))
+        def dates_page_url(number):
+            return (f'/matters/{slug}/chronology?' + urlencode(dict(
+                page=page, dates_page=number, support=support, return_to=return_to)) + '#found-dates-heading')
         response = templates.TemplateResponse(request=request, name='workbench_assertions.html', context={
             **base_context(request, matter), 'matter': matter, 'detail': detail,
             'creating': creating, 'entity': entity, 'entity_id': entity_id, 'mentions': mentions,
@@ -53,6 +62,10 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
             'choices': choices, 'choice_total': choice_total, 'roles': ROLES, 'statuses': STATUSES,
             'passage': passage, 'support': support, 'return_to': return_to,
             'record_url': record_url, 'page_url': page_url, 'error': error, 'draft': draft,
+            'found_dates': found_dates, 'found_total': found_total, 'found_ordered': found_ordered,
+            'dates_page': dates_page, 'dates_page_url': dates_page_url, 'dates_page_size': 25,
+            # Reviewing a found date can return to this timeline position.
+            'timeline_here': f'/matters/{slug}/chronology?' + urlencode(dict(page=page, dates_page=dates_page)),
             'removed': removed, 'show_assistant_dock': False,
         }, status_code=status_code, headers={'Cache-Control': 'no-store'})
         try:
@@ -65,8 +78,9 @@ def install_assertion_routes(app, *, service_for, entities_for, authorized_matte
     @app.get('/matters/{slug}/chronology')
     def chronology(request: Request, slug: str, entity_id: str = Query('', max_length=80),
                    page: int = Query(1, ge=1, le=100000), support: str = Query('', max_length=40),
-                   return_to: str = Query('', max_length=4000)):
-        return render(request, slug, entity_id=entity_id, page=page, support=support, return_to=return_to)
+                   return_to: str = Query('', max_length=4000), dates_page: int = Query(1, ge=1, le=100000)):
+        return render(request, slug, entity_id=entity_id, page=page, support=support, return_to=return_to,
+                      dates_page=dates_page)
 
     @app.get('/matters/{slug}/assertions/new')
     def new_assertion(request: Request, slug: str, entity_id: str = Query('', max_length=80),

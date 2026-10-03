@@ -1,0 +1,203 @@
+"""Synthetic regression: found dates form a read-only draft on the timeline."""
+from __future__ import annotations
+
+import hashlib
+import html
+import re
+
+from tests.test_automatic_discovery import upload, workbench  # noqa: F401
+from tests.test_matter_notebook import WEB_ACTOR
+
+SOURCES = (
+    ("Synthetic delivery.txt", b"The crate was delivered on 2026-03-05 at the north dock."),
+    ("Synthetic inspection.txt", b"Inspection began 2026-01-02T09:30Z before the shift change."),
+    ("Synthetic call log.txt", b"A call was logged on 03/04/2026 about the crate."),
+    ("Synthetic form.txt", b"The form is dated 2026-02-30 in the header."),
+)
+
+
+def section(page: str) -> str:
+    found = re.search(r'<section class="found-dates".*?</section>', page, re.S)
+    return found[0] if found else ""
+
+
+def stated(fragment: str) -> list[str]:
+    return re.findall(r'<p class="found-date-when"><strong>([^<]+)</strong>', fragment)
+
+
+def prepare(client, bench, matter, sources=SOURCES):
+    for name, content in sources:
+        upload(client, matter.slug, name, content)
+    bench.run_automatic_discovery_once()
+
+
+def test_full_dates_are_ordered_and_uncertain_ones_are_never_guessed(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter)
+    page = client.get(f"/matters/{matter.slug}/chronology")
+    assert page.status_code == 200
+    draft = section(page.text)
+    assert '<h2 id="found-dates-heading">Dates found in sources <span class="suggestion-total">4</span></h2>' in draft
+    ordered = re.search(r"<h3>In date order</h3><ol class=\"found-date-list\">(.*?)</ol>", draft, re.S)[1]
+    unordered = re.search(r"<h3>Order not established</h3><ul class=\"found-date-list\">(.*?)</ul>", draft, re.S)[1]
+    # By calendar day; the time is shown as stated.
+    assert stated(ordered) == ["2026-01-02T09:30Z", "2026-03-05"]
+    # Day/month order unknown, and an impossible calendar day: kept apart, in the order found.
+    assert stated(unordered) == ["03/04/2026", "2026-02-30"]
+    assert "day/month order unresolved" in unordered and "calendar date not established" in unordered
+    assert "2 of 4 are full calendar dates" in draft
+    # Each entry shows its highlighted passage and links to the original.
+    assert "<mark>2026-03-05</mark>" in ordered
+    assert re.search(rf'class="suggestion-source" href="/matters/{matter.slug}\?support=[0-9a-f]{{40}}#support-pane">'
+                     r"Synthetic delivery\.txt", ordered)
+
+
+def test_the_draft_saves_nothing_and_skips_dates_set_aside(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter)
+    service = bench.entity_service(matter)
+    rows, _ = service.list(matter.matter_id, WEB_ACTOR)
+    by_name = {row["display_name"]: row for row in rows}
+    # A reviewer sets one date identity aside and one passage of another.
+    service.decide(matter.matter_id, WEB_ACTOR, [(by_name["03/04/2026"]["entity_id"], by_name["03/04/2026"]["revision"])],
+                   status="dismissed")
+    march = service.detail(matter.matter_id, WEB_ACTOR, by_name["2026-03-05"]["entity_id"])
+    service.review_mention(matter.matter_id, WEB_ACTOR, march[0]["entity_id"], expected_revision=march[0]["revision"],
+                           mention_id=march[1][0]["mention_id"], status="dismissed")
+    draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    assert sorted(stated(draft)) == ["2026-01-02T09:30Z", "2026-02-30"]
+    assert "nothing here is saved or confirmed" in draft
+    assert bench.assertion_service(matter).list(matter.matter_id, WEB_ACTOR)[1] == 0
+
+
+def test_an_identity_timeline_and_an_empty_matter_show_no_draft(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    assert section(client.get(f"/matters/{matter.slug}/chronology").text) == ""
+    prepare(client, bench, matter, SOURCES[:1])
+    rows, _ = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)
+    page = client.get(f"/matters/{matter.slug}/chronology", params={"entity_id": rows[0]["entity_id"]})
+    assert page.status_code == 200 and section(page.text) == ""
+
+
+def test_a_changed_source_is_shown_as_retained_history(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:2])
+    connection = bench.workspace.connection
+    with bench.workspace._lock, connection:  # The inspection passage now cites an earlier source version.
+        connection.execute("UPDATE workbench_entity_mention SET source_version_id='superseded-version' "
+                           "WHERE matter_id=? AND source_name='Synthetic inspection.txt'", (matter.matter_id,))
+    draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    entries = re.findall(r'<li class="found-date">.*?</li>', draft, re.S)
+    inspection = next(entry for entry in entries if "2026-01-02T09:30Z" in entry)
+    delivery = next(entry for entry in entries if "2026-03-05" in entry)
+    assert "?support=" not in inspection and "original passage changed or is unavailable" in inspection
+    assert 'class="suggestion-source" href=' in delivery
+
+
+def test_a_renamed_date_keeps_the_date_as_stated(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:1])
+    service = bench.entity_service(matter)
+    row = next(row for row in service.list(matter.matter_id, WEB_ACTOR)[0] if row["display_name"] == "2026-03-05")
+    service.update(matter.matter_id, WEB_ACTOR, row["entity_id"], expected_revision=row["revision"],
+                   display_name="Delivery day", entity_type="date", status="suggested", aliases="")
+    draft = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    assert stated(draft) == ["2026-03-05"] and "<h3>In date order</h3>" in draft
+
+
+def _add_dates(bench, matter, sample, count, start):
+    connection = bench.workspace.connection
+    with bench.workspace._lock, connection:  # Background work shares this connection.
+        for index in range(start, start + count):
+            day = f"2025-{1 + index // 28 % 12:02d}-{1 + index % 28:02d}"
+            entity_id = f"synthetic-date-{index:06d}"
+            connection.execute(
+                "INSERT INTO workbench_entity(entity_id,matter_id,entity_type,display_name,status,origin,"
+                "created_by,created_at,updated_by,updated_at) VALUES (?,?,'date',?,'suggested','extraction',"
+                "?,'2026-01-01T00:00:00Z',?,'2026-01-01T00:00:00Z')",
+                (entity_id, matter.matter_id, day, WEB_ACTOR, WEB_ACTOR))
+            connection.execute(
+                "INSERT INTO workbench_entity_mention(mention_id,matter_id,entity_id,document_id,source_version_id,"
+                "source_name,location,unit_number,chunk_id,excerpt_digest,excerpt,support_token,origin,created_by,"
+                "created_at,surface_text) VALUES (?,?,?,?,?,?,?,1,?,?,?,?,'extraction',?,'2026-01-01T00:00:00Z',?)",
+                (f"synthetic-date-mention-{index:06d}", matter.matter_id, entity_id, sample["document_id"],
+                 sample["source_version_id"], sample["source_name"], sample["location"], sample["chunk_id"],
+                 hashlib.sha256(str(index).encode()).hexdigest(), f"Logged {day}.", sample["support_token"],
+                 WEB_ACTOR, day))
+
+
+def test_found_dates_page_in_order_and_keep_the_timeline_page(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:1])
+    service = bench.entity_service(matter)
+    row = service.list(matter.matter_id, WEB_ACTOR)[0][0]
+    sample = service.detail(matter.matter_id, WEB_ACTOR, row["entity_id"])[1][0]
+    _add_dates(bench, matter, sample, 29, 0)
+    first = section(client.get(f"/matters/{matter.slug}/chronology").text)
+    assert len(stated(first)) == 25 and stated(first) == sorted(stated(first))
+    more = html.unescape(re.search(r'<a href="([^"]+)">More dates</a>', first)[1])
+    assert "dates_page=2" in more and "page=1" in more and more.endswith("#found-dates-heading")
+    second = section(client.get(more.split("#")[0]).text)
+    assert len(stated(second)) == 5 and min(stated(second)) >= max(stated(first))
+    assert "Previous dates" in second and "More dates" not in second
+
+
+def test_found_date_work_grows_linearly(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:1])
+    service = bench.entity_service(matter)
+    row = service.list(matter.matter_id, WEB_ACTOR)[0][0]
+    sample = service.detail(matter.matter_id, WEB_ACTOR, row["entity_id"])[1][0]
+    connection = bench.workspace.connection
+
+    def steps():
+        counted = [0]
+
+        def tick():
+            counted[0] += 1
+            return 0
+        connection.set_progress_handler(tick, 1000)
+        try:
+            items, total, _ordered = service.date_draft(matter.matter_id, WEB_ACTOR)
+        finally:
+            connection.set_progress_handler(None, 0)
+        assert len(items) == 25
+        return counted[0], total
+
+    _add_dates(bench, matter, sample, 1000, 0)
+    small, total = steps()
+    _add_dates(bench, matter, sample, 3000, 1000)
+    large, larger_total = steps()
+    assert larger_total - total == 3000
+    # One pass plus a sort: four times the dates costs about four times the work.
+    assert large <= 6 * max(small, 1), (small, large)
+
+
+def test_reviewing_a_found_date_can_return_to_the_same_timeline_position(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:1])
+    service = bench.entity_service(matter)
+    row = service.list(matter.matter_id, WEB_ACTOR)[0][0]
+    sample = service.detail(matter.matter_id, WEB_ACTOR, row["entity_id"])[1][0]
+    _add_dates(bench, matter, sample, 29, 0)
+    page = client.get(f"/matters/{matter.slug}/chronology", params={"dates_page": 2}).text
+    draft = section(page)
+    links = re.findall(r'<a href="([^"]+)" aria-label="([^"]+)">Review this date</a>', draft)
+    assert len(links) == 5 and len({label for _href, label in links}) == 5
+    assert all(label.startswith("Review date ") and " from " in label for _href, label in links)
+    opened = client.get(html.unescape(links[0][0])).text
+    back = html.unescape(re.search(r'<a href="([^"]+)">Return to source review</a>', opened)[1])
+    assert back.startswith(f"/matters/{matter.slug}/chronology?") and "dates_page=2" in back
+
+
+def test_paging_saved_records_keeps_the_found_date_page(workbench, monkeypatch):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    prepare(client, bench, matter, SOURCES[:1])
+    service = bench.assertion_service(matter)
+    original = service.list
+    # More than one page of saved records, without creating fifty synthetic records.
+    monkeypatch.setattr(service.__class__, "list", lambda self, *args, **kwargs: (original(*args, **kwargs)[0], 120))
+    page = client.get(f"/matters/{matter.slug}/chronology", params={"dates_page": 3, "page": 2}).text
+    nav = re.search(r'<nav aria-label="Chronology pages">(.*?)</nav>', page, re.S)[1]
+    links = [html.unescape(href) for href in re.findall(r'href="([^"]+)"', nav)]
+    assert links and all("dates_page=3" in href for href in links)
