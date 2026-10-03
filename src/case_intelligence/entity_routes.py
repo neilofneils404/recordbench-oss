@@ -69,13 +69,21 @@ def install_entity_routes(app, *, service_for, discovery_for, assertions_for, au
         def entity_url(identifier='', target_page=1):
             path = f'/matters/{slug}/entities' + ('/' + identifier if identifier else '')
             return path + '?' + urlencode(dict(q=q, page=target_page, support=support, return_to=return_to, **place))
+        def connections_return():
+            # Compact return from the connections graph: no nested return_to, so it stays
+            # within that route's bound while keeping the search and inbox position.
+            if not entity_id:
+                return ''
+            carried = {key: value for key, value in dict(q=q, support=support, **place).items() if value}
+            return f'/matters/{slug}/entities/{entity_id}' + ('?' + urlencode(carried) if carried else '')
         response = templates.TemplateResponse(request=request, name='workbench_entities.html', context={
             **base_context(request, matter), 'matter': matter, 'entity': entity,
             'entities': entities, 'total': total, 'page': page, 'q': q,
             'mentions': mentions, 'history': [dict(entry, snapshot=json.loads(entry['snapshot_json'])) for entry in history], 'linked_note': note,
             'assertions': assertions, 'assertion_total': assertion_total,
             'passage': passage, 'support': support, 'return_to': return_to,
-            'entity_url': entity_url, 'entity_types': ENTITY_TYPES, 'entity_statuses': ENTITY_STATUSES,
+            'entity_url': entity_url, 'connections_return': connections_return(),
+            'entity_types': ENTITY_TYPES, 'entity_statuses': ENTITY_STATUSES,
             'coverage': coverage, 'review_page': review_page, 'has_more_reviews': has_more_reviews,
             'review_page_url': lambda value: f'/matters/{slug}/entities?' + urlencode(dict(q=q, support=support, return_to=return_to, review_page=value, **place)),
             'coverage_url': lambda value: f'/matters/{slug}/entity-discovery/{value}?' + urlencode(dict(q=q, return_to=return_to, **place)),

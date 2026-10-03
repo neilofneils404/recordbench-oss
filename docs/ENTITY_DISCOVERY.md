@@ -152,7 +152,8 @@ When the occurrence lies beyond the retained excerpt of a long passage, the row 
 the text that was found and says to open the original for its context. Filter by People, Organizations, Places, Things &
 IDs or Dates; searching hides the list, keeps the selected filter and page for the
 way back, and leaves guided discovery collapsed. Guided discovery runs opened from
-the inbox also keep the filter and page through their batches and return link. Counting is
+the inbox also keep the filter and page through their batches and return link, and
+so does returning from an identity's connections graph. Counting is
 one pass over the matter's passages, so the list stays quick at the discovery limit.
 **Confirm** or **Not relevant** records that status on every suggestion in the
 row, up to 200 at a time (a larger row says so, and the rest stay listed; the identity

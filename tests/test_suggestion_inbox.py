@@ -633,3 +633,21 @@ def test_a_large_group_decides_the_identity_whose_passage_it_shows(workbench):  
     assert response.status_code == 303
     decided = service.detail(matter.matter_id, WEB_ACTOR, "synthetic-riley-200")[0]
     assert decided["status"] == "confirmed"
+
+
+def test_exploring_connections_keeps_the_inbox_position(workbench):  # noqa: F811
+    client, bench, matter, _runtime = workbench
+    upload(client, matter.slug, "Synthetic memo.txt", FIRST)
+    bench.run_automatic_discovery_once()
+    rows, _ = bench.entity_service(matter).list(matter.matter_id, WEB_ACTOR)
+    alex = next(row for row in rows if row["display_name"] == "Alex Example")
+    link = f"/matters/{matter.slug}/entities/{alex['entity_id']}?kind=people&inbox_page=2"
+    detail = client.get(link).text
+    explore = html.unescape(re.search(r'<a class="button button-secondary" href="([^"]+)">Explore connections</a>', detail)[1])
+    graph = client.get(explore)
+    assert graph.status_code == 200
+    back = html.unescape(re.search(r'<a href="([^"]+)">Return to previous review</a>', graph.text)[1])
+    assert "kind=people" in back and "inbox_page=2" in back
+    returned = client.get(back).text
+    everything = html.unescape(re.search(r'<a href="([^"]+)">All entities</a>', returned)[1])
+    assert "kind=people" in everything and "inbox_page=2" in everything
