@@ -3468,7 +3468,7 @@ class CaseIntelligenceWorkbench:
 
     def _answer_claim_passages(self, matter: MatterRecord, conversation_id: str, message_id: str,
                                claim_index: int):
-        """The claim's distinct cited passages (up to 12) for discovery, and a basis naming them.
+        """The claim's distinct cited passages (up to 12) for discovery.
 
         Call under the source mutation guard and the workspace lock. Any changed
         or unavailable passage refuses the whole claim.
@@ -3500,10 +3500,14 @@ class CaseIntelligenceWorkbench:
                      unit_ordinal=ordinal, unit_digest=hashlib.sha256(unit.text.encode()).hexdigest()),
                 (unit.text, self._discovery_reference(matter, document, unit, ordinal)),
             ))
-        basis = hashlib.sha256(json.dumps([
-            [unit["document_id"], unit["source_version_id"], unit["unit_ordinal"], unit["unit_digest"]]
-            for unit, _loaded in passages], separators=(",", ":")).encode()).hexdigest()
-        return passages, basis
+        return passages
+
+    @staticmethod
+    def _suggestion_basis(passages, occurrence_keys) -> str:
+        """Names a proposal: the exact passages read and the occurrences it would add."""
+        return hashlib.sha256(json.dumps([
+            [[unit["document_id"], unit["source_version_id"], unit["unit_ordinal"], unit["unit_digest"]]
+             for unit, _loaded in passages], list(occurrence_keys)], separators=(",", ":")).encode()).hexdigest()
 
     def preview_answer_claim_suggestions(
         self, matter: MatterRecord, actor_id: str, conversation_id: str, message_id: str,
@@ -3513,32 +3517,38 @@ class CaseIntelligenceWorkbench:
         self.workspace.membership(matter.matter_id, actor_id)
         with self.source_store(matter).mutation_guard(), self.workspace._lock:
             self.workspace.membership(matter.matter_id, actor_id)
-            passages, basis = self._answer_claim_passages(matter, conversation_id, message_id, claim_index)
-            found, failed = self.entity_discovery(matter).preview_passages(matter.matter_id, actor_id, passages)
+            passages = self._answer_claim_passages(matter, conversation_id, message_id, claim_index)
+            found, keys, failed = self.entity_discovery(matter).preview_passages(matter.matter_id, actor_id, passages)
         return {"items": [{"label": label, "kind": kind, "count": count} for label, kind, count in found],
-                "basis": basis, "failed": failed,
+                "basis": self._suggestion_basis(passages, keys), "failed": failed,
                 "passages": [f"{loaded[1]['source_name']} · {loaded[1]['location']}" for _unit, loaded in passages]}
 
     def suggest_from_answer_claim(
         self, matter: MatterRecord, actor_id: str, conversation_id: str, message_id: str,
-        claim_index: int, basis: str,
+        claim_index: int, basis: str, *, record=None,
     ) -> dict[str, object]:
         """Add the previewed suggestions from a verified claim's cited passages.
 
         Runs the deterministic extractor that discovery uses on the cited
         passages, as the reviewer, in one transaction. New identities stay
         Suggested and record that they came from an answer; occurrences that
-        discovery already suggested are not added again. If the passages changed
-        since the preview, nothing is written.
+        discovery already suggested are not added again. The basis binds the
+        passages and the exact occurrences previewed: if either changed since,
+        nothing is written. record(added, passages), when given, runs inside the
+        same transaction, so an audit event commits with the suggestions.
         """
         self.workspace.membership(matter.matter_id, actor_id)
         with self.source_store(matter).mutation_guard(), self.workspace._lock:
             self.workspace.membership(matter.matter_id, actor_id)
-            passages, current = self._answer_claim_passages(matter, conversation_id, message_id, claim_index)
-            if not hmac.compare_digest(str(basis), current):
-                raise WorkspaceProblem("The cited passages changed since the preview. Review the suggestions again.")
+            passages = self._answer_claim_passages(matter, conversation_id, message_id, claim_index)
+
+            def expect(keys):
+                # Checked inside the write transaction, so no other writer can interleave.
+                if not hmac.compare_digest(str(basis), self._suggestion_basis(passages, keys)):
+                    raise WorkspaceProblem("The cited passages or their suggestions changed since the preview. Review the suggestions again.")
             added, kinds, failed = self.entity_discovery(matter).suggest_from_passages(
-                matter.matter_id, actor_id, passages)
+                matter.matter_id, actor_id, passages, expect=expect,
+                record=(lambda count, _kinds: record(count, len(passages))) if record is not None else None)
         return {"added": added, "dates": kinds.count("date"), "passages": len(passages), "failed": failed}
 
     def _saved_answer_references(
@@ -15926,8 +15936,20 @@ def create_workbench_app(
             if not re.fullmatch(r"[0-9a-f]{64}", basis):
                 raise WorkspaceProblem("Review the suggestions before adding them.")
             matter = authorized_matter(request, slug)
+
+            def record(added: int, passages: int) -> None:
+                # Inside the suggestion transaction (same connection, re-entrant
+                # lock), so the audit event commits or rolls back with the writes.
+                bench.workspace._append_audit_event_locked(
+                    actor_principal_id=context.principal_id,
+                    session_id=context.session.session_id if context.session is not None else None,
+                    matter_id=matter.matter_id,
+                    request_id=getattr(request.state, "request_id", f"request-{uuid.uuid4().hex}"),
+                    action="entity.suggest_from_answer", outcome="success",
+                    object_type="message", object_id=message_id,
+                    details={"count": int(added), "unit_count": int(passages), "state": "suggested"})
             result = bench.suggest_from_answer_claim(
-                matter, context.principal_id, conversation_id, message_id, claim_index, basis)
+                matter, context.principal_id, conversation_id, message_id, claim_index, basis, record=record)
         except KeyError as exc:
             raise HTTPException(404, "Saved answer passage not found") from exc
         except WorkspaceProblem as exc:
@@ -15935,16 +15957,6 @@ def create_workbench_app(
                 return JSONResponse({"message": str(exc)}, status_code=409,
                                     headers={"Cache-Control": "no-store"})
             return _answer_feedback(slug, conversation_id, return_path, str(exc), error=True)
-        audit(
-            request,
-            "entity.suggest_from_answer",
-            "success",
-            context=context,
-            matter=matter,
-            object_type="message",
-            object_id=message_id,
-            details={"count": int(result["added"]), "unit_count": int(result["passages"]), "state": "suggested"},
-        )
         added, dates = int(result["added"]), int(result["dates"])
         if added:
             notice = f"Added {added} suggestion{'' if added == 1 else 's'} for review"

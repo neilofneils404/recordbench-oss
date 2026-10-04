@@ -103,7 +103,9 @@ def test_adding_the_preview_creates_suggestions_that_record_they_came_from_an_an
     again = client.post(url + '/preview', headers=JSON).json()
     assert again['items'] == [] and again['message'] == (
         'No new people, things or dates: they are already suggested, or none were found.')
-    repeat = client.post(url, data={'basis': preview['basis']}, headers=JSON).json()
+    # The old proposal no longer matches what is left to add, so it is refused.
+    assert client.post(url, data={'basis': preview['basis']}, headers=JSON).status_code == 409
+    repeat = client.post(url, data={'basis': again['basis']}, headers=JSON).json()
     assert repeat['added'] == 0 and repeat['timeline_url'] == ''
     assert len(identities(bench, matter)) == 3
 
@@ -270,3 +272,53 @@ def test_the_action_appears_on_each_claim_in_the_dock_and_the_full_conversation(
     assert f'id="answer-support-{message.message_id}"' in full
     back = client.post(url + '/preview', data={'return_to': anchor}, follow_redirects=False)
     assert back.status_code == 200 and f'href="{html.escape(anchor)}">Dismiss</a>' in back.text
+
+
+def test_a_proposal_is_refused_when_discovery_took_its_occurrences_after_the_preview(answer):
+    client, (matter, conversation, message, url) = answer
+    bench = client.app.state.workbench
+    preview = client.post(url + '/preview', headers=JSON).json()
+    # Automatic discovery suggests the same occurrences between preview and Add.
+    bench.run_automatic_discovery_once()
+    before = len(identities(bench, matter))
+    response = client.post(url, data={'basis': preview['basis']}, headers=JSON)
+    assert response.status_code == 409 and 'changed since the preview' in response.json()['message']
+    assert len(identities(bench, matter)) == before
+    assert client.post(url + '/preview', headers=JSON).json()['items'] == []
+
+
+def test_a_group_mixing_answer_and_automatic_suggestions_says_so(answer):
+    client, (matter, conversation, message, url) = answer
+    bench = client.app.state.workbench
+    assert preview_and_add(client, url)[1].json()['added'] == 3
+    store = bench.source_store(matter)
+    document = store.store_stream('Synthetic second log.txt', 'text/plain', io.BytesIO(b'witness: Alex Example\n'))[0]
+    bench._sync_source_catalog(matter, (document,))
+    bench.run_automatic_discovery_once()
+    inbox = client.get(f'/matters/{matter.slug}/entities').text
+    assert 'suggestion-from-answer">1 of 2 from an answer</span>' in inbox
+    assert inbox.count('suggestion-from-answer">From an answer</span>') == 2
+
+
+def test_the_audit_event_commits_with_the_suggestions_or_neither_is_saved(answer, monkeypatch):
+    client, (matter, conversation, message, url) = answer
+    bench = client.app.state.workbench
+    preview = client.post(url + '/preview', headers=JSON).json()
+    real = bench.workspace._append_audit_event_locked
+
+    def failing(**kwargs):
+        if kwargs['action'] == 'entity.suggest_from_answer':
+            raise RuntimeError('synthetic audit storage failure')
+        return real(**kwargs)
+    monkeypatch.setattr(bench.workspace, '_append_audit_event_locked', failing)
+    with pytest.raises(RuntimeError):
+        client.post(url, data={'basis': preview['basis']}, headers=JSON)
+    assert not identities(bench, matter)
+    with bench.workspace._lock:
+        receipts = bench.workspace.connection.execute(
+            'SELECT COUNT(*) FROM workbench_entity_discovery_seen WHERE matter_id=?', (matter.matter_id,)).fetchone()[0]
+    assert receipts == 0
+    monkeypatch.setattr(bench.workspace, '_append_audit_event_locked', real)
+    assert client.post(url, data={'basis': preview['basis']}, headers=JSON).json()['added'] == 3
+    events = [event for event in bench.workspace.audit_events(matter.matter_id) if event.action == 'entity.suggest_from_answer']
+    assert len(events) == 1 and events[0].object_id == message.message_id

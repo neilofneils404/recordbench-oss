@@ -177,11 +177,15 @@ would add and from which cited passages, writing nothing. Each occurrence
 becomes its own suggestion, so a name found twice is shown with its count and
 counted twice in **Add**. In the dock this is a card with **Add to suggestions** and
 **Dismiss**, and without JavaScript, or from the full conversation, a page with
-the same choices. **Add** checks that the passages are still the ones previewed
-and writes every passage in one transaction, as the reviewer, so a budget
-refusal leaves nothing behind. New identities are Suggested with origin
+the same choices. **Add** checks, inside its write transaction, that the passages
+and the exact occurrences are still the ones previewed (if discovery or another
+reviewer suggested any of them meanwhile, nothing is written and the reviewer
+previews again), then writes every passage and its audit event in that one
+transaction, as the reviewer, so a budget or audit failure leaves nothing behind. New identities are Suggested with origin
 `extraction`; their first history entry, "suggested from an answer passage", is
-how the inbox marks them **From an answer**. Occurrences share automatic
+how the inbox marks them **From an answer**; a row that also holds automatic
+suggestions with the same name says how many came from an answer ("1 of 2 from
+an answer"). Occurrences share automatic
 discovery's receipts, so neither path suggests what the other already found,
 and repeating the action finds nothing new. One `entity.suggest_from_answer`
 audit event records the number added and passages read. The result links to the

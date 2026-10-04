@@ -298,44 +298,59 @@ class EntityDiscovery:
             unit['unit_ordinal'], unit['unit_digest'], occurrence.start, occurrence.end],
             separators=(',', ':')).encode()).hexdigest()
 
+    def _new_occurrences(self, repo, matter_id, passages):
+        """Occurrences in passages that no discovery pass has recorded yet.
+
+        Returns ({(label, kind): count}, sorted occurrence keys, failed passages).
+        Every occurrence becomes its own suggestion, so repeats are counted.
+        """
+        found, keys, failed = {}, set(), 0
+        for unit, (text, _reference) in passages:
+            try:
+                occurrences = self._validated_occurrences(text)
+            except Exception:
+                failed += 1
+                continue
+            for occurrence in occurrences:
+                key = self._occurrence_key(unit, occurrence)
+                if key in keys or repo.has_discovery_receipt(matter_id, key):
+                    continue
+                keys.add(key)
+                name = (occurrence.label, occurrence.kind)
+                found[name] = found.get(name, 0) + 1
+        return found, sorted(keys), failed
+
     def preview_passages(self, matter_id, actor_id, passages):
         """What suggest_from_passages would add now, without writing anything.
 
-        Every occurrence becomes its own suggestion, so each (label, kind) is
-        returned with the number of occurrences that would be added.
-        Returns ([(label, kind, count)] in passage order, failed passages).
+        Returns ([(label, kind, count)] in passage order, sorted occurrence keys,
+        failed passages).
         """
-        found, keys, failed = {}, set(), 0
         with self.service.repository.reading(matter_id, actor_id) as repo:
-            for unit, (text, _reference) in passages:
-                try:
-                    occurrences = self._validated_occurrences(text)
-                except Exception:
-                    failed += 1
-                    continue
-                for occurrence in occurrences:
-                    key = self._occurrence_key(unit, occurrence)
-                    if key in keys or repo.has_discovery_receipt(matter_id, key):
-                        continue
-                    keys.add(key)
-                    name = (occurrence.label, occurrence.kind)
-                    found[name] = found.get(name, 0) + 1
-        return [(label, kind, count) for (label, kind), count in found.items()], failed
+            found, keys, failed = self._new_occurrences(repo, matter_id, passages)
+        return [(label, kind, count) for (label, kind), count in found.items()], keys, failed
 
-    def suggest_from_passages(self, matter_id, actor_id, passages):
+    def suggest_from_passages(self, matter_id, actor_id, passages, *, expect=None, record=None):
         """Suggest identities from passages a reviewer chose, as that reviewer.
 
         passages yields (unit, (text, reference)) with the unit's document,
-        version, ordinal and digest. All passages are written in one
-        transaction, so a budget refusal leaves nothing behind.
+        version, ordinal and digest. Everything happens in one transaction:
+        expect(keys), when given, sees the occurrence keys that would be added
+        and raises to refuse a stale proposal before anything is written;
+        record(added, kinds) runs after the writes, so its audit commits with
+        them. A budget refusal leaves nothing behind.
         Returns (added, kinds of added, failed).
         """
         kinds, failed = [], 0
         with self.service.repository.transaction(matter_id, actor_id) as repo:
+            if expect is not None:
+                expect(self._new_occurrences(repo, matter_id, passages)[1])
             for unit, loaded in passages:
                 state, _prepared = self._process_unit(repo, matter_id, actor_id, unit, loaded, AnswerLedger,
                                                       history_action=ANSWER_HISTORY_ACTION, added_kinds=kinds)
                 failed += state != 'processed'
+            if record is not None:
+                record(len(kinds), kinds)
         # Counted as created, so an occurrence another writer just suggested is not counted twice.
         return len(kinds), kinds, failed
 
