@@ -276,8 +276,18 @@ def main(argv=None):
 
             suggest.send_keys(Keys.ENTER)
             add = wait.until(lambda _: card.is_displayed() and card.find_element(By.XPATH, ".//button[starts-with(normalize-space(), 'Add ')]"))
+            # A slow Add holds Dismiss and Suggest, so feedback never says nothing was added while it may succeed.
+            js("const original = window.fetch; window.fetch = (url, init) => /\\/suggestions\\/claims\\/\\d+$/.test(String(url))"
+               " ? new Promise((resolve) => setTimeout(resolve, 1500)).then(() => original(url, init)) : original(url, init);")
             add.click()
+            wait.until(lambda _: status.text == "Adding suggestions…")
+            dismiss = card.find_element(By.XPATH, ".//button[normalize-space()='Dismiss']")
+            assert dismiss.get_attribute("aria-disabled") == "true" and suggest.get_attribute("aria-disabled") == "true"
+            dismiss.click()
+            suggest.click()
+            assert card.is_displayed() and status.text == "Adding suggestions…", status.text
             wait.until(lambda _: status.text.startswith("Added "))
+            assert suggest.get_attribute("aria-disabled") is None
             assert "date" in status.text, status.text
             assert inbox.is_displayed() and timeline.is_displayed() and not card.is_displayed()
             assert identity_count() == len(labels)
@@ -288,7 +298,7 @@ def main(argv=None):
             suggest.send_keys(Keys.ENTER)
             wait.until(lambda _: status.text.startswith("No new people, things or dates"))
             assert not card.is_displayed() and not timeline.is_displayed() and inbox.is_displayed()
-            checks.append("Add adds the previewed suggestions without leaving the reader, announces them, offers the inbox and timeline draft, and a repeat finds nothing new")
+            checks.append("While a slow Add is pending, Dismiss and Suggest are held; Add then adds the previewed suggestions without leaving the reader, announces them, offers the inbox and timeline draft, and a repeat finds nothing new")
 
             inbox.click()
             wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, "#suggestions .suggestion-from-answer"))

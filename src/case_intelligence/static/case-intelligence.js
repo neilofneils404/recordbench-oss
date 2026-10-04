@@ -3944,10 +3944,10 @@
       const inbox = suggestForm.querySelector("[data-suggest-inbox]");
       const timeline = suggestForm.querySelector("[data-suggest-timeline]");
       const card = suggestForm.nextElementSibling;
-      const busy = async (form, control, message, work) => {
+      const busy = async (form, controls, message, work) => {
         if (form.getAttribute("aria-busy") === "true") return;
         form.setAttribute("aria-busy", "true");
-        control.setAttribute("aria-disabled", "true");
+        controls.forEach((control) => control.setAttribute("aria-disabled", "true"));
         feedback.textContent = message;
         try {
           await work();
@@ -3955,7 +3955,7 @@
           if (form.isConnected) feedback.textContent = `${error.message} You can safely try again.`;
         } finally {
           form.removeAttribute("aria-busy");
-          control.removeAttribute("aria-disabled");
+          controls.forEach((control) => control.removeAttribute("aria-disabled"));
         }
       };
       const closeCard = () => {
@@ -3997,13 +3997,15 @@
         card.hidden = false;
         heading.focus();
         dismiss.addEventListener("click", () => {
+          // While Add is pending its outcome is unknown, so Dismiss cannot claim nothing was added.
+          if (addForm.getAttribute("aria-busy") === "true") return;
           closeCard();
           feedback.textContent = "Dismissed; nothing was added.";
           button.focus();
         });
         addForm.addEventListener("submit", (event) => {
           event.preventDefault();
-          busy(addForm, add, "Adding suggestions…", async () => {
+          busy(addForm, [add, dismiss, button], "Adding suggestions…", async () => {
             const body = new FormData(addForm);
             const response = await fetch(addForm.action, {
               method: "POST", body, headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
@@ -4021,7 +4023,9 @@
       };
       suggestForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        busy(suggestForm, button, "Finding people, things and dates in the cited passages…", async () => {
+        // A new preview is not requested while an Add from the current card is pending.
+        if (card.querySelector('form[aria-busy="true"]')) return;
+        busy(suggestForm, [button], "Finding people, things and dates in the cited passages…", async () => {
           const response = await fetch(suggestForm.action, {
             method: "POST", body: new FormData(suggestForm),
             headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },

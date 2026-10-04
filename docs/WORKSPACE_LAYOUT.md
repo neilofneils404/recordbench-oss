@@ -152,7 +152,9 @@ from this passage** below **Save passage to case notes**; see
 [suggestions from an answer](ENTITY_DISCOVERY.md#suggestions-from-an-answer).
 It stays on the current page and shows a proposal card under the claim, which
 takes focus and lists what it found; **Dismiss** adds nothing and returns focus
-to the button. **Add to suggestions** announces how many it added in a status
+to the button. While **Add to suggestions** is pending, Dismiss and the Suggest
+button are held, so the status never says nothing was added while the request may
+still succeed. **Add to suggestions** announces how many it added in a status
 line, then shows **Review suggestions** and, when it added a date, **See dates in
 the timeline draft**. When nothing new is found, the status says so and
 **Review suggestions** stays available. Without JavaScript, and from the full
