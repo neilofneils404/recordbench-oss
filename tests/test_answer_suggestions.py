@@ -322,3 +322,23 @@ def test_the_audit_event_commits_with_the_suggestions_or_neither_is_saved(answer
     assert client.post(url, data={'basis': preview['basis']}, headers=JSON).json()['added'] == 3
     events = [event for event in bench.workspace.audit_events(matter.matter_id) if event.action == 'entity.suggest_from_answer']
     assert len(events) == 1 and events[0].object_id == message.message_id
+
+
+def test_a_proposal_is_refused_when_a_revised_extractor_would_create_something_else(answer, monkeypatch):
+    import dataclasses
+    from case_intelligence.entity_extractor import DeterministicEntityExtractor
+    client, (matter, conversation, message, url) = answer
+    bench = client.app.state.workbench
+    preview = client.post(url + '/preview', headers=JSON).json()
+    assert {'label': 'Alex Example', 'kind': 'person', 'count': 1, 'kind_label': 'Person'} in preview['items']
+    real = DeterministicEntityExtractor.extract
+
+    def revised(self, text):
+        # Same source offsets, different classification, as a revised extractor might produce.
+        for occurrence in real(self, text):
+            yield dataclasses.replace(occurrence, kind='organization') if occurrence.kind == 'person' else occurrence
+    monkeypatch.setattr(DeterministicEntityExtractor, 'extract', revised)
+    response = client.post(url, data={'basis': preview['basis']}, headers=JSON)
+    assert response.status_code == 409 and not identities(bench, matter)
+    fresh = client.post(url + '/preview', headers=JSON).json()
+    assert {'label': 'Alex Example', 'kind': 'organization', 'count': 1, 'kind_label': 'Organization'} in fresh['items']

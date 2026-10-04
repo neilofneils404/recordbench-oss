@@ -3503,11 +3503,15 @@ class CaseIntelligenceWorkbench:
         return passages
 
     @staticmethod
-    def _suggestion_basis(passages, occurrence_keys) -> str:
-        """Names a proposal: the exact passages read and the occurrences it would add."""
+    def _suggestion_basis(passages, proposal) -> str:
+        """Names a proposal: the exact passages read and what it would create.
+
+        The proposal holds the extractor version and each occurrence's key,
+        label and kind, so a revised extractor cannot change what Add creates.
+        """
         return hashlib.sha256(json.dumps([
             [[unit["document_id"], unit["source_version_id"], unit["unit_ordinal"], unit["unit_digest"]]
-             for unit, _loaded in passages], list(occurrence_keys)], separators=(",", ":")).encode()).hexdigest()
+             for unit, _loaded in passages], proposal], separators=(",", ":")).encode()).hexdigest()
 
     def preview_answer_claim_suggestions(
         self, matter: MatterRecord, actor_id: str, conversation_id: str, message_id: str,
@@ -3518,9 +3522,9 @@ class CaseIntelligenceWorkbench:
         with self.source_store(matter).mutation_guard(), self.workspace._lock:
             self.workspace.membership(matter.matter_id, actor_id)
             passages = self._answer_claim_passages(matter, conversation_id, message_id, claim_index)
-            found, keys, failed = self.entity_discovery(matter).preview_passages(matter.matter_id, actor_id, passages)
+            found, proposal, failed = self.entity_discovery(matter).preview_passages(matter.matter_id, actor_id, passages)
         return {"items": [{"label": label, "kind": kind, "count": count} for label, kind, count in found],
-                "basis": self._suggestion_basis(passages, keys), "failed": failed,
+                "basis": self._suggestion_basis(passages, proposal), "failed": failed,
                 "passages": [f"{loaded[1]['source_name']} · {loaded[1]['location']}" for _unit, loaded in passages]}
 
     def suggest_from_answer_claim(
@@ -3542,9 +3546,9 @@ class CaseIntelligenceWorkbench:
             self.workspace.membership(matter.matter_id, actor_id)
             passages = self._answer_claim_passages(matter, conversation_id, message_id, claim_index)
 
-            def expect(keys):
+            def expect(proposal):
                 # Checked inside the write transaction, so no other writer can interleave.
-                if not hmac.compare_digest(str(basis), self._suggestion_basis(passages, keys)):
+                if not hmac.compare_digest(str(basis), self._suggestion_basis(passages, proposal)):
                     raise WorkspaceProblem("The cited passages or their suggestions changed since the preview. Review the suggestions again.")
             added, kinds, failed = self.entity_discovery(matter).suggest_from_passages(
                 matter.matter_id, actor_id, passages, expect=expect,

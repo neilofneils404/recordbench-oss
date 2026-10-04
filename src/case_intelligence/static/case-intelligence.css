@@ -5802,6 +5802,7 @@ select.source-scope {
 .suggestion-preview-actions button { min-height: 32px; padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: 6px; cursor: pointer; font: 700 12px var(--font-ui); }
 .suggestion-preview-actions button:not(.button-primary) { background: var(--surface); color: var(--ink); }
 .suggestion-preview-list { padding-left: 20px; }
+.suggestion-preview-sources, .suggestion-preview-list { overflow-wrap: anywhere; }
 .save-claim-form button, .citation-with-save form button { padding: 2px 0; border: 0; background: transparent; color: var(--accent-dark); cursor: pointer; font: 700 10px var(--font-ui); }
 .citation-with-save { display: inline-flex; align-items: stretch; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--canvas); }
 .citation-with-save .citation { border: 0; border-radius: 0; }

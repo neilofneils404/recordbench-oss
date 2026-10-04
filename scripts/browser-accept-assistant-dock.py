@@ -55,10 +55,10 @@ def seed(bench):
     return f"/matters/{matter.slug}", f"/matters/{matter.slug}/sources/{store.action_token(document)}"
 
 
-def seed_answer(bench, prefix):
-    """Add a synthetic verified answer whose one claim cites the journey source."""
+def seed_answer(bench, prefix, document=None):
+    """Add a synthetic verified answer whose one claim cites the journey source (or the one given)."""
     matter = bench.workspace.get_matter(prefix.rsplit("/", 1)[1], ACTOR)
-    document = next(iter(bench.source_store(matter).documents.values()))
+    document = document or next(iter(bench.source_store(matter).documents.values()))
     bench._sync_source_catalog(matter, (document,))
     citation = bench._citation(matter, bench._candidate(matter, document, document.parsed_units()[0], 1))
     conversation = bench.workspace.get_conversation(matter.matter_id)
@@ -316,7 +316,28 @@ def main(argv=None):
                 assert rect(form.find_element(By.CSS_SELECTOR, "button"))["right"] <= width + 1
                 no_page_overflow()
                 driver.save_screenshot(str(args.output / f"dock-suggest-{width}.png"))
-            checks.append("At 390px and 320px the answer-passage Suggest control fits without sideways scrolling")
+            # An open proposal naming a source with a long unbroken filename still fits a phone.
+            bench = app.state.workbench
+            matter = bench.workspace.get_matter(prefix.rsplit("/", 1)[1], ACTOR)
+            long_name = "Synthetic-" + "unbroken" * 24 + ".txt"
+            long_document, _ = bench.source_store(matter).store_stream(
+                long_name, "text/plain", io.BytesIO(b"witness: Morgan Example signed the second log on 2026-04-01."))
+            seed_answer(bench, prefix, long_document)
+            open_page(prefix + "/notebook")
+            last_suggest = wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, "[data-assistant-suggest-passage] button"))[-1]
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", last_suggest)
+            last_suggest.click()
+            open_card = wait.until(lambda _: next((card for card in driver.find_elements(By.CSS_SELECTOR, "[data-suggest-preview-card]")
+                                                   if card.is_displayed() and card.find_elements(By.CSS_SELECTOR, "li")), None))
+            sources = open_card.find_element(By.CSS_SELECTOR, ".suggestion-preview-sources")
+            assert long_name[:40] in sources.text.replace("\n", "")
+            for element in (open_card, sources):
+                box = rect(element)
+                assert box["left"] >= -1 and box["right"] <= 321, box
+            assert js("return arguments[0].scrollWidth <= arguments[0].clientWidth + 1", sources)
+            no_page_overflow()
+            driver.save_screenshot(str(args.output / "dock-suggest-preview-320.png"))
+            checks.append("At 390px and 320px the answer-passage Suggest control fits, and an open proposal naming a long unbroken filename wraps without sideways scrolling")
 
             receipt["passed"] = True
             (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")

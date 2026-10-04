@@ -301,10 +301,12 @@ class EntityDiscovery:
     def _new_occurrences(self, repo, matter_id, passages):
         """Occurrences in passages that no discovery pass has recorded yet.
 
-        Returns ({(label, kind): count}, sorted occurrence keys, failed passages).
-        Every occurrence becomes its own suggestion, so repeats are counted.
+        Returns ({(label, kind): count}, the proposal, failed passages). The
+        proposal names exactly what would be created: the extractor version and,
+        sorted by occurrence key, each occurrence's key, label and kind. Every
+        occurrence becomes its own suggestion, so repeats are counted.
         """
-        found, keys, failed = {}, set(), 0
+        found, keys, proposal, failed = {}, set(), [], 0
         for unit, (text, _reference) in passages:
             try:
                 occurrences = self._validated_occurrences(text)
@@ -316,26 +318,27 @@ class EntityDiscovery:
                 if key in keys or repo.has_discovery_receipt(matter_id, key):
                     continue
                 keys.add(key)
+                proposal.append([key, occurrence.label, occurrence.kind])
                 name = (occurrence.label, occurrence.kind)
                 found[name] = found.get(name, 0) + 1
-        return found, sorted(keys), failed
+        return found, [self.extractor.version, sorted(proposal)], failed
 
     def preview_passages(self, matter_id, actor_id, passages):
         """What suggest_from_passages would add now, without writing anything.
 
-        Returns ([(label, kind, count)] in passage order, sorted occurrence keys,
-        failed passages).
+        Returns ([(label, kind, count)] in passage order, the proposal naming
+        what would be created, failed passages).
         """
         with self.service.repository.reading(matter_id, actor_id) as repo:
-            found, keys, failed = self._new_occurrences(repo, matter_id, passages)
-        return [(label, kind, count) for (label, kind), count in found.items()], keys, failed
+            found, proposal, failed = self._new_occurrences(repo, matter_id, passages)
+        return [(label, kind, count) for (label, kind), count in found.items()], proposal, failed
 
     def suggest_from_passages(self, matter_id, actor_id, passages, *, expect=None, record=None):
         """Suggest identities from passages a reviewer chose, as that reviewer.
 
         passages yields (unit, (text, reference)) with the unit's document,
         version, ordinal and digest. Everything happens in one transaction:
-        expect(keys), when given, sees the occurrence keys that would be added
+        expect(proposal), when given, sees exactly what would be added
         and raises to refuse a stale proposal before anything is written;
         record(added, kinds) runs after the writes, so its audit commits with
         them. A budget refusal leaves nothing behind.
