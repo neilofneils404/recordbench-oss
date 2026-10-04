@@ -64,6 +64,24 @@ def resolve_saved_answer_references(bench, matter, references, *, notebook_previ
     return tuple(resolver.resolve(value) for value in references)
 
 
+def resolve_saved_answer_units(bench, matter, references):
+    """Verify cited passages in one bounded scan and return their current units.
+
+    The checks are the ones saving a passage uses (notebook-preview mode), so a
+    long unit is bound by its complete digest without the report's per-citation
+    length limit. Any changed or unavailable passage refuses the whole set.
+    Returns (canonical reference, document, unit, unit ordinal) per reference.
+    """
+    resolver = _References(bench, matter, notebook_preview=True)
+    resolver.prepare(references)
+    resolved = []
+    for value in references:
+        reference = resolver.resolve(value)
+        document, unit, candidate = resolver.resolved[value["support_token"]]
+        resolved.append((reference, document, unit, int(candidate.chunk_id.removeprefix("chunk-"))))
+    return tuple(resolved)
+
+
 def _decision_review_status(machine, human):
     if (machine, human) in {("included", "exclude"), ("excluded", "include")}:
         return "disputed"

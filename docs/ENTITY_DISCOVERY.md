@@ -168,18 +168,23 @@ review remains below, collapsed while suggestions wait.
 ### Suggestions from an answer
 
 Under each verified claim, the assistant dock and the full conversation offer
-**Suggest people, things and dates from this passage**. It runs the same
-deterministic extractor on the claim's cited passages (up to 12), as the
-reviewer, after checking each passage's exact text the way saving or reporting
-the answer does. A passage that changed, or a transcript passage that is only
-retained history, is skipped and the result says so; if none is current, nothing
-is written. New identities are Suggested with origin `extraction`; their first
-history entry, "suggested from an answer passage", is how the inbox marks them
-**From an answer**. Occurrences share automatic discovery's receipts, so
-neither path suggests what the other already found, and repeating the action
-adds nothing. One `entity.suggest_from_answer` audit event records the number
-added and passages read. The result links to the inbox and, when it added a
-date, to the timeline draft. No schema change is involved.
+**Suggest people, things and dates from this passage**. It first checks the
+claim's cited passages (up to 12) in one bounded pass with the rules saving a
+passage uses, so a long passage is checked by its full digest; if any of them
+changed or is unavailable, nothing is suggested. It then runs the same
+deterministic extractor on the current text and shows a proposal of what it
+would add, writing nothing: in the dock a card with **Add to suggestions** and
+**Dismiss**, and without JavaScript, or from the full conversation, a page with
+the same choices. **Add** checks that the passages are still the ones previewed
+and writes every passage in one transaction, as the reviewer, so a budget
+refusal leaves nothing behind. New identities are Suggested with origin
+`extraction`; their first history entry, "suggested from an answer passage", is
+how the inbox marks them **From an answer**. Occurrences share automatic
+discovery's receipts, so neither path suggests what the other already found,
+and repeating the action finds nothing new. One `entity.suggest_from_answer`
+audit event records the number added and passages read. The result links to the
+inbox and, when it added a date, to the timeline draft. No schema change is
+involved.
 `tests/test_answer_suggestions.py` covers this path.
 
 Found dates also appear on the matter's timeline as a read-only draft, **Dates

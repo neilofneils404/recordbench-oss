@@ -3936,35 +3936,106 @@
       });
     });
 
+    // Suggest from an answer passage: preview what would be added, then Add or Dismiss.
+    // Nothing is written until Add; found names are only ever set as text.
     assistantDock.querySelectorAll("[data-assistant-suggest-passage]").forEach((suggestForm) => {
-      suggestForm.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        if (suggestForm.getAttribute("aria-busy") === "true") return;
-        const button = suggestForm.querySelector('button[type="submit"]');
-        const feedback = suggestForm.querySelector("[data-suggest-passage-status]");
-        const inbox = suggestForm.querySelector("[data-suggest-inbox]");
-        const timeline = suggestForm.querySelector("[data-suggest-timeline]");
-        suggestForm.setAttribute("aria-busy", "true");
-        button.setAttribute("aria-disabled", "true");
-        feedback.textContent = "Suggesting from the cited passages…";
+      const button = suggestForm.querySelector('button[type="submit"]');
+      const feedback = suggestForm.querySelector("[data-suggest-passage-status]");
+      const inbox = suggestForm.querySelector("[data-suggest-inbox]");
+      const timeline = suggestForm.querySelector("[data-suggest-timeline]");
+      const card = suggestForm.nextElementSibling;
+      const busy = async (form, control, message, work) => {
+        if (form.getAttribute("aria-busy") === "true") return;
+        form.setAttribute("aria-busy", "true");
+        control.setAttribute("aria-disabled", "true");
+        feedback.textContent = message;
         try {
+          await work();
+        } catch (error) {
+          if (form.isConnected) feedback.textContent = `${error.message} You can safely try again.`;
+        } finally {
+          form.removeAttribute("aria-busy");
+          control.removeAttribute("aria-disabled");
+        }
+      };
+      const closeCard = () => {
+        card.replaceChildren();
+        card.hidden = true;
+      };
+      const showPreview = (preview) => {
+        card.replaceChildren();
+        const heading = document.createElement("h3");
+        heading.textContent = "Suggestions from this passage";
+        heading.tabIndex = -1;
+        const list = document.createElement("ul");
+        preview.items.forEach((item) => {
+          const row = document.createElement("li");
+          const label = document.createElement("strong");
+          label.textContent = item.label;
+          row.append(label, ` · ${item.kind_label}`);
+          list.append(row);
+        });
+        const addForm = document.createElement("form");
+        addForm.method = "post";
+        addForm.action = preview.save_url;
+        const basis = document.createElement("input");
+        basis.type = "hidden";
+        basis.name = "basis";
+        basis.value = preview.basis;
+        const add = document.createElement("button");
+        add.type = "submit";
+        add.className = "button-primary";
+        add.textContent = `Add ${preview.items.length} to suggestions`;
+        const dismiss = document.createElement("button");
+        dismiss.type = "button";
+        dismiss.textContent = "Dismiss";
+        const actions = document.createElement("div");
+        actions.className = "suggestion-preview-actions";
+        actions.append(add, dismiss);
+        addForm.append(basis, actions);
+        card.append(heading, list, addForm);
+        card.hidden = false;
+        heading.focus();
+        dismiss.addEventListener("click", () => {
+          closeCard();
+          feedback.textContent = "Dismissed; nothing was added.";
+          button.focus();
+        });
+        addForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          busy(addForm, add, "Adding suggestions…", async () => {
+            const body = new FormData(addForm);
+            const response = await fetch(addForm.action, {
+              method: "POST", body, headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+            });
+            const result = await assistantJson(response);
+            if (typeof result.added !== "number") throw new Error("The suggestions could not be confirmed.");
+            if (!suggestForm.isConnected) return;
+            closeCard();
+            feedback.textContent = result.message;
+            if (inbox) inbox.hidden = false;
+            if (timeline) timeline.hidden = !result.timeline_url;
+            button.focus();
+          });
+        });
+      };
+      suggestForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        busy(suggestForm, button, "Finding people, things and dates in the cited passages…", async () => {
           const response = await fetch(suggestForm.action, {
             method: "POST", body: new FormData(suggestForm),
             headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
           });
-          const result = await assistantJson(response);
-          if (typeof result.added !== "number") throw new Error("The suggestions could not be confirmed.");
-          // A late response belongs only to its original claim.
+          const preview = await assistantJson(response);
+          if (!Array.isArray(preview.items)) throw new Error("The suggestions could not be confirmed.");
           if (!suggestForm.isConnected) return;
-          feedback.textContent = result.message;
-          if (inbox) inbox.hidden = false;
-          if (timeline) timeline.hidden = !result.timeline_url;
-        } catch (error) {
-          if (suggestForm.isConnected) feedback.textContent = `${error.message} You can safely try again.`;
-        } finally {
-          suggestForm.removeAttribute("aria-busy");
-          button.removeAttribute("aria-disabled");
-        }
+          feedback.textContent = preview.message;
+          // With nothing new, what was found may already be waiting in the inbox.
+          if (inbox) inbox.hidden = Boolean(preview.items.length);
+          if (timeline) timeline.hidden = true;
+          if (preview.items.length) showPreview(preview);
+          else closeCard();
+        });
       });
     });
 

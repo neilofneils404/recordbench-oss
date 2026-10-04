@@ -292,20 +292,84 @@ class EntityDiscovery:
         with self.service.repository.reading(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
             return repo.auto_discovery_progress(matter_id, self.extractor.version, detail=detail)
 
+    @staticmethod
+    def _occurrence_key(unit, occurrence):
+        return hashlib.sha256(json.dumps([unit['document_id'], unit['source_version_id'],
+            unit['unit_ordinal'], unit['unit_digest'], occurrence.start, occurrence.end],
+            separators=(',', ':')).encode()).hexdigest()
+
+    def preview_passages(self, matter_id, actor_id, passages):
+        """What suggest_from_passages would add now, without writing anything.
+
+        Returns ([(label, kind)] distinct and in passage order, failed passages).
+        """
+        found, keys, failed = [], set(), 0
+        with self.service.repository.reading(matter_id, actor_id) as repo:
+            for unit, (text, _reference) in passages:
+                try:
+                    occurrences = self._validated_occurrences(text)
+                except Exception:
+                    failed += 1
+                    continue
+                for occurrence in occurrences:
+                    key = self._occurrence_key(unit, occurrence)
+                    if key in keys or repo.has_discovery_receipt(matter_id, key):
+                        continue
+                    keys.add(key)
+                    if (occurrence.label, occurrence.kind) not in found:
+                        found.append((occurrence.label, occurrence.kind))
+        return found, failed
+
     def suggest_from_passages(self, matter_id, actor_id, passages):
         """Suggest identities from passages a reviewer chose, as that reviewer.
 
         passages yields (unit, (text, reference)) with the unit's document,
-        version, ordinal and digest. Returns (added, kinds of added, failed).
+        version, ordinal and digest. All passages are written in one
+        transaction, so a budget refusal leaves nothing behind.
+        Returns (added, kinds of added, failed).
         """
         kinds, failed = [], 0
-        for unit, loaded in passages:
-            with self.service.repository.transaction(matter_id, actor_id) as repo:
+        with self.service.repository.transaction(matter_id, actor_id) as repo:
+            for unit, loaded in passages:
                 state, _prepared = self._process_unit(repo, matter_id, actor_id, unit, loaded, AnswerLedger,
                                                       history_action=ANSWER_HISTORY_ACTION, added_kinds=kinds)
-            failed += state != 'processed'
+                failed += state != 'processed'
         # Counted as created, so an occurrence another writer just suggested is not counted twice.
         return len(kinds), kinds, failed
+
+    def _validated_occurrences(self, text):
+        """The extractor's occurrences in text, or an exception for unsupported output."""
+        service = self.service
+        occurrences = list(islice(self.extractor.extract(text), 1001))
+        if len(occurrences) > 1000:
+            raise ValueError('bounded output exceeded')
+        classifications = {}
+        for occurrence in occurrences:
+            span = (occurrence.start, occurrence.end)
+            if span in classifications and classifications[span] != occurrence.kind:
+                raise ValueError('extractor must resolve same-span classifications')
+            classifications[span] = occurrence.kind
+            if (not 0 <= occurrence.start < occurrence.end <= len(text)
+                    or text[occurrence.start:occurrence.end] != occurrence.label
+                    or len(occurrence.label) > 160
+                    or occurrence.kind not in ('person', 'organization', 'identifier', 'thing', 'date')):
+                raise ValueError('unsupported occurrence')
+            service.fields(display_name=occurrence.label, entity_type=occurrence.kind, status='suggested')
+            if len(json.dumps(occurrence.date)) > 1000:
+                raise ValueError('date metadata exceeded its bound')
+            if occurrence.kind == 'date':
+                metadata = occurrence.date
+                if (not isinstance(metadata, dict) or metadata.get('raw') != occurrence.label
+                        or metadata.get('normalized') is not None
+                        or not isinstance(metadata.get('ambiguity'), str)
+                        or not metadata['ambiguity']
+                        or (metadata.get('timezone') is not None
+                            and (not isinstance(metadata['timezone'], str)
+                                 or not occurrence.label.endswith(metadata['timezone'])))):
+                    raise ValueError('unsupported date normalization')
+            elif occurrence.date is not None:
+                raise ValueError('unexpected date metadata')
+        return occurrences
 
     def _process_unit(self, repo, matter_id, actor_id, unit, loaded, ledger,
                       history_action='extracted', added_kinds=None):
@@ -329,35 +393,7 @@ class EntityDiscovery:
             ledger.state(repo, unit, 'invalidated', 'Original unit changed or is unavailable; start current-source coverage.')
             return 'invalidated', 0
         try:
-            occurrences = list(islice(self.extractor.extract(text), 1001))
-            if len(occurrences) > 1000:
-                raise ValueError('bounded output exceeded')
-            classifications = {}
-            for occurrence in occurrences:
-                span = (occurrence.start, occurrence.end)
-                if span in classifications and classifications[span] != occurrence.kind:
-                    raise ValueError('extractor must resolve same-span classifications')
-                classifications[span] = occurrence.kind
-                if (not 0 <= occurrence.start < occurrence.end <= len(text)
-                        or text[occurrence.start:occurrence.end] != occurrence.label
-                        or len(occurrence.label) > 160
-                        or occurrence.kind not in ('person', 'organization', 'identifier', 'thing', 'date')):
-                    raise ValueError('unsupported occurrence')
-                service.fields(display_name=occurrence.label, entity_type=occurrence.kind, status='suggested')
-                if len(json.dumps(occurrence.date)) > 1000:
-                    raise ValueError('date metadata exceeded its bound')
-                if occurrence.kind == 'date':
-                    metadata = occurrence.date
-                    if (not isinstance(metadata, dict) or metadata.get('raw') != occurrence.label
-                            or metadata.get('normalized') is not None
-                            or not isinstance(metadata.get('ambiguity'), str)
-                            or not metadata['ambiguity']
-                            or (metadata.get('timezone') is not None
-                                and (not isinstance(metadata['timezone'], str)
-                                     or not occurrence.label.endswith(metadata['timezone'])))):
-                        raise ValueError('unsupported date normalization')
-                elif occurrence.date is not None:
-                    raise ValueError('unexpected date metadata')
+            occurrences = self._validated_occurrences(text)
         except Exception:
             # Do not persist extractor exception text, which may include
             # source content or provider internals.
@@ -366,8 +402,7 @@ class EntityDiscovery:
         prepared = []
         keys = set()
         for occurrence in occurrences:
-            key = hashlib.sha256(json.dumps([unit['document_id'], unit['source_version_id'],
-                unit['unit_ordinal'], unit['unit_digest'], occurrence.start, occurrence.end], separators=(',', ':')).encode()).hexdigest()
+            key = self._occurrence_key(unit, occurrence)
             if key not in keys and not repo.has_discovery_receipt(matter_id, key):
                 keys.add(key)
                 prepared.append((key, occurrence))

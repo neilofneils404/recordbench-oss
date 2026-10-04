@@ -251,20 +251,44 @@ def main(argv=None):
             inbox = form.find_element(By.CSS_SELECTOR, "[data-suggest-inbox]")
             timeline = form.find_element(By.CSS_SELECTOR, "[data-suggest-timeline]")
             assert not inbox.is_displayed() and not timeline.is_displayed()
+            matter = app.state.workbench.workspace.get_matter(prefix.rsplit("/", 1)[1], ACTOR)
+            service = app.state.workbench.entity_service(matter)
+            identity_count = lambda: service.list(matter.matter_id, ACTOR)[1]
+            status = form.find_element(By.CSS_SELECTOR, "[data-suggest-passage-status]")
+            card = find("[data-suggest-preview-card]")
             js("arguments[0].focus()", suggest)
             suggest.send_keys(Keys.ENTER)
-            status = form.find_element(By.CSS_SELECTOR, "[data-suggest-passage-status]")
+            wait.until(lambda _: card.is_displayed() and card.find_elements(By.CSS_SELECTOR, "li"))
+            heading = card.find_element(By.CSS_SELECTOR, "h3")
+            assert heading.text == "Suggestions from this passage" and js("return document.activeElement") == heading
+            labels = [item.text for item in card.find_elements(By.CSS_SELECTOR, "li")]
+            assert any(label.endswith(" · Date") for label in labels), labels
+            assert "Nothing is added until you choose Add." in status.text, status.text
+            assert identity_count() == 0
+            driver.save_screenshot(str(args.output / "dock-suggest-preview-1440.png"))
+            dismiss = card.find_element(By.XPATH, ".//button[normalize-space()='Dismiss']")
+            js("arguments[0].focus()", dismiss)
+            dismiss.send_keys(Keys.ENTER)
+            wait.until(lambda _: not card.is_displayed())
+            assert js("return document.activeElement") == suggest and status.text == "Dismissed; nothing was added."
+            assert identity_count() == 0
+            checks.append("Suggest from an answer passage previews what it found from the keyboard; Dismiss adds nothing and returns focus")
+
+            suggest.send_keys(Keys.ENTER)
+            add = wait.until(lambda _: card.is_displayed() and card.find_element(By.XPATH, ".//button[starts-with(normalize-space(), 'Add ')]"))
+            add.click()
             wait.until(lambda _: status.text.startswith("Added "))
             assert "date" in status.text, status.text
-            assert inbox.is_displayed() and timeline.is_displayed()
+            assert inbox.is_displayed() and timeline.is_displayed() and not card.is_displayed()
+            assert identity_count() == len(labels)
             assert driver.current_url.startswith(base + reader), driver.current_url
             no_page_overflow()
             driver.save_screenshot(str(args.output / "dock-suggested-1440.png"))
             js("arguments[0].focus()", suggest)
             suggest.send_keys(Keys.ENTER)
             wait.until(lambda _: status.text.startswith("No new people, things or dates"))
-            assert not timeline.is_displayed(), "timeline link offered without new dates"
-            checks.append("Suggest from an answer passage works from the keyboard without leaving the reader, announces what it added, offers the inbox and timeline draft, and adds nothing on repeat")
+            assert not card.is_displayed() and not timeline.is_displayed() and inbox.is_displayed()
+            checks.append("Add adds the previewed suggestions without leaving the reader, announces them, offers the inbox and timeline draft, and a repeat finds nothing new")
 
             inbox.click()
             wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, "#suggestions .suggestion-from-answer"))

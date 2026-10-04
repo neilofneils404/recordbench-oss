@@ -1,0 +1,28 @@
+{% extends "workbench_base.html" %}
+
+{% block title %}Suggestions from this passage · {{ product_name }}{% endblock %}
+{% block body_class %}close-matter-page suggestion-preview-page{% endblock %}
+
+{% block content %}
+<main id="main-content" tabindex="-1" class="single-page-main close-matter-main">
+  {% with active='review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  <section class="close-matter-card suggestion-preview" aria-labelledby="suggestion-preview-heading">
+    <p class="eyebrow">From an answer's cited passages · nothing is added yet</p>
+    <h1 id="suggestion-preview-heading">Suggestions from this passage</h1>
+    <p role="status">{{ message }}</p>
+    <ul class="suggestion-preview-list">
+      {% for item in items %}<li><strong>{{ item.label }}</strong> <span class="suggestion-type">{{ item.kind_label }}</span></li>{% endfor %}
+    </ul>
+    <p>Adding puts them in the suggestions inbox on People &amp; things, marked From an answer, for you to confirm or mark not relevant.</p>
+    <form method="post" action="{{ save_url }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="basis" value="{{ basis }}">
+      <input type="hidden" name="return_to" value="{{ return_to }}">
+      <div class="close-matter-actions">
+        <button class="button button-primary" type="submit">Add to suggestions</button>
+        <a class="button button-secondary" href="{{ back_url }}">Dismiss</a>
+      </div>
+    </form>
+  </section>
+</main>
+{% endblock %}

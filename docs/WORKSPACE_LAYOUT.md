@@ -150,10 +150,14 @@ Search or Reports, so no suggestions are offered there.
 Each verified claim in the dock also offers **Suggest people, things and dates
 from this passage** below **Save passage to case notes**; see
 [suggestions from an answer](ENTITY_DISCOVERY.md#suggestions-from-an-answer).
-It stays on the current page, announces how many suggestions it added in a
-status line, and then shows **Review suggestions** and, when it added a date,
-**See dates in the timeline draft**. Without JavaScript, and in the full
-conversation, the same form returns with a notice.
+It stays on the current page and shows a proposal card under the claim, which
+takes focus and lists what it found; **Dismiss** adds nothing and returns focus
+to the button. **Add to suggestions** announces how many it added in a status
+line, then shows **Review suggestions** and, when it added a date, **See dates in
+the timeline draft**. When nothing new is found, the status says so and
+**Review suggestions** stays available. Without JavaScript, and from the full
+conversation, the proposal is its own page, and the full conversation returns to
+the answer afterwards.
 
 ## Manual source review workspace
 

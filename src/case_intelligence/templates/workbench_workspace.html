@@ -385,8 +385,9 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit">Save passage to case notes</button>
                       </form>
-                      <form class="save-claim-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/suggestions/claims/{{ claim_index }}" data-working-form data-working-label="Suggesting…">
+                      <form class="save-claim-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/suggestions/claims/{{ claim_index }}/preview" data-working-form data-working-label="Finding suggestions…">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="return_to" value="/matters/{{ matter.slug }}?conversation={{ conversation.conversation_id }}#answer-support-{{ message.message_id }}">
                         <button type="submit">Suggest people, things and dates from this passage</button>
                       </form>
                       {% if claim.citations %}

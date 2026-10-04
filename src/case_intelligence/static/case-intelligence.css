@@ -5795,6 +5795,13 @@ select.source-scope {
 [data-assistant-suggest-passage] [data-suggest-passage-status] { display: block; margin-top: 2px; font-size: 12px; }
 [data-assistant-suggest-passage] a { display: inline-block; margin: 2px 12px 0 0; color: var(--accent-dark); font-size: 12px; font-weight: 700; text-decoration: underline; }
 [data-assistant-suggest-passage] a[hidden] { display: none; }
+.suggestion-preview-card { margin: 6px 0 0; border: 1px solid var(--line-strong); border-radius: 8px; padding: 10px 12px; background: var(--canvas); font-size: 12px; }
+.suggestion-preview-card h3 { margin: 0; font-size: 13px; }
+.suggestion-preview-card ul { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
+.suggestion-preview-actions { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; }
+.suggestion-preview-actions button { min-height: 32px; padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: 6px; cursor: pointer; font: 700 12px var(--font-ui); }
+.suggestion-preview-actions button:not(.button-primary) { background: var(--surface); color: var(--ink); }
+.suggestion-preview-list { padding-left: 20px; }
 .save-claim-form button, .citation-with-save form button { padding: 2px 0; border: 0; background: transparent; color: var(--accent-dark); cursor: pointer; font: 700 10px var(--font-ui); }
 .citation-with-save { display: inline-flex; align-items: stretch; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--canvas); }
 .citation-with-save .citation { border: 0; border-radius: 0; }

@@ -99,14 +99,16 @@ schema. No model-chosen tool use.
   that entry in the 3c draft.
 
 As built: both are one action. Each claim offers **Suggest people, things and
-dates from this passage**. It first checks every cited passage with the same
-exact-text rules as saving or reporting the answer, skips any that changed, and
-refuses when none is current. New identities are Suggested, created by the
-reviewer, and their first history entry is "suggested from an answer passage";
-the inbox marks them **From an answer**. Occurrences share discovery's receipts,
-so neither path adds what the other already found. The result names how many
-were added, links to the inbox, and links to **Dates found in sources** on the
-timeline only when it added a date (the draft has no per-date anchor).
+dates from this passage**, which checks every cited passage with the rules saving
+a passage uses (any change refuses the claim), then shows a proposal of what it
+found with **Add to suggestions** and **Dismiss** (decision 2). Add re-checks
+that the passages are the ones previewed and writes them in one transaction.
+New identities are Suggested, created by the reviewer, and their first history
+entry is "suggested from an answer passage"; the inbox marks them **From an
+answer**. Occurrences share discovery's receipts, so neither path adds what the
+other already found. The result names how many were added, links to the inbox,
+and links to **Dates found in sources** on the timeline only when it added a date
+(the draft has no per-date anchor).
 
 **C. Draft interview or discovery questions (new generation mode).**
 - From selected passages or a saved note set: "Draft questions for a witness" or
