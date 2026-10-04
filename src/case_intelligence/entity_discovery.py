@@ -301,9 +301,11 @@ class EntityDiscovery:
     def preview_passages(self, matter_id, actor_id, passages):
         """What suggest_from_passages would add now, without writing anything.
 
-        Returns ([(label, kind)] distinct and in passage order, failed passages).
+        Every occurrence becomes its own suggestion, so each (label, kind) is
+        returned with the number of occurrences that would be added.
+        Returns ([(label, kind, count)] in passage order, failed passages).
         """
-        found, keys, failed = [], set(), 0
+        found, keys, failed = {}, set(), 0
         with self.service.repository.reading(matter_id, actor_id) as repo:
             for unit, (text, _reference) in passages:
                 try:
@@ -316,9 +318,9 @@ class EntityDiscovery:
                     if key in keys or repo.has_discovery_receipt(matter_id, key):
                         continue
                     keys.add(key)
-                    if (occurrence.label, occurrence.kind) not in found:
-                        found.append((occurrence.label, occurrence.kind))
-        return found, failed
+                    name = (occurrence.label, occurrence.kind)
+                    found[name] = found.get(name, 0) + 1
+        return [(label, kind, count) for (label, kind), count in found.items()], failed
 
     def suggest_from_passages(self, matter_id, actor_id, passages):
         """Suggest identities from passages a reviewer chose, as that reviewer.

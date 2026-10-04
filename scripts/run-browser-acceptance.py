@@ -69,6 +69,7 @@ ARTIFACT_NAMES = (
     'assertion-conflict.png', 'assertion-mobile.png', 'assertion-mobile-recovery.png',
     'assertion-chronology.png',
     'dock-source-1440.png', 'dock-source-390.png', 'dock-source-320.png',
+    'dock-suggest-preview-1440.png', 'dock-suggested-1440.png', 'dock-suggest-390.png', 'dock-suggest-320.png',
 )
 
 

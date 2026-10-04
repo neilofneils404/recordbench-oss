@@ -68,10 +68,11 @@ def test_a_preview_shows_what_would_be_added_and_writes_nothing(answer):
     assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
     preview = response.json()
     assert preview['items'] == [
-        {'label': 'Alex Example', 'kind': 'person', 'kind_label': 'Person'},
-        {'label': '2026-03-05', 'kind': 'date', 'kind_label': 'Date'},
-        {'label': 'AB-1234', 'kind': 'identifier', 'kind_label': 'Identifier'},
+        {'label': 'Alex Example', 'kind': 'person', 'count': 1, 'kind_label': 'Person'},
+        {'label': '2026-03-05', 'kind': 'date', 'count': 1, 'kind_label': 'Date'},
+        {'label': 'AB-1234', 'kind': 'identifier', 'count': 1, 'kind_label': 'Identifier'},
     ]
+    assert preview['count'] == 3 and preview['passages'] == ['Synthetic receiving log 1.txt · Lines 1–3']
     assert preview['message'] == '3 new suggestions found. Nothing is added until you choose Add.'
     assert re.fullmatch(r'[0-9a-f]{64}', preview['basis']) and preview['save_url'] == url
     assert not identities(bench, matter)
@@ -105,6 +106,21 @@ def test_adding_the_preview_creates_suggestions_that_record_they_came_from_an_an
     repeat = client.post(url, data={'basis': preview['basis']}, headers=JSON).json()
     assert repeat['added'] == 0 and repeat['timeline_url'] == ''
     assert len(identities(bench, matter)) == 3
+
+
+def test_the_preview_counts_every_occurrence_that_adding_creates(answer):
+    client, _seeded = answer
+    bench = client.app.state.workbench
+    # The same name in two cited passages is two occurrences, so two suggestions.
+    matter, conversation, message, url = seed(bench, extra=b'witness: Alex Example\n')
+    preview = client.post(url + '/preview', headers=JSON).json()
+    alex = next(item for item in preview['items'] if item['label'] == 'Alex Example')
+    assert alex['count'] == 2 and preview['count'] == sum(item['count'] for item in preview['items'])
+    assert preview['passages'] == ['Synthetic receiving log 1.txt · Lines 1–3', 'Synthetic receiving log 2.txt · Line 1']
+    added = client.post(url, data={'basis': preview['basis']}, headers=JSON).json()
+    assert added['added'] == preview['count']
+    page = client.post(url + '/preview', data={}, follow_redirects=False)
+    assert page.status_code == 303  # nothing new is left to add
 
 
 def test_adding_needs_the_preview_basis_of_the_current_passages(answer):
@@ -204,6 +220,8 @@ def test_without_javascript_the_preview_is_a_page_with_add_and_dismiss(answer):
     assert page.status_code == 200 and page.headers['cache-control'] == 'no-store'
     assert '<h1 id="suggestion-preview-heading">Suggestions from this passage</h1>' in page.text
     assert '<strong>Alex Example</strong> <span class="suggestion-type">Person</span>' in page.text
+    assert '<li>Synthetic receiving log 1.txt · Lines 1–3</li>' in page.text
+    assert '>Add 3 to suggestions</button>' in page.text
     assert f'href="{html.escape(reader)}">Dismiss</a>' in page.text
     assert not identities(bench, matter)
     basis = re.search(r'name="basis" value="([0-9a-f]{64})"', page.text)[1]

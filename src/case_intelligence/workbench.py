@@ -3515,8 +3515,9 @@ class CaseIntelligenceWorkbench:
             self.workspace.membership(matter.matter_id, actor_id)
             passages, basis = self._answer_claim_passages(matter, conversation_id, message_id, claim_index)
             found, failed = self.entity_discovery(matter).preview_passages(matter.matter_id, actor_id, passages)
-        return {"items": [{"label": label, "kind": kind} for label, kind in found],
-                "basis": basis, "passages": len(passages), "failed": failed}
+        return {"items": [{"label": label, "kind": kind, "count": count} for label, kind, count in found],
+                "basis": basis, "failed": failed,
+                "passages": [f"{loaded[1]['source_name']} · {loaded[1]['location']}" for _unit, loaded in passages]}
 
     def suggest_from_answer_claim(
         self, matter: MatterRecord, actor_id: str, conversation_id: str, message_id: str,
@@ -15879,7 +15880,7 @@ def create_workbench_app(
             return _answer_feedback(slug, conversation_id, return_path, str(exc), error=True)
         items = [{**item, "kind_label": suggestion_kind_labels.get(item["kind"], item["kind"].title())}
                  for item in preview["items"]]
-        count = len(items)
+        count = sum(item["count"] for item in items)
         if count:
             message = f"{count} new suggestion{'' if count == 1 else 's'} found. Nothing is added until you choose Add."
         else:
@@ -15889,7 +15890,8 @@ def create_workbench_app(
         save_url = (f"/matters/{slug}/conversations/{conversation_id}/messages/{message_id}"
                     f"/suggestions/claims/{claim_index}")
         if wants_json:
-            return JSONResponse({"message": message, "items": items, "basis": preview["basis"],
+            return JSONResponse({"message": message, "items": items, "count": count,
+                                 "passages": preview["passages"], "basis": preview["basis"],
                                  "save_url": save_url}, headers={"Cache-Control": "no-store"})
         if not count:
             return _answer_feedback(slug, conversation_id, return_path, message)
@@ -15897,6 +15899,7 @@ def create_workbench_app(
             request=request,
             name="workbench_suggestion_preview.html",
             context={**base_context(request, matter), "matter": matter, "items": items, "message": message,
+                     "count": count, "passages": preview["passages"],
                      "basis": preview["basis"], "save_url": save_url, "return_to": return_path or "",
                      "back_url": return_path or _query_url(f"/matters/{slug}", conversation=conversation_id) + "#latest"},
         )

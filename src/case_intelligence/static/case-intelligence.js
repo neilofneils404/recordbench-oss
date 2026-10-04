@@ -3972,9 +3972,12 @@
           const row = document.createElement("li");
           const label = document.createElement("strong");
           label.textContent = item.label;
-          row.append(label, ` · ${item.kind_label}`);
+          row.append(label, ` · ${item.kind_label}${item.count > 1 ? ` · found ${item.count} times` : ""}`);
           list.append(row);
         });
+        const sources = document.createElement("p");
+        sources.className = "suggestion-preview-sources";
+        sources.textContent = `From: ${preview.passages.join("; ")}`;
         const addForm = document.createElement("form");
         addForm.method = "post";
         addForm.action = preview.save_url;
@@ -3985,7 +3988,7 @@
         const add = document.createElement("button");
         add.type = "submit";
         add.className = "button-primary";
-        add.textContent = `Add ${preview.items.length} to suggestions`;
+        add.textContent = `Add ${preview.count} to suggestions`;
         const dismiss = document.createElement("button");
         dismiss.type = "button";
         dismiss.textContent = "Dismiss";
@@ -3993,7 +3996,7 @@
         actions.className = "suggestion-preview-actions";
         actions.append(add, dismiss);
         addForm.append(basis, actions);
-        card.append(heading, list, addForm);
+        card.append(heading, list, sources, addForm);
         card.hidden = false;
         heading.focus();
         dismiss.addEventListener("click", () => {
@@ -4031,7 +4034,7 @@
             headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
           });
           const preview = await assistantJson(response);
-          if (!Array.isArray(preview.items)) throw new Error("The suggestions could not be confirmed.");
+          if (!Array.isArray(preview.items) || !Array.isArray(preview.passages)) throw new Error("The suggestions could not be confirmed.");
           if (!suggestForm.isConnected) return;
           feedback.textContent = preview.message;
           // With nothing new, what was found may already be waiting in the inbox.

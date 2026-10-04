@@ -264,6 +264,8 @@ def main(argv=None):
             labels = [item.text for item in card.find_elements(By.CSS_SELECTOR, "li")]
             assert any(label.endswith(" · Date") for label in labels), labels
             assert "Nothing is added until you choose Add." in status.text, status.text
+            assert card.find_element(By.CSS_SELECTOR, ".suggestion-preview-sources").text.startswith("From: " + SOURCE_NAME)
+            assert card.find_element(By.XPATH, ".//button[starts-with(normalize-space(), 'Add ')]").text == f"Add {len(labels)} to suggestions"
             assert identity_count() == 0
             driver.save_screenshot(str(args.output / "dock-suggest-preview-1440.png"))
             dismiss = card.find_element(By.XPATH, ".//button[normalize-space()='Dismiss']")
@@ -272,7 +274,7 @@ def main(argv=None):
             wait.until(lambda _: not card.is_displayed())
             assert js("return document.activeElement") == suggest and status.text == "Dismissed; nothing was added."
             assert identity_count() == 0
-            checks.append("Suggest from an answer passage previews what it found from the keyboard; Dismiss adds nothing and returns focus")
+            checks.append("Suggest from an answer passage previews what it found and from which passages, from the keyboard; Dismiss adds nothing and returns focus")
 
             suggest.send_keys(Keys.ENTER)
             add = wait.until(lambda _: card.is_displayed() and card.find_element(By.XPATH, ".//button[starts-with(normalize-space(), 'Add ')]"))

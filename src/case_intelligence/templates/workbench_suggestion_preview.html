@@ -11,7 +11,11 @@
     <h1 id="suggestion-preview-heading">Suggestions from this passage</h1>
     <p role="status">{{ message }}</p>
     <ul class="suggestion-preview-list">
-      {% for item in items %}<li><strong>{{ item.label }}</strong> <span class="suggestion-type">{{ item.kind_label }}</span></li>{% endfor %}
+      {% for item in items %}<li><strong>{{ item.label }}</strong> <span class="suggestion-type">{{ item.kind_label }}</span>{% if item.count > 1 %} <span class="suggestion-count">found {{ item.count }} times</span>{% endif %}</li>{% endfor %}
+    </ul>
+    <h2 class="suggestion-preview-sources-heading">From the cited passages</h2>
+    <ul class="suggestion-preview-sources">
+      {% for passage in passages %}<li>{{ passage }}</li>{% endfor %}
     </ul>
     <p>Adding puts them in the suggestions inbox on People &amp; things, marked From an answer, for you to confirm or mark not relevant.</p>
     <form method="post" action="{{ save_url }}">
@@ -19,7 +23,7 @@
       <input type="hidden" name="basis" value="{{ basis }}">
       <input type="hidden" name="return_to" value="{{ return_to }}">
       <div class="close-matter-actions">
-        <button class="button button-primary" type="submit">Add to suggestions</button>
+        <button class="button button-primary" type="submit">Add {{ count }} to suggestions</button>
         <a class="button button-secondary" href="{{ back_url }}">Dismiss</a>
       </div>
     </form>

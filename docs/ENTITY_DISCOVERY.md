@@ -173,7 +173,9 @@ claim's cited passages (up to 12) in one bounded pass with the rules saving a
 passage uses, so a long passage is checked by its full digest; if any of them
 changed or is unavailable, nothing is suggested. It then runs the same
 deterministic extractor on the current text and shows a proposal of what it
-would add, writing nothing: in the dock a card with **Add to suggestions** and
+would add and from which cited passages, writing nothing. Each occurrence
+becomes its own suggestion, so a name found twice is shown with its count and
+counted twice in **Add**. In the dock this is a card with **Add to suggestions** and
 **Dismiss**, and without JavaScript, or from the full conversation, a page with
 the same choices. **Add** checks that the passages are still the ones previewed
 and writes every passage in one transaction, as the reviewer, so a budget
