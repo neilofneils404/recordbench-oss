@@ -11,6 +11,9 @@ import uuid
 
 from .workspace_store import WorkspaceProblem
 
+# The first history entry of an identity suggested from an answer's cited passage.
+ANSWER_HISTORY_ACTION = 'suggested from an answer passage'
+
 
 class EntityEditConflict(WorkspaceProblem):
     pass
@@ -279,8 +282,14 @@ class EntityRepository:
                     (matter_id, mention['entity_id'])).fetchone()
                 if owner is not None:
                     members = [dict(owner), *members[:self.INBOX_GROUP_LIMIT - 1]]
+            # Identities a reviewer suggested from an answer's cited passage keep that provenance.
+            from_answer = self.connection.execute(
+                "SELECT 1 FROM workbench_entity e JOIN workbench_entity_history h "
+                "ON h.entity_id=e.entity_id AND h.revision=1 WHERE e.matter_id=? AND e.status='suggested' "
+                "AND e.origin='extraction' AND e.display_name=? AND e.entity_type=? AND h.action=? LIMIT 1",
+                (matter_id, group['display_name'], group['entity_type'], ANSWER_HISTORY_ACTION)).fetchone() is not None
             group = {key: group[key] for key in group.keys() if key != 'first_key'}
-            items.append(dict(group, members=members, first_mention=mention,
+            items.append(dict(group, members=members, first_mention=mention, from_answer=from_answer,
                               # Open the identity that owns the passage shown.
                               entity_id=mention['entity_id'] if mention else members[0]['entity_id'] if members else '',
                               targets=','.join(f"{row['entity_id']}:{row['revision']}" for row in members)))

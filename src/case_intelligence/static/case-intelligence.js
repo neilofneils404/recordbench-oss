@@ -3936,6 +3936,38 @@
       });
     });
 
+    assistantDock.querySelectorAll("[data-assistant-suggest-passage]").forEach((suggestForm) => {
+      suggestForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (suggestForm.getAttribute("aria-busy") === "true") return;
+        const button = suggestForm.querySelector('button[type="submit"]');
+        const feedback = suggestForm.querySelector("[data-suggest-passage-status]");
+        const inbox = suggestForm.querySelector("[data-suggest-inbox]");
+        const timeline = suggestForm.querySelector("[data-suggest-timeline]");
+        suggestForm.setAttribute("aria-busy", "true");
+        button.setAttribute("aria-disabled", "true");
+        feedback.textContent = "Suggesting from the cited passages…";
+        try {
+          const response = await fetch(suggestForm.action, {
+            method: "POST", body: new FormData(suggestForm),
+            headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+          });
+          const result = await assistantJson(response);
+          if (typeof result.added !== "number") throw new Error("The suggestions could not be confirmed.");
+          // A late response belongs only to its original claim.
+          if (!suggestForm.isConnected) return;
+          feedback.textContent = result.message;
+          if (inbox) inbox.hidden = false;
+          if (timeline) timeline.hidden = !result.timeline_url;
+        } catch (error) {
+          if (suggestForm.isConnected) feedback.textContent = `${error.message} You can safely try again.`;
+        } finally {
+          suggestForm.removeAttribute("aria-busy");
+          button.removeAttribute("aria-disabled");
+        }
+      });
+    });
+
     const conversationPicker = assistantDock.querySelector("[data-assistant-conversation-picker]");
     conversationPicker?.addEventListener("change", async () => {
       const conversationId = conversationPicker.value;

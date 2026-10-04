@@ -147,6 +147,14 @@ Search or Reports, so no suggestions are offered there.
 `tests/test_assistant_suggestions.py` and the pinned
 `scripts/browser-accept-assistant-dock.py` journey cover this behavior.
 
+Each verified claim in the dock also offers **Suggest people, things and dates
+from this passage** below **Save passage to case notes**; see
+[suggestions from an answer](ENTITY_DISCOVERY.md#suggestions-from-an-answer).
+It stays on the current page, announces how many suggestions it added in a
+status line, and then shows **Review suggestions** and, when it added a date,
+**See dates in the timeline draft**. Without JavaScript, and in the full
+conversation, the same form returns with a notice.
+
 ## Manual source review workspace
 
 **Review** opens the source library. **Find records matching a rule** retains

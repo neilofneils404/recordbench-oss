@@ -89,7 +89,9 @@ in [PR #139](https://github.com/neilofneils404/recordbench-oss/pull/139) at
 `a512e3c` after a clean final-head hosted code review (all 12 review threads
 reconciled), passing Quality and maintainer acceptance. Increment 5
 ([assistant actions](product-slices/assistant-actions.md)) is approved: A (assistant
-panel basics) is proposed in its own PR; B and C follow. Each PR requests hosted
+panel basics) landed in [PR #140](https://github.com/neilofneils404/recordbench-oss/pull/140)
+at `809676f`; B (suggest people, things and dates from an answer's cited passages,
+no schema change) is proposed in its own PR; C follows. Each PR requests hosted
 code review before merge. See
 the [workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar) and
 [entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing).

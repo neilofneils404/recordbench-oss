@@ -78,6 +78,14 @@
                   <button type="submit">Save passage to case notes</button>
                   <span data-save-passage-status role="status" aria-live="polite" aria-atomic="true"></span>
                 </form>
+                <form class="save-claim-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ assistant.conversation.conversation_id }}/messages/{{ message.message_id }}/suggestions/claims/{{ claim_index }}" data-assistant-suggest-passage>
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="return_to" value="{{ source_review_return_href(matter.slug, request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) if not request.url.path.endswith('/assistant') else assistant.open_url }}">
+                  <button type="submit">Suggest people, things and dates from this passage</button>
+                  <span data-suggest-passage-status role="status" aria-live="polite" aria-atomic="true"></span>
+                  <a href="/matters/{{ matter.slug }}/entities#suggestions" data-suggest-inbox hidden>Review suggestions</a>
+                  <a href="/matters/{{ matter.slug }}/chronology#found-dates-heading" data-suggest-timeline hidden>See dates in the timeline draft</a>
+                </form>
                 {% if claim.citations %}
                 <div class="assistant-citations cited-context-list">
                   {% for citation in claim.citations %}

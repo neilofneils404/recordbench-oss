@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the assistant dock's Close control and page-aware suggestions with synthetic records."""
+"""Check the assistant dock's Close control, page-aware suggestions and answer-passage suggestions with synthetic records."""
 from __future__ import annotations
 
 import argparse
@@ -53,6 +53,18 @@ def seed(bench):
     store = bench.source_store(matter)
     document, _ = store.store_stream(SOURCE_NAME, "text/plain", io.BytesIO(SOURCE_TEXT.encode()))
     return f"/matters/{matter.slug}", f"/matters/{matter.slug}/sources/{store.action_token(document)}"
+
+
+def seed_answer(bench, prefix):
+    """Add a synthetic verified answer whose one claim cites the journey source."""
+    matter = bench.workspace.get_matter(prefix.rsplit("/", 1)[1], ACTOR)
+    document = next(iter(bench.source_store(matter).documents.values()))
+    bench._sync_source_catalog(matter, (document,))
+    citation = bench._citation(matter, bench._candidate(matter, document, document.parsed_units()[0], 1))
+    conversation = bench.workspace.get_conversation(matter.matter_id)
+    bench.workspace.append_message(matter.matter_id, conversation.conversation_id, "assistant", "Synthetic answer",
+        {"kind": "generated", "claims": [{"text": "Alex Example signed for the blue crate.",
+                                          "citations": [bench._saved_answer_citation_payload(citation)]}]})
 
 
 def main(argv=None):
@@ -229,6 +241,46 @@ def main(argv=None):
                     assert box["right"] <= width + 1, (width, box)
                 driver.save_screenshot(str(args.output / f"dock-source-{width}.png"))
             checks.append("At 390px and 320px the dock, its Close control and source suggestions fit without sideways scrolling")
+
+            seed_answer(app.state.workbench, prefix)
+            viewport(1440, 900)
+            open_page(reader)
+            suggest = wait.until(lambda _: driver.find_element(By.CSS_SELECTOR, "[data-assistant-suggest-passage] button"))
+            assert suggest.text.strip() == "Suggest people, things and dates from this passage", suggest.text
+            form = find("[data-assistant-suggest-passage]")
+            inbox = form.find_element(By.CSS_SELECTOR, "[data-suggest-inbox]")
+            timeline = form.find_element(By.CSS_SELECTOR, "[data-suggest-timeline]")
+            assert not inbox.is_displayed() and not timeline.is_displayed()
+            js("arguments[0].focus()", suggest)
+            suggest.send_keys(Keys.ENTER)
+            status = form.find_element(By.CSS_SELECTOR, "[data-suggest-passage-status]")
+            wait.until(lambda _: status.text.startswith("Added "))
+            assert "date" in status.text, status.text
+            assert inbox.is_displayed() and timeline.is_displayed()
+            assert driver.current_url.startswith(base + reader), driver.current_url
+            no_page_overflow()
+            driver.save_screenshot(str(args.output / "dock-suggested-1440.png"))
+            js("arguments[0].focus()", suggest)
+            suggest.send_keys(Keys.ENTER)
+            wait.until(lambda _: status.text.startswith("No new people, things or dates"))
+            assert not timeline.is_displayed(), "timeline link offered without new dates"
+            checks.append("Suggest from an answer passage works from the keyboard without leaving the reader, announces what it added, offers the inbox and timeline draft, and adds nothing on repeat")
+
+            inbox.click()
+            wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, "#suggestions .suggestion-from-answer"))
+            assert all(tag.text == "From an answer" for tag in driver.find_elements(By.CSS_SELECTOR, ".suggestion-from-answer"))
+            open_page(prefix + "/chronology#found-dates-heading")
+            assert "2026-03-05" in find(".found-dates").text
+            checks.append("The inbox marks suggestions that came from an answer, and the timeline draft lists the found date")
+
+            for width, height in ((390, 844), (320, 640)):
+                viewport(width, height)
+                open_page(reader)
+                form = wait.until(lambda _: driver.find_element(By.CSS_SELECTOR, "[data-assistant-suggest-passage]"))
+                assert rect(form.find_element(By.CSS_SELECTOR, "button"))["right"] <= width + 1
+                no_page_overflow()
+                driver.save_screenshot(str(args.output / f"dock-suggest-{width}.png"))
+            checks.append("At 390px and 320px the answer-passage Suggest control fits without sideways scrolling")
 
             receipt["passed"] = True
             (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")

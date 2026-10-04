@@ -14,7 +14,11 @@ the sticky question box, so the journey targets the drawer's link explicitly.
 The [assistant dock journey](WORKSPACE_LAYOUT.md#assistant-dock-suggestions-and-close)
 checks the labelled Close control and the suggested questions with the keyboard
 at 1440, 390 and 320 pixels: on an open source, choosing a suggestion limits the
-next question to that source before filling the box, and nothing is sent.
+next question to that source before filling the box, and nothing is sent. With
+a seeded cited answer it also chooses **Suggest people, things and dates from
+this passage** from the keyboard, checks the announced result and its links, the
+**From an answer** mark in the inbox and the found date in the timeline draft,
+that a repeat adds nothing, and that the control fits at 390 and 320 pixels.
 
 All applications are generated for the run and listen on ephemeral loopback
 ports. They use the unavailable generator and synthetic text fixtures. This is

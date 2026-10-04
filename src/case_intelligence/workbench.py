@@ -3431,6 +3431,87 @@ class CaseIntelligenceWorkbench:
             return self._save_answer_to_notebook(matter, actor_id, conversation_id,
                 message_id, claim_index, citation_index=citation_index)
 
+    def _answer_claim(self, matter: MatterRecord, conversation_id: str, message_id: str,
+                      claim_index: int) -> Mapping[str, object]:
+        """One verified claim of a saved generated answer, or KeyError."""
+        messages = self.workspace.messages(matter.matter_id, conversation_id)
+        message = next(
+            (
+                item
+                for item in messages
+                if item.message_id == message_id and item.role == "assistant"
+            ),
+            None,
+        )
+        if message is None or message.payload.get("kind") != "generated":
+            raise KeyError(message_id)
+        claims = message.payload.get("claims")
+        if not isinstance(claims, list) or not 0 <= claim_index < len(claims):
+            raise KeyError(str(claim_index))
+        claim = claims[claim_index]
+        if not isinstance(claim, Mapping) or not isinstance(claim.get("text"), str):
+            raise KeyError(str(claim_index))
+        return claim
+
+    def suggest_from_answer_claim(
+        self, matter: MatterRecord, actor_id: str, conversation_id: str, message_id: str,
+        claim_index: int,
+    ) -> dict[str, object]:
+        """Suggest people, things and dates from a verified claim's cited passages.
+
+        Runs the deterministic extractor that discovery uses on each cited
+        passage that is still current, as the reviewer. New identities stay
+        Suggested and record that they came from an answer; occurrences that
+        discovery already suggested are not added again.
+        """
+        self.workspace.membership(matter.matter_id, actor_id)
+        with self.source_store(matter).mutation_guard(), self.workspace._lock:
+            self.workspace.membership(matter.matter_id, actor_id)
+            claim = self._answer_claim(matter, conversation_id, message_id, claim_index)
+            citations = claim.get("citations")
+            if not isinstance(citations, list) or not citations:
+                raise WorkspaceProblem("That answer passage no longer has source support.")
+            tokens, unavailable = [], 0
+            for citation in citations[:12]:
+                if not isinstance(citation, Mapping):
+                    unavailable += 1
+                    continue
+                try:
+                    # The same exact-text check as saving or reporting the answer:
+                    # a citation whose passage changed is never read.
+                    self._saved_answer_references(matter, [citation])
+                except WorkspaceProblem:
+                    unavailable += 1
+                    continue
+                token = self._citation_support_token(citation)
+                if token and token not in tokens:
+                    tokens.append(token)
+            passages = []
+            for token in tokens:
+                try:
+                    document, units, index = self._find_support(matter, token)
+                    current = document.parsed_units()
+                    # Only the current text of a cited passage is read; retained
+                    # history of a changed transcript is not.
+                    if index >= len(current) or current[index].text != units[index].text:
+                        raise KeyError(token)
+                except (KeyError, OSError, RuntimeError, TypeError, ValueError):
+                    unavailable += 1
+                    continue
+                unit = units[index]
+                ordinal = index + 1
+                passages.append((
+                    dict(document_id=document.document_id, source_version_id=document.version_id,
+                         unit_ordinal=ordinal, unit_digest=hashlib.sha256(unit.text.encode()).hexdigest()),
+                    (unit.text, self._discovery_reference(matter, document, unit, ordinal)),
+                ))
+            if not passages:
+                raise WorkspaceProblem("The cited passages changed or are unavailable, so nothing was suggested.")
+            added, kinds, failed = self.entity_discovery(matter).suggest_from_passages(
+                matter.matter_id, actor_id, passages)
+        return {"added": added, "dates": kinds.count("date"), "passages": len(passages),
+                "unavailable": unavailable, "failed": failed}
+
     def _saved_answer_references(
         self, matter: MatterRecord, citations: Sequence[Mapping[str, object]],
         *, notebook_preview: bool = False, source_navigation: bool = False,
@@ -3456,23 +3537,7 @@ class CaseIntelligenceWorkbench:
         *,
         citation_index: int | None = None,
     ) -> tuple[NotebookItemRecord, bool]:
-        messages = self.workspace.messages(matter.matter_id, conversation_id)
-        message = next(
-            (
-                item
-                for item in messages
-                if item.message_id == message_id and item.role == "assistant"
-            ),
-            None,
-        )
-        if message is None or message.payload.get("kind") != "generated":
-            raise KeyError(message_id)
-        claims = message.payload.get("claims")
-        if not isinstance(claims, list) or not 0 <= claim_index < len(claims):
-            raise KeyError(str(claim_index))
-        claim = claims[claim_index]
-        if not isinstance(claim, Mapping) or not isinstance(claim.get("text"), str):
-            raise KeyError(str(claim_index))
+        claim = self._answer_claim(matter, conversation_id, message_id, claim_index)
         citations = claim.get("citations")
         if not isinstance(citations, list) or not citations:
             raise WorkspaceProblem("That answer passage no longer has source support.")
@@ -15743,6 +15808,73 @@ def create_workbench_app(
             return JSONResponse({"message": notice, "created": created,
                                  "item_id": item.item_id, "status": item.status},
                                 headers={"Cache-Control": "no-store"})
+        return return_with_feedback(notice)
+
+    @app.post(
+        "/matters/{slug}/conversations/{conversation_id}/messages/{message_id}/suggestions/claims/{claim_index}",
+        dependencies=[Depends(require_csrf)],
+    )
+    def suggest_from_answer_claim(
+        request: Request,
+        slug: str,
+        conversation_id: str,
+        message_id: str,
+        claim_index: int,
+        return_to: str = Form("", max_length=4000),
+    ):
+        context = auth_context(request)
+        wants_json = "application/json" in request.headers.get("accept", "")
+        return_path = _source_review_return_href(slug, return_to)
+
+        def return_with_feedback(message: str, *, error: bool = False):
+            fallback = _query_url(f"/matters/{slug}", conversation=conversation_id)
+            if not error:
+                fallback += "#latest"
+            parsed = urlparse(return_path or fallback)
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            query.pop("error", None)
+            query.pop("notice", None)
+            query["error" if error else "notice"] = [message]
+            return RedirectResponse(parsed._replace(query=urlencode(query, doseq=True)).geturl(), status_code=303)
+        try:
+            matter = authorized_matter(request, slug)
+            result = bench.suggest_from_answer_claim(
+                matter, context.principal_id, conversation_id, message_id, claim_index)
+        except KeyError as exc:
+            raise HTTPException(404, "Saved answer passage not found") from exc
+        except WorkspaceProblem as exc:
+            if wants_json:
+                return JSONResponse({"message": str(exc)}, status_code=409,
+                                    headers={"Cache-Control": "no-store"})
+            return return_with_feedback(str(exc), error=True)
+        audit(
+            request,
+            "entity.suggest_from_answer",
+            "success",
+            context=context,
+            matter=matter,
+            object_type="message",
+            object_id=message_id,
+            details={"count": int(result["added"]), "unit_count": int(result["passages"]), "state": "suggested"},
+        )
+        added, dates = int(result["added"]), int(result["dates"])
+        if added:
+            notice = f"Added {added} suggestion{'' if added == 1 else 's'} for review"
+            if dates:
+                notice += f", including {dates} date{'' if dates == 1 else 's'}"
+            notice += "."
+        else:
+            notice = "No new people, things or dates: they are already suggested, or none were found."
+        if result["unavailable"]:
+            notice += " Cited passages that changed were skipped."
+        if result["failed"]:
+            notice += " Some passages could not be read; try again."
+        if wants_json:
+            return JSONResponse({
+                "message": notice, "added": added, "dates": dates,
+                "inbox_url": f"/matters/{slug}/entities#suggestions",
+                "timeline_url": f"/matters/{slug}/chronology#found-dates-heading" if dates else "",
+            }, headers={"Cache-Control": "no-store"})
         return return_with_feedback(notice)
 
     @app.post(

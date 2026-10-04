@@ -385,6 +385,10 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit">Save passage to case notes</button>
                       </form>
+                      <form class="save-claim-form" method="post" action="/matters/{{ matter.slug }}/conversations/{{ conversation.conversation_id }}/messages/{{ message.message_id }}/suggestions/claims/{{ claim_index }}" data-working-form data-working-label="Suggesting…">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit">Suggest people, things and dates from this passage</button>
+                      </form>
                       {% if claim.citations %}
                       <div class="citation-list cited-context-list">
                         {% for citation in claim.citations %}

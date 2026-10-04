@@ -165,6 +165,23 @@ renamed or detached; open the name to reconcile, edit or attach passages. If ano
 is saved and the refreshed list is shown. Guided discovery from a full-text
 review remains below, collapsed while suggestions wait.
 
+### Suggestions from an answer
+
+Under each verified claim, the assistant dock and the full conversation offer
+**Suggest people, things and dates from this passage**. It runs the same
+deterministic extractor on the claim's cited passages (up to 12), as the
+reviewer, after checking each passage's exact text the way saving or reporting
+the answer does. A passage that changed, or a transcript passage that is only
+retained history, is skipped and the result says so; if none is current, nothing
+is written. New identities are Suggested with origin `extraction`; their first
+history entry, "suggested from an answer passage", is how the inbox marks them
+**From an answer**. Occurrences share automatic discovery's receipts, so
+neither path suggests what the other already found, and repeating the action
+adds nothing. One `entity.suggest_from_answer` audit event records the number
+added and passages read. The result links to the inbox and, when it added a
+date, to the timeline draft. No schema change is involved.
+`tests/test_answer_suggestions.py` covers this path.
+
 Found dates also appear on the matter's timeline as a read-only draft, **Dates
 found in sources**, ordered only where a full calendar date makes the order certain;
 see [events and assertions](EVIDENCE_ASSERTIONS.md#reviewer-workflow).

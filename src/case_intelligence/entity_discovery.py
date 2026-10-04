@@ -10,6 +10,7 @@ import hashlib
 import json
 
 from .entity_extractor import DeterministicEntityExtractor
+from .entity_repository import ANSWER_HISTORY_ACTION
 from .workspace_store import AUTOMATIC_DISCOVERY_PRINCIPAL, WorkspaceProblem
 
 
@@ -59,6 +60,25 @@ class AutomaticLedger:
     @staticmethod
     def state(repo, unit, state, note):
         repo.auto_discovery_state(unit, state, note)
+
+
+class AnswerLedger:
+    """A reviewer's one-off pass over passages cited in an answer: no coverage is recorded.
+
+    The occurrence keys and receipts are the ones discovery uses, so later
+    automatic or run-based discovery skips what this pass already suggested.
+    """
+    @staticmethod
+    def seed(repo, unit):
+        pass
+
+    @staticmethod
+    def current(repo, matter_id, unit):
+        return True
+
+    @staticmethod
+    def state(repo, unit, state, note):
+        pass
 
 
 class EntityDiscovery:
@@ -272,7 +292,23 @@ class EntityDiscovery:
         with self.service.repository.reading(matter_id, AUTOMATIC_DISCOVERY_PRINCIPAL) as repo:
             return repo.auto_discovery_progress(matter_id, self.extractor.version, detail=detail)
 
-    def _process_unit(self, repo, matter_id, actor_id, unit, loaded, ledger):
+    def suggest_from_passages(self, matter_id, actor_id, passages):
+        """Suggest identities from passages a reviewer chose, as that reviewer.
+
+        passages yields (unit, (text, reference)) with the unit's document,
+        version, ordinal and digest. Returns (added, kinds of added, failed).
+        """
+        kinds, failed = [], 0
+        for unit, loaded in passages:
+            with self.service.repository.transaction(matter_id, actor_id) as repo:
+                state, _prepared = self._process_unit(repo, matter_id, actor_id, unit, loaded, AnswerLedger,
+                                                      history_action=ANSWER_HISTORY_ACTION, added_kinds=kinds)
+            failed += state != 'processed'
+        # Counted as created, so an occurrence another writer just suggested is not counted twice.
+        return len(kinds), kinds, failed
+
+    def _process_unit(self, repo, matter_id, actor_id, unit, loaded, ledger,
+                      history_action='extracted', added_kinds=None):
         service = self.service
         # Counted inside the admitting transaction, so concurrent writers are included.
         used_bytes = repo.discovery_storage_bytes(matter_id)
@@ -351,6 +387,8 @@ class EntityDiscovery:
             repo.mark_extracted(matter_id, entity['entity_id'], self.extractor.version)
             added = repo.add_mention(matter_id, actor_id, entity['entity_id'], reference, 'extraction')
             added = repo.annotate_occurrence(matter_id, added['mention_id'], key, self.extractor.version, occurrence)
-            repo.record_history(matter_id, actor_id, entity['entity_id'], 'extracted', added_mentions=[added])
+            repo.record_history(matter_id, actor_id, entity['entity_id'], history_action, added_mentions=[added])
+            if added_kinds is not None:
+                added_kinds.append(occurrence.kind)
         ledger.state(repo, unit, 'processed', '')
         return 'processed', len(prepared)
