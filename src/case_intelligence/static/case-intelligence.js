@@ -4110,12 +4110,13 @@
           saveForm.setAttribute("aria-busy", "true");
           const held = [save, dismiss, ...draftForm.querySelectorAll("button")];
           held.forEach((control) => control.setAttribute("aria-disabled", "true"));
-          // Changing or starting a conversation would replace the dock and hide the save's
-          // result, so the picker and New chat are held until it is known.
+          // Changing or starting a conversation would replace the dock and hide a save's
+          // result, so the picker and New chat are held until every pending save is known.
           const picker = assistantDock.querySelector("[data-assistant-conversation-picker]");
           const newChat = assistantDock.querySelector("[data-assistant-new-chat]");
-          const pickerWasDisabled = Boolean(picker?.disabled);
-          assistantDock.dataset.questionSavePending = "true";
+          const pending = Number(assistantDock.dataset.questionSavesPending || 0);
+          if (!pending) assistantDock.dataset.questionPickerWasDisabled = String(Boolean(picker?.disabled));
+          assistantDock.dataset.questionSavesPending = String(pending + 1);
           if (picker) picker.disabled = true;
           newChat?.setAttribute("aria-disabled", "true");
           status.textContent = "Saving…";
@@ -4136,9 +4137,16 @@
           } finally {
             saveForm.removeAttribute("aria-busy");
             held.forEach((control) => control.removeAttribute("aria-disabled"));
-            delete assistantDock.dataset.questionSavePending;
-            if (picker && !pickerWasDisabled) picker.disabled = false;
-            newChat?.removeAttribute("aria-disabled");
+            const remaining = Number(assistantDock.dataset.questionSavesPending || 1) - 1;
+            if (remaining > 0) {
+              assistantDock.dataset.questionSavesPending = String(remaining);
+            } else {
+              const pickerWasDisabled = assistantDock.dataset.questionPickerWasDisabled === "true";
+              delete assistantDock.dataset.questionSavesPending;
+              delete assistantDock.dataset.questionPickerWasDisabled;
+              if (picker && !pickerWasDisabled) picker.disabled = false;
+              newChat?.removeAttribute("aria-disabled");
+            }
           }
         });
       };
@@ -4177,7 +4185,7 @@
 
     const conversationPicker = assistantDock.querySelector("[data-assistant-conversation-picker]");
     conversationPicker?.addEventListener("change", async () => {
-      if (assistantDock.dataset.questionSavePending === "true") return;
+      if (Number(assistantDock.dataset.questionSavesPending || 0) > 0) return;
       const conversationId = conversationPicker.value;
       if (conversationId === "__draft__") {
         beginAssistantDraft();
@@ -4211,7 +4219,7 @@
 
     assistantDock.querySelector("[data-assistant-new-chat]")?.addEventListener("click", () => {
       // A pending draft save keeps this dock until its result is shown.
-      if (assistantDock.dataset.questionSavePending === "true") return;
+      if (Number(assistantDock.dataset.questionSavesPending || 0) > 0) return;
       beginAssistantDraft();
     });
 
