@@ -4110,6 +4110,14 @@
           saveForm.setAttribute("aria-busy", "true");
           const held = [save, dismiss, ...draftForm.querySelectorAll("button")];
           held.forEach((control) => control.setAttribute("aria-disabled", "true"));
+          // Changing or starting a conversation would replace the dock and hide the save's
+          // result, so the picker and New chat are held until it is known.
+          const picker = assistantDock.querySelector("[data-assistant-conversation-picker]");
+          const newChat = assistantDock.querySelector("[data-assistant-new-chat]");
+          const pickerWasDisabled = Boolean(picker?.disabled);
+          assistantDock.dataset.questionSavePending = "true";
+          if (picker) picker.disabled = true;
+          newChat?.setAttribute("aria-disabled", "true");
           status.textContent = "Saving…";
           try {
             const response = await fetch(saveForm.action, {
@@ -4128,6 +4136,9 @@
           } finally {
             saveForm.removeAttribute("aria-busy");
             held.forEach((control) => control.removeAttribute("aria-disabled"));
+            delete assistantDock.dataset.questionSavePending;
+            if (picker && !pickerWasDisabled) picker.disabled = false;
+            newChat?.removeAttribute("aria-disabled");
           }
         });
       };
@@ -4166,6 +4177,7 @@
 
     const conversationPicker = assistantDock.querySelector("[data-assistant-conversation-picker]");
     conversationPicker?.addEventListener("change", async () => {
+      if (assistantDock.dataset.questionSavePending === "true") return;
       const conversationId = conversationPicker.value;
       if (conversationId === "__draft__") {
         beginAssistantDraft();
@@ -4198,6 +4210,8 @@
     });
 
     assistantDock.querySelector("[data-assistant-new-chat]")?.addEventListener("click", () => {
+      // A pending draft save keeps this dock until its result is shown.
+      if (assistantDock.dataset.questionSavePending === "true") return;
       beginAssistantDraft();
     });
 
