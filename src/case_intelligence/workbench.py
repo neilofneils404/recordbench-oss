@@ -6462,22 +6462,31 @@ def _workspace_citation_href(
 
 
 class _MatterResponseSendLeaseMiddleware:
-    """Release opted-in matter leases after the outer response send exits."""
+    """Release admitted downloads after the outer response send exits."""
 
-    def __init__(self, app, *, release: Callable[[str, str], None]):
+    def __init__(self, app, *, release: Callable[[str, str], None],
+                 release_clip: Callable[[str, Path], bool]):
         self.app = app
         self.release = release
+        self.release_clip = release_clip
 
     async def __call__(self, scope, receive, send):
         try:
             await self.app(scope, receive, send)
         finally:
-            state = scope.get("state", {}).get("matter_response_lease")
-            if isinstance(state, dict) and state.get("send_owned"):
-                # BaseHTTPMiddleware buffers an inner Response. Its background
-                # task may run before the outer body's send completes, and may
-                # be skipped on failure. This boundary also covers disconnects.
-                self.release(state["matter"].matter_id, state["lease_id"])
+            try:
+                state = scope.get("state", {}).get("matter_response_lease")
+                if isinstance(state, dict) and state.get("send_owned"):
+                    # BaseHTTPMiddleware buffers an inner Response. Its background
+                    # task may run before the outer body's send completes, and may
+                    # be skipped on failure. This boundary also covers disconnects.
+                    self.release(state["matter"].matter_id, state["lease_id"])
+            finally:
+                clip = scope.get("state", {}).get("media_clip_response_lease")
+                if clip is not None:
+                    # Ownership begins at render admission, so construction,
+                    # authorization, rendering and send failures all clean up.
+                    self.release_clip(*clip)
 
 
 def create_workbench_app(
@@ -6719,7 +6728,8 @@ def create_workbench_app(
 
     # Register outside the identity middleware's response buffer so an opted-in
     # lease outlives the final body send, including send errors/cancellation.
-    app.add_middleware(_MatterResponseSendLeaseMiddleware, release=bench.finish_matter_response)
+    app.add_middleware(_MatterResponseSendLeaseMiddleware, release=bench.finish_matter_response,
+                       release_clip=bench.finish_media_clip_export)
 
     async def require_csrf(
         request: Request,
@@ -13578,10 +13588,13 @@ def create_workbench_app(
         request: Request, slug: str, token: str, clip_id: str
     ):
         context = auth_context(request)
-        directory: Path | None = None
         try:
             matter = authorized_matter(request, slug)
+            administrator_override = (
+                getattr(request.state, "administrator_matter_override", None) == matter.matter_id
+            )
             directory = bench.begin_media_clip_export(matter)
+            request.state.media_clip_response_lease = (matter.matter_id, directory)
             store = bench.source_store(matter)
             with store.mutation_guard():
                 document = store.get_by_action_token(token)
@@ -13599,28 +13612,11 @@ def create_workbench_app(
                     source, clip, has_video=document.has_video, output=output
                 )
         except KeyError as exc:
-            if directory is not None:
-                bench.finish_media_clip_export(matter.matter_id, directory)
             raise HTTPException(404, "Media clip not found") from exc
         except (RuntimeError, ValueError, WorkspaceProblem) as exc:
-            if directory is not None:
-                bench.finish_media_clip_export(matter.matter_id, directory)
             raise HTTPException(503, "The clip could not be rendered. Try again.") from exc
 
-        def cleanup_clip() -> None:
-            bench.finish_media_clip_export(matter.matter_id, directory)
-
-        audit(
-            request,
-            "media.clip_export",
-            "success",
-            context=context,
-            matter=matter,
-            object_type="media_clip",
-            object_id=clip.clip_id,
-            details={"format": "mp4" if document.has_video else "wav"},
-        )
-        return FileResponse(
+        response = FileResponse(
             output,
             media_type="video/mp4" if document.has_video else "audio/wav",
             filename=f"media-clip-{clip.clip_id[-12:]}{suffix}",
@@ -13628,8 +13624,22 @@ def create_workbench_app(
                 "X-RecordBench-Export": "work-product",
                 "Cache-Control": "no-store",
             },
-            background=BackgroundTask(cleanup_clip),
         )
+        # Recheck live authority after rendering and response construction, at
+        # the last practical boundary before returning the admitted download.
+        with bench.workspace._lock:
+            refresh_context_authority(request, slug, context, administrator_override)
+            audit(
+                request,
+                "media.clip_export",
+                "success",
+                context=context,
+                matter=matter,
+                object_type="media_clip",
+                object_id=clip.clip_id,
+                details={"format": "mp4" if document.has_video else "wav"},
+            )
+            return response
 
     @app.post(
         "/matters/{slug}/sources/{token}/review-state",
