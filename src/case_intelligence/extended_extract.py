@@ -481,7 +481,10 @@ def extract_xlsx(path: Path) -> tuple[ExtractedSection, ...]:
                             value += " [cached: " + _cell_text(value_node.text) + "]"
                     elif cell_type == "s" and value_node is not None:
                         try:
-                            value = shared[int(value_node.text or "-1")]
+                            shared_index = int(value_node.text or "-1")
+                            if not 0 <= shared_index < len(shared):
+                                raise ValueError("shared index outside table")
+                            value = shared[shared_index]
                         except (ValueError, IndexError) as exc:
                             raise ValueError("The spreadsheet has an invalid shared value.") from exc
                     elif cell_type == "inlineStr" and inline is not None:

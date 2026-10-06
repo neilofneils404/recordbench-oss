@@ -8,6 +8,12 @@ Tesseract. Selective mode processes empty-text pages; expanded mode also selects
 pages with little native text, substantial image placements or unknown image
 evidence, so a text stamp does not suppress OCR of a scanned body.
 
+XLSX shared-string references must identify an existing entry with a nonnegative
+index. Negative, empty or out-of-range indexes fail extraction instead of
+substituting unrelated cell text. A retained failed upload has no searchable
+units and can be retried or removed through the usual source workflow. Existing
+extractions and their citation identities are not silently rewritten.
+
 OCR page, pixel, byte and time limits protect the shared node. Source status
 records attempts and returned text separately from disabled/selective/capped
 skips, failures, timeouts, empty results and output limits. Searchable text or a
