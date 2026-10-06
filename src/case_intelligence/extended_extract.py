@@ -481,7 +481,10 @@ def extract_xlsx(path: Path) -> tuple[ExtractedSection, ...]:
                             value += " [cached: " + _cell_text(value_node.text) + "]"
                     elif cell_type == "s" and value_node is not None:
                         try:
-                            shared_index = int(value_node.text or "-1")
+                            index_text = (value_node.text or "").strip(" \t\r\n")
+                            if re.fullmatch(r"[+-]?[0-9]+", index_text) is None:
+                                raise ValueError("shared index is not an ASCII decimal integer")
+                            shared_index = int(index_text)
                             if not 0 <= shared_index < len(shared):
                                 raise ValueError("shared index outside table")
                             value = shared[shared_index]

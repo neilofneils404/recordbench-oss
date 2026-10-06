@@ -24,7 +24,7 @@ def workbook(index):
     return output.getvalue()
 
 
-@pytest.mark.parametrize("index", ["-1", "-2", "", "2", "invalid"])
+@pytest.mark.parametrize("index", ["-1", "-2", "", "2", "invalid", "0_1", "\u0661", "\uff11", "\u00a01"])
 def test_invalid_shared_index_is_rejected(tmp_path, index):
     path = tmp_path / "synthetic.xlsx"
     path.write_bytes(workbook(index))
@@ -32,7 +32,10 @@ def test_invalid_shared_index_is_rejected(tmp_path, index):
         extract_xlsx(path)
 
 
-@pytest.mark.parametrize("index, expected", [("0", "first"), ("1", "last"), (" +1 ", "last")])
+@pytest.mark.parametrize("index, expected", [
+    ("0", "first"), ("1", "last"), (" +1 ", "last"),
+    (" \t+1\r\n", "last"), ("-0", "first"), ("01", "last"),
+])
 def test_valid_shared_index_preserves_exact_value(tmp_path, index, expected):
     path = tmp_path / "synthetic.xlsx"
     path.write_bytes(workbook(index))
@@ -41,7 +44,7 @@ def test_valid_shared_index_preserves_exact_value(tmp_path, index, expected):
     assert sections[0].text == f"Row 1: A1: Synthetic {expected} value"
 
 
-@pytest.mark.parametrize("index", ["-1", ""])
+@pytest.mark.parametrize("index", ["-1", "", "0_1", "\u0661", "\uff11", "\u00a01"])
 def test_bad_shared_index_never_becomes_searchable_source_text(tmp_path, index):
     store = PilotStore(tmp_path / "sources", malware_scanner=CleanScanner(), malware_scan_mode="extended")
     document, _ = store.store_stream(
