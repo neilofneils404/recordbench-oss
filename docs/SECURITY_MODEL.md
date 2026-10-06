@@ -51,6 +51,18 @@ schedule remain unscheduled.
 Report vulnerabilities privately under [SECURITY.md](../SECURITY.md). Do not
 attach case files, transcripts, credentials, or internal topology to a report.
 
+## Rendered clip downloads
+
+Clip downloads recheck the reader's live session, provider authority, principal
+and matter access after rendering, before returning the file response. Rendering
+does not hold the workspace lock. This check cannot retract bytes already sent,
+and access changes after the final check do not interrupt an admitted stream.
+Each download owns a separate temporary directory and deletion lease through the
+outer response send. Normal completion, disconnect, cancellation and exceptions
+all attempt cleanup and release that admission; another download's files remain
+owned by its own lease. Filesystem cleanup failures retain the existing strict
+matter-close recovery and startup reconciliation behavior.
+
 ## Matter naming
 
 The [matter settings contract](MATTER_SETTINGS.md) permits owner/admin rename
