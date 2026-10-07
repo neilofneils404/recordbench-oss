@@ -7,7 +7,7 @@ documents before evaluating them; a query does not grant access to a population.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 import unicodedata
 from typing import Callable, Iterable
@@ -85,6 +85,8 @@ class Not:
 @dataclass(frozen=True)
 class And:
     operands: tuple[Expression, ...]
+    # Syntax provenance only: explicit and implicit AND have identical semantics.
+    explicit: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -349,11 +351,13 @@ class _Parser:
 
     def conjunction(self, depth: int) -> Expression:
         nodes = [self.unary(depth)]
+        explicit = False
         while self.kind in {"AND", "NOT", "literal", "("}:
             if self.kind == "AND":
+                explicit = True
                 self.index += 1
             nodes.append(self.unary(depth))
-        return nodes[0] if len(nodes) == 1 else And(tuple(nodes))
+        return nodes[0] if len(nodes) == 1 else And(tuple(nodes), explicit=explicit)
 
     def unary(self, depth: int) -> Expression:
         if depth > MAX_QUERY_DEPTH:

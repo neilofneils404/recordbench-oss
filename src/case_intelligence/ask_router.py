@@ -1,0 +1,77 @@
+"""Pure intent classification for a future shared Ask entry point.
+
+Valid exact-search syntax wins over requests for every source. The entire input
+must parse; malformed syntax falls through to ordinary intent classification.
+This module selects a kind only and never executes a search or a model call.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import re
+from typing import Literal as Kind
+
+from .exact_search import And, Expression, Literal, Not, Or, Proximity, QuerySyntaxError, parse_query
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    kind: Kind["exact", "question", "every_source"]
+    reason: str
+
+
+# These are natural-language retrieval cues, not an exact-search grammar.
+_RECORD = (
+    r"(?:documents?|records?|sources?|files?|e-?mails?|messages?|texts?|reports?|"
+    r"transcripts?|statements?|interviews?|recordings?|notes?|memos?|exhibits?|"
+    r"attachments?|references?|mentions?|occurrences?|matches|results|evidence|items?)"
+)
+_QUANTITY = r"(?:all(?:\s+of)?(?:\s+the)?|every(?:\s+single)?|each(?:\s+and\s+every)?)"
+_POPULATION = rf"{_QUANTITY}\s+(?:(?:matching|relevant|available)\s+)?{_RECORD}\b"
+_RETRIEVE = r"(?:find|list|show|locate|identify|retrieve|return|collect|get|search\s+for|give\s+me)"
+_EVERY_SOURCE = re.compile(
+    rf"\b{_RETRIEVE}\s+(?:me\s+)?{_POPULATION}"
+    rf"|\b{_RETRIEVE}\s+(?:me\s+)?{_QUANTITY}\s*[.!?]*$"
+    rf"|^(?:please\s+)?{_POPULATION}"
+    rf"|\bevery(?:\s+single)?\s+{_RECORD}\s+(?:that|which|where|mentioning|containing)\b",
+    re.IGNORECASE,
+)
+
+
+def _exact_reason(node: Expression) -> str | None:
+    """Inspect parser-owned syntax, including children of implicit conjunctions."""
+    if isinstance(node, Literal):
+        return "Chose exact search because your words are in quotes." if node.phrase else None
+    if isinstance(node, Proximity):
+        return "Chose exact search because you specified how close words must be."
+    if isinstance(node, (Not, Or)) or isinstance(node, And) and node.explicit:
+        return "Chose exact search because you used a Boolean operator."
+    if isinstance(node, And):
+        for operand in node.operands:
+            if reason := _exact_reason(operand):
+                return reason
+    return None
+
+
+def classify(text: str) -> RouteDecision:
+    """Choose exact, every_source, or question without I/O or mutable state.
+
+    Plain literals, even with implicit AND or grouping, remain questions.
+    Parse failures (including punctuation or unbalanced quotes) do not establish
+    exact intent; explicit requests to enumerate records can still win next.
+    """
+    text = text.strip()
+    if not text:
+        return RouteDecision("question", "Nothing was typed, so there is no question to answer yet.")
+
+    try:
+        parsed = parse_query(text)
+    except QuerySyntaxError:
+        pass
+    else:
+        if reason := _exact_reason(parsed.expression):
+            return RouteDecision("exact", reason)
+
+    if _EVERY_SOURCE.search(text):
+        return RouteDecision("every_source", "Chose every source because you asked for all matching records.")
+    return RouteDecision("question", "Chose a question because no search instructions were recognized.")

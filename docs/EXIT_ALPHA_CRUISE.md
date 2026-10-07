@@ -12,6 +12,13 @@ full-text synthesis adapter, graph exploration, Linux CPU B-lite and trusted
 matter continuity A, B and C are landed.
 Historical receipts below retain their original scope and evidence.
 
+**Ask routing foundation (approved; local implementation, not landed):**
+[Pure intent classification](EXACT_SEARCH.md#ask-intent-classification) selects
+exact search, every-source review or a question from typed text, with a short
+explanation. This increment adds no UI, HTTP route, model call or I/O. Local
+validation is complete; the next action is draft PR publication and requested
+hosted code review. Merge and deployment remain outside this increment.
+
 **Trusted matter continuity A is Done**:
 [connect Case notes to saved identities and events/assertions](product-slices/continuity-a-case-notes.md).
 A reviewer returning to an active matter can inspect the team's saved knowledge,

@@ -1,34 +1,73 @@
 ## User problem
 
-Describe the review or operator problem this change addresses.
+Reviewers should be able to type an intent without choosing a search engine.
+The foundation needs to distinguish exact syntax, requests for every matching
+record, and ordinary questions without executing retrieval or sending text away.
 
 ## Result
 
-Describe the behavior after this change in plain language.
+Adds pure `classify(text) -> RouteDecision` in `ask_router.py`, with a frozen
+decision and one short explanation. Valid exact syntax takes precedence over
+requests for every source; plain words, casual uses of "all", and empty input
+remain questions. Invalid syntax falls through to the natural-language rules.
+
+Exact intent comes only from `parse_query` and its structure. The parser now
+retains explicit `AND` provenance so ordinary adjacent words do not become
+exact searches. Matching, normalization, expression equality/hash and serialized
+plans retain their existing semantics. The routing contract and punctuation
+limitations are documented in `docs/EXACT_SEARCH.md`.
 
 ## Synthetic evidence
 
-List the synthetic reproduction, automated tests, and any browser or clean-host
-acceptance performed. Do not include private deployment output.
+- `tests/test_ask_router.py`: 102 synthetic input/expected-kind examples,
+  including quoted questions, malformed quotes, precedence, casual "all", and
+  record-enumeration variants; also immutable decisions, content-free reasons,
+  deterministic results and parser-authority regressions.
+- `tests/test_exact_search.py`: explicit/implicit `AND` provenance, nesting and
+  unchanged matching, normalized, serialized, equality and hash semantics.
+- Router, parser and proximity targeted suite: 247 passed.
+- Full `CASE_INTELLIGENCE_STORAGE_RESERVE_GIB=0 make check`: passed (exit 0);
+  application: 4,967 passed, 14 skipped; transcription: 330 passed.
+  Compilation, all Compose graphs and the tree/history publication sanitizer
+  also passed. `ask_router.py` is 77 lines; `git diff --check` is clean.
+  This is the existing CI/synthetic-test setting documented in
+  `docs/WORKFLOW_LINUX_VALIDATION.md`. The initial default-reserve run was stopped
+  after four upload-dependent failures: the test environment cannot meet the
+  production 100 GiB free-space reserve. All four pass with the synthetic setting.
+- No browser or clean-host acceptance applies to this pure helper.
 
 ## Impact
 
 - Security, authorization, or matter isolation (for sensitive changes, include
   the focused assessment, abuse cases, regression evidence and findings disposition):
-- Storage, deletion, backup, or migration:
-- Models, licensing, or offline operation:
-- Operator documentation or recovery:
+  Classification consumes untrusted text but does not access sources or execute
+  a query. Internal security assessment covered parser rejection and bounds,
+  malformed quotes/operators, Unicode/control characters, regex resource use,
+  fixed explanations, and source/execution boundaries. The 247 targeted tests
+  passed; 20,007 synthetic adversarial/boundary probes produced no crashes;
+  1,000 audited calls emitted no file, process or socket events. Nine regex
+  stress families through approximately one million characters showed linear
+  scaling. Explanations do not echo input. No actionable findings.
+  Exact parsing retains its 512-character, 128-token and depth-16 bounds; the
+  natural-language fallback has no global input cap. Future integration must
+  apply request budgets and existing authorization/source scoping. This
+  assessment covers the pure helper, not later retrieval/model integration.
+- Storage, deletion, backup, or migration: none.
+- Models, licensing, or offline operation: no model or dependency changes;
+  classification is local, deterministic and requires no configuration or I/O.
+- Operator documentation or recovery: routing precedence and parser limitations
+  added to the existing exact-search contract; no deployment changes.
 
 ## Checklist
 
-- [ ] All examples, fixtures, screenshots, and logs are synthetic and
+- [x] All examples, fixtures, screenshots, and logs are synthetic and
       environment-neutral.
-- [ ] No private identity, hostname, address, path, credential, certificate,
+- [x] No private identity, hostname, address, path, credential, certificate,
       data, transcript, runtime state, or deployment overlay is included.
-- [ ] Behavioral changes include a regression test and applicable
+- [x] Behavioral changes include a regression test and applicable
       documentation.
-- [ ] `make check` passes, or the exact bounded exception is explained.
-- [ ] The publication sanitizer passes.
+- [x] `make check` passes, or the exact bounded exception is explained.
+- [x] The publication sanitizer passes.
 - [ ] The complete outgoing history passed the local pre-push check; PR text
       and attachments were separately inspected before upload.
 - [ ] Before merge: actual hosted Codex code review completed on the final
@@ -37,4 +76,9 @@ acceptance performed. Do not include private deployment output.
       explicit trusted revalidation immediately before manual merge. Hosted security review is optional;
       labels and quotas cannot waive code review. All Quality, publication,
       Gitleaks and native branch protections remain required.
-- [ ] No existing release tag was moved or rewritten.
+- [x] No existing release tag was moved or rewritten.
+
+Draft publication and hosted code review are requested. The pre-push check must
+pass before upload; final-head hosted review, reconciliation and maintainer
+acceptance remain required before merge under `docs/PUBLIC_ALPHA.md`. Security
+review was performed internally; no hosted security review was requested.

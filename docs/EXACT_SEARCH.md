@@ -52,6 +52,39 @@ backend contract, not executable SQL and not permission to access a source.
 Normalized expressions omit redundant grouping and use implicit AND so
 serialization does not add grammar depth or tokens at those input limits.
 
+## Ask intent classification
+
+`case_intelligence.ask_router.classify(text)` is a pure helper for a future
+shared Ask entry point. It returns a frozen `RouteDecision(kind, reason)` with
+one short reviewer-facing explanation. It performs no search, model call or I/O,
+and is not connected to a UI or HTTP route.
+
+Routing precedence is:
+
+1. `exact` when the trimmed input successfully parses and its structure contains
+   a quoted phrase, explicit Boolean operator or proximity expression. Adjacent
+   plain words and grouping alone remain questions. The parser retains explicit
+   `AND` provenance on conjunctions; that marker does not change expression
+   equality, hashing, normalization, serialized plans or matching semantics.
+2. `every_source` for case-insensitive requests to enumerate matching records,
+   such as `find every email`, `list all`, `show me all of the reports`,
+   `all the records mentioning bicycles`, or `every document that mentions
+   bicycles`. Casual phrases such as `all the time` and `after all`, or questions
+   about whether all records agree, remain questions.
+3. `question` otherwise, including empty input, whose reason says nothing was
+   typed. Parse failures fall through to these natural-language rules, so an
+   unbalanced quote alone does not select exact search.
+
+The existing parser is the sole authority on exact syntax, including its limits
+and punctuation rules. For example, `What does "red bicycle" mean` is `exact`,
+but `What does "red bicycle" mean?` is `question` because the whole input fails
+to parse. `list all documents with "red` is `every_source` after parsing fails.
+The helper does not extract or repair fragments of a malformed query.
+
+`tests/test_ask_router.py` covers synthetic intent examples, ambiguous inputs,
+precedence, immutable decisions and explanations. This foundation does not
+claim that enumeration, source coverage or cited answers have run.
+
 ## Known-answer corpus and validation
 
 `tests/fixtures/synthetic/product-foundation/v1/corpus.json` contains invented
