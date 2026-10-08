@@ -87,8 +87,8 @@ from case_intelligence.exact_search import Literal, ParsedQuery, QuerySyntaxErro
     ("Check every workbook", "every_source"),
     ("Find all text files", "every_source"),
     ("List all CSV files", "every_source"),
-    ("List each and every document", "exact"),
-    ("I need each and every record", "exact"),
+    ("List each and every document", "every_source"),  # Only uppercase Boolean operators establish exact intent.
+    ("I need each and every record", "every_source"),  # Only uppercase Boolean operators establish exact intent.
     ("List each and every document?", "every_source"),
     ("I need each and every record.", "every_source"),
     ("All documents", "every_source"),
@@ -109,14 +109,16 @@ from case_intelligence.exact_search import Literal, ParsedQuery, QuerySyntaxErro
     ('"find every document"', "exact"),
     ('"all the time"', "exact"),
     ('"say \\"hello\\""', "exact"),
+    ("Smith AND Jones", "exact"),
+    ("Smith NOT Jones", "exact"),
     ("red AND bicycle", "exact"),
-    ("red and bicycle", "exact"),
-    ("red AnD bicycle", "exact"),
+    ("red and bicycle", "question"),  # Only uppercase Boolean operators establish exact intent.
+    ("red AnD bicycle", "question"),  # Only uppercase Boolean operators establish exact intent.
     ("red OR blue", "exact"),
-    ("red or blue", "exact"),
+    ("red or blue", "question"),  # Only uppercase Boolean operators establish exact intent.
     ("NOT bicycle", "exact"),
-    ("red not bicycle", "exact"),
-    ("What changed and why", "exact"),
+    ("red not bicycle", "question"),  # Only uppercase Boolean operators establish exact intent.
+    ("What changed and why", "question"),  # Only uppercase Boolean operators establish exact intent.
     ("(red AND bicycle)", "exact"),
     ("green (red AND bicycle)", "exact"),
     ("red (blue OR green)", "exact"),
@@ -191,6 +193,29 @@ def test_synthetic_route_table(text, expected_kind):
     assert 0 < len(decision.reason) <= 120
     assert decision.reason.endswith(".")
     assert "\n" not in decision.reason
+
+
+@pytest.mark.parametrize("suffix", ["", "?"])
+@pytest.mark.parametrize("text,expected_kind", [
+    ("Did Smith and Jones meet on Tuesday", "question"),
+    ("Why did the officer not stop the car", "question"),
+    ("Was it red or blue", "question"),
+    ("who called 911 and when", "question"),
+    ("show me all the texts between Dana and Lee", "every_source"),
+])
+def test_ordinary_boolean_words_do_not_depend_on_question_mark(text, expected_kind, suffix):
+    assert classify(text + suffix).kind == expected_kind
+
+
+@pytest.mark.parametrize("text", [
+    'red and "blue bicycle"',
+    'red or "blue bicycle"',
+    'not "blue bicycle"',
+    "red or blue NEAR/3 bicycle",
+    "not blue BEFORE/3 bicycle",
+])
+def test_lowercase_boolean_nodes_preserve_phrase_and_proximity_intent(text):
+    assert classify(text).kind == "exact"
 
 
 @pytest.mark.parametrize("field,value", [("kind", "exact"), ("reason", "Changed.")])

@@ -1,6 +1,6 @@
 """Pure intent classification for a future shared Ask entry point.
 
-Valid exact-search syntax wins over requests for every source. The entire input
+Quotes, proximity and uppercase Boolean syntax win over enumeration. The input
 must parse; malformed syntax falls through to ordinary intent classification.
 This module selects a kind only and never executes a search or a model call.
 """
@@ -20,6 +20,7 @@ class RouteDecision:
     reason: str
 
 
+_UPPERCASE_BOOLEAN = re.compile(r"(?<![^\s()])(?:AND|OR|NOT)(?![^\s()])")
 # These are natural-language retrieval cues, not an exact-search grammar.
 _FORMAT = r"\.?(?:pdf|docx|txt|jpg|jpeg|png|tif|tiff|eml|csv|tsv|xlsx|wav|mp3|m4a|ogg|opus|mp4|mov|webm)"
 _RECORD = (
@@ -53,25 +54,24 @@ _EVERY_SOURCE = re.compile(
 )
 
 
-def _exact_reason(node: Expression) -> str | None:
-    """Inspect parser-owned syntax, including children of implicit conjunctions."""
+def _exact_reason(node: Expression, *, uppercase_boolean: bool) -> str | None:
     if isinstance(node, Literal):
         return "Chose exact search because your words are in quotes." if node.phrase else None
     if isinstance(node, Proximity):
         return "Chose exact search because you specified how close words must be."
-    if isinstance(node, (Not, Or)) or isinstance(node, And) and node.explicit:
+    if uppercase_boolean and (isinstance(node, (Not, Or)) or isinstance(node, And) and node.explicit):
         return "Chose exact search because you used a Boolean operator."
-    if isinstance(node, And):
-        for operand in node.operands:
-            if reason := _exact_reason(operand):
-                return reason
+    operands = (node.operand,) if isinstance(node, Not) else node.operands
+    for operand in operands:
+        if reason := _exact_reason(operand, uppercase_boolean=uppercase_boolean):
+            return reason
     return None
 
 
 def classify(text: str) -> RouteDecision:
     """Choose exact, every_source, or question without I/O or mutable state.
 
-    Plain literals, even with implicit AND or grouping, remain questions.
+    Lowercase Boolean operators, plain literals and grouping remain questions.
     Parse failures (including punctuation or unbalanced quotes) do not establish
     exact intent; explicit requests to enumerate records can still win next.
     """
@@ -84,7 +84,7 @@ def classify(text: str) -> RouteDecision:
     except QuerySyntaxError:
         pass
     else:
-        if reason := _exact_reason(parsed.expression):
+        if reason := _exact_reason(parsed.expression, uppercase_boolean=bool(_UPPERCASE_BOOLEAN.search(text))):
             return RouteDecision("exact", reason)
 
     if _EVERY_SOURCE.search(text):

@@ -62,10 +62,11 @@ and is not connected to a UI or HTTP route.
 Routing precedence is:
 
 1. `exact` when the trimmed input successfully parses and its structure contains
-   a quoted phrase, explicit Boolean operator or proximity expression. Adjacent
-   plain words and grouping alone remain questions. The parser retains explicit
-   `AND` provenance on conjunctions; that marker does not change expression
-   equality, hashing, normalization, serialized plans or matching semantics.
+   a quoted phrase, uppercase Boolean operator (`AND`, `OR`, `NOT`) or proximity
+   expression. Adjacent plain words and grouping alone remain questions. The
+   router detects uppercase operators in the original text because the parser
+   retains explicit `AND` provenance but not operator case. Exact-search parsing
+   and matching semantics remain case-insensitive and unchanged.
 2. `every_source` for case-insensitive positive requests to enumerate matching
    records, such as `find every email`, `list all`, `show me all of the reports`,
    `check every source`, or `I need to find all records mentioning bicycles`. Retrieval
@@ -96,11 +97,12 @@ and punctuation rules. For example, `What does "red bicycle" mean` is `exact`,
 but `What does "red bicycle" mean?` is `question` because the whole input fails
 to parse. `list all documents with "red` is `every_source` after parsing fails.
 The helper does not extract or repair fragments of a malformed query.
-The same precedence applies to natural wording containing Boolean operators:
-`List each and every document` and `I need each and every record` are `exact`
-because the parser recognizes `and`. Adding terminal `?` or `.` makes parsing
-fail, so their population requests fall through to `every_source`. There is no
-natural-language exception that bypasses valid parser-owned exact syntax.
+Lowercase or mixed-case `and`, `or` and `not` do not establish exact intent in
+Ask. `Did Smith and Jones meet on Tuesday` is `question` with or without `?`;
+`show me all the texts between Dana and Lee` and `List each and every document`
+are `every_source` with or without `?`. `Smith AND Jones` and `Smith NOT Jones`
+are `exact` when the whole input parses. Quoted phrases and proximity expressions
+still establish exact intent, including inside lowercase Boolean expressions.
 
 `tests/test_ask_router.py` covers synthetic intent examples, ambiguous inputs,
 precedence, immutable decisions and explanations. This foundation does not
