@@ -1,6 +1,7 @@
 """Freeze refactor-sensitive interfaces; update snapshots only after review.
 
-From the repository root, deliberately regenerate either snapshot with:
+From the repository root, deliberately regenerate both route configurations or
+the store API snapshot with:
     .venv/bin/python -m tests.test_api_snapshots --update routes
     .venv/bin/python -m tests.test_api_snapshots --update store
 """
@@ -15,6 +16,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from case_intelligence.generation import UnavailableGenerator
@@ -22,15 +24,22 @@ from case_intelligence.workbench import create_workbench_app
 from case_intelligence.workspace_store import WorkspaceStore
 
 SNAPSHOTS = Path(__file__).parent / "snapshots"
+ROUTE_SNAPSHOTS = (
+    (False, "workbench_routes.json"),
+    (True, "workbench_routes_acceptance.json"),
+)
 
 
-def _route_snapshot(runtime: Path) -> str:
+def _route_snapshot(runtime: Path, *, acceptance_diagnostics: bool = False) -> str:
     # Keep the synthetic runtime independent of configured services and storage.
     environment = {
         key: value
         for key, value in os.environ.items()
         if not key.startswith("CASE_INTELLIGENCE_")
     }
+    # Enable only the route-registration flag under test, never operator settings.
+    if acceptance_diagnostics:
+        environment["CASE_INTELLIGENCE_ACCEPTANCE_DIAGNOSTICS"] = "1"
     with patch.dict(os.environ, environment, clear=True):
         app = create_workbench_app(
             runtime, generator=UnavailableGenerator(), auth_mode="test"
@@ -83,9 +92,18 @@ def _assert_snapshot(actual: str, filename: str, target: str) -> None:
     assert actual == path.read_text(encoding="utf-8"), guidance
 
 
-def test_workbench_route_snapshot(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("acceptance_diagnostics", "filename"),
+    ROUTE_SNAPSHOTS,
+    ids=("default", "acceptance-diagnostics"),
+)
+def test_workbench_route_snapshot(
+    tmp_path: Path, acceptance_diagnostics: bool, filename: str
+) -> None:
     _assert_snapshot(
-        _route_snapshot(tmp_path / "runtime"), "workbench_routes.json", "routes"
+        _route_snapshot(tmp_path / "runtime", acceptance_diagnostics=acceptance_diagnostics),
+        filename,
+        "routes",
     )
 
 
@@ -99,9 +117,13 @@ def _main() -> None:
     args = parser.parse_args()
     SNAPSHOTS.mkdir(exist_ok=True)
     if args.update in {"routes", "all"}:
-        with TemporaryDirectory(prefix="recordbench-route-snapshot-") as directory:
-            snapshot = _route_snapshot(Path(directory) / "runtime")
-        (SNAPSHOTS / "workbench_routes.json").write_text(snapshot, encoding="utf-8")
+        for acceptance_diagnostics, filename in ROUTE_SNAPSHOTS:
+            with TemporaryDirectory(prefix="recordbench-route-snapshot-") as directory:
+                snapshot = _route_snapshot(
+                    Path(directory) / "runtime",
+                    acceptance_diagnostics=acceptance_diagnostics,
+                )
+            (SNAPSHOTS / filename).write_text(snapshot, encoding="utf-8")
     if args.update in {"store", "all"}:
         (SNAPSHOTS / "workspace_store_api.json").write_text(
             _store_snapshot(), encoding="utf-8"
