@@ -21,33 +21,33 @@ class RouteDecision:
 
 
 # These are natural-language retrieval cues, not an exact-search grammar.
+_FORMAT = r"\.?(?:pdf|docx|txt|jpg|jpeg|png|tif|tiff|eml|csv|tsv|xlsx|wav|mp3|m4a|ogg|opus|mp4|mov|webm)"
 _RECORD = (
     r"(?:documents?|records?|sources?|files?|e-?mails?|messages?|texts?|reports?|"
     r"transcripts?|statements?|interviews?|recordings?|notes?|memos?|exhibits?|"
     r"attachments?|references?|mentions?|occurrences?|matches|results|evidence|items?|"
-    r"pdfs?|videos?|images?|photos?|photographs?|pictures?|spreadsheets?|workbooks?|audio)"
+    rf"{_FORMAT}s?|videos?|images?|photos?|photographs?|pictures?|spreadsheets?|workbooks?|audio)"
 )
 _QUANTITY = r"(?:all(?:\s+of)?(?:\s+the)?|every(?:\s+single)?|each(?:\s+and\s+every)?)"
-_MEDIA = r"(?:pdf|video|audio|image|photo|spreadsheet|text|csv|excel|word)"
+_MEDIA = rf"(?:{_FORMAT}|video|audio|image|photo|spreadsheet|text|excel|word)"
 _POPULATION = (
     rf"{_QUANTITY}\s+(?:(?:matching|relevant|available)\s+)?"
     rf"(?:{_MEDIA}\s+)?{_RECORD}\b"
-)
-_FILTER = (
-    r"(?:about|mentioning|containing|regarding|concerning|with|relating\s+to|"
-    r"(?:that|which)\s+(?:mentions?|contains?|references?))\b"
 )
 _RETRIEVE = (
     r"(?:find|list|show|locate|identify|retrieve|return|collect|get|check|review|"
     r"enumerate|search\s+for|give\s+me)"
 )
-_REQUEST = r"(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?"
+_REQUEST = (
+    r"(?:please\s+)?(?:(?:(?:can|could|would|will)\s+you|"
+    r"i\s+(?:need|want)\s+(?:you\s+)?to)\s+(?:please\s+)?)?"
+)
 # Bare filtered populations are ambiguous subjects ("all records about X agree")
 # as well as request fragments. Require a positive request cue for those forms.
 _EVERY_SOURCE = re.compile(
     rf"^(?:{_REQUEST}{_RETRIEVE}\s+(?:me\s+)?"
     rf"(?:{_POPULATION}|{_QUANTITY}\s*[.!?]*$)"
-    rf"|i\s+(?:need|want)\s+{_POPULATION}(?:\s+{_FILTER}|\s*[.!?]*$)"
+    rf"|i\s+(?:need|want)\s+{_POPULATION}\s*[.!?]*$"
     rf"|(?:please\s+)?{_POPULATION}\s*[.!?]*$)",
     re.IGNORECASE,
 )

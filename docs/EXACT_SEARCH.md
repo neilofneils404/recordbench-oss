@@ -68,21 +68,23 @@ Routing precedence is:
    equality, hashing, normalization, serialized plans or matching semantics.
 2. `every_source` for case-insensitive positive requests to enumerate matching
    records, such as `find every email`, `list all`, `show me all of the reports`,
-   `check every source`, or `I need all records mentioning bicycles`. Retrieval
+   `check every source`, or `I need to find all records mentioning bicycles`. Retrieval
    verbs must begin the request, optionally with `please` before or after
    `can/could/would/will you`; `review` and `enumerate` are also supported.
    `I need` and `I want` can introduce a population directly only when it ends
-   the request or is followed by a supported filter such as `about`, `with`,
-   or `that mentions`. Other operations such as `I need all documents deleted`
-   remain questions. Populations include generic records and supported media
-   nouns (PDFs, videos, images, photographs, spreadsheets, workbooks, audio),
-   including forms such as `all audio files` and `every matching PDF document`.
+   the request. Filtered populations require a retrieval verb, including forms
+   such as `I need to find` or `I want you to list`. This avoids guessing whether
+   a suffix requests collection or another operation: `I need all documents
+   about bicycles deleted` remains a question. Populations include generic
+   records, media nouns and every extension advertised by the source upload UI,
+   including forms such as `all audio files`, `every matching PDF document`,
+   `all DOCX files`, `every .xlsx file`, and `all PNGs`.
    A bare population
    must stand alone (`all documents`, `every report?`). Filtered bare phrases
-   such as `all documents about bicycles` remain questions: without a positive
-   request cue, they cannot reliably be distinguished from the subject of a
+   such as `all documents about bicycles` remain questions: without a retrieval
+   verb, they cannot reliably be distinguished from the subject of a
    statement such as `All documents about bicycles agree`. This conservative
-   boundary avoids guessing from a verb list; add `List` or `I need` to request
+   boundary avoids guessing from a verb list; add `List` or `I need to find` to request
    enumeration. Casual uses of `all`, interrogative wrappers, negations, and
    conditional mentions do not qualify through an incidental retrieval phrase.
 3. `question` otherwise, including empty input, whose reason says nothing was

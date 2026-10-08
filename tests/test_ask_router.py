@@ -1,6 +1,8 @@
 """Synthetic examples of routing intent; no case material or retrieval is used."""
 
 from dataclasses import FrozenInstanceError
+from pathlib import Path
+import re
 
 import pytest
 
@@ -50,19 +52,27 @@ from case_intelligence.exact_search import Literal, ParsedQuery, QuerySyntaxErro
     ("Please would you review all documents?", "every_source"),
     ("Please will you enumerate every record?", "every_source"),
     ("Could you please check every source?", "every_source"),
-    ("I need every document mentioning bicycles", "every_source"),
+    ("I need every document mentioning bicycles", "question"),
     ("All documents about bicycles agree.", "question"),
     ("All documents about bicycles agree", "question"),
     ("Every report containing the claim is unreliable.", "question"),
     ("Every report containing the claim is unreliable", "question"),
     ("Every report concerning bicycles contradicts the claim", "question"),
-    ("I need all documents about bicycles", "every_source"),
-    ("I want every report containing the claim", "every_source"),
+    ("I need all documents about bicycles", "question"),
+    ("I want every report containing the claim", "question"),
     ("List all documents about bicycles", "every_source"),
     ("I need all documents deleted", "question"),
     ("I want every report removed.", "question"),
     ("I need all files archived", "question"),
     ("I want every source renamed", "question"),
+    ("I need all documents about bicycles deleted", "question"),
+    ("I want every report concerning bicycles summarized", "question"),
+    ("I need all documents containing bicycles renamed.", "question"),
+    ("I want every source with bicycle references archived", "question"),
+    ("I need to find all documents about bicycles", "every_source"),
+    ("I want to review every report concerning bicycles", "every_source"),
+    ("I need you to list all documents about bicycles", "every_source"),
+    ("I want you to please check every source", "every_source"),
     ("I need all documents", "every_source"),
     ("I want every report?", "every_source"),
     ("List all PDFs", "every_source"),
@@ -165,7 +175,7 @@ from case_intelligence.exact_search import Literal, ParsedQuery, QuerySyntaxErro
     ("all evidence relating to the bicycle", "question"),
     ("every document that mentions the bicycle", "question"),
     ("every record which mentions the bicycle", "question"),
-    ("I need every document that mentions the bicycle", "every_source"),
+    ("I need every document that mentions the bicycle", "question"),
     ("Can you list all records about the bicycle?", "every_source"),
     ('find every document with "red bicycle', "every_source"),
     ('list all records containing "red bicycle"?', "every_source"),
@@ -235,3 +245,17 @@ def test_parser_rejection_falls_back_to_natural_language(monkeypatch, text, expe
     monkeypatch.setattr(ask_router, "parse_query", reject_synthetic_query)
 
     assert classify(text).kind == expected_kind
+
+
+def test_advertised_upload_formats_are_recognized_as_source_populations():
+    template = (Path(__file__).resolve().parents[1] / "src/case_intelligence/templates/workbench_setup.html").read_text()
+    extensions = {
+        item[1:].upper()
+        for accept in re.findall(r'\baccept="([^"]+)"', template)
+        for item in accept.split(",")
+        if item.startswith(".")
+    }
+    assert extensions
+    for extension in sorted(extensions):
+        for text in (f"List all {extension} files", f"Review all {extension}s", f"Find every .{extension} file"):
+            assert classify(text).kind == "every_source", text
