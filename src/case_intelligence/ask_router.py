@@ -29,11 +29,16 @@ _RECORD = (
 _QUANTITY = r"(?:all(?:\s+of)?(?:\s+the)?|every(?:\s+single)?|each(?:\s+and\s+every)?)"
 _POPULATION = rf"{_QUANTITY}\s+(?:(?:matching|relevant|available)\s+)?{_RECORD}\b"
 _RETRIEVE = r"(?:find|list|show|locate|identify|retrieve|return|collect|get|search\s+for|give\s+me)"
+_ENUMERATION = (
+    r"(?:about|mentioning|containing|regarding|concerning|with|relating\s+to|"
+    r"(?:that|which)\s+(?:mentions?|contains?|references?))\b"
+)
 _EVERY_SOURCE = re.compile(
     rf"\b{_RETRIEVE}\s+(?:me\s+)?{_POPULATION}"
     rf"|\b{_RETRIEVE}\s+(?:me\s+)?{_QUANTITY}\s*[.!?]*$"
-    rf"|^(?:please\s+)?{_POPULATION}"
-    rf"|\bevery(?:\s+single)?\s+{_RECORD}\s+(?:that|which|where|mentioning|containing)\b",
+    rf"|^(?:please\s+)?{_POPULATION}(?:\s+{_ENUMERATION}|\s*[.!?]*$)"
+    rf"|\bevery(?:\s+single)?\s+{_RECORD}\s+"
+    rf"(?:(?:that|which)\s+(?:mentions?|contains?|references?)|mentioning|containing)\b",
     re.IGNORECASE,
 )
 

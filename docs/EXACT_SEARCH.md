@@ -70,7 +70,11 @@ Routing precedence is:
    such as `find every email`, `list all`, `show me all of the reports`,
    `all the records mentioning bicycles`, or `every document that mentions
    bicycles`. Casual phrases such as `all the time` and `after all`, or questions
-   about whether all records agree, remain questions.
+   about whether all records agree, remain questions. A leading population such
+   as `all documents` needs an enumerative continuation (`about`, `mentioning`,
+   `containing`, `that mentions`, and similar cues), or must stand alone.
+   Statements such as `All documents agree` and `Every report is false` remain
+   questions.
 3. `question` otherwise, including empty input, whose reason says nothing was
    typed. Parse failures fall through to these natural-language rules, so an
    unbalanced quote alone does not select exact search.

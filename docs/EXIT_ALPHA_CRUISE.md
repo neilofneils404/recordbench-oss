@@ -15,9 +15,12 @@ Historical receipts below retain their original scope and evidence.
 **Ask routing foundation (approved; local implementation, not landed):**
 [Pure intent classification](EXACT_SEARCH.md#ask-intent-classification) selects
 exact search, every-source review or a question from typed text, with a short
-explanation. This increment adds no UI, HTTP route, model call or I/O. Local
-validation is complete; the next action is draft PR publication and requested
-hosted code review. Merge and deployment remain outside this increment.
+explanation. This increment adds no UI, HTTP route, model call or I/O. It is
+proposed in [PR #146](https://github.com/neilofneils404/recordbench-oss/pull/146).
+Review corrections preserve the reusable PR template and keep ordinary statements
+about a population of records on the question path. Final-head hosted code
+review, passing Quality and maintainer acceptance remain required before landing;
+deployment remains paused.
 
 **Trusted matter continuity A is Done**:
 [connect Case notes to saved identities and events/assertions](product-slices/continuity-a-case-notes.md).
