@@ -32,16 +32,14 @@ _RETRIEVE = (
     r"(?:find|list|show|locate|identify|retrieve|return|collect|get|check|review|"
     r"enumerate|search\s+for|give\s+me)"
 )
-_REQUEST = r"(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?"
-_ENUMERATION = (
-    r"(?:about|mentioning|containing|regarding|concerning|with|relating\s+to|"
-    r"(?:that|which)\s+(?:mentions?|contains?|references?))\b"
-)
+_REQUEST = r"(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?"
+# Bare filtered populations are ambiguous subjects ("all records about X agree")
+# as well as request fragments. Require a positive request cue for those forms.
 _EVERY_SOURCE = re.compile(
     rf"^(?:{_REQUEST}{_RETRIEVE}\s+(?:me\s+)?"
     rf"(?:{_POPULATION}|{_QUANTITY}\s*[.!?]*$)"
-    rf"|(?:(?:please|i\s+(?:need|want))\s+)?{_POPULATION}"
-    rf"(?:\s+{_ENUMERATION}|\s*[.!?]*$))",
+    rf"|i\s+(?:need|want)\s+{_POPULATION}"
+    rf"|(?:please\s+)?{_POPULATION}\s*[.!?]*$)",
     re.IGNORECASE,
 )
 

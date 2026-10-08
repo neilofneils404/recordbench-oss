@@ -66,19 +66,19 @@ Routing precedence is:
    plain words and grouping alone remain questions. The parser retains explicit
    `AND` provenance on conjunctions; that marker does not change expression
    equality, hashing, normalization, serialized plans or matching semantics.
-2. `every_source` for case-insensitive requests to enumerate matching records,
-   such as `find every email`, `list all`, `show me all of the reports`,
-   `all the records mentioning bicycles`, or `every document that mentions
-   bicycles`. Casual phrases such as `all the time` and `after all`, or questions
-   about whether all records agree, remain questions. A leading population such
-   as `all documents` needs an enumerative continuation (`about`, `mentioning`,
-   `containing`, `that mentions`, and similar cues), or must stand alone.
-   Statements such as `All documents agree` and `Every report is false` remain
-   questions. Retrieval verbs must begin a positive request, optionally with
-   `please` or `can/could/would/will you`; `check`, `review`, and `enumerate`
-   are supported alongside `find` and `list`. A population phrase can also
-   follow `I need` or `I want`. Questions, negations, and conditional instructions
-   that merely mention an enumeration do not qualify through that mention.
+2. `every_source` for case-insensitive positive requests to enumerate matching
+   records, such as `find every email`, `list all`, `show me all of the reports`,
+   `check every source`, or `I need all records mentioning bicycles`. Retrieval
+   verbs must begin the request, optionally with `please` before or after
+   `can/could/would/will you`; `review` and `enumerate` are also supported.
+   `I need` and `I want` can introduce a population directly. A bare population
+   must stand alone (`all documents`, `every report?`). Filtered bare phrases
+   such as `all documents about bicycles` remain questions: without a positive
+   request cue, they cannot reliably be distinguished from the subject of a
+   statement such as `All documents about bicycles agree`. This conservative
+   boundary avoids guessing from a verb list; add `List` or `I need` to request
+   enumeration. Casual uses of `all`, interrogative wrappers, negations, and
+   conditional mentions do not qualify through an incidental retrieval phrase.
 3. `question` otherwise, including empty input, whose reason says nothing was
    typed. Parse failures fall through to these natural-language rules, so an
    unbalanced quote alone does not select exact search.
