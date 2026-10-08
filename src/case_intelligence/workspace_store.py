@@ -1,8 +1,6 @@
 """Persistent development matters and conversations for Milestone A."""
 from __future__ import annotations
 
-from .review_budget import budget_metadata, budget_description
-
 import hashlib
 import json
 import random
@@ -12,7 +10,6 @@ import threading
 import unicodedata
 import uuid
 from contextlib import nullcontext
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from importlib import resources
 from pathlib import Path
@@ -20,7 +17,68 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 from .contracts import validate_relative_path
 from .derived_text import presentation_text
-from .source_locations import SourcePreflight, SourceScanItem
+from .source_locations import SourcePreflight
+# Re-export record types, exceptions, and the shared helper for existing importers.
+from .store_records import (
+    AnalysisRunRecord as AnalysisRunRecord,
+    AnswerEventRecord as AnswerEventRecord,
+    AnswerJobRecord as AnswerJobRecord,
+    AnswerNotebookContextRecord as AnswerNotebookContextRecord,
+    AuditEventRecord as AuditEventRecord,
+    ConversationDeletionRecord as ConversationDeletionRecord,
+    ConversationOrganizationRecord as ConversationOrganizationRecord,
+    ConversationRecord as ConversationRecord,
+    ConversationSummaryRecord as ConversationSummaryRecord,
+    IngestJobRecord as IngestJobRecord,
+    IngestPlanItemRecord as IngestPlanItemRecord,
+    IngestPlanRecord as IngestPlanRecord,
+    MatterActivityRecord as MatterActivityRecord,
+    MatterLifecycleRecord as MatterLifecycleRecord,
+    MatterMembershipRecord as MatterMembershipRecord,
+    MatterNameConflict as MatterNameConflict,
+    MatterReadinessRecord as MatterReadinessRecord,
+    MatterRecord as MatterRecord,
+    MatterRetentionRecord as MatterRetentionRecord,
+    MediaClipRecord as MediaClipRecord,
+    MediaJobRecord as MediaJobRecord,
+    MediaSummaryRecord as MediaSummaryRecord,
+    MediaTranscriptRecord as MediaTranscriptRecord,
+    MessageRecord as MessageRecord,
+    NotebookEditConflict as NotebookEditConflict,
+    NotebookItemRecord as NotebookItemRecord,
+    NotebookPageRecord as NotebookPageRecord,
+    NotebookReferenceRecord as NotebookReferenceRecord,
+    PrincipalPreferenceRecord as PrincipalPreferenceRecord,
+    PrincipalRecord as PrincipalRecord,
+    ReportCitationRecord as ReportCitationRecord,
+    ReportEditConflict as ReportEditConflict,
+    ReportRecord as ReportRecord,
+    ReportSectionRecord as ReportSectionRecord,
+    ResearchEventRecord as ResearchEventRecord,
+    ResearchJobRecord as ResearchJobRecord,
+    ReviewCriterionRecord as ReviewCriterionRecord,
+    ReviewCriterionVersionRecord as ReviewCriterionVersionRecord,
+    ReviewDecisionConflict as ReviewDecisionConflict,
+    ReviewDecisionPageRecord as ReviewDecisionPageRecord,
+    ReviewDecisionRecord as ReviewDecisionRecord,
+    ReviewFindingRecord as ReviewFindingRecord,
+    ReviewFindingReferenceRecord as ReviewFindingReferenceRecord,
+    ReviewRunRecord as ReviewRunRecord,
+    SessionRecord as SessionRecord,
+    SourceCatalogPageRecord as SourceCatalogPageRecord,
+    SourceCatalogRecord as SourceCatalogRecord,
+    SourceCollectionRecord as SourceCollectionRecord,
+    SourceFolderPageRecord as SourceFolderPageRecord,
+    SourceFolderRecord as SourceFolderRecord,
+    SourceOrganizationRecord as SourceOrganizationRecord,
+    SourceSetRecord as SourceSetRecord,
+    SpeakerMappingRecord as SpeakerMappingRecord,
+    TranscriptSegmentRecord as TranscriptSegmentRecord,
+    UploadItemRecord as UploadItemRecord,
+    UploadSessionRecord as UploadSessionRecord,
+    WorkspaceProblem as WorkspaceProblem,
+    is_full_text_synthesis as is_full_text_synthesis,
+)
 
 _SLUG = re.compile(r"^m-[0-9a-f]{12}$")
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9-]{15,80}$")
