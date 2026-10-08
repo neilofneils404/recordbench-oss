@@ -74,7 +74,11 @@ Routing precedence is:
    as `all documents` needs an enumerative continuation (`about`, `mentioning`,
    `containing`, `that mentions`, and similar cues), or must stand alone.
    Statements such as `All documents agree` and `Every report is false` remain
-   questions.
+   questions. Retrieval verbs must begin a positive request, optionally with
+   `please` or `can/could/would/will you`; `check`, `review`, and `enumerate`
+   are supported alongside `find` and `list`. A population phrase can also
+   follow `I need` or `I want`. Questions, negations, and conditional instructions
+   that merely mention an enumeration do not qualify through that mention.
 3. `question` otherwise, including empty input, whose reason says nothing was
    typed. Parse failures fall through to these natural-language rules, so an
    unbalanced quote alone does not select exact search.
