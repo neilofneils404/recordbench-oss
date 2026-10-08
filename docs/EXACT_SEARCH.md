@@ -71,7 +71,13 @@ Routing precedence is:
    `check every source`, or `I need all records mentioning bicycles`. Retrieval
    verbs must begin the request, optionally with `please` before or after
    `can/could/would/will you`; `review` and `enumerate` are also supported.
-   `I need` and `I want` can introduce a population directly. A bare population
+   `I need` and `I want` can introduce a population directly only when it ends
+   the request or is followed by a supported filter such as `about`, `with`,
+   or `that mentions`. Other operations such as `I need all documents deleted`
+   remain questions. Populations include generic records and supported media
+   nouns (PDFs, videos, images, photographs, spreadsheets, workbooks, audio),
+   including forms such as `all audio files` and `every matching PDF document`.
+   A bare population
    must stand alone (`all documents`, `every report?`). Filtered bare phrases
    such as `all documents about bicycles` remain questions: without a positive
    request cue, they cannot reliably be distinguished from the subject of a
@@ -88,6 +94,11 @@ and punctuation rules. For example, `What does "red bicycle" mean` is `exact`,
 but `What does "red bicycle" mean?` is `question` because the whole input fails
 to parse. `list all documents with "red` is `every_source` after parsing fails.
 The helper does not extract or repair fragments of a malformed query.
+The same precedence applies to natural wording containing Boolean operators:
+`List each and every document` and `I need each and every record` are `exact`
+because the parser recognizes `and`. Adding terminal `?` or `.` makes parsing
+fail, so their population requests fall through to `every_source`. There is no
+natural-language exception that bypasses valid parser-owned exact syntax.
 
 `tests/test_ask_router.py` covers synthetic intent examples, ambiguous inputs,
 precedence, immutable decisions and explanations. This foundation does not
