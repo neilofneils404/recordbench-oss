@@ -123,6 +123,25 @@ def test_serialized_plan_retains_original_and_version_and_roundtrips_meaning():
         assert again.matches_units([text]) == query.matches_units([text])
 
 
+def test_explicit_and_provenance_preserves_matching_and_serialized_semantics():
+    explicit = parse_query("red AND bicycle")
+    implicit = parse_query("red bicycle")
+    assert explicit.expression.explicit is True
+    assert implicit.expression.explicit is False
+    assert explicit.expression == implicit.expression
+    assert hash(explicit.expression) == hash(implicit.expression)
+    assert explicit.to_dict()["expression"] == implicit.to_dict()["expression"]
+    assert explicit.normalized == implicit.normalized
+    for text in ["red bicycle", "red", "bicycle", "neutral"]:
+        assert explicit.matches_units([text]) == implicit.matches_units([text])
+
+
+def test_explicit_and_provenance_survives_nested_implicit_conjunctions():
+    parsed = parse_query("red (blue AND bicycle)")
+    assert parsed.expression.explicit is False
+    assert parsed.expression.operands[1].explicit is True
+
+
 def test_bounded_arbitrary_input_never_recurses_unchecked_or_silently_crashes():
     rng = random.Random(19)
     alphabet = 'red AND OR NOT()"*?-:/\\\u202e'

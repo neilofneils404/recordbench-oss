@@ -52,6 +52,60 @@ backend contract, not executable SQL and not permission to access a source.
 Normalized expressions omit redundant grouping and use implicit AND so
 serialization does not add grammar depth or tokens at those input limits.
 
+## Ask intent classification
+
+`case_intelligence.ask_router.classify(text)` is a pure helper for a future
+shared Ask entry point. It returns a frozen `RouteDecision(kind, reason)` with
+one short reviewer-facing explanation. It performs no search, model call or I/O,
+and is not connected to a UI or HTTP route.
+
+Routing precedence is:
+
+1. `exact` when the trimmed input successfully parses and its structure contains
+   a quoted phrase, explicit Boolean operator or proximity expression. Adjacent
+   plain words and grouping alone remain questions. The parser retains explicit
+   `AND` provenance on conjunctions; that marker does not change expression
+   equality, hashing, normalization, serialized plans or matching semantics.
+2. `every_source` for case-insensitive positive requests to enumerate matching
+   records, such as `find every email`, `list all`, `show me all of the reports`,
+   `check every source`, or `I need to find all records mentioning bicycles`. Retrieval
+   verbs must begin the request, optionally with `please` before or after
+   `can/could/would/will you`; `review` and `enumerate` are also supported.
+   `I need` and `I want` can introduce a population directly only when it ends
+   the request. Filtered populations require a retrieval verb, including forms
+   such as `I need to find` or `I want you to list`. This avoids guessing whether
+   a suffix requests collection or another operation: `I need all documents
+   about bicycles deleted` remains a question. Populations include generic
+   records, media nouns and every extension advertised by the source upload UI,
+   including forms such as `all audio files`, `every matching PDF document`,
+   `all DOCX files`, `every .xlsx file`, and `all PNGs`.
+   A bare population
+   must stand alone (`all documents`, `every report?`). Filtered bare phrases
+   such as `all documents about bicycles` remain questions: without a retrieval
+   verb, they cannot reliably be distinguished from the subject of a
+   statement such as `All documents about bicycles agree`. This conservative
+   boundary avoids guessing from a verb list; add `List` or `I need to find` to request
+   enumeration. Casual uses of `all`, interrogative wrappers, negations, and
+   conditional mentions do not qualify through an incidental retrieval phrase.
+3. `question` otherwise, including empty input, whose reason says nothing was
+   typed. Parse failures fall through to these natural-language rules, so an
+   unbalanced quote alone does not select exact search.
+
+The existing parser is the sole authority on exact syntax, including its limits
+and punctuation rules. For example, `What does "red bicycle" mean` is `exact`,
+but `What does "red bicycle" mean?` is `question` because the whole input fails
+to parse. `list all documents with "red` is `every_source` after parsing fails.
+The helper does not extract or repair fragments of a malformed query.
+The same precedence applies to natural wording containing Boolean operators:
+`List each and every document` and `I need each and every record` are `exact`
+because the parser recognizes `and`. Adding terminal `?` or `.` makes parsing
+fail, so their population requests fall through to `every_source`. There is no
+natural-language exception that bypasses valid parser-owned exact syntax.
+
+`tests/test_ask_router.py` covers synthetic intent examples, ambiguous inputs,
+precedence, immutable decisions and explanations. This foundation does not
+claim that enumeration, source coverage or cited answers have run.
+
 ## Known-answer corpus and validation
 
 `tests/fixtures/synthetic/product-foundation/v1/corpus.json` contains invented
