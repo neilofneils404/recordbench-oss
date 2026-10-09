@@ -5,8 +5,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from typing import Callable, Iterable
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
+from .ask_router import classify
 from .store_records import MatterRecord
 from .workspace_store import AUTOMATIC_DISCOVERY_PRINCIPAL, WorkspaceProblem
 
@@ -17,6 +18,8 @@ MAX_ROWS = 100_000
 MAX_DATE_MENTIONS = 5_000
 PAGE_SIZE = 100
 SOURCE_LINK_LIMIT = 3
+MAX_QUESTIONS = 5
+MAX_QUESTION_CHARS = 2_000
 
 
 @dataclass(frozen=True)
@@ -60,14 +63,76 @@ class BriefingSection:
 
 
 @dataclass(frozen=True)
+class SuggestedQuestion:
+    label: str
+    text: str
+    links: tuple[BriefingLink, ...]
+
+
+@dataclass(frozen=True)
 class Briefing:
     matter_id: str
     matter_slug: str
     sections: tuple[BriefingSection, ...]
     coverage: tuple[BriefingLine, ...]
+    questions: tuple[SuggestedQuestion, ...] = ()
 
     def section(self, key: str) -> BriefingSection:
         return next(section for section in self.sections if section.key == key)
+
+
+def _questions(matter_slug: str, sections: tuple[BriefingSection, ...]) -> tuple[SuggestedQuestion, ...]:
+    """Round-robin current person/place/date inputs, without pairing subjects.
+
+    Use only the displayed D1 ranks and their current source links. Original
+    names and stated dates stay intact; unsuitable text is skipped, never
+    shortened or rewritten. Canonical deduplication does not change the text.
+    """
+    root = "/matters/" + matter_slug
+    buckets = {kind: [] for kind in ("person", "place", "mentioned_date")}
+    for section in sections:
+        for line in section.lines:
+            if (line.kind not in buckets or section.key != ("dates" if line.kind == "mentioned_date" else "people_places")
+                    or not line.suggested or not line.count or line.count < 0
+                    or not isinstance(line.value, str) or not line.value.strip() or not line.value.isprintable()):
+                continue
+            # D1 emits passage links only for metadata-checked current support;
+            # retained entity references and chronology links cannot qualify.
+            supported = False
+            for link in line.links:
+                url = urlsplit(link.href)
+                if (not url.scheme and not url.netloc and url.path == root and url.fragment == "support-pane"
+                        and any(token.strip() for token in parse_qs(url.query).get("support", ()))):
+                    supported = True
+                    break
+            if not supported:
+                continue
+            subject = "the mentioned date " + line.value if line.kind == "mentioned_date" else line.value
+            text = f"What do the records say about {subject}?"
+            if (len(text) > MAX_QUESTION_CHARS or classify(line.value).kind != "question"
+                    or classify(text).kind != "question"):
+                continue
+            buckets[line.kind].append((line, text))
+    ranked = [iter(sorted(rows, key=lambda item: (-item[0].count, item[0].value,
+              tuple((link.href, link.label) for link in item[0].links)))) for rows in buckets.values()]
+    questions, seen = [], set()
+    while len(questions) < MAX_QUESTIONS:
+        before = len(questions)
+        for rows in ranked:
+            for line, text in rows:
+                # Canonicalize the structured subject, not the rendered text;
+                # the fixed template's final punctuation must not retain spaces.
+                key = (("the mentioned date " if line.kind == "mentioned_date" else "")
+                       + " ".join(line.value.split())).casefold()
+                if key not in seen:
+                    questions.append(SuggestedQuestion("Suggested", text, line.links))
+                    seen.add(key)
+                    break
+            if len(questions) == MAX_QUESTIONS:
+                break
+        if len(questions) == before:
+            break
+    return tuple(questions)
 
 
 def _link(base, label, path="/setup", **query):
@@ -360,4 +425,4 @@ def build_briefing(
             raise WorkspaceProblem("Matter records changed while the briefing was read. Try again.")
     coverage.append(BriefingLine("source_link_coverage", "", f"Each count covers its complete group; up to {SOURCE_LINK_LIMIT} example source links are shown alongside the existing review pages.", (_link(base, "Review all sources", view="list"),)))
     coverage.append(BriefingLine("extraction_coverage", "", "Readiness and recorded failures do not establish that every page, image, attachment or media segment was read. Review each source's extraction and coverage notices.", (_link(base, "Review source coverage", view="list"),)))
-    return Briefing(matter.matter_id, matter.slug, sections, tuple(coverage))
+    return Briefing(matter.matter_id, matter.slug, sections, tuple(coverage), _questions(matter.slug, sections))
