@@ -12,6 +12,13 @@ full-text synthesis adapter, graph exploration, Linux CPU B-lite and trusted
 matter continuity A, B and C are landed.
 Historical receipts below retain their original scope and evidence.
 
+**Harbor Street demo (local implementation, not landed):**
+[`make demo`](../README.md#try-the-demo) seeds a disposable, offline preview through
+ordinary folder intake with synthetic records and automatic discovery. Draft PR
+publication is authorized; hosted review and merge are not requested. The Home
+briefing and one-box integration await their upstream implementations; merge main
+and verify every briefing section when `briefing.py` lands.
+
 **Ask routing foundation (approved; local implementation, not landed):**
 [Pure intent classification](EXACT_SEARCH.md#ask-intent-classification) selects
 exact search, every-source review or a question from typed text, with a short
