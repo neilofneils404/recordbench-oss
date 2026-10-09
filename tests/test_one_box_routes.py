@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.testclient import TestClient
 import pytest
 
@@ -42,7 +42,8 @@ def unit_app(monkeypatch, *, flag='1', ready=True, answer_response=None):
         return answer_response if answer_response is not None else RedirectResponse(
             f'/matters/{SLUG}?conversation=generated-conversation#matter-question', status_code=303)
     install_one_box_routes(app, authorized_matter=authorized, require_csrf=csrf, templates=templates,
-        ask=ask, readiness_for=lambda matter_id: SimpleNamespace(can_query=ready))
+        ask=ask, readiness_for=lambda matter_id: SimpleNamespace(can_query=ready),
+        home=lambda **kwargs: HTMLResponse(kwargs['error']))
     return app, calls, templates
 
 
@@ -273,3 +274,27 @@ def test_question_retry_reuses_canonical_request_key_and_saved_answer(app_client
     assert first.status_code == second.status_code == 303
     assert parse_qs(urlsplit(first.headers['location']).query)['conversation'] == parse_qs(urlsplit(second.headers['location']).query)['conversation']
     assert bench.workspace.connection.execute('SELECT count(*) FROM workbench_answer_job WHERE matter_id=?', (matter.matter_id,)).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize('kind', tuple(TEXTS))
+@pytest.mark.parametrize('character', ['漢', '😀'])
+def test_encoded_unicode_limit_retains_draft_without_redirect_or_work(app_client, kind, character):
+    client, bench, matter = app_client
+    text = character * (512 if kind == 'exact' else 2000)
+    response = submit(client, text, slug=matter.slug, route=kind)
+    assert response.status_code == 422 and 'location' not in response.headers
+    assert 'Shorten it' in response.text and text in unescape(response.text)
+    assert bench.workspace.connection.execute('SELECT count(*) FROM workbench_answer_job').fetchone()[0] == 0
+    assert not bench.workspace.review_criteria(matter.matter_id, WEB_ACTOR)
+    assert not bench.workspace.review_runs(matter.matter_id, WEB_ACTOR)
+
+
+def test_encoded_limit_accepts_short_unicode_and_long_ascii(app_client):
+    from case_intelligence.one_box_routes import MAX_REDIRECT_BYTES
+    client, bench, matter = app_client
+    for text, kind in [('漢' * 350, 'exact'), ('😀' * 500, 'every_source'), ('x' * 2000, 'every_source')]:
+        response = submit(client, text, slug=matter.slug, route=kind)
+        assert response.status_code == 303
+        assert len(response.headers['location'].encode('ascii')) <= MAX_REDIRECT_BYTES
+        assert parse_qs(urlsplit(response.headers['location']).query)['one_box_text'] == [text]
+        assert client.get(response.headers['location']).status_code == 200

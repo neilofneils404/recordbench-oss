@@ -12,6 +12,8 @@ from . import ask_router
 from .exact_search import MAX_QUERY_CHARS
 
 MAX_ONE_BOX_CHARS = 2_000
+# Leave room below the gateway's default 8 KiB request line for HTTP syntax.
+MAX_REDIRECT_BYTES = 7_000
 ROUTE_LABELS = {
     "exact": "Exact search",
     "question": "Cited answer",
@@ -39,7 +41,7 @@ def _answer_redirect(response, slug, text, kind):
     return response
 
 
-def install_one_box_routes(app, *, authorized_matter, require_csrf, templates, ask, readiness_for):
+def install_one_box_routes(app, *, authorized_matter, require_csrf, templates, ask, readiness_for, home):
     """Install one adapter; all answering remains in the supplied Ask handler.
 
     The feature is read once at application creation, using the existing
@@ -53,12 +55,15 @@ def install_one_box_routes(app, *, authorized_matter, require_csrf, templates, a
     def route_context(request, matter):
         if not enabled or matter is None:
             return None
-        text = request.query_params.get("one_box_text", "")
-        kind = request.query_params.get("one_box_kind", "")
+        draft = getattr(request.state, "one_box_draft", None)
+        text, kind = draft if draft is not None else (
+            request.query_params.get("one_box_text", ""), request.query_params.get("one_box_kind", ""))
         if kind not in ROUTE_LABELS or not text.strip() or len(text) > MAX_ONE_BOX_CHARS:
             return None
         root = f"/matters/{matter.slug}"
         allowed = {root, root + "/exact-search", root + "/full-review", root + "/home"}
+        if draft is not None:
+            allowed.add(root + "/one-box")
         if request.url.path not in allowed:
             return None
         decision = ask_router.classify(text)
@@ -94,11 +99,27 @@ def install_one_box_routes(app, *, authorized_matter, require_csrf, templates, a
         kind = route or decision.kind
 
         def recover(message):
-            return RedirectResponse(_destination(slug, "/home", question, kind, error=message),
+            destination = _destination(slug, "/home", question, kind, error=message)
+            if len(destination.encode("ascii")) > MAX_REDIRECT_BYTES:
+                return render_recovery(message)
+            return RedirectResponse(destination,
                                     status_code=303, headers={"Cache-Control": "no-store"})
+
+        def render_recovery(message):
+            request.state.one_box_draft = (question, kind)
+            response = home(request=request, slug=slug, notice="", error=message)
+            response.status_code = 422
+            return response
 
         if not question.strip():
             return recover("Enter a question, search words or a description of the records you want to find.")
+        # Check the actual encoded text, including its duplicate exact-search q.
+        # Reserve space for canonical answer IDs and recovery messages. Refuse
+        # before queueing work and render the unchanged draft without a redirect.
+        candidate = _destination(slug, "/exact-search" if kind == "exact" else "/full-review",
+                                 question, kind, **({"q": question} if kind == "exact" else {}))
+        if len(candidate.encode("ascii")) + 512 > MAX_REDIRECT_BYTES:
+            return render_recovery("This text is too long for a safe destination URL after encoding. Shorten it and try again; your text is unchanged.")
         readiness = readiness_for(matter.matter_id)
         if not readiness.can_query:
             return recover("Sources are not ready to query. Review source preparation, then try again.")
