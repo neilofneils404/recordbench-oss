@@ -57,6 +57,17 @@ Actionlint and the generic publication scan passed again. The superseded hosted
 runs were cancelled once the failing contract was identified; they are not
 claimed as passes. Fresh full Quality and hosted review outcomes are recorded on PR #105.
 
+## Source size ratchet
+
+`tests/test_source_size_ratchet.py` checks Python modules under `src/` as part
+of `make check`. Modules at or below 1,500 lines can grow or shrink freely and
+need no entry in `tests/snapshots/source_line_counts.json`. The baseline records
+only existing oversized modules: they may shrink without editing it, but may
+not grow beyond their recorded count. Lowering a baseline after a reduction is
+optional; never raise it to admit growth. A module crossing 1,500 lines must be
+split into smaller modules. Remove baseline entries when their files are deleted.
+Counts include comments, blank lines and a final line without a newline.
+
 ## Verify a documentation-only run
 
 For a qualifying same-repository PR, inspect both the branch-push and pull-request
