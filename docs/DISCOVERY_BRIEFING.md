@@ -3,8 +3,7 @@
 `case_intelligence.briefing.build_briefing` assembles an immutable `Briefing`
 from an authorized matter's existing records. This is an assembler API only;
 it adds no Home component, route, feature flag, generated text, model call,
-storage or schema. It never reads original bytes or extracted text. Suggested
-questions are outside this increment.
+storage or schema. It never reads original bytes or extracted text.
 
 Callers supply the existing workspace, ordinary `EntityService`, and
 `IntakeReceipts` for that workspace. The entity service must have its existing
@@ -49,6 +48,34 @@ Date-draft eligibility preserves that service's existing human-review statuses.
 The source-linked coverage caveat also states that readiness and recorded
 failures do not establish complete reading of every page, image, attachment or
 media segment; existing source extraction notices remain authoritative.
+
+## Suggested questions
+
+`Briefing.questions` contains up to five immutable questions, each explicitly
+labeled **Suggested** and carrying its input row's source links. These use fixed
+templates and already-read briefing data; no model, extra source read, saved
+question or UI is added.
+
+Selection rotates through people, places and mentioned dates in that order.
+Within each group, rows sort by descending mention count, then literal subject
+and source link as stable tie breakers. This selects prompts, not a chronological
+sequence. Person/place questions ask
+“What do the records say about …?” Date questions ask “What do the records say
+about the mentioned date …?” Ambiguous date spellings remain literal. Questions
+do not combine independently ranked names and dates or assume an event occurred.
+
+Only positive-count Suggested rows with an available same-matter passage link
+qualify. Retained historical references alone are insufficient. Empty subjects,
+non-printing characters and completed questions exceeding 2,000 characters are
+excluded without truncating source labels. Candidates that the existing Ask
+router would treat as another task are excluded too, checking both the subject
+and completed question; embedded quotes or operators must not silently change a
+suggested question into another task.
+
+Whitespace-normalized, case-insensitive subjects within each fixed template are
+deduplicated before applying the five-question cap. A duplicate or ineligible row does not consume a
+slot. Sparse matters may therefore have fewer questions or none. Tests cover
+selection, deterministic ordering, deduplication, limits and unavailable support.
 
 ## Document-date availability
 
