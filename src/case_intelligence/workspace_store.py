@@ -18,6 +18,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 from .contracts import validate_relative_path
 from .derived_text import presentation_text
 from .source_locations import SourcePreflight
+from .store.answer_scope import AnswerScopeMixin
 # Re-export record types, exceptions, and the shared helper for existing importers.
 from .store_records import (
     AnalysisRunRecord as AnalysisRunRecord,
@@ -157,7 +158,7 @@ _ANALYSIS_RESTART_MESSAGE = (
 )
 
 
-class WorkspaceStore:
+class WorkspaceStore(AnswerScopeMixin):
     """Small SQLite control store; source bytes remain in per-matter stores."""
 
     def __init__(
@@ -7958,15 +7959,6 @@ class WorkspaceStore:
                 "UPDATE workbench_matter SET updated_at=? WHERE matter_id=?", (self._now(), matter_id),
             )
         return current
-
-    def answer_source_set_id(self, matter_id: str, job_id: str) -> str | None:
-        with self._lock:
-            row = self.connection.execute(
-                "SELECT source_set_id FROM workbench_answer_source_scope "
-                "WHERE matter_id=? AND job_id=?",
-                (matter_id, job_id),
-            ).fetchone()
-        return row["source_set_id"] if row is not None else None
 
     def answer_notebook_context(
         self, matter_id: str, job_id: str

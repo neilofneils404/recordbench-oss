@@ -186,6 +186,75 @@ def test_recorded_scope_without_binding_does_not_fall_back_to_all_sources(app_cl
     assert template_helper(bench)['deeper_investigation_offer'](None, matter, message) is None
 
 
+def test_store_basis_enforces_member_matter_and_conversation_boundaries(app_client):
+    _client, bench, matter, document = app_client
+    scope = bench.workspace.create_source_set(matter.matter_id, 'Synthetic scoped answer', [document.document_id], WEB_ACTOR)
+    conversation, _job, message = save_answer(bench, matter, scope=scope.source_set_id)
+    read = bench.workspace.answer_investigation_basis
+    basis = read(matter.matter_id, WEB_ACTOR, conversation.conversation_id, message.message_id)
+    assert (basis.question, basis.source_set_id, basis.scope_available, basis.can_query, basis.has_active_work) == (
+        QUESTION, scope.source_set_id, True, True, False)
+    assert bench.workspace.answer_source_set_id(matter.matter_id, _job.job_id) == scope.source_set_id
+    other_matter = bench.create_matter('Synthetic other investigation', 'Synthetic fixture', WEB_ACTOR)
+    other_conversation = bench.workspace.create_conversation(matter.matter_id)
+    with pytest.raises(KeyError):
+        read(matter.matter_id, 'synthetic-nonmember', conversation.conversation_id, message.message_id)
+    with pytest.raises(KeyError):
+        read(other_matter.matter_id, WEB_ACTOR, conversation.conversation_id, message.message_id)
+    assert read(matter.matter_id, WEB_ACTOR, other_conversation.conversation_id, message.message_id) is None
+    assert read(matter.matter_id, WEB_ACTOR, conversation.conversation_id, 'missing-message') is None
+    assert bench.workspace.answer_source_set_id(other_matter.matter_id, _job.job_id) is None
+
+
+@pytest.mark.parametrize('state', ['queued', 'running', 'failed', 'cancelled'])
+def test_store_basis_requires_a_completed_job(app_client, state):
+    _client, bench, matter, _document = app_client
+    conversation, job, message = save_answer(bench, matter)
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_answer_job SET state=? WHERE job_id=?', (state, job.job_id))
+    assert bench.workspace.answer_investigation_basis(
+        matter.matter_id, WEB_ACTOR, conversation.conversation_id, message.message_id) is None
+
+
+@pytest.mark.parametrize('length', [0, 2_000, 2_001])
+def test_store_basis_bounds_question_without_truncating(app_client, length):
+    _client, bench, matter, _document = app_client
+    conversation, job, message = save_answer(bench, matter)
+    question = 'x' * length
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute('UPDATE workbench_answer_job SET question=? WHERE job_id=?', (question, job.job_id))
+        bench.workspace.connection.execute('UPDATE workbench_message SET content=? WHERE message_id=?', (question, job.question_message_id))
+    basis = bench.workspace.answer_investigation_basis(matter.matter_id, WEB_ACTOR, conversation.conversation_id, message.message_id)
+    if length == 2_000:
+        assert basis.question == question
+    else:
+        assert basis is None
+
+
+def test_template_offer_uses_only_public_store_basis(app_client):
+    _client, bench, matter, _document = app_client
+    _conversation, _job, message = save_answer(bench, matter)
+    facade = SimpleNamespace(answer_investigation_basis=bench.workspace.answer_investigation_basis)
+    result = template_helper(SimpleNamespace(workspace=facade, generator=bench.generator))['deeper_investigation_offer'](
+        None, matter, message)
+    assert result['question'] == QUESTION and not result['disabled']
+
+
+def test_store_basis_does_not_create_a_conversation_when_none_is_active(app_client):
+    _client, bench, matter, _document = app_client
+    conversation, _job, message = save_answer(bench, matter)
+    with bench.workspace._lock, bench.workspace.connection:
+        bench.workspace.connection.execute(
+            "UPDATE workbench_conversation_organization SET state='archived',archived_at=updated_at,archived_by=? "
+            "WHERE matter_id=?", (WEB_ACTOR, matter.matter_id))
+    before = bench.workspace.connection.total_changes
+    with pytest.raises(KeyError):
+        bench.workspace.answer_investigation_basis(matter.matter_id, WEB_ACTOR, conversation.conversation_id, message.message_id)
+    assert bench.workspace.connection.total_changes == before
+    assert bench.workspace.conversations(matter.matter_id, include_archived=False) == ()
+    assert template_helper(bench)['deeper_investigation_offer'](None, matter, message) is None
+
+
 def test_authorized_teammate_gets_own_retry_identity_and_no_optional_context_is_forwarded(app_client):
     _client, bench, matter, _document = app_client
     payload = {**CaseIntelligenceWorkbench._answer_payload(unsupported(), {}), 'notebook_context': {'mode': 'confirmed'}}

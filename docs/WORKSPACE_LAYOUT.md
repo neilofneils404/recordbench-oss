@@ -95,6 +95,9 @@ no schema changes are needed. The offer resolves the original question through
 its completed answer job and retains that job's source set. It never infers
 answerability from response wording or citation counts, substitutes another
 team member's identity, or broadens an unavailable source scope.
+`WorkspaceStore.answer_investigation_basis` owns the member-scoped, read-only
+question binding and availability checks; the shared template helper uses that
+public result without accessing the database connection or its lock.
 
 Nothing starts until the reviewer clicks. The native form posts the original
 question and conversation with `review_task=research` to the existing

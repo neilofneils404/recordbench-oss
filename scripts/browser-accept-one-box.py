@@ -24,6 +24,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -305,7 +306,11 @@ def main(argv=None):
             destination("", UNSUPPORTED_QUESTION)
             wait.until(lambda _: js("return !!document.querySelector('[data-deeper-investigation]')"))
             assert generator.calls == 2
-            assert "I could not find enough support" in find(".answer-not-supported").text
+            # Completion reloads the one-box conversation. The offer may be
+            # visible in the retiring document, so re-find the answer on stale
+            # reads while still requiring the same unsupported-answer text.
+            wait.until(EC.text_to_be_present_in_element(
+                (By.CSS_SELECTOR, ".answer-not-supported"), "I could not find enough support"))
             assert bench.workspace.research_jobs(matter.matter_id, ACTOR) == ()
             unsupported_url = driver.current_url
             conversation_id = parse_qs(urlsplit(unsupported_url).query)["conversation"][0]
