@@ -1,6 +1,29 @@
 """Report operations on the shared workspace connection and lock."""
 from __future__ import annotations
 
+import re
+import sqlite3
+import uuid
+from contextlib import nullcontext
+from datetime import datetime, timedelta
+from typing import Mapping, Sequence
+
+from . import (
+    MAX_REPORT_CITATION_EXCERPT_CHARS,
+    MAX_REPORT_SECTION_CITATIONS,
+    _MEDIA_CLIP,
+    _REPORT,
+    _REPORT_SECTION,
+    _SOURCE_DOCUMENT,
+)
+from ..store_records import (
+    ReportCitationRecord,
+    ReportEditConflict,
+    ReportRecord,
+    ReportSectionRecord,
+    WorkspaceProblem,
+)
+
 
 class ReportsStoreMixin:
     """State-free Report behavior supplied by WorkspaceStore."""
