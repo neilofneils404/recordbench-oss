@@ -70,11 +70,13 @@ GitHub rejects the public address, use a normal protected fast-forward of the
 reviewed head when possible; do not remove branch protections or silently retry
 with the account default.
 
-The maintainer approved the existing author attribution on squash merge
-`624fbe4dcfbae093c442955bfb6cc4b6be6fff3e` for the October 9 merge train.
-Its recorded disposition covers only that exact commit and identity digest.
+The maintainer approved the existing author attribution on squash merges
+`624fbe4dcfbae093c442955bfb6cc4b6be6fff3e` and
+`6735691a938e42173c6c7a309b700be2e19c0668` for the October 9 merge train.
+Each recorded disposition covers only its exact commit and identity digest.
 It does not permit email addresses in content or messages, cover other commits,
-or relax operator deny checks. Account email and privacy settings are unchanged.
+or relax operator deny checks. The recorded dispositions do not change account
+email or privacy settings.
 
 ## Prevent disclosure before publishing
 

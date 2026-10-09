@@ -24,6 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # Owner-reviewed public attribution; exact commit and name/email digest only.
 # This suppresses only the email rule, never deny terms or content checks.
 REVIEWED_COMMIT_EMAIL_IDENTITIES = {
+    "6735691a938e42173c6c7a309b700be2e19c0668": {
+        "33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b",
+    },
     "624fbe4dcfbae093c442955bfb6cc4b6be6fff3e": {
         "33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b",
     },

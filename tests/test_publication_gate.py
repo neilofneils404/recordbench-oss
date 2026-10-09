@@ -464,6 +464,9 @@ def test_reviewed_personal_baseline_does_not_cover_ancestors(tmp_path, monkeypat
 
 
 @pytest.mark.parametrize('commit, digest, neighboring_commit', [
+    ('6735691a938e42173c6c7a309b700be2e19c0668',
+     '33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b',
+     '6735691a938e42173c6c7a309b700be2e19c0660'),
     ('a8f4fbe36439a374746f9c2b2ca9660d89793044',
      '33a1b1226f681d54071f794ee5d2b2cb226c4d91efbe954997eab68adcd3f35b',
      'a8f4fbe36439a374746f9c2b2ca9660d89793045'),
