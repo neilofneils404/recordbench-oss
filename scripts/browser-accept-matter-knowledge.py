@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -138,6 +139,7 @@ def main():
     parser.add_argument('--chromedriver', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline-js', help='Serve an earlier committed frontend only in this synthetic app.')
+    parser.add_argument('--briefing', action='store_true', help='Enable the optional Home briefing in this synthetic app.')
     args = parser.parse_args()
     output = args.output.resolve()
     # The shared CI runner creates an empty output directory before dispatch.
@@ -146,6 +148,8 @@ def main():
     if any(output.iterdir()):
         raise ValueError('Choose an empty output directory; existing results were preserved.')
     isolate_environment()
+    if args.briefing:
+        os.environ['CASE_INTELLIGENCE_BRIEFING'] = '1'
     checks = []
     driver = None
     def record(message):
@@ -213,6 +217,8 @@ def main():
                 })();
             """})['identifier']
             driver.get(base + path)
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'main')))
+            assert bool(driver.find_elements(By.CSS_SELECTOR, 'script[src*="/briefing.js"]')) == args.briefing
             wait.until(lambda current: current.execute_script('return !!window.__readinessFocusFixture.pending'))
             actions = '.matter-readiness-actions'
             def primary():
@@ -380,7 +386,8 @@ def main():
             no_overflow()
             record('390-pixel layout and real pointer source-return navigation work without horizontal page overflow')
             (output / 'receipt.json').write_text(json.dumps(dict(synthetic_only=True, passed=True,
-                checks=checks, javascript_baseline=args.baseline_js, browser=driver.capabilities.get('browserVersion'),
+                checks=checks, javascript_baseline=args.baseline_js, briefing_enabled=args.briefing,
+                browser=driver.capabilities.get('browserVersion'),
                 screenshots=sorted(file.name for file in output.glob('*.png'))), indent=2))
         except Exception as exc:
             if driver:

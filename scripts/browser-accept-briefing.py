@@ -265,7 +265,10 @@ def main(argv=None):
                         .catch(e=>done({error:String(e)}));""", href)
                     assert response.get("status") == 200 and "text/html" in response.get("type", ""), (href, response.get("status"))
                     driver.get(base + href)
-                    assert driver.find_elements(By.CSS_SELECTOR, "main"), href
+                    # Chrome may acknowledge navigation before the destination's
+                    # DOM is observable. Keep the landmark requirement and wait
+                    # for the real page, including filtered source-list links.
+                    wait.until(lambda _: driver.find_elements(By.CSS_SELECTOR, "main"), href)
                     assert "Internal Server Error" not in find("body").text
                     if "/sources/" in urlsplit(href).path:
                         assert label in find("main").text
@@ -376,6 +379,7 @@ def main(argv=None):
                 location = urlsplit(driver.current_url)
                 report["failure_location"] = location.path + ("?" + location.query if location.query else "")
                 driver.save_screenshot(str(args.output / "failure.png"))
+                (args.output / "failure.html").write_text(driver.page_source)
             except Exception as capture_error:
                 report["screenshot_error"] = type(capture_error).__name__
         (args.output / "receipt.json").write_text(json.dumps(report, indent=2) + "\n")

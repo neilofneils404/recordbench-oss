@@ -116,6 +116,10 @@ a briefing under another person's membership.
 boundaries, source links and graceful refusal. The registered
 `scripts/browser-accept-briefing.py` journey checks processing transitions,
 source links, question selection, both composer variants and a narrow viewport.
+Each linked destination must return HTML 200 and expose its main landmark after
+navigation; failures retain both a screenshot and page source. Run
+`scripts/browser-accept-matter-knowledge.py` with `--briefing` to check the
+existing Case notes journey with this flag enabled after fixture isolation.
 
 ## Scroll regions
 
