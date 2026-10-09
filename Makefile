@@ -2,10 +2,13 @@ PYTHON ?= .venv/bin/python
 SYSTEM_PYTHON ?= python3.12
 .DEFAULT_GOAL := test
 
-.PHONY: bootstrap check compile compose-check publication-check test test-transcription
+.PHONY: bootstrap check compile compose-check demo publication-check test test-transcription
 
 bootstrap:
 	"$(SYSTEM_PYTHON)" scripts/bootstrap-dev.py
+
+demo:
+	"$(PYTHON)" scripts/demo.py
 
 test:
 	"$(PYTHON)" -m pytest -q
