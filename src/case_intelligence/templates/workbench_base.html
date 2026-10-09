@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="{{ asset_url('workspace-layout.css') }}">
   <script src="{{ asset_url('case-intelligence.js') }}" defer></script>
   {% if one_box_enabled %}<link rel="stylesheet" href="{{ asset_url('one-box.css') }}"><script src="{{ asset_url('one-box.js') }}" defer></script>{% endif %}
+  {% if deeper_investigation_enabled %}<link rel="stylesheet" href="{{ asset_url('deeper-investigation.css') }}">{% endif %}
   {% block extra_head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}{% if active_matter %} matter-page{% endif %}{% if show_assistant_dock %} assistant-available{% endif %}" data-csrf-token="{{ csrf_token }}" data-assistant-default="{{ 'collapsed' if source_sequence is defined else assistant_default|default('open') }}">

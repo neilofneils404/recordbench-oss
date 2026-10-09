@@ -37,6 +37,7 @@ SOURCE_NAME = "Synthetic arrival ledger.txt"
 SOURCE_TEXT = "The amber bicycle arrived at noon."
 EXACT = '"amber bicycle"'
 QUESTION = "When did the amber bicycle arrive?"
+UNSUPPORTED_QUESTION = "Why did the amber bicycle arrive at noon?"
 EVERY_SOURCE = "Find every record about the amber bicycle."
 
 
@@ -46,8 +47,11 @@ class SyntheticAnswerGenerator:
     def __init__(self):
         self.calls = 0
 
-    def generate(self, *, evidence, **kwargs):
+    def generate(self, *, question, evidence, **kwargs):
         self.calls += 1
+        if question == UNSUPPORTED_QUESTION:
+            return {"answerable": False, "claims": [], "limitation": None,
+                    "missing_information": "The synthetic arrival record gives no reason."}
         return {"answerable": bool(evidence), "claims": [
             {"text": item.excerpt, "evidence_ids": [item.evidence_id]}
             for item in evidence[:1]], "limitation": None, "missing_information": ""}
@@ -68,6 +72,7 @@ def main(argv=None):
     prepare_output(args.output)
     isolate_environment()
     os.environ["CASE_INTELLIGENCE_ONE_BOX"] = "1"
+    os.environ["CASE_INTELLIGENCE_DEEPER_INVESTIGATION"] = "1"
     report = {"synthetic_only": True, "passed": False, "checks": []}
     checks = report["checks"]
     with tempfile.TemporaryDirectory(prefix="recordbench-one-box-") as temporary:
@@ -118,11 +123,19 @@ def main(argv=None):
                         const top=document.querySelector('.topbar')?.getBoundingClientRect().bottom || 0;
                         const dock=document.querySelector('[data-assistant-expand]');
                         const d=dock?.getBoundingClientRect();
-                        const bottom=d && dock.getClientRects().length && d.width>innerWidth/2
+                        let bottom=d && dock.getClientRects().length && d.width>innerWidth/2
                             && d.bottom>=innerHeight-2 ? d.top : innerHeight;
+                        const composer=e.closest('.deeper-investigation')
+                            && e.closest('.workspace-main')?.querySelector('.composer-wrap');
+                        const c=composer?.getBoundingClientRect();
+                        const s=getComputedStyle(e);
+                        const outline=c && s.outlineStyle!=='none'
+                            ? Math.max(0,(parseFloat(s.outlineWidth)||0)+(parseFloat(s.outlineOffset)||0)) : 0;
+                        if(c && composer.getClientRects().length) bottom=Math.min(bottom,c.top);
                         return {control:e.id || e.dataset.oneBoxKind || e.tagName,
                             focused:document.activeElement===e,focus_visible:e.matches(':focus-visible'),
                             top:r.top,bottom:r.bottom,left:r.left,right:r.right,
+                            focus_bottom:r.bottom+outline,composer_top:c?.top ?? null,
                             available_top:top,available_bottom:bottom,viewport_width:innerWidth,
                             scroll_y:scrollY,center_unobscured:e.contains(document.elementFromPoint(
                                 r.left+r.width/2,r.top+r.height/2))};""", element)
@@ -135,6 +148,7 @@ def main(argv=None):
                         and measurement["center_unobscured"]
                         and measurement["top"] >= measurement["available_top"] - 1
                         and measurement["bottom"] <= measurement["available_bottom"] + 1
+                        and measurement["focus_bottom"] <= measurement["available_bottom"] + 1
                         and measurement["left"] >= -1
                         and measurement["right"] <= measurement["viewport_width"] + 1)
 
@@ -259,6 +273,8 @@ def main(argv=None):
             destination("", QUESTION)
             wait.until(lambda _: js("return document.querySelector('.answer-claims')?.textContent.includes(arguments[0])", SOURCE_TEXT))
             assert generator.calls == 1
+            assert not driver.find_elements(By.CSS_SELECTOR, "[data-deeper-investigation]")
+            checks.append("A supported generated answer has no deeper-investigation offer")
             conversations = bench.workspace.conversations(matter.matter_id)
             messages = tuple(message for conversation in conversations
                 for message in bench.workspace.messages(matter.matter_id, conversation.conversation_id))
@@ -280,6 +296,54 @@ def main(argv=None):
             assert any(driver.find_element(By.ID, identifier).is_displayed()
                 and driver.find_element(By.ID, identifier).text.strip() for identifier in described)
             checks.append("An empty matter disables the box and submit control with a visible associated readiness hint")
+
+            # Retain the real research admission path and make its queued result
+            # deterministic. No research generation is needed to check consent.
+            bench.research.close()
+            bench.research = None
+            home_submit(UNSUPPORTED_QUESTION, keyboard=True)
+            destination("", UNSUPPORTED_QUESTION)
+            wait.until(lambda _: js("return !!document.querySelector('[data-deeper-investigation]')"))
+            assert generator.calls == 2
+            assert "I could not find enough support" in find(".answer-not-supported").text
+            assert bench.workspace.research_jobs(matter.matter_id, ACTOR) == ()
+            unsupported_url = driver.current_url
+            conversation_id = parse_qs(urlsplit(unsupported_url).query)["conversation"][0]
+            messages = bench.workspace.messages(matter.matter_id, conversation_id)
+            assert any(message.role == "user" and message.content == UNSUPPORTED_QUESTION for message in messages)
+            assert any(message.role == "assistant" and message.payload.get("kind") == "not-supported" for message in messages)
+            driver.refresh()
+            wait.until(lambda _: js("return !!document.querySelector('[data-deeper-investigation]')"))
+            offers = driver.find_elements(By.CSS_SELECTOR, "[data-deeper-investigation]")
+            assert len(offers) == 1
+            offer = offers[0]
+            assert urlsplit(offer.get_attribute("action")).path == prefix + "/ask"
+            assert offer.get_attribute("method").lower() == "post"
+            assert offer.find_element(By.CSS_SELECTOR, 'input[name="csrf_token"]').get_attribute("value")
+            assert offer.find_element(By.CSS_SELECTOR, 'input[name="question"]').get_attribute("value") == UNSUPPORTED_QUESTION
+            assert offer.find_element(By.CSS_SELECTOR, 'input[name="conversation"]').get_attribute("value") == conversation_id
+            assert offer.find_element(By.CSS_SELECTOR, '[name="review_task"]').get_attribute("value") == "research"
+            assert bench.workspace.research_jobs(matter.matter_id, ACTOR) == ()
+            assert generator.calls == 2
+            checks.append("A generator-declined answer retains the same question in one CSRF-protected offer; displaying and refreshing it starts no investigation")
+            button = offer.find_element(By.CSS_SELECTOR, 'button[type="submit"]')
+            assert button.text == "Investigate this more deeply"
+            keyboard_to(button)
+            no_overflow()
+            driver.save_screenshot(str(args.output / "deeper-investigation-offer-430.png"))
+            button.click()  # One native activation; no automatic or retried submit.
+            wait.until(lambda _: len(bench.workspace.research_jobs(matter.matter_id, ACTOR)) == 1)
+            wait.until(lambda _: js("return !!document.querySelector('.conversation-research-progress')"))
+            [job] = bench.workspace.research_jobs(matter.matter_id, ACTOR)
+            assert job.question == UNSUPPORTED_QUESTION and job.conversation_id == conversation_id
+            assert job.state == "queued" and job.actor_id == ACTOR
+            assert job.idempotency_key.startswith("research-request-")
+            assert UNSUPPORTED_QUESTION in find(".conversation-research-progress").text
+            driver.refresh()
+            wait.until(lambda _: js("return !!document.querySelector('.conversation-research-progress')"))
+            assert len(bench.workspace.research_jobs(matter.matter_id, ACTOR)) == 1
+            assert generator.calls == 2
+            checks.append("At 430 pixels, one native offer click queues exactly one canonical research job with the unchanged question and conversation; refreshing never resubmits it")
             report["passed"] = True
             (args.output / "receipt.json").write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(report))

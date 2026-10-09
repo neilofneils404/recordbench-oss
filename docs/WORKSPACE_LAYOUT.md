@@ -80,6 +80,35 @@ python scripts/browser-accept-one-box.py \
   --output /tmp/recordbench-one-box-acceptance
 ```
 
+## Offer to investigate a thin answer
+
+Set `CASE_INTELLIGENCE_DEEPER_INVESTIGATION=1` before starting the application
+to offer **Investigate this more deeply** under a saved answer when the generator
+explicitly returned `answerable: false`. The flag defaults off and uses the same
+`1`, `true`, `yes`, `on` values as the one box. Main conversation and Ask dock
+use the same offer. Supported answers, verification rejections, no-evidence
+responses, research results, and older answers without recorded provenance get
+no extra action.
+
+The verifier records an optional `generator_answerable: false` payload marker;
+no schema changes are needed. The offer resolves the original question through
+its completed answer job and retains that job's source set. It never infers
+answerability from response wording or citation counts, substitutes another
+team member's identity, or broadens an unavailable source scope.
+
+Nothing starts until the reviewer clicks. The native form posts the original
+question and conversation with `review_task=research` to the existing
+CSRF-protected Ask handler. Stable per-answer, per-reviewer request keys reuse
+the same saved investigation on retries. Existing membership, readiness, local
+answering availability, source scope and concurrent-work checks still apply.
+Saved context and case notes are not reused by research; the offer states this
+when they were supplied to the original answer.
+
+`tests/test_deeper_investigation.py` covers provenance, both presentations,
+source and question binding, authorization, and duplicate submission. The
+existing `scripts/browser-accept-one-box.py` journey also clicks the offer after
+an unsupported answer and confirms that no investigation starts automatically.
+
 ## Scroll regions
 
 Long right-hand content must not make left-hand controls unreachable:

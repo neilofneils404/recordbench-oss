@@ -441,6 +441,7 @@
                 {% else %}
                   <p class="answer-error">{{ message.content }}</p>
                 {% endif %}
+                {% include "workbench_deeper_investigation.html" %}
                 {% if message.payload.kind == 'generated' %}
                 <nav class="workflow-completion-bar answer-completion-bar" aria-label="Completed answer actions">
                   <span class="workflow-completion-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><span><strong>{{ 'Investigation ready' if message.payload.workflow == 'research' else 'Answer ready' }}</strong><small>Citations stay attached</small></span></span>
