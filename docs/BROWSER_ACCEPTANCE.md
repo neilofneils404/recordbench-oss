@@ -21,6 +21,12 @@ that Dismiss adds nothing; that a slow Add holds Dismiss and Suggest; then adds 
 and its links, the **From an answer** mark in the inbox and the found date in the
 timeline draft, that a repeat finds nothing new, and that the control fits at 390
 and 320 pixels.
+Finally, with a deterministic synthetic drafting client in place of a model, it
+drafts witness questions from the keyboard and checks that the proposal card
+takes focus, shows only questions that pass the check with their sources, and
+that Dismiss saves nothing and returns focus; that saving a discovery draft adds
+one Suggested note without leaving the page; and that the card fits at 390 and
+320 pixels.
 
 All applications are generated for the run and listen on ephemeral loopback
 ports. They use the unavailable generator and synthetic text fixtures. This is
