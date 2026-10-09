@@ -224,3 +224,8 @@ helper. This applies both to direct invocation and invocation through the runner
 
 The Dusk journey checks that disabled-button overrides remain confined to the
 source library and preserve disabled styling elsewhere.
+After switching back to Light, it waits for the complete computed-style snapshot
+to match the original, including color, background color, opacity and border
+color for every captured element. The theme attribute alone does not establish
+that styles have settled. A timeout identifies the first differing element and
+property (or a changed element count); the comparison and timeout remain strict.
