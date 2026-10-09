@@ -1,4 +1,28 @@
 """Notebook operations on the shared workspace connection and lock."""
+from __future__ import annotations
+
+import re
+import sqlite3
+import uuid
+from datetime import datetime, timedelta
+from typing import Mapping, Sequence
+
+from . import (
+    NOTEBOOK_ORIGINS,
+    NOTEBOOK_STATUSES,
+    NOTEBOOK_TYPES,
+    _IDENTIFIER,
+    _NOTEBOOK_ITEM,
+    _SOURCE_DOCUMENT,
+)
+from ..store_records import (
+    AnswerNotebookContextRecord,
+    NotebookEditConflict,
+    NotebookItemRecord,
+    NotebookPageRecord,
+    NotebookReferenceRecord,
+    WorkspaceProblem,
+)
 
 
 class NotebookStoreMixin:

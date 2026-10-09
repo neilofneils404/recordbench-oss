@@ -18,6 +18,15 @@ from typing import Callable, Iterable, Mapping, Sequence
 from .contracts import validate_relative_path
 from .derived_text import presentation_text
 from .source_locations import SourcePreflight
+from .store import (
+    NOTEBOOK_ORIGINS as NOTEBOOK_ORIGINS,
+    NOTEBOOK_STATUSES as NOTEBOOK_STATUSES,
+    NOTEBOOK_TYPES as NOTEBOOK_TYPES,
+    _IDENTIFIER,
+    _NOTEBOOK_ITEM,
+    _SOURCE_DOCUMENT,
+)
+from .store.notebook import NotebookStoreMixin
 # Re-export record types, exceptions, and the shared helper for existing importers.
 from .store_records import (
     AnalysisRunRecord as AnalysisRunRecord,
@@ -151,7 +160,7 @@ _ANALYSIS_RESTART_MESSAGE = (
 )
 
 
-class WorkspaceStore:
+class WorkspaceStore(NotebookStoreMixin):
     """Small SQLite control store; source bytes remain in per-matter stores."""
 
     def __init__(
