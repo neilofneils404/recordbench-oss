@@ -58,7 +58,7 @@ def pdf_bytes(lines: list[str]) -> bytes:
     return output.getvalue()
 
 
-def generate_corpus(directory: Path, count: int, seed: int) -> dict:
+def generate_corpus(directory: Path, count: int, seed: int, density: str) -> dict:
     rng = random.Random(seed)
     digest = hashlib.sha256()
     counts = dict.fromkeys(TYPES, 0)
@@ -79,6 +79,10 @@ def generate_corpus(directory: Path, count: int, seed: int) -> dict:
             lines.append(f"{custodian} met Morgan Example on 04/{day:02d}/2026.")
         lines += [f"Entry {number + 1}: sample crate {rng.randrange(100, 999)} was checked; no damage noted."
                   for number in range(8 + rng.randrange(8))]
+        if density == "dense":
+            lines = [lines[0]] + [
+                f"Alex Example met Jordan Sample on 04/{day:02d}/2026; entry {number + 1}."
+                for number in range(20)]
         if extension == "pdf":
             content = pdf_bytes(lines)
         elif extension == "eml":
@@ -100,34 +104,15 @@ def generate_corpus(directory: Path, count: int, seed: int) -> dict:
 
 @contextmanager
 def profile_all_threads(enabled: bool):
-    """Include request, ingestion and discovery threads, each with its own profiler."""
-    from anyio._backends._asyncio import WorkerThread
-
-    profiles = []
-    originals = {threading.Thread: threading.Thread.run, WorkerThread: WorkerThread.run}
-
-    def wrap(original):
-        def profiled_thread(thread):
-            profiler = cProfile.Profile()
-            try:
-                return profiler.runcall(original, thread)
-            finally:
-                profiles.append(profiler)
-        return profiled_thread
-
-    foreground = cProfile.Profile()
+    """Python 3.12+ cProfile monitors the interpreter, including app threads."""
+    profiler = cProfile.Profile()
     if enabled:
-        for cls, original in originals.items():
-            cls.run = wrap(original)
-        foreground.enable()
+        profiler.enable()
     try:
-        yield profiles
+        yield [profiler] if enabled else []
     finally:
         if enabled:
-            foreground.disable()
-            for cls, original in originals.items():
-                cls.run = original
-            profiles.append(foreground)
+            profiler.disable()
 
 
 def profile_summary(profiles: list) -> dict | None:
@@ -174,6 +159,7 @@ class ReadinessObserver:
         self.active = dict.fromkeys(("extraction", "indexing", "automatic_discovery"), False)
         self.readiness = None
         self.discovery = None
+        self.budget_exhausted_seconds = None
         self.lock = threading.Lock()
 
     def sample(self) -> bool:
@@ -189,7 +175,11 @@ class ReadinessObserver:
             self.active = {"extraction": record.extracting_count > 0,
                 "indexing": record.indexing_count > 0,
                 "automatic_discovery": bool(progress and
+                    not progress["budget_reached"] and
                     progress["sources_complete"] < progress["sources_ready"])}
+            if progress["budget_reached"] and self.budget_exhausted_seconds is None:
+                self.budget_exhausted_seconds = elapsed
+                self.stages["automatic_discovery"]["status"] = "budget_exhausted"
             complete = {"intake": record.saved_count == self.count,
                 "extraction": record.extracted_count == self.count,
                 "indexing": record.searchable_count == self.count,
@@ -204,9 +194,13 @@ class ReadinessObserver:
                 "extracted_count", "searchable_count", "attention_count", "can_query")}
             self.discovery = {key: progress[key] for key in ("sources_ready", "sources_complete",
                 "sources_attention", "sources_pending", "unsealed_sources", "budget_reached")}
-            if record.attention_count or progress["sources_attention"] or progress["budget_reached"]:
+            if record.attention_count or progress["sources_attention"]:
                 raise RuntimeError("Synthetic intake or discovery did not complete successfully.")
-            return all(self.stages[key]["status"] == "complete" for key in complete)
+            # A budget pause can be temporary while later uploads are still
+            # unsealed. Wait for the final whole-corpus pause, not an early batch.
+            discovery_terminal = progress["sources_complete"] == self.count or progress["budget_reached"]
+            return discovery_terminal and all(
+                self.stages[key]["status"] in {"complete", "budget_exhausted"} for key in complete)
 
 
 def request(client, method: str, url: str, **kwargs):
@@ -216,14 +210,14 @@ def request(client, method: str, url: str, **kwargs):
     return response
 
 
-def run_one(count: int, seed: int, temp_root: Path, timeout: float, briefing: bool) -> dict:
+def run_one(count: int, seed: int, density: str, temp_root: Path, timeout: float, briefing: bool) -> dict:
     from fastapi.testclient import TestClient
     from case_intelligence.generation import UnavailableGenerator
     from case_intelligence.source_locations import SourceLocationRegistry
     from case_intelligence.workbench import create_workbench_app
 
     corpus_dir = temp_root / "corpus"
-    corpus = generate_corpus(corpus_dir, count, seed)
+    corpus = generate_corpus(corpus_dir, count, seed, density)
     runtime = temp_root / "runtime"
     app = create_workbench_app(runtime, auth_mode="test", generator=UnavailableGenerator(),
         source_registry=SourceLocationRegistry(), background_ingestion=True, ingestion_workers=2,
@@ -321,6 +315,8 @@ def run_one(count: int, seed: int, temp_root: Path, timeout: float, briefing: bo
     database_bytes = sum(path.stat().st_size for path in runtime.rglob("*")
         if path.is_file() and path.suffix in {".sqlite", ".sqlite3", ".db"})
     return {"files": count, "corpus": corpus, "stages": observer.stages,
+        "outcome": "discovery_budget_exhausted" if observer.budget_exhausted_seconds is not None else "complete",
+        "budget_exhausted_seconds": observer.budget_exhausted_seconds,
         "readiness": observer.readiness, "automatic_discovery": observer.discovery,
         "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024),
         "database_bytes": database_bytes}
@@ -330,10 +326,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sizes", type=int, nargs="+", default=[100, 1000, 5000])
     parser.add_argument("--seed", type=int, default=20261009)
+    parser.add_argument("--density", choices=("sparse", "dense"), default="sparse",
+        help="Sparse references for scale timings, or repeated people/dates to exercise the discovery budget")
     parser.add_argument("--output", required=True, type=outside_checkout)
     parser.add_argument("--temp-root", type=outside_checkout, default=Path("/tmp"))
     parser.add_argument("--timeout", type=float, default=7200, help="Per-size time limit in seconds")
     parser.add_argument("--profile", action="store_true", help="Profile all worker threads; changes timings")
+    parser.add_argument("--main-ref", default="origin/main",
+        help="Main revision to inspect; shape tests in shallow checkouts can explicitly use HEAD")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--briefing", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -345,7 +345,7 @@ def main() -> None:
         isolate_environment()
         with tempfile.TemporaryDirectory(prefix="recordbench-timing-", dir=args.temp_root) as directory:
             with profile_all_threads(args.profile) as profiles:
-                run = run_one(args.sizes[0], args.seed, Path(directory), args.timeout, args.briefing)
+                run = run_one(args.sizes[0], args.seed, args.density, Path(directory), args.timeout, args.briefing)
             run["profile"] = profile_summary(profiles)
             write_json(args.output, run)
         return
@@ -353,7 +353,7 @@ def main() -> None:
     def git(*arguments):
         return subprocess.check_output(["git", "-C", str(ROOT), *arguments], text=True).strip()
 
-    main_commit = git("rev-parse", "origin/main")
+    main_commit = git("rev-parse", args.main_ref)
     briefing = bool(git("ls-tree", main_commit, "src/case_intelligence/briefing.py"))
     if briefing and not (ROOT / "src/case_intelligence/briefing.py").is_file():
         parser.error("Update this branch from main before timing its available briefing module.")
@@ -362,13 +362,13 @@ def main() -> None:
             "main_commit": main_commit, "briefing_available_on_main": briefing},
         "environment": {"python": platform.python_version(), "cpu_count": os.cpu_count()},
         "configuration": {"seed": args.seed, "poll_seconds": POLL_SECONDS, "ingestion_workers": 2,
-            "profiled": args.profile, "runtime": "sqlite_basic_offline"}, "runs": []}
+            "profiled": args.profile, "runtime": "sqlite_basic_offline", "density": args.density}, "runs": []}
     for count in args.sizes:
         with tempfile.TemporaryDirectory(prefix="recordbench-receipt-", dir=args.temp_root) as directory:
             output = Path(directory) / "run.json"
             command = [sys.executable, str(Path(__file__).resolve()), "--worker", "--sizes", str(count),
                 "--seed", str(args.seed), "--output", str(output), "--temp-root", str(Path(directory) / "work"),
-                "--timeout", str(args.timeout)]
+                "--timeout", str(args.timeout), "--density", args.density]
             if args.profile:
                 command.append("--profile")
             if briefing:
