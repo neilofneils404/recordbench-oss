@@ -62,6 +62,10 @@ two buttons that send the same text through either alternative. They require
 CSRF and matter access too. The box accepts up to 2,000 characters; exact search
 retains its 512-character limit. An overlong exact-search choice returns to Home
 with the unchanged text and an explanation instead of truncating it.
+Encoded destinations also have a 7,000-byte limit, with space reserved for answer
+IDs and recovery messages below the gateway's request-line limit. Text that would
+exceed it (including long Unicode input) stays in the Home form with a request to
+shorten it; no redirect or answer job is created.
 
 The form uses the existing readiness hint and polling, and remains disabled
 while sources cannot be queried or the page is an administrator's read-only

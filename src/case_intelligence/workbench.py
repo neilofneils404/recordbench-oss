@@ -16887,7 +16887,7 @@ def create_workbench_app(
 
     from .one_box_routes import install_one_box_routes
     install_one_box_routes(app, authorized_matter=authorized_matter, require_csrf=require_csrf,
-                           templates=templates, ask=ask_question, readiness_for=bench.workspace.matter_readiness)
+                           templates=templates, ask=ask_question, readiness_for=bench.workspace.matter_readiness, home=matter_home)
     return app
 
 
