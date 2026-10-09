@@ -2252,7 +2252,8 @@
         // The result route is a distinct request target. Navigating through it
         // forces fresh server-rendered conversation HTML even when the final
         // workspace URL differs only by a fragment.
-        window.location.assign(job.result_url || job.workspace_url);
+        const completion = new CustomEvent("recordbench:answer-complete", { detail: job, cancelable: true });
+        if (window.dispatchEvent(completion)) window.location.assign(job.result_url || job.workspace_url);
         return;
       }
       if (["failed", "cancelled"].includes(job.state)) return;
