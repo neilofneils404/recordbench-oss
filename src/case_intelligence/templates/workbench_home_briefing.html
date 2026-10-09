@@ -20,7 +20,7 @@
       <h3 id="briefing-questions-heading">Suggested questions</h3>
       <p id="briefing-question-hint">Choose a question to fill {% if one_box_enabled %}the box below{% else %}the Ask composer{% endif %}. Nothing is sent until you submit it.</p>
       <ul>{% for question in briefing_view.briefing.questions %}
-        <li data-briefing-line><button type="button" data-briefing-question value="{{ question.text }}" aria-describedby="briefing-question-hint"{% if administrator_view or not matter_readiness.can_query %} disabled{% endif %}><span>{{ question.label }}</span> {{ question.text }}</button><span class="briefing-links">{% for link in question.links %}<a href="{{ link.href }}">{{ link.label }}</a>{% endfor %}</span></li>
+        <li data-briefing-line><button type="button" data-briefing-question value="{{ question.text }}" aria-describedby="briefing-question-hint"{% if administrator_view or not briefing_view.can_query %} disabled{% endif %}><span>{{ question.label }}</span> {{ question.text }}</button><span class="briefing-links">{% for link in question.links %}<a href="{{ link.href }}">{{ link.label }}</a>{% endfor %}</span></li>
       {% endfor %}</ul>
       <p class="briefing-question-status" data-briefing-question-status role="status"></p>
     </section>

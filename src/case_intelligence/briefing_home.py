@@ -29,7 +29,7 @@ def install_briefing_home(templates, *, bench, auth_context, readiness_for):
             # The existing read-only administrator Home does not grant D1's
             # membership boundary. Never substitute an owner's identity.
             return None
-        result = dict(state="processing", briefing=None, message="",
+        result = dict(state="processing", briefing=None, message="", can_query=False,
             sources_url=f"/matters/{matter.slug}/setup?view=list",
             refresh_url=f"/matters/{matter.slug}/home")
         try:
@@ -44,9 +44,10 @@ def install_briefing_home(templates, *, bench, auth_context, readiness_for):
                 briefing = build_briefing(matter, actor, workspace=bench.workspace,
                     entity_service=service, intake_receipts=IntakeReceipts(bench.workspace),
                     source_metadata=bench.source_store(matter).get)
-                if _processing(readiness_for(matter)):
+                readiness = readiness_for(matter)
+                if _processing(readiness):
                     return result
-            result.update(state="ready", briefing=briefing)
+            result.update(state="ready", briefing=briefing, can_query=bool(readiness.get("can_query")))
         except WorkspaceProblem:
             result.update(state="unavailable", message=(
                 "The briefing is unavailable because its complete read limit was reached or records changed. "

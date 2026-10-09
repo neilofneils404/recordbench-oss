@@ -101,7 +101,8 @@ flag separately to discover people and dates as sources become ready.
 
 While work is active, the existing readiness line remains and the briefing is
 hidden. Readiness polling replaces only the briefing region after completion,
-preserving text and focus in the question box. A new processing phase hides the
+preserving text and focus in the question box. Suggestion buttons use the same
+fresh readiness snapshot as the briefing. A new processing phase hides the
 previous briefing again. Read-limit and changed-record refusals leave Home's
 normal workflows available with links to sources and a manual refresh.
 

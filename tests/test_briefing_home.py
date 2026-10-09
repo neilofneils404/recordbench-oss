@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 from fastapi import Request
 from fastapi.testclient import TestClient
+from jinja2 import Environment, FileSystemLoader
+from pathlib import Path
 import pytest
 
 from case_intelligence import briefing_home as module
@@ -101,6 +103,24 @@ def test_terminal_failures_and_paused_discovery_show_briefing_and_read_limit_is_
     assert result['state'] == 'unavailable' and result['briefing'] is None
     assert result['sources_url'] == f'/matters/{SLUG}/setup?view=list'
     assert 'read limit' in result['message']
+
+
+@pytest.mark.parametrize('initial,fresh', [(False, True), (True, False)])
+def test_suggestion_buttons_use_briefing_snapshot_after_home_readiness_race(monkeypatch, initial, fresh):
+    globals_, request, matter, _bench = helper(monkeypatch,
+        readiness=[{'can_query': fresh}, {'can_query': fresh}])
+    question = SimpleNamespace(text='What do the records say about Alex Example?', label='Suggested person', links=())
+    briefing = SimpleNamespace(sections=(), coverage=(), questions=(question,))
+    monkeypatch.setattr(module, 'build_briefing', lambda *args, **kwargs: briefing)
+    view = globals_['home_briefing'](request, matter)
+    assert view['state'] == 'ready' and view['can_query'] is fresh
+    environment = Environment(loader=FileSystemLoader(Path(module.__file__).parent / 'templates'), autoescape=True)
+    html = environment.get_template('workbench_home_briefing.html').render(
+        briefing_enabled=True, home_briefing=lambda *_args: view, request=request, matter=matter,
+        one_box_enabled=True, administrator_view=False, matter_readiness={'can_query': initial})
+    [button] = BriefingMarkup(html).questions
+    assert ('disabled' not in button) is fresh
+    assert button['type'] == 'button' and button['value'] == question.text
 
 
 class BriefingMarkup(HTMLParser):
