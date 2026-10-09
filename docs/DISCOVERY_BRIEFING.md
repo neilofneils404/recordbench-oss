@@ -1,0 +1,91 @@
+# Deterministic discovery briefing
+
+`case_intelligence.briefing.build_briefing` assembles an immutable `Briefing`
+from an authorized matter's existing records. This is an assembler API only;
+it adds no Home component, route, feature flag, generated text, model call,
+storage or schema. It never reads original bytes or extracted text. Suggested
+questions are outside this increment.
+
+Callers supply the existing workspace, ordinary `EntityService`, and
+`IntakeReceipts` for that workspace. The entity service must have its existing
+metadata-only `current_sources` checker. `source_metadata=source_store.get`
+retains original recorded extraction reasons when the catalog's presentation
+label is less specific. Optional `inventory` entries are
+`RecordedDocumentDate(document_id, version_id, value, basis="document_date")`.
+
+The four stable section keys are:
+
+- `arrived`: source-catalog counts by file type and top-level folder, including
+  files at the root, and the earliest/latest explicitly recorded document dates.
+- `people_places`: most frequent suggested people and places whose extraction
+  identities and occurrences were created by automatic discovery. Counts group
+  exact names and types for presentation; identities are never merged. Manual,
+  answer-triggered, dismissed and human-confirmed identities are excluded.
+  A suggested automatic identity that a reviewer retyped as a place remains
+  eligible; the current deterministic extractor has no separate place rule.
+- `dates`: busiest calendar days as stated, from every page of
+  `EntityService.date_draft`. Ambiguous dates retain their literal spelling and
+  unresolved calendar order. Times do not establish a timezone or UTC ordering.
+- `unread`: incomplete intake, pending processing, extraction failures and held
+  recordings, with recorded reasons. Durable ingest/media job states take
+  precedence over optimistic catalog readiness. Skipped selection rows retain
+  browser-report attribution and separate filename-check reasons. A receipt
+  pointing at an already-listed current source failure is counted once;
+  historical selections, unrecorded metadata and legacy uploads remain separate.
+
+Every line has matter-relative links to existing source viewers, cited
+passages, source lists, entity/date review pages or the appropriate intake
+receipt page. Items never uploaded have no original source to open; their links
+open the receipt or upload review instead. Groups include up to three sample
+source links. Unavailable historical mentions never receive an active passage
+link; an available sample is preferred, otherwise retained reference review is
+linked. Source availability is checked again by the destination.
+
+`BriefingLine.kind`, `value`, `count` and `suggested` retain structured data
+separately from display text. Both people/place and found-date lines explicitly
+say **Suggested**. Their ranks count retained non-dismissed automatic mentions,
+including historical support, not proven identities or established events.
+Date-draft eligibility preserves that service's existing human-review statuses.
+The source-linked coverage caveat also states that readiness and recorded
+failures do not establish complete reading of every page, image, attachment or
+media segment; existing source extraction notices remain authoritative.
+
+## Document-date availability
+
+Current RecordBench source catalogs and inventories do **not** record semantic
+document dates. Catalog `added_at` is arrival time; filesystem `stable_mtime_ns`
+is file identity metadata and can be upload time. Dates found in text are
+mentions. None is substituted for a document date.
+
+Without explicit semantic inventory metadata, the briefing reports the date
+range unavailable. Supplied dates must be canonical ISO calendar days, have
+`basis="document_date"`, and match a current catalog document ID and version.
+Invalid, stale, wrong-basis or conflicting records are excluded with a linked
+coverage explanation. The range reports only dated sources and states how many
+sources lack qualifying dates. This supports future recorded metadata without
+inventing current availability or adding storage.
+
+## Consistency, limits and validation
+
+Assembly checks membership before reading and before returning, holds the
+existing source guard and workspace lock, and rejects a concurrent external
+SQLite change. It does not nest a transaction around services that own theirs.
+Catalog rows stream through one metadata query, avoiding repeated library-wide
+facet calculations. Receipt pages are fully consumed and checked for missing
+rows before any summary is returned.
+
+Reads refuse inputs exceeding 100,000 rows in a bounded inventory. Found-date
+reads have a separate 5,000-mention ceiling because the existing service
+recomputes calendar ordering for each 25-row page. Exceeding either ceiling
+raises `WorkspaceProblem`; no partial briefing is returned. By default, display
+shows five ranked groups per person/place type, five date groups, and fifty
+incomplete items. All underlying counts remain complete and omitted display
+counts are explicit. Limits can be reduced or raised within the API's documented
+validation bounds (1–25 ranked entries, 1–100 incomplete entries).
+
+`tests/test_briefing.py` builds synthetic processed matters using the same
+application and automatic-discovery flow as `test_automatic_discovery.py`. It
+checks all four sections, counts, actual link destinations, semantic dates and
+missing/stale metadata, empty matters, failure reasons, historical support,
+pagination and display limits, read ceilings, authorization, unchanged storage,
+absence of extracted-text reads, and external-change detection.
