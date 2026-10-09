@@ -1,9 +1,10 @@
 # Deterministic discovery briefing
 
 `case_intelligence.briefing.build_briefing` assembles an immutable `Briefing`
-from an authorized matter's existing records. This is an assembler API only;
-it adds no Home component, route, feature flag, generated text, model call,
-storage or schema. It never reads original bytes or extracted text. Suggested
+from an authorized matter's existing records. The assembler adds no Home component,
+feature flag, generated text, model call, storage or schema. Legacy uploads link
+to a read-only, item-specific upload review page for matter members; this page
+grants no upload or cancellation authority. Assembly never reads original bytes or extracted text. Suggested
 questions are outside this increment.
 
 Callers supply the existing workspace, ordinary `EntityService`, and
@@ -28,7 +29,9 @@ The four stable section keys are:
   unresolved calendar order. Times do not establish a timezone or UTC ordering.
 - `unread`: incomplete intake, pending processing, extraction failures and held
   recordings, with recorded reasons. Durable ingest/media job states take
-  precedence over optimistic catalog readiness. Skipped selection rows retain
+  precedence over optimistic catalog readiness. Searchable sources with recorded
+  coverage notices remain listed with those notices, including partially read PDFs
+  and sources with no searchable text. Skipped selection rows retain
   browser-report attribution and separate filename-check reasons. A receipt
   pointing at an already-listed current source failure is counted once;
   historical selections, unrecorded metadata and legacy uploads remain separate.
@@ -70,8 +73,9 @@ inventing current availability or adding storage.
 Assembly checks membership before reading and before returning, holds the
 existing source guard and workspace lock, and rejects a concurrent external
 SQLite change. It does not nest a transaction around services that own theirs.
-Catalog rows stream through one metadata query, avoiding repeated library-wide
-facet calculations. Receipt pages are fully consumed and checked for missing
+Catalog rows stream through one metadata query; current ingest and media jobs
+each use one catalog-bound bulk read, avoiding per-source queries and repeated
+library-wide facet calculations. Receipt pages are fully consumed and checked for missing
 rows before any summary is returned.
 
 Reads refuse inputs exceeding 100,000 rows in a bounded inventory. Found-date

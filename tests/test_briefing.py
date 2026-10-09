@@ -217,7 +217,14 @@ def test_catalog_streams_beyond_one_page_and_counts_root_and_nested_folders(work
     def no_library_pages(*args, **kwargs):
         pytest.fail('Briefing must not recompute whole-library facets for each source page')
     monkeypatch.setattr(bench.workspace, 'source_catalog_page', no_library_pages)
+    monkeypatch.setattr(bench.workspace, 'ingest_job', no_library_pages)
+    monkeypatch.setattr(bench.workspace, 'media_job', no_library_pages)
+    queries = []
+    bench.workspace.connection.set_trace_callback(queries.append)
     briefing = assemble(bench, matter)
+    bench.workspace.connection.set_trace_callback(None)
+    job_reads = [query for query in queries if query.startswith('SELECT j.* FROM workbench_')]
+    assert len(job_reads) == 2
     assert briefing.section('arrived').total == 105
     assert [(line.value, line.count) for line in lines(briefing, 'arrived', 'folder')] == [('', 5), ('Folder0', 50), ('Folder1', 50)]
     assert lines(briefing, 'arrived', 'file_type')[0].count == 105
@@ -260,7 +267,71 @@ def test_receipts_beyond_recent_default_and_cancelled_legacy_uploads_are_counted
     assert briefing.section('unread').omitted == 52
     [cancelled] = lines(briefing, 'unread', 'upload_incomplete')
     assert 'Cancelled.txt' in cancelled.text and 'Upload cancelled' in cancelled.text
-    assert client.get(cancelled.links[0].href).status_code == 200
+    review = client.get(cancelled.links[0].href)
+    assert review.status_code == 200 and 'text/html' in review.headers['content-type']
+    assert 'Cancelled.txt' in review.text and 'Upload cancelled' in review.text
+    assert session.upload_session_id in cancelled.links[0].href
+    assert items[0].upload_item_id in cancelled.links[0].href
+
+
+@pytest.mark.parametrize('notice', [
+    '1 of 2 pages searchable; scanned pages remain unreadable. Complete page reading is not established.',
+    'This source has no searchable text.',
+])
+def test_searchable_sources_keep_recorded_incomplete_coverage(workbench, notice):
+    client, bench, matter, _runtime = workbench
+    if 'pages' in notice:
+        from tests.test_pdf_coverage_surfaces import generated_native_pdf
+        response = client.post(f'/matters/{matter.slug}/uploads',
+            files={'files': ('Generated partial source.pdf', generated_native_pdf(), 'application/pdf')},
+            follow_redirects=False)
+        assert response.status_code in (200, 303), response.text
+    else:
+        upload(client, matter.slug, 'Generated partial source.txt', b'Synthetic searchable passage.')
+    ready(bench, matter)
+    store = bench.source_store(matter)
+    [document] = store.documents.values()
+    with store.mutation_guard():
+        document.message = notice
+        bench._sync_source_catalog(matter, tuple(store.documents.values()))
+    catalog = bench.workspace.source_catalog_record(matter.matter_id, document.document_id)
+    assert catalog.tone == 'ready' and catalog.state_label == notice
+    readiness = bench.workspace.matter_readiness(matter.matter_id)
+    assert readiness.searchable_count == 1 and readiness.attention_count == 0
+    briefing = assemble(bench, matter)
+    assert briefing.section('unread').total == 1
+    [line] = lines(briefing, 'unread', 'source_incomplete')
+    assert notice in line.text
+    assert_links_open(client, matter, briefing)
+
+
+def test_legacy_upload_review_checks_membership_matter_session_and_item(tmp_path, monkeypatch):
+    from tests.test_matter_management import ADMIN, OWNER, OTHER, _app, _csrf, _headers, _principal_id
+    from tests.test_matter_management import _create_matter as create_authorized
+    monkeypatch.setenv('CASE_INTELLIGENCE_STORAGE_RESERVE_GIB', '0')
+    with TestClient(_app(tmp_path), base_url='https://recordbench.example.test') as client:
+        csrf = _csrf(client.get('/matters/new', headers=_headers(OWNER)).text)
+        slug = create_authorized(client, principal=OWNER, csrf_token=csrf, name='Synthetic upload review')
+        bench = client.app.state.workbench
+        owner_id = _principal_id(client, OWNER)
+        client.get('/matters/new', headers=_headers(OTHER))
+        other_id = _principal_id(client, OTHER)
+        matter = bench.matter(slug, owner_id)
+        session, items = bench.workspace.create_upload_session(matter.matter_id, owner_id, 'Generated failed collection',
+            [dict(display_name='Failed.txt', relative_path='Failed.txt', media_type='text/plain', expected_size=20)])
+        bench.workspace.cancel_upload_session(matter.matter_id, owner_id, session.upload_session_id)
+        href = f'/matters/{slug}/upload-review/{session.upload_session_id}/{items[0].upload_item_id}'
+        # Membership permits reading a teammate's upload without granting its
+        # actor-owned transfer/cancellation API to that teammate.
+        bench.workspace.add_member(matter.matter_id, other_id, owner_id)
+        response = client.get(href, headers=_headers(OTHER))
+        assert response.status_code == 200 and 'Failed.txt' in response.text
+        assert 'Generated failed collection' in response.text and 'Upload cancelled' in response.text
+        assert client.get(f'/matters/{slug}/upload-sessions/{session.upload_session_id}', headers=_headers(OTHER)).status_code == 404
+        assert client.get(href, headers=_headers(ADMIN)).status_code == 404
+        bench.workspace.revoke_member(matter.matter_id, other_id, owner_id)
+        assert client.get(href, headers=_headers(OTHER)).status_code == 404
+        assert client.get(href.replace(items[0].upload_item_id, 'upload-item-' + '0' * 32), headers=_headers(OWNER)).status_code == 404
 
 
 def test_read_is_authorized_and_writes_nothing_or_reads_no_extracted_text(workbench, monkeypatch):
