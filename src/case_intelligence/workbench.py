@@ -6584,12 +6584,6 @@ def create_workbench_app(
     app.state.identity = identity
     templates = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
 
-    def present_value(value):
-        if not isinstance(value, str):
-            return value
-        projected = presentation_text(value)
-        # Preserve Jinja's escaping boundary for already-escaped markup.
-        return Markup(projected) if isinstance(value, Markup) else projected
 
     templates.env.finalize = present_value
     templates.env.globals.update(
@@ -6612,11 +6606,6 @@ def create_workbench_app(
     )
     app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
 
-    def auth_context(request: Request) -> AuthContext:
-        context = getattr(request.state, "auth", None)
-        if not isinstance(context, AuthContext):
-            raise HTTPException(401, "Sign in is required.")
-        return context
 
     def audit(
         request: Request,
@@ -6646,11 +6635,6 @@ def create_workbench_app(
             details=details,
         )
 
-    def requested_path(request: Request) -> str:
-        value = request.url.path
-        if request.url.query:
-            value += "?" + request.url.query
-        return IdentityService.safe_next(value)
 
     @app.middleware("http")
     async def identity_boundary(request: Request, call_next):
