@@ -163,6 +163,25 @@ def _catalog(workspace, matter_id):
         yield from rows
 
 
+def _jobs(workspace, matter_id, sources):
+    # Read each job inventory once, restricted to the current source catalog.
+    # Preserve the store's decoding and media preflight display semantics.
+    for table, field, decode, version in (
+        ("workbench_ingest_job", "ingest", workspace._job, ""),
+        ("workbench_media_job", "media", workspace._media_job, " AND j.source_version_id=c.version_id"),
+    ):
+        cursor = workspace.connection.execute(
+            f"SELECT j.* FROM {table} j JOIN workbench_source_catalog c "
+            "ON c.matter_id=j.matter_id AND c.document_id=j.document_id" + version +
+            " WHERE c.matter_id=?", (matter_id,))
+        count = 0
+        while rows := cursor.fetchmany(PAGE_SIZE):
+            count += len(rows)
+            _bounded(count)
+            for row in rows:
+                sources[row["document_id"]][field] = decode(row)
+
+
 def _arrived(base, sources, inventory_dates, coverage):
     all_sources = _link(base, "Review all sources", view="list")
     lines = [BriefingLine("source_count", "", f"{len(sources)} sources in the source inventory.", (all_sources,), len(sources))]
@@ -295,8 +314,7 @@ def _dates(base, matter_id, actor_id, service, maximum, coverage):
 def _unread(base, matter_id, actor_id, workspace, receipts, sources, readiness, maximum, coverage):
     lines, seen_sources = [], set()
     for document_id, source in sources.items():
-        ingest = workspace.ingest_job(matter_id, document_id)
-        media = workspace.media_job(matter_id, document_id, source["version_id"])
+        ingest, media = source.get("ingest"), source.get("media")
         active = next((job for job in (ingest, media) if job and job.state in ("queued", "running")), None)
         failed = next((job for job in (ingest, media) if job and job.state in ("failed", "cancelled")), None)
         if active:
@@ -305,6 +323,8 @@ def _unread(base, matter_id, actor_id, workspace, receipts, sources, readiness, 
             state, reason = getattr(failed, "display_state", failed.state), failed.message or failed.stage
         elif source["tone"] != "ready":
             state, reason = source["state"], source["reason"]
+        elif source["reason"] and source["reason"] != "Searchable":
+            state, reason = "coverage notice", source["reason"]
         else:
             continue
         seen_sources.add((document_id, source["version_id"]))
@@ -346,7 +366,7 @@ def _unread(base, matter_id, actor_id, workspace, receipts, sources, readiness, 
     # Legacy uploads may lack selection receipts. Read them directly within the
     # already-authorized workspace lock; no upload-session/actor default limit.
     cursor = workspace.connection.execute(
-        "SELECT u.upload_item_id,u.document_id,u.relative_path,u.state,u.message FROM workbench_upload_item u "
+        "SELECT u.upload_item_id,u.upload_session_id,u.document_id,u.relative_path,u.state,u.message FROM workbench_upload_item u "
         "JOIN workbench_upload_session s ON s.upload_session_id=u.upload_session_id AND s.matter_id=u.matter_id "
         "LEFT JOIN workbench_source_catalog c ON c.document_id=u.document_id AND c.matter_id=u.matter_id "
         "WHERE u.matter_id=? AND c.document_id IS NULL "
@@ -356,7 +376,7 @@ def _unread(base, matter_id, actor_id, workspace, receipts, sources, readiness, 
         _bounded(index)
         lines.append(BriefingLine("upload_incomplete", row["upload_item_id"],
             f"{row['relative_path']} — {row['state']}: {row['message'] or 'No reason was recorded.'}",
-            (_link(base, "Review upload progress", view="list"),), 1))
+            (_link(base, "Review this upload", "/upload-review/" + row["upload_session_id"] + "/" + row["upload_item_id"]),), 1))
     lines.sort(key=lambda line: (line.text, line.kind, line.value))
     total = sum(line.count or 0 for line in lines)
     omitted = sum(line.count or 0 for line in lines[maximum:])
@@ -413,6 +433,7 @@ def build_briefing(
                 folder=row["relative_path"].split("/", 1)[0] if "/" in row["relative_path"] else "",
                 link=_link(base, row["display_name"], "/sources/" + row["action_token"]),
                 tone=row["tone"], state=row["source_state"], reason=reason, name=row["relative_path"] or row["display_name"])
+        _jobs(workspace, matter.matter_id, sources)
         readiness = workspace.matter_readiness(matter.matter_id)
         sections = (
             _arrived(base, sources, inventory, coverage),

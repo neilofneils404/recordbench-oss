@@ -297,12 +297,10 @@ ANSWER_STAGE_MESSAGES = {
     "verifying": "Checking citation references and text consistency; meaning still needs human review.",
 }
 
-
 RESEARCH_COVERAGE_NOTICE = (
     "This investigation is limited to selected search passages; it did not check every source. "
     "Use Check every source for a document-by-document task."
 )
-
 
 def _source_coverage(
     readiness: MatterReadinessRecord,
@@ -358,7 +356,6 @@ def _source_coverage(
         "excluded_count": excluded,
         "notice": notice,
     }
-
 
 def _focused_answer_scope(
     question: str,
@@ -16888,6 +16885,9 @@ def create_workbench_app(
                            templates=templates, ask=ask_question, readiness_for=bench.workspace.matter_readiness, home=matter_home)
     from .briefing_home import install_briefing_home
     install_briefing_home(templates, bench=bench, auth_context=auth_context, readiness_for=matter_readiness_projection)
+    from .upload_review import install_upload_review
+    install_upload_review(app, bench=bench, authorized_matter=authorized_matter,
+                          auth_context=auth_context, templates=templates, base_context=base_context)
     return app
 
 
