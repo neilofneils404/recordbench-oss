@@ -80,6 +80,43 @@ python scripts/browser-accept-one-box.py \
   --output /tmp/recordbench-one-box-acceptance
 ```
 
+## Discovery briefing on Home
+
+Set `CASE_INTELLIGENCE_BRIEFING=1` before starting the application to show the
+discovery briefing before Home's resume panel and task launcher. The flag
+defaults off; `1`, `true`, `yes` and `on` enable it, ignoring case and surrounding
+spaces. With it off, no briefing is assembled and its markup and assets are
+absent. The feature adds no route, saved briefing, or model call.
+
+Once source preparation, media overviews and automatic discovery finish, four
+sections show what arrived, suggested people and places, dates mentioned in the
+records, and recorded intake or extraction problems. Every line has source or
+review links. **Coverage and limitations** keeps the caveats in one initially
+collapsed disclosure. Counts and questions follow the deterministic rules and
+explicit read limits in [Discovery briefing](DISCOVERY_BRIEFING.md); mentioned
+dates are not document dates or established events.
+The briefing does not enable automatic discovery: it summarizes suggestions
+already recorded. Enable the existing `CASE_INTELLIGENCE_AUTOMATIC_DISCOVERY=1`
+flag separately to discover people and dates as sources become ready.
+
+While work is active, the existing readiness line remains and the briefing is
+hidden. Readiness polling replaces only the briefing region after completion,
+preserving text and focus in the question box. A new processing phase hides the
+previous briefing again. Read-limit and changed-record refusals leave Home's
+normal workflows available with links to sources and a manual refresh.
+
+Each **Suggested** question is a native button that fills the one box without
+submitting. When `CASE_INTELLIGENCE_ONE_BOX` is off, it opens and fills the
+existing Ask dock instead. Busy, disabled or read-only composers are left
+unchanged. Question selection never starts a search, answer or review. A
+nonmember administrator retains the existing read-only Home without assembling
+a briefing under another person's membership.
+
+`tests/test_briefing_home.py` covers visibility, authorization, completion
+boundaries, source links and graceful refusal. The registered
+`scripts/browser-accept-briefing.py` journey checks processing transitions,
+source links, question selection, both composer variants and a narrow viewport.
+
 ## Scroll regions
 
 Long right-hand content must not make left-hand controls unreachable:
