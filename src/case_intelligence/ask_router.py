@@ -20,7 +20,8 @@ class RouteDecision:
     reason: str
 
 
-_UPPERCASE_BOOLEAN = re.compile(r"(?<![^\s()])(?:AND|OR|NOT)(?![^\s()])")
+# Consume complete quoted phrases and their escapes before matching operator tokens.
+_BOOLEAN_OR_PHRASE = re.compile(r'"(?:[^"\\]|\\["\\])*"|(?<![^\s()])(?P<operator>AND|OR|NOT)(?![^\s()])')
 # These are natural-language retrieval cues, not an exact-search grammar.
 _FORMAT = r"\.?(?:pdf|docx|txt|jpg|jpeg|png|tif|tiff|eml|csv|tsv|xlsx|wav|mp3|m4a|ogg|opus|mp4|mov|webm)"
 _RECORD = (
@@ -69,11 +70,9 @@ def _exact_reason(node: Expression, *, uppercase_boolean: bool) -> str | None:
 
 
 def classify(text: str) -> RouteDecision:
-    """Choose exact, every_source, or question without I/O or mutable state.
+    """Choose a route without I/O or mutable state; exact intent requires valid grammar.
 
-    Lowercase Boolean operators, plain literals and grouping remain questions.
-    Parse failures (including punctuation or unbalanced quotes) do not establish
-    exact intent; explicit requests to enumerate records can still win next.
+    Parse failures fall through to enumeration cues and otherwise remain questions.
     """
     text = text.strip()
     if not text:
@@ -84,7 +83,8 @@ def classify(text: str) -> RouteDecision:
     except QuerySyntaxError:
         pass
     else:
-        if reason := _exact_reason(parsed.expression, uppercase_boolean=bool(_UPPERCASE_BOOLEAN.search(text))):
+        uppercase = any(match["operator"] for match in _BOOLEAN_OR_PHRASE.finditer(text))
+        if reason := _exact_reason(parsed.expression, uppercase_boolean=uppercase):
             return RouteDecision("exact", reason)
 
     if _EVERY_SOURCE.search(text):

@@ -64,9 +64,9 @@ Routing precedence is:
 1. `exact` when the trimmed input successfully parses and its structure contains
    a quoted phrase, uppercase Boolean operator (`AND`, `OR`, `NOT`) or proximity
    expression. Adjacent plain words and grouping alone remain questions. The
-   router detects uppercase operators in the original text because the parser
-   retains explicit `AND` provenance but not operator case. Exact-search parsing
-   and matching semantics remain case-insensitive and unchanged.
+   router detects uppercase operator tokens outside quoted phrases in the original
+   text because the parser retains explicit `AND` provenance but not operator case.
+   Exact-search parsing and matching semantics remain case-insensitive and unchanged.
 2. `every_source` for case-insensitive positive requests to enumerate matching
    records, such as `find every email`, `list all`, `show me all of the reports`,
    `check every source`, or `I need to find all records mentioning bicycles`. Retrieval
@@ -103,6 +103,8 @@ Ask. `Did Smith and Jones meet on Tuesday` is `question` with or without `?`;
 are `every_source` with or without `?`. `Smith AND Jones` and `Smith NOT Jones`
 are `exact` when the whole input parses. Quoted phrases and proximity expressions
 still establish exact intent, including inside lowercase Boolean expressions.
+For example, `"red AND blue" and green` selects exact search because of its quoted
+phrase; the uppercase `AND` inside that phrase is literal text, not an operator.
 
 `tests/test_ask_router.py` covers synthetic intent examples, ambiguous inputs,
 precedence, immutable decisions and explanations. This foundation does not

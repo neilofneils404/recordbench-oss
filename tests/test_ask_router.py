@@ -218,6 +218,62 @@ def test_lowercase_boolean_nodes_preserve_phrase_and_proximity_intent(text):
     assert classify(text).kind == "exact"
 
 
+@pytest.mark.parametrize("text", [
+    '"red AND blue" and green',
+    '"red OR blue" or green',
+    'not "red NOT blue"',
+    '"AND" and green',
+    '"(AND)" or green',
+    'not ("red AND blue" or green)',
+    'red and "blue AND green" or "amber NOT white"',
+    r'"red \" AND blue" and green',
+    r'"red \\ AND blue" and green',
+    r'"red \" OR blue" or green',
+    r'not "red \\ NOT blue"',
+])
+def test_quoted_operator_words_keep_the_phrase_explanation(text):
+    assert classify(text) == RouteDecision(
+        "exact", "Chose exact search because your words are in quotes.",
+    )
+
+
+@pytest.mark.parametrize("text", [
+    '"red AND blue" AND green',
+    '"red OR blue" OR green',
+    'NOT "red NOT blue"',
+    '"red AND blue" and (green OR amber)',
+    '("red AND blue")AND(green)',
+    r'"red \" AND blue" AND green',
+    r'"red \\" AND green',
+])
+def test_unquoted_uppercase_operators_keep_the_boolean_explanation(text):
+    assert classify(text) == RouteDecision(
+        "exact", "Chose exact search because you used a Boolean operator.",
+    )
+
+
+@pytest.mark.parametrize("text", [
+    'red NEAR/2 "blue AND green" and amber',
+    'not red BEFORE/2 "blue OR green"',
+    'red near/0 "blue NOT green" or amber',
+])
+def test_quoted_operator_words_preserve_the_proximity_explanation(text):
+    assert classify(text) == RouteDecision(
+        "exact", "Chose exact search because you specified how close words must be.",
+    )
+
+
+@pytest.mark.parametrize("text,expected_kind", [
+    ('"red AND blue" and', "question"),
+    ('"red AND blue"AND green', "question"),
+    (r'"red \q AND blue" and green', "question"),
+    (r'"red \" AND blue and green', "question"),
+    ('find every document with "red AND blue', "every_source"),
+])
+def test_quoted_operator_detection_still_requires_valid_grammar(text, expected_kind):
+    assert classify(text).kind == expected_kind
+
+
 @pytest.mark.parametrize("field,value", [("kind", "exact"), ("reason", "Changed.")])
 def test_route_decision_is_frozen(field, value):
     decision = classify("Where was the synthetic bicycle found?")
