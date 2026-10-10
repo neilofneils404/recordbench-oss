@@ -3178,3 +3178,41 @@ def test_update_preserves_old_only_compose_settings(tmp_path, monkeypatch, reque
             b'RECORDBENCH_RELEASE_ID="synthetic-new"')
         assert "up-new" in events
     assert b"EXCULPATA_" not in path.read_bytes()
+
+
+@pytest.mark.parametrize("prefix", ["RECORDBENCH", "EXCULPATA"])
+@pytest.mark.parametrize("final_newline", [True, False])
+def test_reconfigure_adds_kerberos_setting_using_saved_naming_style(tmp_path, monkeypatch, prefix, final_newline):
+    from tests.test_first_run_handoff import configured_node
+    root, args, paths = configured_node(tmp_path)
+    path = root / "compose.env"
+    before = path.read_bytes().replace(b"EXCULPATA_", prefix.encode() + b"_")
+    if not final_newline:
+        before = before.removesuffix(b"\n")
+    path.write_bytes(before)
+    assert b"KERBEROS_PRINCIPAL" not in before
+    assert json.loads((root / "installation.json").read_text())["auth"] == "local"
+    args.auth = "kerberos"
+    args.kerberos_realm = "EXAMPLE.TEST"
+    args.kerberos_allowed_groups = "synthetic-reviewers@example.test"
+    args.kerberos_admin_groups = "synthetic-administrators@example.test"
+    installer._private_write(paths["secrets"] / "recordbench.keytab", "synthetic opaque keytab bytes")
+    original_is_dir, original_is_file = Path.is_dir, Path.is_file
+    monkeypatch.setattr(Path, "is_dir", lambda value: True if value == Path("/var/lib/sss/pipes") else original_is_dir(value))
+    monkeypatch.setattr(Path, "is_file", lambda value: True if value == Path("/etc/krb5.conf") else original_is_file(value))
+
+    installer._configure(installer.Console(color=False, quiet=True), args, root, paths,
+                         "synthetic-release", ROOT, ())
+
+    principal = "HTTP/recordbench.example.test@EXAMPLE.TEST"
+    added = f"{prefix}_KERBEROS_PRINCIPAL={json.dumps(principal)}\n".encode()
+    expected = before + (b"" if final_newline else b"\n") + added
+    assert path.read_bytes() == expected
+    other = "EXCULPATA" if prefix == "RECORDBENCH" else "RECORDBENCH"
+    assert not any(key.startswith(other + "_") for key in installer._dotenv(path))
+    assert installer._dotenv(path)[f"{prefix}_KERBEROS_PRINCIPAL"] == principal
+    assert json.loads((root / "installation.json").read_text())["auth"] == "kerberos"
+    # Repeating the same reconfiguration must not duplicate or reformat keys.
+    installer._configure(installer.Console(color=False, quiet=True), args, root, paths,
+                         "synthetic-release", ROOT, ())
+    assert path.read_bytes() == expected

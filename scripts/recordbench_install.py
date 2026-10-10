@@ -2194,7 +2194,7 @@ def _configure(
         compose_path = root / "compose.env"
         if compose_path.exists():
             for key, value in compose_values.items():
-                _replace_env(compose_path, key, str(value), add_missing=False)
+                _replace_env(compose_path, key, str(value), add_missing_aliases=True)
         else:
             _private_write(compose_path, _env_text(compose_values, "RecordBench Compose node", aliases=True))
         _private_write(paths["config"] / "recordbench.env", _env_text(app_values, "RecordBench application"), replace=(paths["config"] / "recordbench.env").exists())
@@ -2279,7 +2279,7 @@ def hashlib_short(path: Path) -> str:
     return hashlib.sha256(str(path).encode()).hexdigest()[:10]
 
 
-def _replace_env(path: Path, key: str, value: str, *, add_missing: bool = True) -> None:
+def _replace_env(path: Path, key: str, value: str, *, add_missing_aliases: bool = False) -> None:
     original = path.read_bytes().decode("utf-8")
     saved = _dotenv(path)
     keys = {key}
@@ -2295,9 +2295,12 @@ def _replace_env(path: Path, key: str, value: str, *, add_missing: bool = True) 
             output.append(f"{current}={json.dumps(value)}{ending}")
         else:
             output.append(line)
-    # Existing node aliases keep their original spelling and key set. Other
-    # settings (such as an enabled transcription pipeline) may still be added.
-    if add_missing and not aliased and key not in saved:
+    # Updates keep existing aliases. Reconfiguration may introduce a setting,
+    # but only when neither alias exists, using the node's current naming style.
+    if (not aliased or add_missing_aliases) and keys.isdisjoint(saved):
+        if aliased:
+            prefix = "EXCULPATA_" if any(name.startswith("EXCULPATA_") for name in saved) else "RECORDBENCH_"
+            key = prefix + suffix
         if original and not original.endswith(("\r", "\n")):
             output.append("\n")
         output.append(f"{key}={json.dumps(value)}\n")
