@@ -36,6 +36,7 @@
       </div>
     </header>
     {% with active='review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+    {% include "workbench_one_box_route.html" %}
     {% include "workbench_review_modes.html" %}
     {% set review_return = source_review_return_href(matter.slug, request.query_params.get('entity_return_to', '')) %}{% if review_return %}<a class="back-link" href="{{ review_return }}">Return to review context</a>{% endif %}
 

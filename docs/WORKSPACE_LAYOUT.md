@@ -37,6 +37,53 @@ new page markup with an older cached stylesheet or script.
 `tests/test_compact_matter_navigation.py` and
 `tests/test_static_asset_versioning.py` hold the synthetic regressions.
 
+## One box on Home
+
+Set `CASE_INTELLIGENCE_ONE_BOX=1` before starting the application to replace
+Home's four task cards with **Ask, search or find records**. The flag defaults
+off; `1`, `true`, `yes` and `on` enable it, ignoring case and surrounding spaces.
+With it off, the existing cards and workflows remain and the new POST endpoint
+returns 404. **Review records manually** and **Investigate a topic** stay as
+quiet links to the source list and Ask composer.
+
+The CSRF-protected form classifies the text using the existing Ask router:
+
+- Quoted phrases, valid Boolean expressions and proximity syntax open exact
+  search with the original expression.
+- Ordinary questions use the existing focused, cited-answer handler. Request
+  keys preserve its retry handling; no separate answer implementation is added.
+- Requests for every matching record open a new criterion form with the full
+  text prefilled. An existing criterion is not overwritten or run. The eligible
+  source count remains visible; saving the rule and starting a review require
+  the existing explicit actions.
+
+Each destination explains the routing choice. **Not what you meant?** reveals
+two buttons that send the same text through either alternative. They require
+CSRF and matter access too. The box accepts up to 2,000 characters; exact search
+retains its 512-character limit. An overlong exact-search choice returns to Home
+with the unchanged text and an explanation instead of truncating it.
+Encoded destinations also have a 7,000-byte limit, with space reserved for answer
+IDs and recovery messages below the gateway's request-line limit. Text that would
+exceed it (including long Unicode input) stays in the Home form with a request to
+shorten it; no redirect or answer job is created.
+
+The form uses the existing readiness hint and polling, and remains disabled
+while sources cannot be queried or the page is an administrator's read-only
+view. The server checks readiness again on submission. Native forms and the
+switch disclosure remain keyboard accessible without JavaScript.
+
+`tests/test_one_box_routes.py` covers routing and the authorization boundaries.
+The registered `scripts/browser-accept-one-box.py` journey checks all three
+destinations, original-source links, explicit switching, a 430-pixel viewport,
+keyboard submission and the absence of a review run before confirmation:
+
+```console
+python scripts/browser-accept-one-box.py \
+  --chrome-binary /path/to/chrome \
+  --chromedriver /path/to/chromedriver \
+  --output /tmp/recordbench-one-box-acceptance
+```
+
 ## Scroll regions
 
 Long right-hand content must not make left-hand controls unreachable:
