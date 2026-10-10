@@ -25,6 +25,14 @@ The [one-box journey](WORKSPACE_LAYOUT.md#one-box-on-home) enables the optional
 Home entry point and checks exact search, cited answers and a prefilled
 every-source criterion, route switching, native keyboard use and a 430-pixel
 viewport. It confirms that opening the criterion creates no review run.
+With `CASE_INTELLIGENCE_DEEPER_INVESTIGATION` enabled, the same journey also
+checks that a supported answer shows no additional offer, while a deterministic
+`answerable=false` result offers **Investigate this more deeply** without
+starting work. One native click at 430 pixels posts the same question through
+the existing CSRF-protected Ask flow and creates exactly one queued research
+job in the same conversation. Refreshing before or after the click creates no
+extra work. The research worker is stopped only to keep this queue-state check
+deterministic; the journey does not assess investigation quality.
 The discovery briefing journey enables `CASE_INTELLIGENCE_BRIEFING`, holds a
 synthetic indexing job to check the existing processing presentation, then
 waits for real extraction, indexing and automatic discovery to finish. It
@@ -236,3 +244,8 @@ helper. This applies both to direct invocation and invocation through the runner
 
 The Dusk journey checks that disabled-button overrides remain confined to the
 source library and preserve disabled styling elsewhere.
+After switching back to Light, it waits for the complete computed-style snapshot
+to match the original, including color, background color, opacity and border
+color for every captured element. The theme attribute alone does not establish
+that styles have settled. A timeout identifies the first differing element and
+property (or a changed element count); the comparison and timeout remain strict.

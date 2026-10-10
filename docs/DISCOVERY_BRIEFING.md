@@ -1,11 +1,11 @@
 # Deterministic discovery briefing
 
 `case_intelligence.briefing.build_briefing` assembles an immutable `Briefing`
-from an authorized matter's existing records. The assembler adds no Home component,
-feature flag, generated text, model call, storage or schema. Legacy uploads link
-to a read-only, item-specific upload review page for matter members; this page
-grants no upload or cancellation authority. Assembly never reads original bytes
-or extracted text.
+from an authorized matter's existing records. The assembler includes fixed-template
+suggested questions and adds no Home component, feature flag, model call, storage
+or schema. Legacy uploads link to a read-only, item-specific upload review page
+for matter members; this page grants no upload or cancellation authority. Assembly
+never reads original bytes or extracted text.
 
 Callers supply the existing workspace, ordinary `EntityService`, and
 `IntakeReceipts` for that workspace. The entity service must have its existing

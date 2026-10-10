@@ -197,9 +197,10 @@ def test_real_exact_answer_and_every_source_destinations_preserve_existing_flows
             assert TEXTS[kind] in unescape(destination.text)
             assert not bench.workspace.review_criteria(matter.matter_id, WEB_ACTOR)
             assert not bench.workspace.review_runs(matter.matter_id, WEB_ACTOR)
-    jobs = bench.workspace.connection.execute('SELECT question FROM workbench_answer_job WHERE matter_id=?', (matter.matter_id,)).fetchall()
-    assert [row['question'] for row in jobs] == [TEXTS['question']]
-    assert bench.workspace.connection.execute('SELECT count(*) FROM workbench_research_job WHERE matter_id=?', (matter.matter_id,)).fetchone()[0] == 0
+    with bench.workspace._lock:
+        jobs = bench.workspace.connection.execute('SELECT question FROM workbench_answer_job WHERE matter_id=?', (matter.matter_id,)).fetchall()
+        assert [row['question'] for row in jobs] == [TEXTS['question']]
+        assert bench.workspace.connection.execute('SELECT count(*) FROM workbench_research_job WHERE matter_id=?', (matter.matter_id,)).fetchone()[0] == 0
 
 
 def test_new_full_review_prefill_does_not_overwrite_existing_criterion_and_escapes_text(app_client):
@@ -273,7 +274,8 @@ def test_question_retry_reuses_canonical_request_key_and_saved_answer(app_client
     second = client.post(f'/matters/{matter.slug}/one-box', data=payload, follow_redirects=False)
     assert first.status_code == second.status_code == 303
     assert parse_qs(urlsplit(first.headers['location']).query)['conversation'] == parse_qs(urlsplit(second.headers['location']).query)['conversation']
-    assert bench.workspace.connection.execute('SELECT count(*) FROM workbench_answer_job WHERE matter_id=?', (matter.matter_id,)).fetchone()[0] == 1
+    with bench.workspace._lock:
+        assert bench.workspace.connection.execute('SELECT count(*) FROM workbench_answer_job WHERE matter_id=?', (matter.matter_id,)).fetchone()[0] == 1
 
 
 @pytest.mark.parametrize('kind', tuple(TEXTS))
@@ -284,7 +286,8 @@ def test_encoded_unicode_limit_retains_draft_without_redirect_or_work(app_client
     response = submit(client, text, slug=matter.slug, route=kind)
     assert response.status_code == 422 and 'location' not in response.headers
     assert 'Shorten it' in response.text and text in unescape(response.text)
-    assert bench.workspace.connection.execute('SELECT count(*) FROM workbench_answer_job').fetchone()[0] == 0
+    with bench.workspace._lock:
+        assert bench.workspace.connection.execute('SELECT count(*) FROM workbench_answer_job').fetchone()[0] == 0
     assert not bench.workspace.review_criteria(matter.matter_id, WEB_ACTOR)
     assert not bench.workspace.review_runs(matter.matter_id, WEB_ACTOR)
 

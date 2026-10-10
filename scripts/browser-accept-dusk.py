@@ -13,6 +13,7 @@ import threading
 
 import uvicorn
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver import ActionChains
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -52,6 +53,30 @@ const lum = c => c.slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/
 const a=lum(fg),b=lum(bg);
 return {ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05),fg,bg};
 """
+
+
+def wait_for_light_snapshot(wait, snapshot, light):
+    actual = None
+
+    def matches(_):
+        nonlocal actual
+        actual = snapshot()
+        return actual == light
+
+    try:
+        wait.until(matches)
+    except TimeoutException as exc:
+        if len(actual) != len(light):
+            difference = f'element count: expected {len(light)}, got {len(actual)}'
+        else:
+            properties = ('color', 'backgroundColor', 'opacity', 'borderColor')
+            difference = next(
+                f'element {index} {property}: expected {expected!r}, got {observed!r}'
+                for index, (expected_row, actual_row) in enumerate(zip(light, actual))
+                for property, expected, observed in zip(properties, expected_row, actual_row)
+                if expected != observed
+            )
+        raise AssertionError(f'Light computed styles did not settle: {difference}') from exc
 
 
 def main():
@@ -201,7 +226,7 @@ def main():
             driver.get(base + f'/matters/{matter.slug}/setup?view=list&page_size=25&q=synthetic')
             Select(one('[data-theme-picker]')).select_by_value('light')
             wait.until(lambda _: one('html').get_attribute('data-theme') == 'light')
-            assert snapshot() == light
+            wait_for_light_snapshot(wait, snapshot, light)
             report['checks'].append('Light computed styles preserved after theme round trip')
             report['passed'] = True
         finally:
