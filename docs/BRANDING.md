@@ -1,4 +1,4 @@
-# RecordBench brand assets and project copy
+# Exculpata brand assets and project copy
 
 Use these assets and descriptions for the repository, project pages, and
 presentations. They describe a development alpha; they do not imply an
@@ -6,7 +6,7 @@ institutional endorsement or production acceptance.
 
 ## Identity
 
-- **Name:** RecordBench
+- **Name:** Exculpata
 - **Tagline:** Review the record. Build the work.
 - **Positioning:** Local-first discovery and case review for defense teams.
 - **Navy:** `#071a3c`
@@ -22,7 +22,7 @@ with enough contrast. The tagline matches the application's sign-in screen.
 | Asset | Use |
 | --- | --- |
 | [Record mark](../src/case_intelligence/static/favicon.svg) | Canonical application icon and standalone mark. |
-| [Repository banner](assets/recordbench-banner.svg) | Wide wordmark and tagline for the README or a project introduction. |
+| [Repository banner](assets/exculpata-banner.svg) | Wide wordmark and tagline for the README or a project introduction. |
 | [Desktop walkthrough](assets/recordbench-desktop-walkthrough.mp4) | 4:47 landscape tour of the fictional Harbor Street matter, at 1280 × 720. |
 | [Mobile walkthrough](assets/recordbench-mobile-walkthrough.mp4) | 5:34 portrait tour of the same fictional matter, at 720 × 1280. |
 
@@ -34,7 +34,7 @@ Use descriptive alternative text when embedding either asset.
 ## Demo walkthroughs
 
 Present the videos as **Desktop walkthrough** and **Mobile walkthrough**, under
-**See RecordBench in action**. They replace the former 51-second teaser as the
+**See Exculpata in action**. They replace the former 51-second teaser as the
 repository's featured demos. Both follow the fictional Harbor Street matter
 through records, source-linked questions, review, and work product. Keep the
 on-screen labels and fictional-case/development-alpha notices visible. Do not
@@ -58,7 +58,7 @@ review media, organize findings, and build work product. Development alpha.
 
 Discovery arrives in folders. Understanding a case takes more.
 
-RecordBench is a self-hosted workspace being built for the work of federal
+Exculpata is a self-hosted workspace being built for the work of federal
 criminal defense. It brings documents, images, email, spreadsheets, audio,
 and video into one place to search, review, ask questions, and develop work
 product with the source material close at hand. Its bundled AI workflows use
@@ -69,7 +69,7 @@ unorganized discovery into a clearer understanding of the case.
 
 ## Maintainer introduction
 
-I'm building RecordBench to help defense teams get more out of discovery.
+I'm building Exculpata to help defense teams get more out of discovery.
 The goal is to bring scattered records, source-linked review, and useful work
 product into one workspace that an office can run itself. It's early, and I'm
 looking for people who can help test it with synthetic material, improve the
@@ -90,3 +90,15 @@ targets until the required acceptance evidence exists.
 Use only synthetic demonstrations. Follow the
 [publication checklist](PUBLICATION_CHECKLIST.md) before distributing assets
 or changing repository visibility.
+
+## Compatibility and historical assets
+
+Exculpata is the visible product name. Package names, environment variables,
+headers, storage markers, format IDs, installation paths and repository URLs
+retain their existing identifiers. The health response and JSON export product
+fields retain `RecordBench`; the CSV column key `RecordBench label` also remains
+stable for existing consumers. Human-readable document exports use Exculpata.
+
+The previous banner and recorded demo videos remain historical assets. The
+README uses the Exculpata banner; the original banner remains available at its
+existing path.

@@ -132,7 +132,7 @@ back completely. Chronology export refuses an oversized result instead of
 silently dropping records; use individual exports if necessary. These limits
 are not measured corpus-capacity qualification. Final bundles remain bounded by
 the existing aggregate work-product limit. Work-product exports do not contain
-original files and are not reopenable RecordBench packages.
+original files and are not reopenable Exculpata packages.
 
 Entity-to-Report compilation, matter memory/background, production import,
 larger capacity, learned relationship extraction, a visual graph, held Mac work

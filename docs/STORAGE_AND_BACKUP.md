@@ -1,7 +1,7 @@
 # Storage, backup, and recovery
 
 Matter storage must be a dedicated absolute directory initialized with a
-RecordBench ownership marker. The application will not delete outside that
+Exculpata ownership marker. The application will not delete outside that
 boundary. A local filesystem or host-mounted NAS path is supported; the
 installer does not mount network shares or store NAS credentials.
 
@@ -14,10 +14,10 @@ make every other indexed source unusable.
 ## Choose your backup method
 
 Operators can use their existing backup system or the optional bundled restic
-tool. Installing RecordBench does not enroll the host in a backup service.
+tool. Installing Exculpata does not enroll the host in a backup service.
 The bundled tool takes an operator-selected absolute destination on a filesystem
 available to the host, including storage mounted by the operating system.
-RecordBench does not mount shares, collect storage credentials, or require a
+Exculpata does not mount shares, collect storage credentials, or require a
 particular storage vendor. Configure encryption, access, retention and recovery
 for the chosen method and test it before depending on it.
 

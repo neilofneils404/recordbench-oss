@@ -1,4 +1,4 @@
-# Portable RecordBench product slices
+# Portable Exculpata product slices
 
 [Trusted matter continuity A](continuity-a-case-notes.md) is **Done** at
 `dd367cc`, with post-merge Quality **35610419040** passing. Case notes now connects

@@ -3,7 +3,7 @@
 Current contract, September 5, 2026.
 
 **Check every source** already shares saved criteria, runs and source decisions
-with authorized matter members. Its preliminary RecordBench label and rationale
+with authorized matter members. Its preliminary Exculpata label and rationale
 remain separate from the team's human validation. The ordinary decision page
 now calls that shared work **Team validation** and shows who saved the current
 review. This is one current shared review per source decision, not a separate

@@ -194,7 +194,7 @@ python scripts/browser-accept-workspace-layout.py \
 
 The script uses temporary invented matters, conversations and notes, an
 unavailable generator, and an explicit synthetic storage policy. It clears
-inherited RecordBench service settings. It checks alignment at 1800×1000,
+inherited Exculpata service settings. It checks alignment at 1800×1000,
 1440×480 and 390×844, then uses native wheel events and keyboard navigation to
 verify independent scrolling beside long content. Support-open checks cover
 761, 820 and 900 pixel widths, then resize the open page to 820×650 without
@@ -244,8 +244,8 @@ replace the pinned browser or other hosted Quality gates.
 ## Assistant dock suggestions and Close
 
 The dock header has a labelled **Close** button (the chevron stays as its icon);
-its accessible name, "Close Ask RecordBench", includes the visible label. Closing
-moves focus to the collapsed **Ask RecordBench** tab, and reopening returns focus
+its accessible name, "Close Ask Exculpata", includes the visible label. Closing
+moves focus to the collapsed **Ask Exculpata** tab, and reopening returns focus
 to the question box with any unsent question kept.
 
 An empty chat, including one started with **New chat**, offers three suggested
@@ -339,9 +339,9 @@ access, source version and extraction basis before saving. A changed source is
 rejected for renewed review. Existing AI passage saves retain suggested status
 and preserve later human decisions on retries.
 
-PDF notes identify the source page selected by RecordBench's section controls.
+PDF notes identify the source page selected by Exculpata's section controls.
 The embedded browser PDF toolbar does not report page changes to the outer
-reader; select the matching RecordBench section before annotating another page.
+reader; select the matching Exculpata section before annotating another page.
 Media notes capture a playback position and attach the canonical transcript span
 containing it. A position without transcript support cannot produce a
 source-linked note through this form. The playback element remains mounted when

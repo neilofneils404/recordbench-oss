@@ -208,27 +208,27 @@ class ManagedMatterStorage:
             return
         marker = self.root / MARKER_NAME
         if marker.is_symlink() or not marker.is_file():
-            raise RuntimeError("the RecordBench managed storage marker is unavailable")
+            raise RuntimeError("the Exculpata managed storage marker is unavailable")
         try:
             metadata = marker.stat(follow_symlinks=False)
             payload = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            raise RuntimeError("the RecordBench managed storage marker is invalid") from exc
+            raise RuntimeError("the Exculpata managed storage marker is invalid") from exc
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4_096:
-            raise RuntimeError("the RecordBench managed storage marker is invalid")
+            raise RuntimeError("the Exculpata managed storage marker is invalid")
         if (
             payload.get("format_version") != MARKER_VERSION
             or payload.get("product") != "RecordBench"
             or not isinstance(payload.get("storage_id"), str)
             or not payload["storage_id"].startswith("recordbench-storage-")
         ):
-            raise RuntimeError("the RecordBench managed storage marker is invalid")
+            raise RuntimeError("the Exculpata managed storage marker is invalid")
 
     def _validate_owned_directories(self) -> None:
         root_device = self.root.stat(follow_symlinks=False).st_dev
         for directory in (self.matters, self.purging, self.ingestion_staging):
             if directory.is_symlink() or not directory.is_dir():
-                raise RuntimeError("a RecordBench managed storage directory is unavailable")
+                raise RuntimeError("an Exculpata managed storage directory is unavailable")
             metadata = directory.stat(follow_symlinks=False)
             if metadata.st_dev != root_device or not os.access(directory, os.R_OK | os.W_OK | os.X_OK):
                 raise RuntimeError("the managed storage boundary is not writable on one filesystem")

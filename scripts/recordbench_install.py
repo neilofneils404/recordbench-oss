@@ -2384,7 +2384,7 @@ def _login_reachable(root: Path) -> bool:
         if installation.get("auth") == "kerberos":
             health_status, health_challenge, _ = probe("/health")
             return status == health_status == 401 and "Negotiate" in challenge and "Negotiate" in health_challenge
-        return status == 200 and b"RecordBench" in body
+        return status == 200 and (b"Exculpata" in body or b"RecordBench" in body)
     except (OSError, ValueError, http.client.HTTPException):
         return False
 

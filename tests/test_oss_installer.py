@@ -2407,7 +2407,8 @@ def test_saved_account_preflight_allows_missing_leaf_with_initial_password_input
     ("192.0.2.44", "192.0.2.44"), ("2001:db8::44", "2001:db8::44"),
     ("0.0.0.0", "127.0.0.1"), ("::", "::1")])
 @pytest.mark.parametrize("auth", ["local", "oidc", "kerberos"])
-def test_gateway_acceptance_uses_configured_bind_for_health_and_login(tmp_path, monkeypatch, bind, target, auth):
+@pytest.mark.parametrize("product_name", ["Exculpata", "RecordBench"])
+def test_gateway_acceptance_uses_configured_bind_for_health_and_login(tmp_path, monkeypatch, bind, target, auth, product_name):
     import io
     from tests.test_first_run_handoff import configured_node
     root, _, _ = configured_node(tmp_path.resolve())
@@ -2435,7 +2436,7 @@ def test_gateway_acceptance_uses_configured_bind_for_health_and_login(tmp_path, 
             return "Negotiate" if auth == "kerberos" else default
         def read(self, limit):
             assert limit == 262_144
-            return b"Synthetic RecordBench sign-in page"
+            return f"Synthetic {product_name} sign-in page".encode()
         def close(self):
             pass
     def health_request(request, **kwargs):
