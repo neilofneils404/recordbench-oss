@@ -1326,6 +1326,8 @@ def saved_gpu_node(tmp_path, *, model_profile="quality", models="review"):
     environment.update({"RECORDBENCH_GENERATOR_GPU": "0", "RECORDBENCH_TRANSCRIPTION_GPU": "0",
                    "RECORDBENCH_RETRIEVAL_DEVICE": "cpu", "RECORDBENCH_RETRIEVAL_GPU": "0",
                    "RECORDBENCH_GPU_LAYOUT": "shared", "RECORDBENCH_GENERATOR_GPU_UTILIZATION": "0.72"})
+    environment.update({key.replace("RECORDBENCH_", "EXCULPATA_", 1): value
+                        for key, value in environment.items() if key.startswith("RECORDBENCH_")})
     (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved GPU plan"))
     (root / "config" / "transcription.env").write_text('TRANSCRIPTION_V2_MIN_FREE_VRAM_MB="16000"\n')
     return root, installation, environment
@@ -1414,7 +1416,7 @@ def test_local_identity_preflight_accepts_account_admin_normalization(tmp_path, 
 @pytest.mark.parametrize("dtype,compute", [("half", 7.5), ("half", 8.9), ("bfloat16", 8.0)])
 def test_supported_saved_generator_precision_is_preserved(tmp_path, dtype, compute):
     root, installation, environment = saved_gpu_node(tmp_path)
-    environment["RECORDBENCH_GENERATOR_DTYPE"] = dtype
+    environment["EXCULPATA_GENERATOR_DTYPE"] = environment["RECORDBENCH_GENERATOR_DTYPE"] = dtype
     args = installer._parser().parse_args(["install", "--root", str(root)])
     installer._restore_model_options(args, installation, environment, {})
     _, plan = installer._resolve_gpu_plans(args, "review", (installer.GpuDevice("0", "Synthetic GPU", 49152, 47000, compute),))
@@ -1455,9 +1457,10 @@ def test_saved_bfloat16_blocks_older_replacement_gpu_before_commands(
 ):
     root, installation, environment = saved_gpu_node(tmp_path)
     request.getfixturevalue("ready_host")
+    environment.pop("EXCULPATA_GENERATOR_DTYPE", None)
     environment.pop("RECORDBENCH_GENERATOR_DTYPE", None)
     if dtype is not None:
-        environment["RECORDBENCH_GENERATOR_DTYPE"] = dtype
+        environment["EXCULPATA_GENERATOR_DTYPE"] = environment["RECORDBENCH_GENERATOR_DTYPE"] = dtype
     (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved precision"))
     before = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
     monkeypatch.setattr(installer, "_probe", lambda cmd: subprocess.CompletedProcess(cmd, 0,
@@ -1491,7 +1494,7 @@ def test_saved_gpu_preflight_blocks_resume_update_before_commands(
         "transcription": "0, Synthetic Transcription, 49152, 44000, 8.9",
     }
     if shortage == "utilization":
-        environment["RECORDBENCH_GENERATOR_GPU_UTILIZATION"] = "0.90"
+        environment["EXCULPATA_GENERATOR_GPU_UTILIZATION"] = environment["RECORDBENCH_GENERATOR_GPU_UTILIZATION"] = "0.90"
         (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved reservation"))
     before = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
     monkeypatch.setattr(installer, "_probe", lambda cmd: subprocess.CompletedProcess(cmd, 0,
@@ -1515,7 +1518,7 @@ def test_completed_diarization_resume_uses_saved_plan_without_new_token(tmp_path
     root, installation, environment = saved_gpu_node(tmp_path, model_profile="portable", models="transcription")
     installation["transcription_diarization"] = True
     installation["transcription_languages"] = ["en", "es"]
-    environment["RECORDBENCH_TRANSCRIPTION_GPU"] = "1"
+    environment["EXCULPATA_TRANSCRIPTION_GPU"] = environment["RECORDBENCH_TRANSCRIPTION_GPU"] = "1"
     (root / "installation.json").write_text(json.dumps(installation))
     (root / "compose.env").write_text(installer._env_text(environment, "synthetic saved transcription"))
     installer._seal_provisioning(root, installation)
@@ -1777,8 +1780,8 @@ def synthetic_live_update(tmp_path, monkeypatch, request, *, after_free=47000, f
     # Build the saved node using the real owner, then emulate the target Linux
     # host for read-only prerequisites and the mocked update lifecycle.
     request.getfixturevalue("ready_host")
-    environment["RECORDBENCH_GENERATOR_GPU_UTILIZATION"] = utilization
-    environment["RECORDBENCH_COMPOSE_PROJECT"] = "recordbench-synthetic-upgrade"
+    environment["EXCULPATA_GENERATOR_GPU_UTILIZATION"] = environment["RECORDBENCH_GENERATOR_GPU_UTILIZATION"] = utilization
+    environment["EXCULPATA_COMPOSE_PROJECT"] = environment["RECORDBENCH_COMPOSE_PROJECT"] = "recordbench-synthetic-upgrade"
     (root / "compose.env").write_text(installer._env_text(environment, "synthetic current runtime"))
     old_release = Path(installation["release_path"])
     new_release = tmp_path.resolve() / "new-release"

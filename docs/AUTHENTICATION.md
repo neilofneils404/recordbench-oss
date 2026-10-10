@@ -15,7 +15,7 @@ The app factory, identity service and workbench CLI require an explicit
 `CASE_INTELLIGENCE_AUTH_MODE` (or the factory's `auth_mode` argument). Missing,
 empty and unknown modes stop startup before the app initializes runtime state.
 An explicitly empty argument does not fall back to the environment. Installed
-Compose operation sets `RECORDBENCH_ALLOW_CONTAINER_BIND=1` and accepts only
+Compose operation sets `EXCULPATA_ALLOW_CONTAINER_BIND=1` (deprecated alias: `RECORDBENCH_ALLOW_CONTAINER_BIND=1`) and accepts only
 `local`, `oidc` or `kerberos`, including when manually restarted on loopback.
 The existing secure-cookie and provider configuration checks still apply.
 
@@ -100,3 +100,28 @@ publish a host port.
 
 [Reusable team groups](TEAM_GROUPS.md) documents explicit matter grants, live
 revocation, provider boundaries, migration 0031 and backup/rollback constraints.
+
+## Compatible HTTP headers
+
+Trusted proxies may send `X-Exculpata-Authenticated-User` and
+`X-Exculpata-Proxy-Secret`, or their existing `X-RecordBench-*` aliases.
+Either identity spelling still requires the configured proxy secret. Each
+field may use either family independently. Equal copies are accepted; differing
+identity or secret copies return HTTP 401 before login or session processing,
+without revoking an existing valid session. Empty or incorrect proof never
+establishes proxy authority.
+
+Every gateway location strips both families of identity, proxy-secret and
+operator diagnostic headers. The Kerberos proxy also unsets both families early,
+then sets both identity names from authenticated `REMOTE_USER` and both secret
+names from its protected secret file. Do not forward browser-supplied copies or
+expose either internal service directly.
+
+The loopback-only operator diagnostic accepts `X-Exculpata-Auth-Diagnostic`
+and the deprecated `X-RecordBench-Auth-Diagnostic`. Missing, invalid or conflicting
+proof retains its HTTP 404 response; valid proof cannot bypass the peer check.
+
+Export, Playback and Theme responses emit equal values under both
+`X-Exculpata-*` and `X-RecordBench-*`. Incoming copies of these response headers
+do not control the emitted values. Existing clients can continue reading the
+old names while new clients adopt the Exculpata names.
