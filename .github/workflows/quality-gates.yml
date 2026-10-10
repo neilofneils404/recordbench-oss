@@ -2,11 +2,12 @@ name: Quality gates
 
 on:
   push:
-    branches:
-      - '**'
-    tags:
-      - '**'
+    branches: [main]
   pull_request:
+  merge_group:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -84,16 +85,15 @@ jobs:
           fi
 
   application:
-    needs: [change-scope, publication-scan]
+    needs: [change-scope]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: Require successful classification and publication scan
+      - name: Require successful classification
         env:
           SCOPE_RESULT: ${{ needs.change-scope.result }}
-          PUBLICATION_RESULT: ${{ needs.publication-scan.result }}
-        run: test "$SCOPE_RESULT" = success && test "$PUBLICATION_RESULT" = success
+        run: test "$SCOPE_RESULT" = success
       - name: Check out integration candidate
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Verify integration checkout
@@ -105,6 +105,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            services/transcription/pyproject.toml
       - name: Install lightweight documentation test dependencies
         if: ${{ needs.change-scope.outputs.docs_only == 'true' }}
         run: python -m pip install --disable-pip-version-check 'pytest>=9.0.3,<10'
@@ -114,18 +117,28 @@ jobs:
       - name: Record documentation-only acceptance
         if: ${{ needs.change-scope.outputs.docs_only == 'true' }}
         run: echo 'Documentation and scope contracts passed; the full application suite is not applicable. Publication and secret checks remain required.' >> "$GITHUB_STEP_SUMMARY"
+      # Only trusted main runs share apt archives; PRs install from fresh signed indexes.
+      # Cache downloads only: apt update/install always run, including on cache hits.
+      - name: Cache trusted apt downloads
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.change-scope.outputs.docs_only != 'true' }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/apt-archives
+          key: apt-application-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-${{ hashFiles('.github/workflows/quality-gates.yml') }}
       - name: Install document and media test dependencies
         if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         run: |
+          mkdir -p "$RUNNER_TEMP/apt-archives/partial"
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
+          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/apt-archives" \
+            -o APT::Keep-Downloaded-Packages=true install --yes --no-install-recommends \
             ffmpeg imagemagick poppler-utils tesseract-ocr \
             tesseract-ocr-eng tesseract-ocr-spa
       - name: Bootstrap contributor environment
         if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
         run: make bootstrap SYSTEM_PYTHON=python
       - name: Verify repeatable setup
-        if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name == 'schedule' }}
         run: make bootstrap SYSTEM_PYTHON=python
       - name: Compile Python sources
         if: ${{ needs.change-scope.outputs.docs_only != 'true' }}
@@ -139,7 +152,7 @@ jobs:
         # Unbuffered verbose output identifies failed/active nodes before timeout.
         # Captured streams stay private; only synthetic failure tracebacks are shown.
         run: >-
-          .venv/bin/python -u -m pytest -v --tb=short --show-capture=no
+          .venv/bin/python -u -m pytest -n auto --dist loadgroup --max-worker-restart=0 -v --tb=short --show-capture=no
           -ra --durations=25 -o junit_logging=no
           --junitxml="${{ runner.temp }}/application-results.xml"
       - name: Retain application test report
@@ -229,18 +242,21 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e './services/transcription[dev]'
       - name: Run bundled transcription suite
         working-directory: services/transcription
-        run: python -m pytest -q
+        run: python -m pytest -q -o addopts=''
 
   deployment-contract:
-    needs: change-scope
-    if: ${{ always() && (needs.change-scope.result != 'success' || needs.change-scope.outputs.docs_only != 'true') }}
+    # This existing required check keeps publication failure blocking while the
+    # application suite runs concurrently; branch protection remains unchanged.
+    needs: [change-scope, publication-scan]
+    if: ${{ always() && (needs.change-scope.result != 'success' || needs.publication-scan.result != 'success' || needs.change-scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Require successful classification
+      - name: Require successful classification and publication scan
         env:
           SCOPE_RESULT: ${{ needs.change-scope.result }}
-        run: test "$SCOPE_RESULT" = success
+          PUBLICATION_RESULT: ${{ needs.publication-scan.result }}
+        run: test "$SCOPE_RESULT" = success && test "$PUBLICATION_RESULT" = success
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Verify integration checkout
         env:
@@ -274,7 +290,7 @@ jobs:
 
   synthetic-browser:
     needs: change-scope
-    if: ${{ always() && (needs.change-scope.result != 'success' || needs.change-scope.outputs.docs_only != 'true') }}
+    if: ${{ always() && contains(fromJSON('["merge_group", "schedule", "workflow_dispatch"]'), github.event_name) && (needs.change-scope.result != 'success' || needs.change-scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
