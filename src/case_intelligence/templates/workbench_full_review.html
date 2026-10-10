@@ -1,4 +1,6 @@
 {% extends "workbench_base.html" %}
+{% set one_box_draft = one_box_context(request, matter) if one_box_enabled else none %}
+{% set one_box_prefill = one_box_draft.text if one_box_draft and one_box_draft.kind == 'every_source' else '' %}
 
 {% macro criterion_form() -%}
 <form method="post" action="/matters/{{ matter.slug }}/full-review/criteria" data-working-form data-working-label="Saving criterion…" data-criterion-form>
@@ -12,8 +14,8 @@
     </div>
     <small>Examples fill the form so you can edit the wording before anything runs.</small>
   </fieldset>
-  <label><span>Name this review</span><input name="title" maxlength="160" required placeholder="Example: Records mentioning vehicle ownership" data-criterion-title></label>
-  <label><span>What should RecordBench mark for review?</span><textarea name="instructions" maxlength="8000" rows="5" required placeholder="Describe the material you want a reviewer to see." data-criterion-instructions></textarea><small>Write one clear rule. RecordBench will apply this same wording to every source.</small></label>
+  <label><span>Name this review</span><input name="title" maxlength="160" required placeholder="Example: Records mentioning vehicle ownership" data-criterion-title{% if one_box_prefill %} value="{{ one_box_prefill[:160] }}"{% endif %}></label>
+  <label><span>What should RecordBench mark for review?</span><textarea name="instructions" maxlength="8000" rows="5" required placeholder="Describe the material you want a reviewer to see." data-criterion-instructions>{{ one_box_prefill }}</textarea><small>Write one clear rule. RecordBench will apply this same wording to every source.</small></label>
   <label><span>What definitely counts? <em>Optional</em></span><textarea name="include_guidance" maxlength="4000" rows="3" placeholder="Add examples, names, phrases, dates, or circumstances that should count." data-criterion-include></textarea></label>
   <label><span>What should RecordBench leave out? <em>Optional</em></span><textarea name="exclude_guidance" maxlength="4000" rows="3" placeholder="Describe look-alikes or situations that should not count." data-criterion-exclude></textarea></label>
   <button class="button button-primary" type="submit">Save review criterion</button>
@@ -27,6 +29,7 @@
 <main id="main-content" tabindex="-1" class="workflow-shell">
   <header class="matter-heading workflow-heading"><div><p class="eyebrow">Review workspace</p><h1>{{ matter.display_name }}</h1><p>{{ matter.descriptor or 'Active case review' }}</p></div><div class="matter-actions"><a class="button button-secondary" href="/matters/{{ matter.slug }}/setup?view=list#source-library">Sources</a><a class="button button-secondary" href="/matters/{{ matter.slug }}/work-product">Work product</a></div></header>
   {% with active='full_review' %}{% include "workbench_matter_tabs.html" %}{% endwith %}
+  {% include "workbench_one_box_route.html" %}
   {% include "workbench_review_modes.html" %}
   {% if notice %}<div class="notice notice-success" role="status">{{ notice }}</div>{% endif %}
   {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
@@ -43,14 +46,14 @@
     <aside class="workflow-library criterion-library">
       <div class="workflow-library-heading"><div><p class="eyebrow">Saved logic</p><h2>Criteria</h2></div><span>{{ criteria|length }}</span></div>
       <nav>{% for item in criteria %}<a class="workflow-run-link {% if active_criterion and item.criterion_id == active_criterion.criterion_id %}selected{% endif %}" href="/matters/{{ matter.slug }}/full-review?criterion={{ item.criterion_id }}"><span class="criterion-version">v{{ item.current_version_number }}</span><span><strong>{{ item.title }}</strong><small>{{ item.version_count }} saved version{% if item.version_count != 1 %}s{% endif %}</small></span></a>{% else %}<p class="workflow-empty-small">Create the first criterion to begin.</p>{% endfor %}</nav>
-      {% if criteria %}<details class="criterion-editor">
+      {% if criteria and not one_box_prefill %}<details class="criterion-editor">
         <summary>New review criterion</summary>
         {{ criterion_form() }}
       </details>{% endif %}
     </aside>
 
     <section class="workflow-canvas {% if active_run %}has-active-run{% endif %} {% if selected_decision %}has-selected-decision{% endif %}">
-      {% if active_criterion %}
+      {% if active_criterion and not one_box_prefill %}
       <section class="criterion-card" id="review-controls">
         <header>
           <div><p class="eyebrow">Current criterion · v{{ active_version.version_number }}</p><h2>{{ active_criterion.title }}</h2></div>

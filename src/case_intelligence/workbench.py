@@ -295,12 +295,10 @@ ANSWER_STAGE_MESSAGES = {
     "verifying": "Checking citation references and text consistency; meaning still needs human review.",
 }
 
-
 RESEARCH_COVERAGE_NOTICE = (
     "This investigation is limited to selected search passages; it did not check every source. "
     "Use Check every source for a document-by-document task."
 )
-
 
 def _source_coverage(
     readiness: MatterReadinessRecord,
@@ -356,7 +354,6 @@ def _source_coverage(
         "excluded_count": excluded,
         "notice": notice,
     }
-
 
 def _focused_answer_scope(
     question: str,
@@ -14283,14 +14280,12 @@ def create_workbench_app(
                           transfer_response_lease=transfer_matter_response_lease,
                           automatic_progress=bench.automatic_discovery_progress,
                           wake_automatic=bench.wake_automatic_discovery)
-
     from .assertion_routes import install_assertion_routes
     install_assertion_routes(app, service_for=bench.assertion_service, entities_for=bench.entity_service,
                              authorized_matter=authorized_matter, auth_context=auth_context,
                              require_csrf=require_csrf, templates=templates, base_context=base_context,
                              audit=audit, require_response_lease=require_matter_response_lease,
                              transfer_response_lease=transfer_matter_response_lease)
-
     from .evidence_graph_routes import install_evidence_graph_routes
     install_evidence_graph_routes(app, assertions_for=bench.assertion_service,
                                   authorized_matter=authorized_matter, auth_context=auth_context,
@@ -14311,7 +14306,6 @@ def create_workbench_app(
             if not bench.workspace.connection.in_transaction:
                 audit(request, "matter.access", "denied", context=original)
             raise HTTPException(404, "Matter is no longer available") from exc
-
     from .matter_context_routes import install_context_routes
     install_context_routes(app, assertions_for=bench.assertion_service, authorized_matter=authorized_matter,
                            auth_context=auth_context, refresh_authority=refresh_context_authority,
@@ -16884,6 +16878,12 @@ def create_workbench_app(
         render_report_compilation=render_report_compilation, add_report_material=add_report_material,
     )
     app.state.app_context = app_context
+    from .one_box_routes import install_one_box_routes
+    install_one_box_routes(app, authorized_matter=authorized_matter, require_csrf=require_csrf,
+                           templates=templates, ask=ask_question, readiness_for=bench.workspace.matter_readiness, home=matter_home)
+    from .upload_review import install_upload_review
+    install_upload_review(app, bench=bench, authorized_matter=authorized_matter,
+                          auth_context=auth_context, templates=templates, base_context=base_context)
     return app
 
 
