@@ -44,6 +44,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 
+from .compat_env import env, header, header_conflicts, kerberos_headers, response_headers
 from .static_assets import asset_url, static_cache_control
 from .source_find import MAX_FIND_CHARS, find_in_source, highlight_find
 from .answer_jobs import AnswerCoordinator, AnswerJobFailure, AnswerResult
@@ -429,7 +430,7 @@ def _focused_answer_scope(
 def _backup_status_projection() -> dict[str, object]:
     """Read one administrator-safe backup receipt, never repository content."""
 
-    configured = os.getenv(
+    configured = env(
         "RECORDBENCH_BACKUP_STATUS_FILE",
         "/srv/recordbench/.local/state/recordbench-backup/status.json",
     ).strip()
@@ -6631,12 +6632,14 @@ def create_workbench_app(
 
     @app.middleware("http")
     async def identity_boundary(request: Request, call_next):
+        if any(header_conflicts(request.headers, name) for name in (KERBEROS_USER_HEADER, KERBEROS_SECRET_HEADER)):
+            return Response(status_code=401, headers={"Cache-Control": "no-store"})
         if request.url.path == "/internal/auth-mode":
             if (
                 request.method != "GET"
                 or request.client is None
                 or request.client.host not in {"127.0.0.1", "::1"}
-                or not identity.auth_diagnostic_authorized(request.headers.get("X-RecordBench-Auth-Diagnostic"))
+                or not identity.auth_diagnostic_authorized(header(request.headers, "X-RecordBench-Auth-Diagnostic"))
             ):
                 return Response(status_code=404, headers={"Cache-Control": "no-store"})
             return JSONResponse({"auth_mode": identity.auth_mode}, headers={"Cache-Control": "no-store"})
@@ -6659,8 +6662,7 @@ def create_workbench_app(
             if context is not None and identity.auth_mode == "kerberos":
                 bound_context = identity.bind_kerberos_request(
                     context,
-                    request.headers.get(KERBEROS_USER_HEADER),
-                    request.headers.get(KERBEROS_SECRET_HEADER),
+                    *kerberos_headers(request.headers),
                 )
                 if bound_context is None:
                     audit(
@@ -6678,8 +6680,7 @@ def create_workbench_app(
                     )
                     if identity.kerberos_session_identity_matches(
                         context,
-                        request.headers.get(KERBEROS_USER_HEADER),
-                        request.headers.get(KERBEROS_SECRET_HEADER),
+                        *kerberos_headers(request.headers),
                     ):
                         identity.logout(context)
                     context = None
@@ -7626,7 +7627,7 @@ def create_workbench_app(
             media_type=artifact.media_type,
             headers={
                 "Content-Disposition": f'attachment; filename="{artifact.filename}"',
-                "X-RecordBench-Export": "work-product",
+                **response_headers("Export", "work-product"),
             },
         )
         return transfer_matter_response_lease(request, response)
@@ -8419,8 +8420,7 @@ def create_workbench_app(
                 identity.auth_mode != "kerberos"
                 or identity.kerberos_request_valid(
                     existing,
-                    request.headers.get(KERBEROS_USER_HEADER),
-                    request.headers.get(KERBEROS_SECRET_HEADER),
+                    *kerberos_headers(request.headers),
                 )
             )
         ):
@@ -8428,8 +8428,7 @@ def create_workbench_app(
         if identity.auth_mode == "kerberos":
             try:
                 context, raw_token = identity.login_kerberos(
-                    request.headers.get(KERBEROS_USER_HEADER),
-                    request.headers.get(KERBEROS_SECRET_HEADER),
+                    *kerberos_headers(request.headers),
                 )
             except KerberosAuthenticationError as exc:
                 audit(
@@ -8750,7 +8749,7 @@ def create_workbench_app(
         return RedirectResponse(
             IdentityService.safe_next(next_path, default="/"),
             status_code=303,
-            headers={"X-RecordBench-Theme": preference.theme},
+            headers=response_headers("Theme", preference.theme),
         )
 
     @app.get("/favicon.ico", include_in_schema=False)
@@ -13404,7 +13403,7 @@ def create_workbench_app(
                 media_type=artifact.media_type,
                 headers={
                     "Content-Disposition": f'attachment; filename="{filename}"',
-                    "X-RecordBench-Export": "work-product",
+                    **response_headers("Export", "work-product"),
                     "Cache-Control": "no-store",
                 },
             ),
@@ -13463,7 +13462,7 @@ def create_workbench_app(
                 media_type=artifact.media_type,
                 headers={
                     "Content-Disposition": f'attachment; filename="{filename}"',
-                    "X-RecordBench-Export": "work-product",
+                    **response_headers("Export", "work-product"),
                     "Cache-Control": "no-store",
                 },
             ),
@@ -13598,7 +13597,7 @@ def create_workbench_app(
             media_type="video/mp4" if document.has_video else "audio/wav",
             filename=f"media-clip-{clip.clip_id[-12:]}{suffix}",
             headers={
-                "X-RecordBench-Export": "work-product",
+                **response_headers("Export", "work-product"),
                 "Cache-Control": "no-store",
             },
         )
@@ -13894,9 +13893,7 @@ def create_workbench_app(
             "Cache-Control": "no-store",
             "X-Frame-Options": "SAMEORIGIN",
             "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'",
-            "X-RecordBench-Playback": (
-                "compatible-copy" if compatible_copy else "original"
-            ),
+            **response_headers("Playback", "compatible-copy" if compatible_copy else "original"),
         }
         if status_code == 206:
             headers["Content-Range"] = f"bytes {start}-{end}/{size}"
@@ -14295,7 +14292,7 @@ def create_workbench_app(
         current = identity.resolve(request.cookies.get(SESSION_COOKIE), read_only=True)
         if current is not None and identity.auth_mode == "kerberos":
             current = identity.bind_kerberos_request(current,
-                request.headers.get(KERBEROS_USER_HEADER), request.headers.get(KERBEROS_SECRET_HEADER))
+                *kerberos_headers(request.headers))
         try:
             if (current is None or current.principal_id != original.principal_id
                     or not current.principal.active
@@ -14450,8 +14447,7 @@ def create_workbench_app(
             if current is not None and identity.auth_mode == "kerberos":
                 current = identity.bind_kerberos_request(
                     current,
-                    request.headers.get(KERBEROS_USER_HEADER),
-                    request.headers.get(KERBEROS_SECRET_HEADER),
+                    *kerberos_headers(request.headers),
                 )
             if (
                 current is None
@@ -16898,7 +16894,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.host != "127.0.0.1" and not (
         args.host == "0.0.0.0"
-        and os.getenv("RECORDBENCH_ALLOW_CONTAINER_BIND", "") == "1"
+        and env("RECORDBENCH_ALLOW_CONTAINER_BIND", "") == "1"
     ):
         parser.error(
             "non-loopback binding is allowed only in the isolated container profile"

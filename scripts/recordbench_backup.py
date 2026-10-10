@@ -22,6 +22,9 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 PROJECT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT / "src"))
+from case_intelligence.compat_env import required_env as _required_env
+sys.path.pop(0)
 POSTGRES_IMAGE = "pgvector/pgvector:pg17"
 ACTIVE_JOB_KEYS = (
     "ingest_jobs",
@@ -549,14 +552,14 @@ def backup(args: argparse.Namespace) -> int:
         return 0
 
     sources = {
-        "runtime": _exact_directory(environment["RECORDBENCH_RUNTIME_ROOT"], label="runtime storage"),
-        "configuration": _exact_directory(environment["RECORDBENCH_CONFIG_ROOT"], label="configuration root"),
-        "secrets": _exact_directory(environment["RECORDBENCH_SECRETS_ROOT"], label="secrets root"),
+        "runtime": _exact_directory(_required_env("RECORDBENCH_RUNTIME_ROOT", environ=environment), label="runtime storage"),
+        "configuration": _exact_directory(_required_env("RECORDBENCH_CONFIG_ROOT", environ=environment), label="configuration root"),
+        "secrets": _exact_directory(_required_env("RECORDBENCH_SECRETS_ROOT", environ=environment), label="secrets root"),
     }
     if installation.get("local_account_management") is True:
-        sources["accounts"] = _exact_directory(environment["RECORDBENCH_LOCAL_ACCOUNT_ROOT"], label="local account root")
+        sources["accounts"] = _exact_directory(_required_env("RECORDBENCH_LOCAL_ACCOUNT_ROOT", environ=environment), label="local account root")
     managed_storage = _exact_directory(
-        environment["RECORDBENCH_STORAGE_ROOT"], label="matter storage"
+        _required_env("RECORDBENCH_STORAGE_ROOT", environ=environment), label="matter storage"
     )
     if not (managed_storage / ".recordbench-managed-storage.json").is_file():
         raise BackupError("matter storage ownership marker is unavailable")
