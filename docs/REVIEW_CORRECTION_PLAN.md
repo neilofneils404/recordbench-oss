@@ -1,15 +1,15 @@
 # Independent review correction plan
 
 This revision includes the seven portable correction packets in
-[#110](https://github.com/neilofneils404/recordbench-oss/pull/110),
-[#111](https://github.com/neilofneils404/recordbench-oss/pull/111),
-[#112](https://github.com/neilofneils404/recordbench-oss/pull/112),
-[#113](https://github.com/neilofneils404/recordbench-oss/pull/113),
-[#114](https://github.com/neilofneils404/recordbench-oss/pull/114),
-[#115](https://github.com/neilofneils404/recordbench-oss/pull/115), and
-[#116](https://github.com/neilofneils404/recordbench-oss/pull/116).
+[#110](https://github.com/Exculpata/exculpata/pull/110),
+[#111](https://github.com/Exculpata/exculpata/pull/111),
+[#112](https://github.com/Exculpata/exculpata/pull/112),
+[#113](https://github.com/Exculpata/exculpata/pull/113),
+[#114](https://github.com/Exculpata/exculpata/pull/114),
+[#115](https://github.com/Exculpata/exculpata/pull/115), and
+[#116](https://github.com/Exculpata/exculpata/pull/116).
 The included behavior and remaining acceptance work are recorded below.
-[Issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109) remains
+[Issue #109](https://github.com/Exculpata/exculpata/issues/109) remains
 open for broader product acceptance; these corrections do not establish installed,
 GPU, real-model, recovery-profile, or release acceptance.
 
@@ -65,7 +65,7 @@ for a current-candidate end-to-end reproduction.
 
 ## Included corrections and review records
 
-- **[#110](https://github.com/neilofneils404/recordbench-oss/pull/110) — R1a.1 confidence presentation.**
+- **[#110](https://github.com/Exculpata/exculpata/pull/110) — R1a.1 confidence presentation.**
   Current and recognized historical generated answers, research, rejection and
   omission notices, exports, and new Report copies describe citation/text checks
   and require source review. Succeeded research results are validated before
@@ -73,7 +73,7 @@ for a current-candidate end-to-end reproduction.
   and retain raw-input change detection for compiled Reports. Semantic
   verification is unchanged. See [generated-answer review](GENERATED_ANSWER_REVIEW.md).
 
-- **[#111](https://github.com/neilofneils404/recordbench-oss/pull/111) — R5 retention/recovery.**
+- **[#111](https://github.com/Exculpata/exculpata/pull/111) — R5 retention/recovery.**
   Serializes purge, work admission, extension and retry checks, with synthetic
   clean-restore regressions and an [expired-matter recovery runbook](EXPIRED_MATTER_RECOVERY.md).
   The default 30-day retention and seven-day grace period are unchanged. Restore
@@ -81,13 +81,13 @@ for a current-candidate end-to-end reproduction.
   immediately purge an expired restored matter. Broader retention-policy and
   installed recovery decisions remain open.
 
-- **[#112](https://github.com/neilofneils404/recordbench-oss/pull/112) — R3/R6 authentication/cache.**
+- **[#112](https://github.com/Exculpata/exculpata/pull/112) — R3/R6 authentication/cache.**
   Requires an explicit auth mode, restricts preview/test access, checks effective
   installed mode, and tests authorization after actual account-writer changes.
   Supported-provider installation acceptance and the reported overlayfs/tmpfs
   comparison remain separate. See [authentication diagnostics](AUTHENTICATION_DIAGNOSTICS.md).
 
-- **[#113](https://github.com/neilofneils404/recordbench-oss/pull/113) — R4 source controls.**
+- **[#113](https://github.com/Exculpata/exculpata/pull/113) — R4 source controls.**
   Preserves source snapshots while projecting unsupported controls safely for
   derived prose and readable exports, including older saved data. Known generated
   notices receive confidence presentation before control-character projection;
@@ -96,14 +96,14 @@ for a current-candidate end-to-end reproduction.
   TXT extraction remains a separate follow-up. See
   [source-text presentation](SOURCE_TEXT_PRESENTATION.md).
 
-- **[#114](https://github.com/neilofneils404/recordbench-oss/pull/114) — R2 PDF OCR/coverage.**
+- **[#114](https://github.com/Exculpata/exculpata/pull/114) — R2 PDF OCR/coverage.**
   Uses bounded page/image evidence as well as native-text strength to select OCR
   candidates. Preserves native text and carries incomplete-extraction cautions
   through current/historical views and exports without replacing old citation
   bases. Selection and searchable text do not establish complete or correct
   recognition. See [PDF OCR coverage](PDF_OCR_COVERAGE.md).
 
-- **[#115](https://github.com/neilofneils404/recordbench-oss/pull/115) — R1a.2 cited excerpts.**
+- **[#115](https://github.com/Exculpata/exculpata/pull/115) — R1a.2 cited excerpts.**
   Adds authorized exact-citation comparison for saved focused-answer claims and
   limitations, including a no-JavaScript page. HTML excerpts follow the source-text
   presentation policy; saved payloads are unchanged, and JSON source context
@@ -112,7 +112,7 @@ for a current-candidate end-to-end reproduction.
   Broader investigation, synthesis and export comparisons remain open. See
   [cited-excerpt comparison](CITED_EXCERPT_COMPARISON.md).
 
-- **[#116](https://github.com/neilofneils404/recordbench-oss/pull/116) — R1b evaluation harness.**
+- **[#116](https://github.com/Exculpata/exculpata/pull/116) — R1b evaluation harness.**
   Freezes 11 synthetic packets and 27 labeled candidates, separating injected
   verifier probes from real-model capture and independent human grading. The
   harness does not establish real-model accuracy or acceptance. See
@@ -431,7 +431,7 @@ tracking an issue or publishing a draft PR does not establish acceptance.
   for inspection as the recovery runbook requires. Other response-lease paths and
   coordination between full application processes need a separate lifecycle audit.
 
-Keep [issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109)
+Keep [issue #109](https://github.com/Exculpata/exculpata/issues/109)
 open until the broader acceptance work has its own evidence and disposition.
 Keep exact candidate review/CI receipts in the linked pull requests and
 acceptance records, distinguishing included code from installed/model acceptance.

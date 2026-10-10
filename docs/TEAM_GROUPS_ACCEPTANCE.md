@@ -3,7 +3,7 @@
 Date: 2026-09-10. Baseline: `9b6fa6c855011953c91dce9d4fd554cae1636dd1` (current main at start).
 Scope: reusable application team groups and explicit matter grants only.
 Slice **06** landed on `main` as
-[#65](https://github.com/neilofneils404/recordbench-oss/pull/65)
+[#65](https://github.com/Exculpata/exculpata/pull/65)
 (`e44e485ab3eca94b7e5588765df58f7f4b2b4786`).
 
 ## Checks performed

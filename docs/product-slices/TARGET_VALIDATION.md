@@ -19,7 +19,7 @@ for discovery; the full commit identifies what was actually tested.
 
 ```bash
 git clone --single-branch --branch codex/portable-candidate-20260909 \
-  https://github.com/neilofneils404/recordbench-oss.git recordbench-validation
+  https://github.com/Exculpata/exculpata.git recordbench-validation
 cd recordbench-validation
 git checkout --detach FULL_COMMIT_FROM_HANDOFF
 git rev-parse HEAD
