@@ -30,6 +30,36 @@ matter source units. Candidate retrieval combines lexical and vector lanes,
 then a cross-encoder reranks a bounded set. The generator sees only the selected
 evidence; a separate deterministic verifier checks claims and citations.
 
+## Application context
+
+`create_workbench_app` creates one frozen `AppContext` from its existing local
+objects and exposes it as `app.state.app_context`. The Reports handlers read
+these bindings through the context; their route registration, signatures,
+dependency decorators, authorization, transactions and response leases stay the
+same. Construction occurs at the end of the factory, after every callback has
+been defined and before requests can run. No route moves to another module.
+
+The context contains the workbench, identity service and template renderer;
+authentication, matter authorization, both CSRF checks, audit and safe return
+path helpers; the base template context, presentation finalizer and download
+renderer; active-matter and bundle response-lease dependencies plus their lookup
+and transfer helpers; the recording decision limit, capacity limiter and pending
+set; and Report labels, citation links, edit recovery, saved-work choices,
+compilation rendering and material insertion helpers. The three self-contained
+helpers `present_value`, `auth_context` and `requested_path` live in
+`app_context.py`; their behavior is unchanged.
+
+Frozen bindings are shallow: services, the renderer, label mapping, limiter and
+pending set retain their original identities and mutability. In particular,
+recording admission shares the same capacity and pending set with its existing
+handler. All other route groups continue using factory locals. Specialized
+readiness, assistant, source, workflow and export projections remain local,
+as do the Report callback implementations and decorator dependencies. This
+limits the initial context adoption to Reports without duplicating services or
+altering when dependencies execute.
+
+## Intake and source processing
+
 Loose-file selection first uses a matter-authorized, CSRF-protected metadata
 preflight. It returns one content-minimized row per selected file without
 copying bytes, reserving capacity, or creating an upload session; filename
