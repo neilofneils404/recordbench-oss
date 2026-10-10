@@ -20,6 +20,8 @@ and no-reply Git email. Use Python 3.12 and the
 
 ```console
 make bootstrap
+.venv/bin/exculpata --help
+.venv/bin/exculpata-workbench --help
 make check-fast
 ```
 

@@ -3,9 +3,9 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "recordbench"
+name = "exculpata"
 version = "0.1.0b1"
-description = "Local-first evidence and matter review workbench for RecordBench"
+description = "Local-first evidence and matter review workbench for Exculpata"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
@@ -31,11 +31,14 @@ postgres = ["psycopg[binary]>=3.2,<4"]
 models = ["sentence-transformers>=5,<6"]
 
 [project.scripts]
-case-review-bench = "case_intelligence.review_bench:main"
-case-intelligence-workbench = "case_intelligence.workbench:main"
-recordbench = "case_intelligence.admin_cli:main"
-recordbench-workbench = "case_intelligence.workbench:main"
-recordbench-retrieval-worker = "case_intelligence.retrieval_worker:main"
+exculpata = "case_intelligence.cli:admin"
+exculpata-workbench = "case_intelligence.cli:workbench"
+exculpata-retrieval-worker = "case_intelligence.cli:retrieval_worker"
+case-review-bench = "case_intelligence.cli:review_bench"
+case-intelligence-workbench = "case_intelligence.cli:workbench"
+recordbench = "case_intelligence.cli:admin"
+recordbench-workbench = "case_intelligence.cli:workbench"
+recordbench-retrieval-worker = "case_intelligence.cli:retrieval_worker"
 
 [tool.setuptools.packages.find]
 where = ["src"]
