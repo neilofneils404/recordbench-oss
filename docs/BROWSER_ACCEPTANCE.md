@@ -33,6 +33,18 @@ the existing CSRF-protected Ask flow and creates exactly one queued research
 job in the same conversation. Refreshing before or after the click creates no
 extra work. The research worker is stopped only to keep this queue-state check
 deterministic; the journey does not assess investigation quality.
+The discovery briefing journey enables `CASE_INTELLIGENCE_BRIEFING`, holds a
+synthetic indexing job to check the existing processing presentation, then
+waits for real extraction, indexing and automatic discovery to finish. It
+checks all four sections, exact counts, recorded intake reasons, Suggested
+labels and every source link, including the collapsed coverage caveats. At
+430 pixels it chooses a question with native Tab and Enter, verifies the
+unobscured focused input and unchanged answer/research counts, and repeats
+with one box disabled to check the existing Ask composer. A final application
+restart checks that disabling the briefing flag restores the existing Home.
+It also holds actual Home responses across two controlled readiness cycles to
+verify that an obsolete response cannot replace the briefing, a fresh read is
+required, and the unsent draft and focus outside the briefing survive.
 
 All applications are generated for the run and listen on ephemeral loopback
 ports. They use the unavailable generator or a fixed synthetic generator and

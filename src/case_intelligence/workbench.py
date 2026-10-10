@@ -16885,6 +16885,8 @@ def create_workbench_app(
                           auth_context=auth_context, templates=templates, base_context=base_context)
     from .deeper_investigation import install_deeper_investigation
     install_deeper_investigation(templates, bench=bench, auth_context=auth_context)
+    from .briefing_home import install_briefing_home
+    install_briefing_home(templates, bench=bench, auth_context=auth_context, readiness_for=matter_readiness_projection)
     return app
 
 

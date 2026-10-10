@@ -43,6 +43,7 @@ JOURNEYS = (
     ('assertions', 'browser-accept-assertions.py', 'receipt.json', 14, ()),
     ('assistant-dock', 'browser-accept-assistant-dock.py', 'receipt.json', 10, ()),
     ('one-box', 'browser-accept-one-box.py', 'receipt.json', 15, ()),
+    ('briefing', 'browser-accept-briefing.py', 'receipt.json', 12, ()),
 )
 ARTIFACT_NAMES = (
     'receipt-browser-result.json', 'receipt.json', 'failure.png', 'failure.html',
@@ -54,6 +55,7 @@ ARTIFACT_NAMES = (
     'notes-constrained-with-assistant.png', 'sources-mobile-actions-390.png',
     'one-box-home-430.png', 'one-box-answer-430.png',
     'deeper-investigation-offer-430.png',
+    'briefing-sections-430.png', 'briefing-question-430.png', 'briefing-ask-fallback-430.png',
     'sources-mobile-actions-320.png',
     'notes-suggestion-original-support.png', 'root-font-200-percent.png',
     'text-spacing.png', 'notes-balanced-4k.png',
