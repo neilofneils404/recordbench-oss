@@ -192,7 +192,7 @@ cited-excerpt comparison, and a frozen claim-evaluation harness. The
 [independent review correction plan](docs/REVIEW_CORRECTION_PLAN.md) links their
 implementation and review records and tracks the remaining installed, model,
 recovery, and policy acceptance work. These changes do not close
-[issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109).
+[issue #109](https://github.com/Exculpata/exculpata/issues/109).
 
 ## What Exculpata uses
 

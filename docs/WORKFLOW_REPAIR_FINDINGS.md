@@ -121,7 +121,7 @@ bounded native comparison, not a green application gate.
 
 Public CI for `bbdaaef5a2a72183eef140b7c6541b5e5b751102` completed all six
 Quality gates successfully. Its unadapted Linux application run returned
-**3,011 passed, 9 skipped**. The [exact application job](https://github.com/neilofneils404/recordbench-oss/actions/runs/34732508452/job/103657780581)
+**3,011 passed, 9 skipped**. The [exact application job](https://github.com/Exculpata/exculpata/actions/runs/34732508452/job/103657780581)
 covers the complete candidate at that revision, including the Note-preview
 follow-up; it is separate from the earlier returned patch-only receipt.
 
@@ -158,7 +158,7 @@ follow-up; the existing workflow browser evidence above retains its scope.
 At `0251b3093b4bfc25c3d160c0df9c00ccba6dc0a9`, the pull-request application
 job passed **3,045 tests with 9 skips**, while the separate push application
 job failed two investigation tests and three Report fixture setups. Both jobs
-tested the same source tree. The [failed run](https://github.com/neilofneils404/recordbench-oss/actions/runs/34758515661)
+tested the same source tree. The [failed run](https://github.com/Exculpata/exculpata/actions/runs/34758515661)
 remains part of the evidence; the passing run does not erase its fixture races.
 
 The investigation fixture treated a ready source document as permission to

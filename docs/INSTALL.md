@@ -57,7 +57,7 @@ unproven; the portable capabilities are listed below.
    docker compose version
    umask 077
    git clone --single-branch --branch main --no-tags \
-     https://github.com/neilofneils404/recordbench-oss.git recordbench
+     https://github.com/Exculpata/exculpata.git recordbench
    cd recordbench
    ```
 

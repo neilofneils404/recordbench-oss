@@ -6,9 +6,9 @@ See the [product north star](docs/PRODUCT_NORTH_STAR.md).
 
 ## Start small
 
-[GitHub issues](https://github.com/neilofneils404/recordbench-oss/issues) are the
+[GitHub issues](https://github.com/Exculpata/exculpata/issues) are the
 work queue. Pick an unassigned
-[`good first issue`](https://github.com/neilofneils404/recordbench-oss/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22),
+[`good first issue`](https://github.com/Exculpata/exculpata/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22),
 read its scope, and comment that you would like to take it on. Ask for clarification
 there if needed. Keep PRs small and focused; a draft PR is fine for early feedback.
 

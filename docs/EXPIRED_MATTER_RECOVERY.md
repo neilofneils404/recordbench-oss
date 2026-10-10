@@ -1,6 +1,6 @@
 # Temporary-matter retention and expired-backup recovery
 
-R5/F3 of [independent review issue #109](https://github.com/neilofneils404/recordbench-oss/issues/109).
+R5/F3 of [independent review issue #109](https://github.com/Exculpata/exculpata/issues/109).
 This packet investigates recovery and concurrent lifecycle operations. It does
 not choose a new retention policy or enroll an installation in backup/export.
 See [storage and backup](STORAGE_AND_BACKUP.md) for the complete backup boundary.
@@ -154,4 +154,4 @@ and lifecycle behavior, not model quality, encrypted restic/replacement-host
 readiness, PostgreSQL import, or CPU/GPU installed acceptance. The existing
 `scripts/context-storage-restore-drill.py --answer-context` separately covers
 upgrade and matching-reader rollback. Candidate commands, results and hosted
-CI/review disposition are recorded in [PR #111](https://github.com/neilofneils404/recordbench-oss/pull/111).
+CI/review disposition are recorded in [PR #111](https://github.com/Exculpata/exculpata/pull/111).

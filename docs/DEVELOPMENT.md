@@ -98,7 +98,7 @@ workflow actions are pinned to reviewed commit SHAs.
 ## Development model
 
 Use the [product north star](PRODUCT_NORTH_STAR.md) to frame the user outcome
-and [GitHub issues](https://github.com/neilofneils404/recordbench-oss/issues) to select active work.
+and [GitHub issues](https://github.com/Exculpata/exculpata/issues) to select active work.
 The [core evolution plan](CORE_EVOLUTION.md) guides incremental service and
 repository extraction. A new feature should strengthen those boundaries while
 preserving atomic authorization, source validation, and saving. Update linked

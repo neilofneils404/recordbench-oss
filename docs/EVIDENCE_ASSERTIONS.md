@@ -2,9 +2,9 @@
 
 Slice 18 connects the [entity workspace](ENTITY_WORKSPACE.md) to reviewer-owned
 events and assertions. The storage and provenance contract is
-[issue #80](https://github.com/neilofneils404/recordbench-oss/issues/80).
+[issue #80](https://github.com/Exculpata/exculpata/issues/80).
 The implementation depends on the cruise promotion in
-[PR #81](https://github.com/neilofneils404/recordbench-oss/pull/81), including
+[PR #81](https://github.com/Exculpata/exculpata/pull/81), including
 commit `e0301b9839b8c69d07f40c5f5827ab4873f428d6`. That prerequisite and this
 behavioral PR have separate final-head review and main acceptance gates.
 
