@@ -272,6 +272,8 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_INTEGRATION_SHA"
       - name: Validate standard and Kerberos Compose graphs
         run: ./scripts/compose-check.sh
+      - name: Verify real gateway strips forged authentication headers
+        run: python3 -m unittest tests.test_gateway_nginx -v
       - name: Exercise read-only installer diagnostics
         run: |
           python3 - <<'PYCODE'

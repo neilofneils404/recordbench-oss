@@ -2056,8 +2056,8 @@ def test_relative_tls_paths_keep_launch_location_in_staged_configuration(tmp_pat
     installer._collect_identity_choices(args)
     installer._configure(installer.Console(color=False, quiet=True), args, root, paths, "synthetic-release", release, ())
     values = installer._dotenv(root / "compose.env")
-    assert values["RECORDBENCH_TLS_CERT"] == str(cert)
-    assert values["RECORDBENCH_TLS_KEY"] == str(key)
+    assert values["EXCULPATA_TLS_CERT"] == str(cert)
+    assert values["EXCULPATA_TLS_KEY"] == str(key)
 
 
 @pytest.mark.parametrize("field", ["--tls-cert", "--tls-key"])
@@ -2659,7 +2659,9 @@ def synthetic_saved_provider(tmp_path, request, monkeypatch, auth, mutation=None
             "CASE_INTELLIGENCE_KERBEROS_ALLOWED_GROUPS": "synthetic-users@example.test",
             "CASE_INTELLIGENCE_KERBEROS_ADMIN_GROUPS": "synthetic-admins@example.test",
             "CASE_INTELLIGENCE_KERBEROS_PROXY_SECRET_FILE": "/run/recordbench-secrets/kerberos-proxy-secret"})
-        installer._replace_env(root / "compose.env", "RECORDBENCH_KERBEROS_PRINCIPAL", "HTTP/recordbench.example.test@EXAMPLE.TEST")
+        compose = installer._dotenv(root / "compose.env")
+        compose["EXCULPATA_KERBEROS_PRINCIPAL"] = "HTTP/recordbench.example.test@EXAMPLE.TEST"
+        (root / "compose.env").write_text(installer._env_text(compose, "Synthetic Kerberos node"))
         credential = paths["secrets"] / "kerberos-proxy-secret"
         installer._private_write(credential, "synthetic_proxy_secret_" + "x" * 32 + "\r\n")
         installer._private_write(paths["secrets"] / "recordbench.keytab", "synthetic opaque keytab bytes")
@@ -3111,3 +3113,68 @@ def test_update_builds_companion_images_before_node_swap(tmp_path, monkeypatch, 
     assert len(builds) == 1
     assert {"gateway", "clamav", "postgres"} <= set(builds[0])
     assert events.index("build-new") < events.index("stop-old") < events.index("up-new")
+
+
+@pytest.mark.parametrize("prefixes", [("RECORDBENCH",), ("EXCULPATA",), ("RECORDBENCH", "EXCULPATA")])
+@pytest.mark.parametrize("ending", ["\n", "\r\n", ""])
+def test_saved_alias_updates_preserve_keys_and_unchanged_bytes(tmp_path, prefixes, ending):
+    path = tmp_path / "compose.env"
+    original = "# Synthetic operator formatting\r\n\r\n" + "\r\n".join(
+        f"  {prefix}_HTTPS_PORT= 8443  " for prefix in prefixes) + ending
+    # Keys are strict dotenv identifiers, while indentation and value spacing
+    # are accepted operator formatting and should survive a no-op update.
+    path.write_bytes(original.encode())
+    path.chmod(0o600)
+    for name in ("RECORDBENCH_HTTPS_PORT", "EXCULPATA_HTTPS_PORT"):
+        installer._replace_env(path, name, "8443")
+        assert path.read_bytes() == original.encode()
+    installer._replace_env(path, "RECORDBENCH_ABSENT", "synthetic")
+    assert path.read_bytes() == original.encode()
+    installer._replace_env(path, "RECORDBENCH_HTTPS_PORT", "9443")
+    expected = original
+    for prefix in prefixes:
+        expected = expected.replace(f"  {prefix}_HTTPS_PORT= 8443  ", f'{prefix}_HTTPS_PORT="9443"')
+    assert path.read_bytes() == expected.encode()
+    assert installer._dotenv(path) == {f"{prefix}_HTTPS_PORT": "9443" for prefix in prefixes}
+
+
+def test_configuration_writes_new_names_only_and_keeps_existing_old_file_byte_identical(tmp_path):
+    from tests.test_first_run_handoff import configured_node
+    root, args, paths = configured_node(tmp_path)
+    path = root / "compose.env"
+    fresh = path.read_bytes()
+    assert b"EXCULPATA_" in fresh
+    assert b"RECORDBENCH_" not in fresh
+    old = b"# Synthetic operator note\r\n" + fresh.replace(b"EXCULPATA_", b"RECORDBENCH_").replace(b"\n", b"\r\n")
+    path.write_bytes(old)
+    installer._configure(installer.Console(color=False, quiet=True), args, root, paths,
+                         "synthetic-release", ROOT, ())
+    assert path.read_bytes() == old
+
+
+@pytest.mark.parametrize("same_release", [True, False])
+def test_update_preserves_old_only_compose_settings(tmp_path, monkeypatch, request, same_release):
+    root, args, events, _ = synthetic_live_update(tmp_path, monkeypatch, request)
+    path = root / "compose.env"
+    settings = installer._dotenv(path)
+    old = {key.replace("EXCULPATA_", "RECORDBENCH_", 1): value
+           for key, value in settings.items() if not key.startswith("RECORDBENCH_")}
+    original = installer._env_text(old, "Synthetic old-only node").encode()
+    path.write_bytes(original)
+    if same_release:
+        installation = json.loads((root / "installation.json").read_text())
+        monkeypatch.setattr(installer, "_stage_release", lambda *a, **k:
+                            (installation["release_id"], Path(installation["release_path"])))
+        monkeypatch.setattr(installer, "_doctor", lambda *a, **k: events.append("doctor"))
+    installer._update(installer.Console(color=False, quiet=True), args, root)
+    if same_release:
+        assert path.read_bytes() == original
+        assert "doctor" in events
+    else:
+        # A new capsule changes the existing release coordinate, never the
+        # spelling, order, or value of any other saved setting.
+        assert path.read_bytes() == original.replace(
+            b'RECORDBENCH_RELEASE_ID="synthetic-release"',
+            b'RECORDBENCH_RELEASE_ID="synthetic-new"')
+        assert "up-new" in events
+    assert b"EXCULPATA_" not in path.read_bytes()

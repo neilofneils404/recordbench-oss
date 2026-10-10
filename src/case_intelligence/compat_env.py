@@ -13,7 +13,7 @@ _lock = threading.Lock()
 
 
 def env(name: str, default: str | None = None, *, environ: Mapping[str, str] | None = None) -> str | None:
-    """Read either prefix, preferring an explicitly set new name (even empty).
+    """Read either prefix, preferring a nonempty new name, like Compose ``:-``.
 
     Warnings contain names only. Deprecation and conflicting values are each
     reported once per setting per process, including under concurrent reads.
@@ -21,14 +21,15 @@ def env(name: str, default: str | None = None, *, environ: Mapping[str, str] | N
     suffix = name.removeprefix("RECORDBENCH_").removeprefix("EXCULPATA_")
     new, old = f"EXCULPATA_{suffix}", f"RECORDBENCH_{suffix}"
     source = os.environ if environ is None else environ
+    new_value, old_value = source.get(new), source.get(old)
     with _lock:
-        if old in source and old not in _warned:
+        if old_value and old not in _warned:
             _warned.add(old)
             _LOG.warning("%s is deprecated; use %s", old, new)
-        if new in source and old in source and source[new] != source[old] and old not in _conflicts:
+        if new_value and old_value and new_value != old_value and old not in _conflicts:
             _conflicts.add(old)
             _LOG.warning("%s and %s differ; using %s", new, old, new)
-    return source[new] if new in source else source.get(old, default)
+    return new_value or old_value or default
 
 
 def required_env(name: str, *, environ: Mapping[str, str]) -> str:

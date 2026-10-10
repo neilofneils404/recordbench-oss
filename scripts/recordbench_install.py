@@ -549,7 +549,8 @@ def _env_text(values: Mapping[str, object], heading: str, *, aliases: bool = Fal
             if key.startswith(("EXCULPATA_", "RECORDBENCH_")):
                 suffix = key.removeprefix("RECORDBENCH_").removeprefix("EXCULPATA_")
                 new, old = f"EXCULPATA_{suffix}", f"RECORDBENCH_{suffix}"
-                expanded[new] = expanded[old] = values[new] if new in values else values[old]
+                preferred = values.get(new)
+                expanded[new] = values.get(old, "") if preferred in (None, "") else preferred
             else:
                 expanded[key] = value
         values = expanded
@@ -2190,7 +2191,12 @@ def _configure(
         "PYANNOTE_METRICS_ENABLED": 0,
     }
     if not args.dry_run:
-        _private_write(root / "compose.env", _env_text(compose_values, "RecordBench Compose node", aliases=True), replace=(root / "compose.env").exists())
+        compose_path = root / "compose.env"
+        if compose_path.exists():
+            for key, value in compose_values.items():
+                _replace_env(compose_path, key, str(value), add_missing=False)
+        else:
+            _private_write(compose_path, _env_text(compose_values, "RecordBench Compose node", aliases=True))
         _private_write(paths["config"] / "recordbench.env", _env_text(app_values, "RecordBench application"), replace=(paths["config"] / "recordbench.env").exists())
         _private_write(paths["config"] / "transcription.env", _env_text(transcription_values, "RecordBench transcription"), replace=(paths["config"] / "transcription.env").exists())
         _private_write(
@@ -2273,25 +2279,31 @@ def hashlib_short(path: Path) -> str:
     return hashlib.sha256(str(path).encode()).hexdigest()[:10]
 
 
-def _replace_env(path: Path, key: str, value: str) -> None:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    encoded = json.dumps(value)
-    output = []
+def _replace_env(path: Path, key: str, value: str, *, add_missing: bool = True) -> None:
+    original = path.read_bytes().decode("utf-8")
+    saved = _dotenv(path)
     keys = {key}
-    if key.startswith(("RECORDBENCH_", "EXCULPATA_")):
+    aliased = key.startswith(("RECORDBENCH_", "EXCULPATA_"))
+    if aliased:
         suffix = key.removeprefix("RECORDBENCH_").removeprefix("EXCULPATA_")
         keys = {f"EXCULPATA_{suffix}", f"RECORDBENCH_{suffix}"}
-    changed = set()
-    for line in lines:
-        current = line.partition("=")[0]
-        if current in keys:
-            output.append(f"{current}={encoded}")
-            changed.add(current)
+    output = []
+    for line in original.splitlines(keepends=True):
+        current = line.strip().partition("=")[0]
+        if current in keys and saved[current] != value:
+            ending = line[len(line.rstrip("\r\n")):]
+            output.append(f"{current}={json.dumps(value)}{ending}")
         else:
             output.append(line)
-    for missing in sorted(keys - changed):
-        output.append(f"{missing}={encoded}")
-    _private_write(path, "\n".join(output) + "\n", replace=True)
+    # Existing node aliases keep their original spelling and key set. Other
+    # settings (such as an enabled transcription pipeline) may still be added.
+    if add_missing and not aliased and key not in saved:
+        if original and not original.endswith(("\r", "\n")):
+            output.append("\n")
+        output.append(f"{key}={json.dumps(value)}\n")
+    updated = "".join(output)
+    if updated != original:
+        _private_write(path, updated, replace=True)
 
 
 def _atomic_private_write(path: Path, value: str) -> None:

@@ -20,8 +20,9 @@ def fresh_warnings(monkeypatch):
 @pytest.mark.parametrize("new,old,expected", [
     (None, None, "default"), ("new-value", None, "new-value"),
     (None, "old-value", "old-value"), ("same", "same", "same"),
-    ("new-value", "old-value", "new-value"), ("", "old-value", ""),
-    (None, "", ""),
+    ("new-value", "old-value", "new-value"), ("", "old-value", "old-value"),
+    (None, "", "default"), ("", None, "default"), ("", "", "default"),
+    ("new-value", "", "new-value"),
 ])
 @pytest.mark.parametrize("name", ["SYNTHETIC", "EXCULPATA_SYNTHETIC", "RECORDBENCH_SYNTHETIC"])
 def test_env_aliases_precedence_and_content_free_warnings(monkeypatch, caplog, name, new, old, expected):
@@ -31,8 +32,8 @@ def test_env_aliases_precedence_and_content_free_warnings(monkeypatch, caplog, n
     with caplog.at_level(logging.WARNING):
         for _ in range(3):
             assert compat_env.env(name, "default") == expected
-    assert sum("deprecated" in record.message for record in caplog.records) == (old is not None)
-    assert sum("differ" in record.message for record in caplog.records) == (new is not None and old is not None and new != old)
+    assert sum("deprecated" in record.message for record in caplog.records) == bool(old)
+    assert sum("differ" in record.message for record in caplog.records) == bool(new and old and new != old)
     assert "new-value" not in caplog.text and "old-value" not in caplog.text
 
 
@@ -63,7 +64,7 @@ def test_header_alias_selection_is_case_insensitive_and_rejects_conflicts(suffix
 
 
 @pytest.mark.parametrize("mode", ["new-only", "old-only", "both-equal", "both-different"])
-def test_installer_and_backup_read_saved_aliases_and_update_both(tmp_path, mode):
+def test_installer_and_backup_read_saved_aliases_and_update_only_existing_keys(tmp_path, mode):
     from tests.test_oss_installer import installer
     from tests.test_backup_contract import backup
 
@@ -80,11 +81,12 @@ def test_installer_and_backup_read_saved_aliases_and_update_both(tmp_path, mode)
         assert module._required_env("RECORDBENCH_HTTPS_PORT", environ=saved) == "8443"
     assert installer._gateway_probe_address(installer._dotenv(path)) == "127.0.0.1"
     installer._replace_env(path, "RECORDBENCH_HTTPS_PORT", "7443")
-    assert installer._dotenv(path) == {"EXCULPATA_HTTPS_PORT": "7443", "RECORDBENCH_HTTPS_PORT": "7443"}
+    assert installer._dotenv(path) == {key: "7443" for key in settings}
     path.write_text(installer._env_text(settings, "Synthetic node", aliases=True))
-    assert installer._dotenv(path) == {"EXCULPATA_HTTPS_PORT": "8443", "RECORDBENCH_HTTPS_PORT": "8443"}
+    assert installer._dotenv(path) == {"EXCULPATA_HTTPS_PORT": "8443"}
     generated = installer._env_text({"RECORDBENCH_RELEASE_ID": "synthetic-release"}, "Synthetic node", aliases=True)
-    assert generated.index('EXCULPATA_RELEASE_ID="synthetic-release"') < generated.index('RECORDBENCH_RELEASE_ID="synthetic-release"')
+    assert 'EXCULPATA_RELEASE_ID="synthetic-release"' in generated
+    assert "RECORDBENCH_" not in generated
 
 
 def test_compose_aliases_do_not_require_any_new_setting():
@@ -137,9 +139,10 @@ def test_saved_node_resume_accepts_all_alias_layouts_without_new_requirements(tm
     root, _, paths = configured_node(tmp_path)
     path = root / "compose.env"
     original = installer._dotenv(path)
-    old = {key: value for key, value in original.items() if key.startswith("RECORDBENCH_")}
+    assert not any(key.startswith("RECORDBENCH_") for key in original)
+    old = {key.replace("EXCULPATA_", "RECORDBENCH_", 1): value
+           for key, value in original.items() if key.startswith("EXCULPATA_")}
     assert old
-    assert all(original[key.replace("RECORDBENCH_", "EXCULPATA_", 1)] == value for key, value in old.items())
     selected = {}
     for key, value in old.items():
         if mode != "new-only":
@@ -238,4 +241,5 @@ def test_backup_status_projection_reads_preferred_receipt(tmp_path, monkeypatch,
 def test_saved_required_settings_keep_missing_key_failures(prefix):
     with pytest.raises(KeyError):
         compat_env.required_env(f"{prefix}_STORAGE_ROOT", environ={})
-    assert compat_env.required_env(f"{prefix}_STORAGE_ROOT", environ={f"{prefix}_STORAGE_ROOT": ""}) == ""
+    with pytest.raises(KeyError):
+        compat_env.required_env(f"{prefix}_STORAGE_ROOT", environ={f"{prefix}_STORAGE_ROOT": ""})
