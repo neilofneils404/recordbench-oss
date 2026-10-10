@@ -25,6 +25,14 @@ The [one-box journey](WORKSPACE_LAYOUT.md#one-box-on-home) enables the optional
 Home entry point and checks exact search, cited answers and a prefilled
 every-source criterion, route switching, native keyboard use and a 430-pixel
 viewport. It confirms that opening the criterion creates no review run.
+With `CASE_INTELLIGENCE_DEEPER_INVESTIGATION` enabled, the same journey also
+checks that a supported answer shows no additional offer, while a deterministic
+`answerable=false` result offers **Investigate this more deeply** without
+starting work. One native click at 430 pixels posts the same question through
+the existing CSRF-protected Ask flow and creates exactly one queued research
+job in the same conversation. Refreshing before or after the click creates no
+extra work. The research worker is stopped only to keep this queue-state check
+deterministic; the journey does not assess investigation quality.
 
 All applications are generated for the run and listen on ephemeral loopback
 ports. They use the unavailable generator or a fixed synthetic generator and

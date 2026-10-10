@@ -18,6 +18,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 from .contracts import validate_relative_path
 from .derived_text import presentation_text
 from .source_locations import SourcePreflight
+from .store.answer_scope import AnswerScopeMixin
 from .store import (
     MAX_REPORT_CITATION_EXCERPT_CHARS as MAX_REPORT_CITATION_EXCERPT_CHARS,
     MAX_REPORT_SECTION_CITATIONS as MAX_REPORT_SECTION_CITATIONS,
@@ -161,7 +162,7 @@ _ANALYSIS_RESTART_MESSAGE = (
 )
 
 
-class WorkspaceStore(NotebookStoreMixin, ReportsStoreMixin):
+class WorkspaceStore(NotebookStoreMixin, ReportsStoreMixin, AnswerScopeMixin):
     """Small SQLite control store; source bytes remain in per-matter stores."""
 
     def __init__(
@@ -6783,14 +6784,6 @@ class WorkspaceStore(NotebookStoreMixin, ReportsStoreMixin):
             raise KeyError(finding_id)
         return self._review_finding(row)
 
-    def answer_source_set_id(self, matter_id: str, job_id: str) -> str | None:
-        with self._lock:
-            row = self.connection.execute(
-                "SELECT source_set_id FROM workbench_answer_source_scope "
-                "WHERE matter_id=? AND job_id=?",
-                (matter_id, job_id),
-            ).fetchone()
-        return row["source_set_id"] if row is not None else None
 
     def _snapshot_notebook_scope_locked(
         self,

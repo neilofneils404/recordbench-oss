@@ -4792,7 +4792,6 @@ class CaseIntelligenceWorkbench:
                     if identifier in evidence
                 ],
             }
-
         # Keep the legacy combined limitation for conversation display, while
         # retaining provenance for saved-work consumers and later compilation.
         source_limitation = answer.source_limitation if answer.verification_notice else answer.limitation
@@ -4803,6 +4802,7 @@ class CaseIntelligenceWorkbench:
                 else "not-supported"
             ),
             "answerable": answer.answerable,
+            **({"generator_answerable": False} if answer.generator_answerable is False else {}),
             "introduction": answer.introduction,
             "claims": [claim_payload(claim) for claim in answer.claims],
             "limitation": claim_payload(answer.limitation) if answer.limitation else None,
@@ -16813,7 +16813,6 @@ def create_workbench_app(
         if wants_json:
             return JSONResponse(projected)
         return RedirectResponse(projected["workspace_url"], status_code=303)
-
     @app.post(
         "/matters/{slug}/answer-jobs/{job_id}/retry",
         dependencies=[Depends(require_csrf)],
@@ -16884,6 +16883,8 @@ def create_workbench_app(
     from .upload_review import install_upload_review
     install_upload_review(app, bench=bench, authorized_matter=authorized_matter,
                           auth_context=auth_context, templates=templates, base_context=base_context)
+    from .deeper_investigation import install_deeper_investigation
+    install_deeper_investigation(templates, bench=bench, auth_context=auth_context)
     return app
 
 
