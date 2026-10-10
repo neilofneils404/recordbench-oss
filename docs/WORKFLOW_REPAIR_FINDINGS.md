@@ -107,7 +107,7 @@ changes beyond the preview, forged saved support, unchanged Report limits and
 complete source-scan budgets. All 66 focused workflow cases and 194 transcription
 tests pass on the corrected candidate. The generated-speech Chrome journey also
 passes with the disclosed native accommodations. These are separate from the
-earlier Linux receipt and do not replace current-head Linux CI or hosted review.
+earlier Linux receipt and do not replace the [review policy](QUALITY_GATES.md#review-policy).
 
 The corrected candidate's unadapted macOS full application run returned
 2,848 passed, 127 failed, 36 fixture errors and 9 skipped. Every previously
@@ -140,7 +140,7 @@ and the authored corpus manifest includes these controls. Mutation tests fail
 against the previous fingerprint for both questions and all seven rubric
 definitions. Earlier receipts remain intact with their original, narrower hash.
 These corrections change no application workflow, source-support validator,
-model artifact or stored user work. Fresh CI and hosted review must cover the
+model artifact or stored user work. The [review policy](QUALITY_GATES.md#review-policy) applies to the
 corrected commit; the successful checks above apply to their recorded revision.
 
 Local validation of these review corrections passed **103 focused checks**

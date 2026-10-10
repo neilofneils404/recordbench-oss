@@ -195,9 +195,8 @@ omitted, each line bounded to 300 characters), so the job log shows where it
 stopped even when the artifact cannot be downloaded.
 
 Check `summary.json` first, then the failed journey's log and screenshot. A
-receipt proves only the generated steps recorded in its `checks` array. CI
-application/transcription tests, final-commit code/security reviews and the
-maintainer merge gate remain separate requirements.
+receipt proves only the generated steps recorded in its `checks` array. The
+[review policy](QUALITY_GATES.md#review-policy) applies separately before merge.
 
 The additional `browser-accept-source-folders.py` journey also checks continuous
 source inspection, list-only keyboard navigation, retained library filters, and

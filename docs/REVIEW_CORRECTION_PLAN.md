@@ -124,18 +124,16 @@ Standalone CI and local integration rehearsals do not establish installed-produc
 acceptance. Earlier failed, timed-out or skipped attempts and native-platform
 limitations retain those outcomes even when a later run passes.
 
-For this series, the maintainer authorized documented independent **local security
+For that historical series, the maintainer authorized documented independent **local security
 review** in place of unavailable hosted security review. Final-head hosted **code**
 review, findings reconciliation, required CI, publication inspection and branch
-protections remain merge requirements. The maintainer's standing authorization
-permits sequential protected merges once those gates pass; additional per-commit
-confirmation is not required. This authorization does not assert independent
+protections were merge requirements. The maintainer's authorization
+permitted sequential protected merges once those gates passed; additional per-commit
+confirmation was not required. This authorization does not assert independent
 human inspection of every later revision or a hosted-security pass.
 
 That series-specific decision is historical. Follow the current
-[PUBLIC_ALPHA.md](PUBLIC_ALPHA.md) policy for mandatory final-head hosted code
-review, optional hosted security review, findings reconciliation and full-head
-maintainer acceptance.
+[review policy](QUALITY_GATES.md#review-policy).
 
 The series' dependency order is **#112 → #111 → #110 → #113 → #114 → #115 → #116**:
 authentication and lifecycle boundaries, common answer presentation, source-text
@@ -396,10 +394,7 @@ combined candidate; do not repeatedly rerun unrelated suites without a reason.
 
 Before any authorized publication, run the installed pre-push publication guard
 and separately inspect report text, fixtures and artifact metadata. Follow the
-current upstream [public-alpha](PUBLIC_ALPHA.md) policy: Quality and branch
-protections always apply; final-head hosted code review, reconciliation and
-maintainer acceptance are mandatory. Hosted security review is optional;
-security-sensitive changes still need a focused assessment. Honor any additional
+current upstream [review policy](QUALITY_GATES.md#review-policy). Honor any additional
 review requirements explicitly set by the maintainer for this work. Do not change the repository review implementation as part of these
 fixes. Each implementation section must have its own reviewed change and receipt;
 tracking an issue or publishing a draft PR does not establish acceptance.

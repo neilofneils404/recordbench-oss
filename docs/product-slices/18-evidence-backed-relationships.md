@@ -45,5 +45,5 @@ and rollback evidence before release.
 
 The manual workflow, source and revision boundaries, exports, limits and
 migration/restore/rollback instructions are recorded in
-[EVIDENCE_ASSERTIONS.md](../EVIDENCE_ASSERTIONS.md). Final-head hosted reviews,
-CI and maintainer acceptance remain distinct from local synthetic verification.
+[EVIDENCE_ASSERTIONS.md](../EVIDENCE_ASSERTIONS.md). The [review policy](../QUALITY_GATES.md#review-policy)
+applies separately from local synthetic verification.

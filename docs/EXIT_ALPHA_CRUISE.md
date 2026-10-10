@@ -1,8 +1,9 @@
 # Exit-alpha cruise
 
-Binding execution order for leaving public contributor alpha.
-Product slice briefs under `docs/product-slices/` remain the implementation
-specs. When numeric slice order conflicts with this file, **this file wins**.
+> Retired: use [GitHub issues](https://github.com/neilofneils404/recordbench-oss/issues)
+> and [milestones](https://github.com/neilofneils404/recordbench-oss/milestones)
+> for the work queue. This cruise is retained for historical context; its old
+> PR rules are superseded by the [review policy](QUALITY_GATES.md#review-policy).
 
 ## Current state — September 30, 2026
 
@@ -18,8 +19,7 @@ exact search, every-source review or a question from typed text, with a short
 explanation. This increment adds no UI, HTTP route, model call or I/O. It is
 proposed in [PR #146](https://github.com/neilofneils404/recordbench-oss/pull/146).
 Review corrections preserve the reusable PR template and keep ordinary statements
-about a population of records on the question path. Final-head hosted code
-review, passing Quality and maintainer acceptance remain required before landing;
+about a population of records on the question path. The [review policy](QUALITY_GATES.md#review-policy) applies before landing;
 deployment remains paused.
 
 **Trusted matter continuity A is Done**:
@@ -101,8 +101,7 @@ reconciled), passing Quality and maintainer acceptance. Increment 5
 ([assistant actions](product-slices/assistant-actions.md)) is approved: A (assistant
 panel basics) landed in [PR #140](https://github.com/neilofneils404/recordbench-oss/pull/140)
 at `809676f`; B (suggest people, things and dates from an answer's cited passages,
-no schema change) is proposed in its own PR; C follows. Each PR requests hosted
-code review before merge. See
+no schema change) is proposed in its own PR; C follows. Each PR follows the [review policy](QUALITY_GATES.md#review-policy). See
 the [workspace layout contract](WORKSPACE_LAYOUT.md#compact-matter-bar) and
 [entity discovery](ENTITY_DISCOVERY.md#automatic-discovery-after-processing).
 
@@ -116,8 +115,8 @@ this increment does not qualify or change any model/runtime profile.
 The [product north star](PRODUCT_NORTH_STAR.md) governs what RecordBench is
 building: a free, local-first review workspace for case teams, with excellent
 manual review, complete exact search, accountable collection processing,
-source-supported investigation, and inspectable matter knowledge. This cruise
-remains the single binding implementation queue. Feature contracts describe
+source-supported investigation, and inspectable matter knowledge. GitHub issues and milestones
+are the implementation queue. Feature contracts describe
 current behavior; the north star describes intent; release readiness defines
 what must be proven before a supported release.
 

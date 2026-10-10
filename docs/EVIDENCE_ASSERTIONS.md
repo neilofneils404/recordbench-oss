@@ -178,9 +178,8 @@ The browser journey also runs in the required
 [synthetic browser runner](BROWSER_ACCEPTANCE.md) (`scripts/run-browser-acceptance.py`).
 
 The [dated validation receipt](EVIDENCE_ASSERTIONS_VALIDATION_2026-09-12.json)
-records actual results and limitations. Hosted
-final-head code/security review, required CI and maintainer acceptance are
-separate gates; synthetic acceptance is not confidential-casework readiness.
+records actual results and limitations. The
+[review policy](QUALITY_GATES.md#review-policy) applies separately; synthetic acceptance is not confidential-casework readiness.
 
 The [historical post-18 receipt](EXIT_ALPHA_CRUISE.md#historical-post-18-receipt-superseded-snapshot)
 records this feature's final-head gates and passed independent post-merge checks.
