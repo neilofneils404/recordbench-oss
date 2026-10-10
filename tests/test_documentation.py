@@ -93,7 +93,10 @@ def test_pull_request_jobs_test_the_merge_and_scan_the_exact_head_separately() -
     application_job = workflow.split("\n  application:\n", 1)[1].split("\n  postgres-integration:\n", 1)[0]
     assert exact_ref in publication_job
     assert exact_ref not in application_job
-    assert "needs: [change-scope, publication-scan]" in application_job
+    assert "needs: [change-scope]\n" in application_job
+    deployment_job = workflow.split("\n  deployment-contract:\n", 1)[1].split("\n  synthetic-browser:\n", 1)[0]
+    assert "needs: [change-scope, publication-scan]" in deployment_job
+    assert 'test "$SCOPE_RESULT" = success && test "$PUBLICATION_RESULT" = success' in deployment_job
     assert "EXPECTED_PUBLICATION_SHA:" in publication_job
     assert "python scripts/check-publication-candidate.py" in publication_job
     assert "python -m pytest -q tests/test_documentation.py tests/test_quality_change_scope.py" in application_job

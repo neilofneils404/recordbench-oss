@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=9.0.3,<10", "selenium>=4.29,<5"]
+dev = ["pytest>=9.0.3,<10", "pytest-xdist>=3.8,<4", "selenium>=4.29,<5"]
 postgres = ["psycopg[binary]>=3.2,<4"]
 models = ["sentence-transformers>=5,<6"]
 
