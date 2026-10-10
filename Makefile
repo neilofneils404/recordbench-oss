@@ -36,7 +36,9 @@ test:
 	"$(PYTHON)" -m pytest -q
 
 test-fast:
-	CASE_REVIEW_POSTGRES_TEST_DSN= CASE_INTELLIGENCE_STORAGE_RESERVE_GIB=0 "$(PYTHON)" -m pytest -n auto --dist loadgroup --max-worker-restart=0 -q
+	CASE_REVIEW_POSTGRES_TEST_DSN= CASE_INTELLIGENCE_STORAGE_RESERVE_GIB=0 \
+		OMP_THREAD_LIMIT=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+		"$(PYTHON)" -m pytest -n auto --dist loadgroup --max-worker-restart=0 -q
 
 test-transcription:
 	PYTHONPATH=services/transcription/src "$(PYTHON)" -c 'import os, pytest; os.chdir("services/transcription"); raise SystemExit(pytest.main(["-q"]))'

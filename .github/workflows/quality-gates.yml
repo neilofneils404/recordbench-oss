@@ -149,6 +149,11 @@ jobs:
           # Hosted runners are intentionally smaller than supported review nodes.
           # Production keeps the 100 GiB default from recordbench.env.example.
           CASE_INTELLIGENCE_STORAGE_RESERVE_GIB: "0"
+          # xdist already occupies the runner CPUs. Bound each worker's native
+          # OCR/numerical thread pools instead of multiplying runnable threads.
+          OMP_THREAD_LIMIT: "1"
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
         # Unbuffered verbose output identifies failed/active nodes before timeout.
         # Captured streams stay private; only synthetic failure tracebacks are shown.
         run: >-

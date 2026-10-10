@@ -69,7 +69,7 @@ def test_after_failure():
 
 
 @pytest.mark.parametrize('phase', ['setup', 'call', 'teardown'])
-def test_failed_node_survives_abrupt_worker_exit(tmp_path, phase):
+def test_failed_node_survives_abrupt_exit_without_session_summary(tmp_path, phase):
     fixture = '''import os
 import pytest
 
