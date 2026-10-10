@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Renamed to Exculpata. Visible product branding changes only; existing package,
+  deployment and data identifiers remain unchanged.
+
 - Keep a bounded source list beside document and recording inspection, with
   library-scoped previous/next, keyboard navigation and retained folder/filter
   context. Clarify the existing folder entry point; see

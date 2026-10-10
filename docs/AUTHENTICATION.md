@@ -6,7 +6,7 @@ explains operator setup when disabled and directs OIDC/Kerberos account changes
 to the sign-in provider. A new person signs in once before being added to a
 matter through **Case team**.
 
-RecordBench has three deployment modes. All use opaque server-side sessions,
+Exculpata has three deployment modes. All use opaque server-side sessions,
 CSRF protection, explicit matter membership, and attributed audit events.
 
 ## Explicit startup mode
@@ -86,7 +86,7 @@ groups through the joined host’s SSSD NSS socket on every request.
 Create the SPN/keytab for `HTTP/<recordbench-host>@<REALM>`, verify there is only
 one SPN owner, use AES keys, protect the keytab at `0600`, and rotate it through
 a planned outage. Browser integrated-auth policy and DNS must use the same final
-hostname. Logging out closes RecordBench’s session; it cannot sign Windows out.
+hostname. Logging out closes Exculpata’s session; it cannot sign Windows out.
 
 Automation can supply `--kerberos-realm`, `--kerberos-allowed-groups`,
 `--kerberos-admin-groups`, and the owner-readable exported keytab through

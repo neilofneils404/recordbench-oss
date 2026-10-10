@@ -12,7 +12,7 @@ staff browser
 gateway ── optional Kerberos proxy
     │
     ▼
-RecordBench app ── PostgreSQL + pgvector (derived retrieval index)
+Exculpata app ── PostgreSQL + pgvector (derived retrieval index)
     │            ├─ ClamAV (stream scan)
     │            ├─ embedding + reranker worker (offline GPU)
     │            ├─ vLLM generator (offline GPU)
@@ -194,7 +194,7 @@ egress only for a configured OIDC provider. Companion-service URLs require an
 exact operator allowlist.
 
 Matter storage is configurable and may be a dedicated host-mounted NAS path.
-RecordBench remains a temporary review workspace: exports leave the system,
+Exculpata remains a temporary review workspace: exports leave the system,
 matters can be closed and purged, and the independent Transcript Studio queue
 has a short expiry.
 

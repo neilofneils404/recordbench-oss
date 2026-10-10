@@ -15,7 +15,7 @@ The generated `matter-report` cover document is separate from saved Reports.
 Indexed safe filenames prevent collisions between identical or differently
 capitalized titles. Exports contain work product and source references, without
 original document, recording, or clip bytes. They can be opened in ordinary
-editors; this does not promise RecordBench package import or archival storage.
+editors; this does not promise Exculpata package import or archival storage.
 
 ## Completeness and recovery
 

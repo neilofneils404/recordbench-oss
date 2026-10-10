@@ -119,7 +119,7 @@ and an updated aggregate content fingerprint, even when case selection and
 expected outcomes stay the same. Run `tests/test_review_acceptance_pack.py`
 alongside the affected workflow tests when updating these fixtures.
 
-RecordBench OSS is the upstream source for portable product behavior. Work from
+Exculpata OSS is the upstream source for portable product behavior. Work from
 a focused branch or worktree, keep one reviewable concern per change, and merge
 only after its synthetic regression and relevant operator documentation pass.
 Do not develop reusable behavior only inside a private deployment and copy its

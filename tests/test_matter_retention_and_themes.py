@@ -249,15 +249,15 @@ def test_temporary_matter_theme_lifecycle_and_persistent_assistant_routes(tmp_pa
         setup = client.get(f"/matters/{slug}/setup")
         assert setup.status_code == 200
         assert "data-assistant-dock" in setup.text
-        assert "Ask RecordBench" in setup.text
+        assert "Ask Exculpata" in setup.text
         assert "data-theme=\"light\"" in setup.text
         identifiers = re.findall(r'\bid="([^"]+)"', setup.text)
         assert len(identifiers) == len(set(identifiers))
         for accessible_control in (
             "data-rail-toggle",
             'aria-label="Open account menu"',
-            'data-assistant-expand aria-label="Open Ask RecordBench"',
-            'data-assistant-collapse aria-label="Close Ask RecordBench"',
+            'data-assistant-expand aria-label="Open Ask Exculpata"',
+            'data-assistant-collapse aria-label="Close Ask Exculpata"',
             'data-assistant-new-chat',
             'aria-label="Start a new chat"',
             'for="assistant-conversation-picker"',

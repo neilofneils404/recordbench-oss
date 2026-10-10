@@ -438,7 +438,7 @@ def _backup_status_projection() -> dict[str, object]:
         "state": "not_initialized",
         "tone": "attention",
         "headline": "Backup setup required",
-        "message": "No encrypted RecordBench disaster-recovery receipt is available.",
+        "message": "No encrypted Exculpata disaster-recovery receipt is available.",
         "completed_at": "",
         "duration_seconds": 0,
         "snapshot_id": "",
@@ -6909,7 +6909,7 @@ def create_workbench_app(
         )
         if readiness.state == "empty":
             headline = "Add sources to begin"
-            summary = "Upload the records you want RecordBench to prepare for review."
+            summary = "Upload the records you want Exculpata to prepare for review."
             guidance = "Add sources before searching or asking questions."
             action_label = "Add sources"
             action_url = f"/matters/{matter.slug}/setup"
@@ -7611,7 +7611,7 @@ def create_workbench_app(
             "can_close_matter": is_matter_owner or context.is_administrator,
             "can_delete_conversations": is_matter_owner,
             "session_action_label": (
-                "Close RecordBench" if identity.auth_mode == "kerberos" else "Sign out"
+                "Close Exculpata" if identity.auth_mode == "kerberos" else "Sign out"
             ),
             "activity_url": _query_url(
                 "/activity", matter=active.slug if active is not None else ""
@@ -8376,7 +8376,7 @@ def create_workbench_app(
                 if capabilities["answering"] == "ready" and storage["ready"]
                 else "degraded"
             ),
-            "product": PRODUCT_NAME,
+            "product": "RecordBench",
             "data": "private RecordBench node",
             "capabilities": capabilities,
             "ingest_jobs": bench.workspace.ingest_counts(),

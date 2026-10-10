@@ -83,7 +83,7 @@ selection, deterministic ordering, deduplication, limits and unavailable support
 
 ## Document-date availability
 
-Current RecordBench source catalogs and inventories do **not** record semantic
+Current Exculpata source catalogs and inventories do **not** record semantic
 document dates. Catalog `added_at` is arrival time; filesystem `stable_mtime_ns`
 is file identity metadata and can be upload time. Dates found in text are
 mentions. None is substituted for a document date.

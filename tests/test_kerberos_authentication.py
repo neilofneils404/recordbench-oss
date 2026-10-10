@@ -126,7 +126,7 @@ def test_kerberos_login_binds_windows_identity_to_server_session(tmp_path):
         assert logout.headers["location"] == "/auth/signed-out"
         signed_out = client.get("/auth/signed-out", headers=_headers())
         assert signed_out.status_code == 200
-        assert "Signed out of RecordBench" in signed_out.text
+        assert "Signed out of Exculpata" in signed_out.text
 
         client.cookies.set(SESSION_COOKIE, session_token, path="/")
         replay = client.get("/matters/new", headers=_headers(), follow_redirects=False)
@@ -162,7 +162,7 @@ def test_kerberos_rejects_unapproved_principal_without_provisioning(tmp_path):
             headers=_headers("not.approved@EXAMPLE.TEST"),
         )
         assert denied.status_code == 401
-        assert "not approved for RecordBench" in denied.text
+        assert "not approved for Exculpata" in denied.text
         assert client.cookies.get(SESSION_COOKIE) is None
         count = app.state.workbench.workspace.connection.execute(
             "SELECT COUNT(*) FROM workbench_principal WHERE provider=?",

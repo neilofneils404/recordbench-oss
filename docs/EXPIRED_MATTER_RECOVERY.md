@@ -7,7 +7,7 @@ See [storage and backup](STORAGE_AND_BACKUP.md) for the complete backup boundary
 
 ## Existing policy
 
-RecordBench is a temporary review workspace. The creation form defaults to
+Exculpata is a temporary review workspace. The creation form defaults to
 30 days, with 7/30/60/90-day choices. The review end is followed by seven days
 of export grace. Once that period ends, enabled maintenance may permanently
 delete the matter without an additional confirmation. The owner or an

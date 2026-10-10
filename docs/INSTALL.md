@@ -121,7 +121,7 @@ generated answers and transcription are outside this CPU path.
 
 ## Hardware and capability profiles
 
-RecordBench targets a modern x86-64 Linux host with Docker Engine and Docker
+Exculpata targets a modern x86-64 Linux host with Docker Engine and Docker
 Compose v2. The figures below are starting targets for alpha evaluation, not
 validated minimums:
 
@@ -162,7 +162,7 @@ organization-trusted certificate.
 1. Choose a dedicated node state root. Do not use `/`, a home directory, or the
    root of a shared NAS export.
 2. Choose matter storage. A host-mounted NAS path is supported when it is stable,
-   writable by the RecordBench UID, and dedicated to this installation.
+   writable by the Exculpata UID, and dedicated to this installation.
 3. Decide between local accounts, OIDC, or Kerberos/Windows Integrated
    Authentication.
 4. Obtain DNS and a trusted TLS certificate for staff access.
@@ -220,7 +220,7 @@ For missing prerequisites:
   must also be non-root. Do not use a home directory, symlink, or shared export
   root. Existing selected directories must belong to that account. A first-install
   node root must be empty. `--resume` permits a nonempty root only when it has a
-  valid RecordBench installation record and available release capsule; it does
+  valid Exculpata installation record and available release capsule; it does
   not claim unrelated directories. A missing or empty root still follows fresh
   installation prerequisites when `--resume` is supplied.
   Both preflight and installation require absolute storage paths without control
@@ -317,7 +317,7 @@ not quotas or a successful client write.
 
 A dedicated Linux host with its distribution-supported Docker service is the
 normal starting point. Containerized evaluation hosts may need administrator
-setup before RecordBench preflight:
+setup before Exculpata preflight:
 
 - **No systemd PID 1:** `systemctl` cannot start Docker. Follow Docker's
   [manual daemon instructions](https://docs.docker.com/engine/daemon/start/)
@@ -342,7 +342,7 @@ setup before RecordBench preflight:
   The administrator must reconcile them with the outer host policy, verify
   inter-container connectivity, and persist only the approved settings.
 
-RecordBench does not install Docker, change drivers/sysctls, or certify nested
+Exculpata does not install Docker, change drivers/sysctls, or certify nested
 host networking. Successful engine access is not a container-connectivity test.
 Keep the gateway on loopback HTTPS and companion services private.
 
@@ -551,12 +551,12 @@ or disagreement cannot pass health acceptance; see
 Then use only synthetic fixtures to verify login, matter creation, document
 OCR, search, cited answers, video playback, transcription/diarization, exports,
 matter closure, and cleanup. Validate GPU memory and concurrent workloads
-outside RecordBench before allowing confidential material.
+outside Exculpata before allowing confidential material.
 
 ## Kerberos installations
 
 Join the Linux host to the organization domain with SSSD first. Create an HTTP
-service principal and keytab for the final RecordBench hostname, then supply the
+service principal and keytab for the final Exculpata hostname, then supply the
 keytab to the installer. The Kerberos Compose overlay mounts only the host NSS
 socket and `nsswitch.conf` into the app so group lookup behaves like the joined
 host; the authentication proxy receives the keytab and strips the browser’s
@@ -627,7 +627,7 @@ images are retained for deliberate operator cleanup; the updater never prunes th
 
 Before fresh managed-storage initialization, the reserved names `matters`,
 `.matter-purging`, and `ingestion-staging` must be absent, including broken links.
-Existing initialized storage must retain its valid RecordBench marker and three
+Existing initialized storage must retain its valid Exculpata marker and three
 writable directories on the same filesystem. Preflight inspects that metadata
 without writing or probing hardlinks; it does not delete or rename collisions.
 Choose another dedicated storage root when unrelated data already uses those names.
