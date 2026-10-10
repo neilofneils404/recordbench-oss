@@ -1,5 +1,5 @@
 """Synthetic source-backed briefing, including provenance and complete pagination."""
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 import sqlite3
 import time
 from urllib.parse import parse_qs, urlsplit
@@ -7,7 +7,11 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
-from case_intelligence.briefing import RecordedDocumentDate, build_briefing
+from case_intelligence.ask_router import classify
+from case_intelligence.briefing import (
+    Briefing, BriefingLine, BriefingLink, BriefingSection, RecordedDocumentDate,
+    SuggestedQuestion, _questions, build_briefing,
+)
 from case_intelligence.intake_receipts import IntakeReceipts
 from case_intelligence.workspace_store import WorkspaceProblem
 from case_intelligence.workbench import create_workbench_app
@@ -57,7 +61,7 @@ def lines(briefing, section, kind=None):
 
 
 def assert_links_open(client, matter, briefing):
-    for line in [line for section in briefing.sections for line in section.lines] + list(briefing.coverage):
+    for line in [line for section in briefing.sections for line in section.lines] + list(briefing.coverage) + list(briefing.questions):
         assert line.links, line
         for link in line.links:
             url = urlsplit(link.href)
@@ -101,6 +105,16 @@ def test_all_sections_counts_recorded_dates_suggestions_and_source_links(workben
     assert [(line.value, line.count) for line in lines(briefing, 'dates', 'mentioned_date')] == [('2024-05-06', 3), ('2024-05-07', 1)]
     assert all(line.suggested and line.text.startswith('Suggested ') for section in ('people_places', 'dates') for line in lines(briefing, section))
     assert briefing.section('unread').total == 0
+    assert [question.text for question in briefing.questions] == [
+        'What do the records say about Alex Example?',
+        'What do the records say about Amber Cooperative?',
+        'What do the records say about the mentioned date 2024-05-06?',
+        'What do the records say about Jordan Sample?',
+        'What do the records say about the mentioned date 2024-05-07?',
+    ]
+    assert all(question.label == 'Suggested' for question in briefing.questions)
+    input_links = {line.links for section in briefing.sections for line in section.lines}
+    assert all(question.links in input_links for question in briefing.questions)
     assert assemble(bench, matter, inventory=inventory) == briefing
     assert_links_open(client, matter, briefing)
 
@@ -112,6 +126,7 @@ def test_empty_matter_has_every_section_and_no_invented_dates(workbench):
     assert all(section.total == 0 for section in briefing.sections)
     assert lines(briefing, 'arrived', 'document_dates_unavailable')
     assert all(lines(briefing, section, 'empty') for section in ('people_places', 'dates', 'unread'))
+    assert briefing.questions == ()
     assert_links_open(client, matter, briefing)
 
 
@@ -143,6 +158,7 @@ def test_failed_extraction_and_skipped_intake_keep_recorded_reasons(workbench):
     receipt = selection(client, matter.slug, [descriptor('Unsupported/opaque.bin', 25)], [], key='b' * 32)
     briefing = assemble(bench, matter)
     assert briefing.section('unread').total == 2
+    assert briefing.questions == ()
     texts = [line.text for line in lines(briefing, 'unread')]
     assert sum('Synthetic index could not be built' in text for text in texts) == 1
     assert any('Browser-reported selection review:' in text and 'Unsupported/opaque.bin' in text for text in texts)
@@ -197,13 +213,16 @@ def test_only_automatic_suggested_people_are_ranked_and_current_sample_wins(work
     reference = bench.notebook_reference_from_support(matter, token)
     assert reference['document_id'] == documents[1].document_id
     assert 'including retained historical support' in next(line.text for line in briefing.coverage if line.kind == 'suggestion_coverage')
+    assert [question.text for question in briefing.questions] == ['What do the records say about Alex Example?']
     assert_links_open(client, matter, briefing)
     with store.mutation_guard():
         documents[1].version_id = 'e' * 32
         bench._sync_source_catalog(matter, tuple(store.documents.values()))
-    [suggestion] = lines(assemble(bench, matter), 'people_places', 'person')
+    stale = assemble(bench, matter)
+    [suggestion] = lines(stale, 'people_places', 'person')
     assert all('support=' not in link.href for link in suggestion.links)
     assert '/entities/' in suggestion.links[0].href
+    assert stale.questions == ()
 
 
 def test_catalog_streams_beyond_one_page_and_counts_root_and_nested_folders(workbench, monkeypatch):
@@ -348,6 +367,7 @@ def test_read_is_authorized_and_writes_nothing_or_reads_no_extracted_text(workbe
     briefing = build_briefing(matter, WEB_ACTOR, workspace=bench.workspace, entity_service=service,
         intake_receipts=IntakeReceipts(bench.workspace))
     assert briefing.section('arrived').total == 1
+    assert len(briefing.questions) == 2
     assert bench.workspace.connection.total_changes == before
     with pytest.raises(KeyError):
         build_briefing(matter, 'generated-foreign-actor', workspace=bench.workspace,
@@ -415,7 +435,97 @@ def test_date_read_limit_accepts_boundary_and_refuses_overage(workbench, monkeyp
     # The exact threshold is configurable here without thousands of fixtures;
     # both sides exercise the real paginated EntityService, not fake rows.
     monkeypatch.setattr(module, 'MAX_DATE_MENTIONS', 2)
-    assert assemble(bench, matter).section('dates').total == 2
+    briefing = assemble(bench, matter)
+    assert briefing.section('dates').total == 2
+    assert [question.text for question in briefing.questions] == [
+        'What do the records say about the mentioned date 2024-01-02?',
+        'What do the records say about the mentioned date 2024-01-03?',
+    ]
     monkeypatch.setattr(module, 'MAX_DATE_MENTIONS', 1)
     with pytest.raises(WorkspaceProblem, match='complete found-date briefing limit'):
         assemble(bench, matter)
+
+
+QUESTION_SLUG = 'm-' + '1' * 12
+
+
+def question_line(kind, value, count=1, *, links=None, suggested=True):
+    links = (BriefingLink('Open generated passage', f'/matters/{QUESTION_SLUG}?support=generated-token#support-pane'),) if links is None else links
+    return BriefingLine(kind, value, 'Suggested synthetic input', links, count, suggested)
+
+
+def question_sections(rows):
+    rows = tuple(rows)
+    return tuple(BriefingSection(key, key, tuple(line for line in rows if line.kind in kinds))
+        for key, kinds in (('people_places', ('person', 'place')), ('dates', ('mentioned_date',))))
+
+
+def test_question_selection_diversity_frequency_ties_and_five_item_cap():
+    rows = [question_line('place', 'West Depot', 2), question_line('person', 'Zed Example', 8),
+        question_line('mentioned_date', '2024-05-06', 20), question_line('person', 'Alice Example', 8),
+        question_line('mentioned_date', '2024-05-07', 1), question_line('place', 'Central Depot', 6),
+        question_line('person', 'Riley Sample', 2)]
+    sections = question_sections(rows)
+    questions = _questions(QUESTION_SLUG, sections)
+    assert [question.text for question in questions] == [
+        'What do the records say about Alice Example?',
+        'What do the records say about Central Depot?',
+        'What do the records say about the mentioned date 2024-05-06?',
+        'What do the records say about Zed Example?',
+        'What do the records say about West Depot?',
+    ]
+    assert _questions(QUESTION_SLUG, question_sections(reversed(rows))) == questions
+    assert questions == _questions(QUESTION_SLUG, sections)
+    assert all(question.label == 'Suggested' and classify(question.text).kind == 'question' for question in questions)
+    assert Briefing('generated', QUESTION_SLUG, sections, ()).questions == ()
+    with pytest.raises(FrozenInstanceError):
+        questions[0].text = 'Changed'
+
+
+def test_question_deduplication_crosses_kinds_and_whitespace_before_filling_cap():
+    rows = [question_line('person', 'Alex Example', 10), question_line('place', 'Alex Example', 9),
+        question_line('place', ' alex   EXAMPLE ', 8), question_line('place', 'Central Depot', 7),
+        question_line('person', 'Alex   Example', 6), question_line('person', 'Blair Sample', 5),
+        question_line('mentioned_date', '03/04/2026', 2), question_line('place', 'West Depot', 1)]
+    questions = _questions(QUESTION_SLUG, question_sections(rows))
+    assert [question.text for question in questions] == [
+        'What do the records say about Alex Example?',
+        'What do the records say about Central Depot?',
+        'What do the records say about the mentioned date 03/04/2026?',
+        'What do the records say about Blair Sample?',
+        'What do the records say about West Depot?',
+    ]
+    assert len({' '.join(question.text.split()).casefold() for question in questions}) == 5
+
+
+def test_questions_skip_invalid_text_and_search_syntax_without_rewriting_names():
+    prefix, suffix = 'What do the records say about ', '?'
+    boundary = 'A' * (2000 - len(prefix) - len(suffix))
+    invalid = ('', '   ', 'Alex\nExample', 'Alex\x00Example', boundary + 'B',
+               'Alex "Synthetic" Example', 'Alex AND Blair', 'Alex NEAR/5 Blair')
+    valid = ('Anne-Marie O’Example, Jr.', boundary)
+    rows = [question_line('person', value, 10) for value in invalid]
+    rows += [question_line('person', value, 1) for value in valid]
+    questions = _questions(QUESTION_SLUG, question_sections(rows))
+    assert [question.text for question in questions] == [prefix + value + suffix for value in sorted(valid)]
+    assert len(questions[0].text) == 2000
+    assert all(classify(question.text).kind == 'question' for question in questions)
+
+
+@pytest.mark.parametrize('href', [
+    f'/matters/{QUESTION_SLUG}/chronology',
+    f'/matters/{QUESTION_SLUG}/entities/generated-entity',
+    '/matters/m-222222222222?support=generated-token#support-pane',
+    f'/matters/{QUESTION_SLUG}?support=#support-pane',
+    f'/matters/{QUESTION_SLUG}?support=%20#support-pane',
+    f'/matters/{QUESTION_SLUG}?support=generated-token',
+    f'https://example.test/matters/{QUESTION_SLUG}?support=generated-token#support-pane',
+])
+def test_questions_require_available_same_matter_passage_support(href):
+    rows = [question_line('person', 'Unavailable Example', 20, links=(BriefingLink('Generated reference', href),)),
+        question_line('place', 'Unsuggested Depot', 20, suggested=False),
+        question_line('person', 'Zero Count', 0), question_line('person', 'No Links', links=()),
+        question_line('mentioned_date', '03/04/2026')]
+    questions = _questions(QUESTION_SLUG, question_sections(rows))
+    assert questions == (SuggestedQuestion('Suggested',
+        'What do the records say about the mentioned date 03/04/2026?', rows[-1].links),)
