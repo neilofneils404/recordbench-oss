@@ -111,10 +111,8 @@ public repository. Public follow-up PRs should contain only synthetic
 reproductions and generalized corrections.
 
 Source readiness and installed-target readiness are separate. Follow the
-[public-alpha gate](../PUBLIC_ALPHA.md#merge-and-automation-boundary) for source
-acceptance, with only the scoped security-review exception recorded in this
-batch's [adoption record](OSS_ADOPTION_2026_09.md). Current code review, CI and
-full-commit maintainer acceptance remain required.
+[review policy](../QUALITY_GATES.md#review-policy) before merging source changes.
+The batch's [adoption record](OSS_ADOPTION_2026_09.md) is historical.
 Target access is not needed to continue portable development or source review.
 Target installation, model quality and recovery lanes stay not run until they are
 actually exercised on the intended profile.

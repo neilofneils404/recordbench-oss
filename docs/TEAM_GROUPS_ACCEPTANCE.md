@@ -38,9 +38,8 @@ of disabled direct grants were added and passed after that broad run.
 The host lacks Linux-specific absolute-path media/document tools expected by
 those tests (for example `/usr/bin/ffmpeg`). No usable local Docker daemon was
 available for Linux validation. These matching baseline failures are comparison
-evidence, **not a passing full suite or a merge waiver**. Hosted Quality gates,
-code/security reviews and maintainer acceptance remain required on the submitted
-commit. No model-quality or installed-node acceptance is claimed.
+evidence, **not a passing full suite or a merge waiver**. Follow the
+[review policy](QUALITY_GATES.md#review-policy) for the submitted commit. No model-quality or installed-node acceptance is claimed.
 
 The backup test uses SQLite's backup API, restores into a newly created target,
 checks integrity and foreign keys, and verifies group/direct reasons and audit
