@@ -30,6 +30,19 @@ matter source units. Candidate retrieval combines lexical and vector lanes,
 then a cross-encoder reranks a bounded set. The generator sees only the selected
 evidence; a separate deterministic verifier checks claims and citations.
 
+The SQLite control store combines `NotebookStoreMixin` and `ReportsStoreMixin`
+in `WorkspaceStore`. These mixins add no state, connection, lock or transaction
+boundary: their unchanged operations use the owning store's existing helpers
+and shared resources. Report methods keep the same public names and signatures;
+record types and Report limits remain available from `workspace_store` for
+existing callers. Authorization, text validation, review records and shared
+export helpers stay in `WorkspaceStore`.
+
+The existing `iter_review_decisions_for_report` exception also stays unchanged:
+it opens a dedicated read-only SQLite connection to stream one stable snapshot
+without retaining the shared lock while callers rank decisions. Its cursor and
+connection still close in `finally` blocks; callers exhaust or close the
+iterator before Report writes. The module move adds no storage or schema.
 ## Application context
 
 `create_workbench_app` creates one frozen `AppContext` from its existing local
