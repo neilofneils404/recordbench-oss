@@ -54,6 +54,20 @@ def _legacy_account() -> bool:
 
 def _detected_names(root: Path, storage_root: Path | None = None) -> str | None:
     generations = set()
+    installation = root / "installation.json"
+    if installation.is_symlink():
+        raise NamingError("Saved installation metadata cannot be a symbolic link.")
+    if installation.exists():
+        try:
+            record = json.loads(installation.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise NamingError("Saved installation metadata is invalid.") from exc
+        if not isinstance(record, dict):
+            raise NamingError("Saved installation metadata is invalid.")
+        if "names" in record:
+            if record["names"] not in ("recordbench", "exculpata"):
+                raise NamingError("Saved installation naming generation is invalid.")
+            generations.add(record["names"])
     for names in ("recordbench", "exculpata"):
         path = root / "config" / f"{names}.env"
         if path.exists() or path.is_symlink():
@@ -70,7 +84,7 @@ def _detected_names(root: Path, storage_root: Path | None = None) -> str | None:
             if marker.exists() or marker.is_symlink():
                 generations.add(names)
     if len(generations) > 1:
-        raise NamingError("Conflicting naming markers; restore the node's original marker/configuration set. No migration was performed.")
+        raise NamingError("Conflicting naming markers or installation metadata; restore the node's original marker/configuration set. No migration was performed.")
     if generations:
         return generations.pop()
     # P2 may already use EXCULPATA environment keys; those are not a migration.

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -181,3 +183,117 @@ def test_update_retains_generation_and_config_except_release(tmp_path, monkeypat
     assert installer._node_names(root) == names
     assert any("up" in call for call in calls)
     assert not (paths["config"] / ("exculpata.env" if names == "recordbench" else "recordbench.env")).exists()
+
+
+@pytest.mark.parametrize("names", ["recordbench", "exculpata"])
+def test_installation_metadata_detects_generation_without_other_markers(tmp_path, monkeypatch, names):
+    record = tmp_path / "installation.json"
+    original = json.dumps({"names": names}).encode()
+    record.write_bytes(original)
+    # A host account is only a fallback, not a conflicting node marker.
+    monkeypatch.setattr(installer, "_legacy_account", lambda: True)
+    assert installer._detected_names(tmp_path) == names
+    assert record.read_bytes() == original
+
+
+@pytest.mark.parametrize("names", ["recordbench", "exculpata"])
+@pytest.mark.parametrize("signal", ["config", "marker", "external-marker"])
+@pytest.mark.parametrize("matches", [True, False])
+def test_installation_metadata_must_agree_with_markers(tmp_path, names, signal, matches):
+    root = tmp_path / "node"
+    root.mkdir()
+    record = root / "installation.json"
+    record.write_text(json.dumps({"names": names}))
+    marker_names = names if matches else ("recordbench" if names == "exculpata" else "exculpata")
+    storage = tmp_path / "storage"
+    if signal == "config":
+        (root / "config").mkdir()
+        marker = root / "config" / f"{marker_names}.env"
+    else:
+        directory = root if signal == "marker" else storage
+        directory.mkdir(exist_ok=True)
+        marker = directory / f".{marker_names}-managed-storage.json"
+    marker.write_text("{}")
+    before = {p: p.read_bytes() for p in (record, marker)}
+    if matches:
+        assert installer._detected_names(root, storage) == names
+    else:
+        with pytest.raises(installer.NamingError, match="Conflicting naming"):
+            installer._detected_names(root, storage)
+    assert {p: p.read_bytes() for p in before} == before
+
+
+def test_installation_without_names_keeps_legacy_fallback(tmp_path):
+    (tmp_path / "installation.json").write_text("{}")
+    assert installer._detected_names(tmp_path) == "recordbench"
+
+
+@pytest.mark.parametrize("content", ['{"names": "unknown"}', '{"names": null}',
+                                     '{"names": []}', '[]', 'invalid JSON'])
+def test_invalid_installation_naming_record_is_refused(tmp_path, content):
+    (tmp_path / "installation.json").write_text(content)
+    with pytest.raises(installer.NamingError, match="invalid"):
+        installer._detected_names(tmp_path)
+
+
+def test_installation_naming_record_symlink_is_refused(tmp_path):
+    target = tmp_path / "synthetic-record.json"
+    target.write_text('{"names": "exculpata"}')
+    (tmp_path / "installation.json").symlink_to(target)
+    with pytest.raises(installer.NamingError, match="symbolic link"):
+        installer._detected_names(tmp_path)
+
+
+@pytest.mark.parametrize("overlay", [None, "compose.kerberos.yaml"])
+def test_compose_without_naming_environment_uses_legacy_defaults(tmp_path, overlay):
+    # The full graph requires mount paths and application env files. Supply only
+    # those synthetic prerequisites; neither naming family nor a .env file may
+    # supply a project, image namespace, or release default.
+    root, _, _ = configured_node(tmp_path)
+    saved = installer._dotenv(root / "compose.env")
+    paths = {key: value for key, value in saved.items()
+             if key.endswith("_ROOT") or key in {"RECORDBENCH_TLS_CERT", "RECORDBENCH_TLS_KEY"}}
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("EXCULPATA_", "RECORDBENCH_", "COMPOSE_"))}
+    env.update(paths)
+    empty_env = tmp_path / "empty.env"
+    empty_env.write_text("")
+    command = ["docker", "compose", "--env-file", str(empty_env), "--profile", "*",
+               "-f", str(ROOT / "compose.yaml")]
+    if overlay:
+        command += ["-f", str(ROOT / overlay)]
+    result = subprocess.run([*command, "config", "--format", "json"], env=env,
+                            capture_output=True, text=True, check=True)
+    graph = json.loads(result.stdout)
+    assert graph["name"] == "recordbench"
+    for service in graph["services"].values():
+        if "build" in service:
+            assert service["image"].startswith("recordbench/")
+
+
+@pytest.mark.parametrize("overlay", [None, "compose.kerberos.yaml"])
+def test_compose_naming_fields_render_with_no_environment(tmp_path, overlay):
+    # Render the production naming expressions with literally no environment.
+    # Mounts/env files are exercised by the full-graph regression above.
+    sources = [(ROOT / "compose.yaml").read_text()]
+    if overlay:
+        sources.append((ROOT / overlay).read_text())
+    project = sources[0].splitlines()[0]
+    images = [image for source in sources
+              for image in re.findall(r"^    image: (.+)$", source, re.MULTILINE)
+              if "IMAGE_NAMESPACE" in image]
+    assert images
+    config = project + "\nservices:\n" + "".join(
+        f"  synthetic-{index}:\n    image: {image}\n" for index, image in enumerate(images)
+    )
+    empty_env = tmp_path / "empty.env"
+    empty_env.write_text("")
+    result = subprocess.run(
+        [shutil.which("docker"), "compose", "--env-file", str(empty_env), "--project-directory", str(tmp_path),
+         "-f", "-", "config", "--format", "json"],
+        input=config, env={}, capture_output=True, text=True, check=True,
+    )
+    graph = json.loads(result.stdout)
+    assert graph["name"] == "recordbench"
+    assert len(graph["services"]) == len(images)
+    assert all(service["image"].startswith("recordbench/") for service in graph["services"].values())
